@@ -1,11 +1,12 @@
 import type {
   ImageGenerationProvider,
+  PublicationProvider,
   RenderProvider,
   VideoGenerationProvider,
   VoiceProvider,
 } from './types'
 
-type SupportedProvider = ImageGenerationProvider | VoiceProvider | VideoGenerationProvider | RenderProvider
+type SupportedProvider = ImageGenerationProvider | VoiceProvider | VideoGenerationProvider | RenderProvider | PublicationProvider
 
 export class ProviderRegistry<T extends SupportedProvider> {
   private readonly providers = new Map<string, T>()
@@ -22,15 +23,23 @@ export class ProviderRegistry<T extends SupportedProvider> {
     return this.providers.get(id)
   }
 
-  async resolve(primaryId: string, fallbackId?: string) {
-    const primary = this.providers.get(primaryId)
-    if (primary && (await primary.health()) === 'ready') return primary
+  list() {
+    return [...this.providers.keys()]
+  }
 
-    if (fallbackId) {
-      const fallback = this.providers.get(fallbackId)
-      if (fallback && (await fallback.health()) === 'ready') return fallback
+  async resolve(primaryId: string, fallbackId?: string) {
+    const candidates = [primaryId, fallbackId].filter((id): id is string => Boolean(id))
+
+    for (const id of candidates) {
+      const provider = this.providers.get(id)
+      if (!provider) continue
+      try {
+        if ((await provider.health()) === 'ready') return provider
+      } catch {
+        // A failing health check must not prevent trying the configured fallback.
+      }
     }
 
-    throw new Error(`No ready provider available for ${primaryId}${fallbackId ? ` or ${fallbackId}` : ''}.`)
+    throw new Error(`No ready provider available for ${candidates.join(' or ')}.`)
   }
 }
