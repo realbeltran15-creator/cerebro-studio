@@ -3,20 +3,22 @@
 import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '../../lib/supabase/client'
+import type { OpportunityRow } from '../../lib/types/database'
 
-type Opportunity = {
-  id: string
-  title: string
-  source_platform: string
-  source_query: string | null
-  region: string | null
-  language: string | null
-  status: string
-  confidence: number | null
-  observed_metrics: Record<string, unknown> | null
-  calculated_metrics: Record<string, unknown> | null
-  created_at: string
-}
+type Opportunity = Pick<
+  OpportunityRow,
+  | 'id'
+  | 'title'
+  | 'source_platform'
+  | 'source_query'
+  | 'region'
+  | 'language'
+  | 'status'
+  | 'confidence'
+  | 'observed_metrics'
+  | 'calculated_metrics'
+  | 'created_at'
+>
 
 export default function MarketIntelligencePage() {
   const [items, setItems] = useState<Opportunity[]>([])
