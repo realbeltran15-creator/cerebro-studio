@@ -1,2 +1,6 @@
-import { ModulePage } from '../components/studio-shell'
-export default function Page(){return <ModulePage title="Conectores" description="Gestiona proveedores, OAuth, APIs y servicios externos desde un único lugar." steps={['Proveedor','Conexión','Permisos','Estado','Desconectar']}/>}
+'use client'
+import { useEffect,useState } from 'react'
+import { StudioShell } from '../components/studio-shell'
+import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+type Connector={id:string;provider:string;capability:string;status:string;updated_at:string}
+export default function ConnectorsPage(){const supabase=getSupabaseBrowserClient();const[rows,setRows]=useState<Connector[]>([]);const[error,setError]=useState('');useEffect(()=>{void(async()=>{const{data,error}=await supabase.from('connector_configs').select('id,provider,capability,status,updated_at').order('provider');if(error)setError(error.message);else setRows((data??[]) as Connector[])})()},[]);return <StudioShell title="Conectores"><div className="hero"><div><small>INTEGRACIONES</small><h2>Estado de proveedores</h2><p>La interfaz solo lee estado y configuración no secreta. Credenciales y tokens no se exponen al cliente.</p></div><div className="status"><b>{rows.length}</b><span>conectores configurados</span></div></div>{error&&<p className="error">{error}</p>}<div className="grid">{rows.map(c=><article key={c.id}><small>{c.capability}</small><h3>{c.provider}</h3><p>Estado: {c.status}</p></article>)}</div></StudioShell>}
