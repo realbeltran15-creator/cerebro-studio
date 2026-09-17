@@ -3,20 +3,9 @@
 import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '../../lib/supabase/client'
+import type { OpportunityRow } from '../../lib/types/database'
 
-type Opportunity = {
-  id: string
-  title: string
-  source_platform: string
-  source_query: string | null
-  region: string | null
-  language: string | null
-  status: string
-  confidence: number | null
-  observed_metrics: Record<string, unknown> | null
-  calculated_metrics: Record<string, unknown> | null
-  created_at: string
-}
+type Opportunity = Pick<OpportunityRow, 'id' | 'title' | 'source_platform' | 'query' | 'region' | 'language' | 'status' | 'confidence' | 'observed_metrics' | 'calculated_metrics' | 'created_at'>
 
 export default function MarketIntelligencePage() {
   const [items, setItems] = useState<Opportunity[]>([])
@@ -41,7 +30,7 @@ export default function MarketIntelligencePage() {
       setAuthenticated(true)
       const { data, error } = await supabase
         .from('opportunities')
-        .select('id,title,source_platform,source_query,region,language,status,confidence,observed_metrics,calculated_metrics,created_at')
+        .select('id,title,source_platform,query,region,language,status,confidence,observed_metrics,calculated_metrics,created_at')
         .order('created_at', { ascending: false })
         .limit(50)
       if (error) throw error
@@ -68,7 +57,7 @@ export default function MarketIntelligencePage() {
         owner_id: user.id,
         title: cleanTitle,
         source_platform: 'manual',
-        source_query: query.trim() || null,
+        query: query.trim() || null,
         region: region.trim() || null,
         language: language.trim() || null,
         status: 'discovered',
@@ -100,7 +89,7 @@ export default function MarketIntelligencePage() {
       <div className="projectList">{items.length === 0 ? <p className="emptyState">No hay oportunidades todavía.</p> : items.map(item => <article key={item.id}>
         <h3>{item.title}</h3>
         <p>{item.region || 'Mercado sin definir'} · {item.language || 'Idioma sin definir'} · {item.status}</p>
-        <p>Fuente: {item.source_platform}{item.source_query ? ` · ${item.source_query}` : ''}</p>
+        <p>Fuente: {item.source_platform}{item.query ? ` · ${item.query}` : ''}</p>
       </article>)}</div>
     </> : null}
   </section></main>
