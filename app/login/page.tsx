@@ -2,9 +2,16 @@
 
 import { FormEvent, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '../../lib/supabase/client'
 
+function safeNextPath(value: string | null) {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/projects'
+  return value
+}
+
 export default function LoginPage() {
+  const searchParams = useSearchParams()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('Inicia sesión para acceder a los datos protegidos de Cerebro Studio.')
@@ -17,7 +24,7 @@ export default function LoginPage() {
       const supabase = createClient()
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
       if (error) throw error
-      window.location.href = '/projects'
+      window.location.href = safeNextPath(searchParams.get('next'))
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo iniciar sesión.')
     } finally {
