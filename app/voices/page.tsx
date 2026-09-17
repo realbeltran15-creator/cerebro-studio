@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Voces" description="Configura narración, idioma, voz y versiones de locución." steps={['Texto','Voz','Idioma','Generar']}/>}

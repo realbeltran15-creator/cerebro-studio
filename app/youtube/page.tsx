@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="YouTube" description="Gestión del canal, metadata, programación y preparación de publicaciones con aprobación humana." steps={['Canal','Metadata','Previsualización','Aprobación','Publicación']}/>}

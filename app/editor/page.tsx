@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Editor" description="Espacio de edición multipista para imagen, vídeo, texto, subtítulos y audio." steps={['Timeline','Capas y cortes','Subtítulos','Audio','Exportación']}/>}

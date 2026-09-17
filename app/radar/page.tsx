@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Radar de tendencias" description="Señales emergentes por nicho, mercado, formato e idioma." steps={['Explorar señales','Comparar mercados','Priorizar oportunidades']}/>}

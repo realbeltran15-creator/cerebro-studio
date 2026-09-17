@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Biblioteca" description="Centraliza assets, renders, miniaturas y material reutilizable con procedencia trazable." steps={['Assets','Filtros','Proyectos','Procedencia','Reutilización']}/>}

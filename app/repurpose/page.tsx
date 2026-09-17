@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Shorts / Reels / TikTok" description="Adapta contenido a formatos verticales sin publicar automáticamente." steps={['Seleccionar','Reencuadrar','Hook','Subtítulos','Exportar']}/>}

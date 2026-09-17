@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Guiones" description="Diseña guiones originales a partir de oportunidades y objetivos de contenido." steps={['Brief','Estructura','Guion','Revisión']}/>}
