@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Automatizaciones" description="Flujos controlados para investigación, producción, render y tareas operativas." steps={['Disparador','Flujo','Protecciones','Ejecuciones','Auditoría']}/>}

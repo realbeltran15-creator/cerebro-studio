@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Música / SFX" description="Gestiona música, ambientes y efectos con controles de licencia y procedencia." steps={['Buscar','Generar','Licencia','Mezcla']}/>}

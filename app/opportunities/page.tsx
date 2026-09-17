@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Oportunidades" description="Convierte señales verificadas en hipótesis y proyectos accionables." steps={['Revisar evidencia','Evaluar oportunidad','Crear proyecto']}/>}

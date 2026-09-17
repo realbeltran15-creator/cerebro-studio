@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Crear vídeo" description="Orquesta la producción desde una idea aprobada hasta un render preparado." steps={['Guion','Storyboard','Assets','Voz y audio','Render']}/>}

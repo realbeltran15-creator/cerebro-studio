@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Conectores" description="Gestiona proveedores, OAuth, APIs y servicios externos desde un único lugar." steps={['Proveedor','Conexión','Permisos','Estado','Desconectar']}/>}

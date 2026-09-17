@@ -1,0 +1,2 @@
+import { ModulePage } from '../components/studio-shell'
+export default function Page(){return <ModulePage title="Miniaturas" description="Diseña variantes de miniatura y conserva la selección vinculada al proyecto." steps={['Concepto','Variantes','Comparar','Seleccionar']}/>}
