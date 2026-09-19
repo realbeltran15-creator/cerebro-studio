@@ -2,9 +2,9 @@ import type { GeneratedAsset, ProviderContext, ProviderHealth, VoiceProvider } f
 const voices = new Set(['alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'])
 export class OpenAIVoiceProvider implements VoiceProvider {
  readonly id='openai-voice'
- async health():Promise<ProviderHealth>{return process.env.OPENAI_VOICE_API_KEY||process.env.OPENAI_API_KEY?'ready':'unconfigured'}
+ async health():Promise<ProviderHealth>{return process.env.OPENAI_VOICE_API_KEY?'ready':'unconfigured'}
  async synthesize(context:ProviderContext,text:string,voice?:string):Promise<GeneratedAsset>{
- const key=process.env.OPENAI_VOICE_API_KEY||process.env.OPENAI_API_KEY
+ const key=process.env.OPENAI_VOICE_API_KEY
  if(!key)throw new Error('OpenAI voice provider is not configured.')
  const selectedVoice=voice&&voices.has(voice)?voice:'alloy'
  const response=await fetch('https://api.openai.com/v1/audio/speech',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json','X-Client-Request-Id':context.requestId},body:JSON.stringify({model:'tts-1',input:text,voice:selectedVoice,response_format:'mp3'}),signal:AbortSignal.timeout(90000)})
