@@ -7,6 +7,7 @@ const state=(id:string,capability:ProviderCapability,...vars:string[]):ProviderR
 export function getProviderRuntimeConfigs():ProviderRuntimeConfig[]{return[
  state('openai-image','image','OPENAI_API_KEY'),
  state('image-fallback','image','IMAGE_FALLBACK_ENDPOINT','IMAGE_FALLBACK_API_KEY'),
+ state('openai-voice','voice','OPENAI_VOICE_API_KEY'),
  state('voice-primary','voice','VOICE_PROVIDER_ENDPOINT','VOICE_PROVIDER_API_KEY'),
  state('voice-fallback','voice','VOICE_FALLBACK_ENDPOINT','VOICE_FALLBACK_API_KEY'),
  state('video-primary','video','VIDEO_PROVIDER_ENDPOINT','VIDEO_PROVIDER_API_KEY'),
