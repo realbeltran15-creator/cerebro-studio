@@ -10,6 +10,7 @@ export function getProviderRuntimeConfigs():ProviderRuntimeConfig[]{return[
  state('openai-voice','voice','OPENAI_VOICE_API_KEY'),
  state('voice-primary','voice','VOICE_PROVIDER_ENDPOINT','VOICE_PROVIDER_API_KEY'),
  state('voice-fallback','voice','VOICE_FALLBACK_ENDPOINT','VOICE_FALLBACK_API_KEY'),
+ state('fal-h3-turbo','video','FAL_KEY'),
  state('video-primary','video','VIDEO_PROVIDER_ENDPOINT','VIDEO_PROVIDER_API_KEY'),
  state('video-fallback','video','VIDEO_FALLBACK_ENDPOINT','VIDEO_FALLBACK_API_KEY'),
  state('render-worker','render','RENDER_WORKER_URL','RENDER_WORKER_TOKEN'),
