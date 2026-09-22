@@ -1,12 +1,15 @@
 'use client'
 
 import { FormEvent, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '../../lib/supabase/client'
 
 type Project = { id:string; name:string; description:string|null; status:string; created_at:string }
 
 export default function ProjectsPage() {
+  const params=useSearchParams()
+  const selectedProjectId=params.get('project')
   const [projects,setProjects]=useState<Project[]>([])
   const [name,setName]=useState('')
   const [message,setMessage]=useState('Comprobando conexión con Supabase…')
@@ -47,7 +50,7 @@ export default function ProjectsPage() {
     {authenticated===false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated===true ? <>
       <form className="projectForm" onSubmit={createProject}><input aria-label="Nombre del proyecto" value={name} onChange={e=>setName(e.target.value)} placeholder="Nombre del nuevo proyecto"/><button disabled={busy}>{busy?'Creando…':'+ Crear proyecto'}</button></form>
       <button className="secondaryButton" onClick={signOut}>Cerrar sesión</button>
-      <div className="projectList">{projects.length===0?<p className="emptyState">Todavía no hay proyectos. Crea el primero arriba.</p>:projects.map(project=><article key={project.id}><h3>{project.name}</h3><p>Estado: {project.status}</p></article>)}</div>
+      <div className="projectList">{projects.length===0?<p className="emptyState">Todavía no hay proyectos. Crea el primero arriba.</p>:projects.map(project=><article key={project.id}><h3>{project.name}{selectedProjectId===project.id?' · Proyecto seleccionado':''}</h3><p>Estado: {project.status}</p>{project.description&&<p>{project.description}</p>}<p><Link href={`/create?project=${encodeURIComponent(project.id)}`}>Abrir storyboard →</Link> · <Link href={`/youtube?project=${encodeURIComponent(project.id)}`}>Preparar YouTube →</Link></p></article>)}</div>
     </> : null}
   </section></main>
 }
