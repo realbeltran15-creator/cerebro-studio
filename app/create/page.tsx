@@ -37,8 +37,8 @@ export default function CreatePage(){
   if(e)setError(e.message)
  }
  useEffect(()=>{void load()},[])
- async function create(e:FormEvent){
-  e.preventDefault();setError('');setNotice('')
+ async function create(event:FormEvent){
+  event.preventDefault();setError('');setNotice('')
   const {data:{user}}=await supabase.auth.getUser()
   if(!user||!projectId||!title.trim())return
   setBusy(true)
@@ -49,8 +49,8 @@ export default function CreatePage(){
   await load()
   if(data){setSelected(data.id);setScenes([])}
  }
- async function addScene(e:FormEvent){
-  e.preventDefault();setError('');setNotice('')
+ async function addScene(event:FormEvent){
+  event.preventDefault();setError('');setNotice('')
   if(!selected||busy)return
   const {data:{user}}=await supabase.auth.getUser()
   if(!user)return
