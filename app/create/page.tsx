@@ -30,7 +30,7 @@ export default function CreatePage(){
   ])
   setProjects((p??[]) as ProjectRow[]);setBoards((b??[]) as Board[])
   const requestedProject=new URLSearchParams(window.location.search).get('project')
-  if(requestedProject&&(p??[]).some(project=>project.id===requestedProject))setProjectId(requestedProject)
+  if(requestedProject&&((p??[]) as ProjectRow[]).some(project=>project.id===requestedProject))setProjectId(requestedProject)
   if(pe||be)setError(pe?.message||be?.message||'Error al cargar')
  }
  async function loadScenes(id:string){
