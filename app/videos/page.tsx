@@ -1,2 +1,2 @@
-import { ModulePage } from '../components/studio-shell'
-export default function Page(){return <ModulePage title="Vídeos" description="Genera y organiza clips y escenas de vídeo para cada proyecto." steps={['Escenas','Proveedor','Generación','Selección']}/>}
+import { ProviderGenerator } from '../components/provider-generator'
+export default function Page(){return <ProviderGenerator title="Vídeos" kind="video" description="Genera clips con el proveedor configurado y conserva automáticamente cada resultado como asset del proyecto."/>}

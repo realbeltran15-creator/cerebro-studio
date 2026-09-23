@@ -1,2 +1,2 @@
-import { ModulePage } from '../components/studio-shell'
-export default function Page(){return <ModulePage title="Imágenes" description="Generación y gestión visual con proveedores intercambiables." steps={['Prompt','Proveedor','Variantes','Seleccionar']}/>}
+import { ProviderGenerator } from '../components/provider-generator'
+export default function Page(){return <ProviderGenerator title="Imágenes" kind="image" description="Genera imágenes con el proveedor configurado y guarda automáticamente el resultado en la Biblioteca."/>}
