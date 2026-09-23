@@ -29,6 +29,8 @@ export default function CreatePage(){
    supabase.from('storyboards').select('id,project_id,title,aspect_ratio,version,created_at').order('created_at',{ascending:false})
   ])
   setProjects((p??[]) as ProjectRow[]);setBoards((b??[]) as Board[])
+  const requestedProject=new URLSearchParams(window.location.search).get('project')
+  if(requestedProject&&(p??[]).some(project=>project.id===requestedProject))setProjectId(requestedProject)
   if(pe||be)setError(pe?.message||be?.message||'Error al cargar')
  }
  async function loadScenes(id:string){
@@ -75,7 +77,8 @@ export default function CreatePage(){
   </form>
   {error&&<p className="error" role="alert">{error}</p>}
   {notice&&<p role="status">{notice}</p>}
-  <div className="grid">{boards.map(b=><article key={b.id}><small>Versión {b.version} · {b.aspect_ratio}</small><h3>{b.title}</h3><p>Proyecto: {projects.find(p=>p.id===b.project_id)?.name||b.project_id}</p><button type="button" onClick={()=>{setSelected(b.id);setError('');setNotice('');void loadScenes(b.id)}}>Editar escenas</button></article>)}</div>
+  {projectId&&<p role="status">Proyecto seleccionado: {projects.find(p=>p.id===projectId)?.name||'—'}</p>}
+  <div className="grid">{boards.filter(b=>!projectId||b.project_id===projectId).map(b=><article key={b.id}><small>Versión {b.version} · {b.aspect_ratio}</small><h3>{b.title}</h3><p>Proyecto: {projects.find(p=>p.id===b.project_id)?.name||b.project_id}</p><button type="button" onClick={()=>{setSelected(b.id);setError('');setNotice('');void loadScenes(b.id)}}>Editar escenas</button></article>)}</div>
   {selected&&<section className="hero"><div><small>STORYBOARD SELECCIONADO</small><h2>{boards.find(b=>b.id===selected)?.title||'Storyboard'}</h2><p>{scenes.length} escenas · {scenes.reduce((sum,s)=>sum+s.duration_ms,0)/1000} segundos planificados</p>
    <div className="grid">{scenes.map(s=><article key={s.id}><small>Escena {s.position} · {s.duration_ms/1000} s</small><p><b>Narración:</b> {s.narration||'Sin narración'}</p><p><b>Imagen:</b> {s.visual_prompt||'Sin prompt'}</p><p><b>Vídeo:</b> {s.video_prompt||'Sin prompt'}</p><p><b>Ambiente:</b> {s.ambient_prompt||'Sin prompt'}</p></article>)}</div>
    <form className="projectForm" onSubmit={addScene}>
