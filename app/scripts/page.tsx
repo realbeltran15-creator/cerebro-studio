@@ -11,6 +11,7 @@ import {
   normalizeSections, scriptStatusLabels, scriptToScenes, scriptWarnings, wordCount,
 } from '@/lib/scripts'
 import type { OpportunityRow, ProjectRow, ScriptBasis, ScriptRow, ScriptSection } from '@/lib/types/database'
+import type { ScriptAssistMode, ScriptAssistProposal } from '@/lib/providers/openai-text'
 
 type Draft = Pick<ScriptRow, 'title' | 'status' | 'idea' | 'brief' | 'hook' | 'cta' | 'review_notes'> & { sections: ScriptSection[] }
 
@@ -49,6 +50,9 @@ export default function ScriptsPage() {
   const [notice, setNotice] = useState('')
   const [migrationPending, setMigrationPending] = useState(false)
   const [requestedScript, setRequestedScript] = useState('')
+  const [assistReady, setAssistReady] = useState<boolean | null>(null)
+  const [assistBusy, setAssistBusy] = useState<ScriptAssistMode | null>(null)
+  const [proposal, setProposal] = useState<(ScriptAssistProposal & { mode: ScriptAssistMode; model: string }) | null>(null)
 
   const project = projects.find(p => p.id === projectId) ?? null
   const selected = scripts.find(s => s.id === selectedId) ?? null
@@ -89,6 +93,40 @@ export default function ScriptsPage() {
   }, [supabase])
 
   useEffect(() => { if (projectId) void loadProject(projectId, requestedScript) }, [projectId, requestedScript, loadProject])
+
+  useEffect(() => {
+    void fetch('/api/providers/status', { cache: 'no-store' })
+      .then(r => r.json() as Promise<{ providers?: Array<{ id: string; enabled: boolean }> }>)
+      .then(j => setAssistReady(Boolean(j.providers?.some(p => p.id === 'openai-text' && p.enabled))))
+      .catch(() => setAssistReady(false))
+  }, [])
+
+  async function assist(mode: ScriptAssistMode) {
+    if (!selected || !draft || assistBusy) return
+    setAssistBusy(mode); setError(''); setNotice(''); setProposal(null)
+    try {
+      const response = await fetch('/api/scripts/assist', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, scriptId: selected.id, mode, draft }),
+      })
+      const json = await response.json() as { proposal?: ScriptAssistProposal; model?: string; error?: string }
+      if (!response.ok || !json.proposal) throw new Error(json.error ?? 'No se pudo generar la propuesta.')
+      setProposal({ ...json.proposal, mode, model: json.model ?? '' })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo generar la propuesta.')
+    } finally { setAssistBusy(null) }
+  }
+
+  function applyProposal() {
+    if (!proposal || !draft) return
+    update({
+      hook: proposal.hooks[0] ?? draft.hook,
+      cta: proposal.cta || draft.cta,
+      sections: proposal.sections.length ? proposal.sections.map(s => ({ ...makeSection(s.heading, s.basis), text: s.text, sources: s.sources })) : draft.sections,
+    })
+    setProposal(null)
+    setNotice('Propuesta aplicada al borrador. Revísala y guarda; «Descartar» la deshace.')
+  }
 
   function update(patch: Partial<Draft>) { setDraft(d => d ? { ...d, ...patch } : d); setDirty(true); setNotice('') }
   function updateSection(id: string, patch: Partial<ScriptSection>) {
@@ -231,8 +269,15 @@ export default function ScriptsPage() {
             <p className="muted small" style={{ marginTop: 10 }}>Los hechos y testimonios necesitan fuente. La reconstrucción no inventa emociones, diálogos ni detalles.</p>
           </section>
           <section className="panel">
-            <span className="stateBadge state-integration_ready">Asistencia IA</span>
-            <p className="muted small" style={{ marginTop: 8 }}>Preparada para integrarse cuando se configure un proveedor de texto. Tendrá coste por uso, así que se activará solo con tu autorización.</p>
+            <span className={assistReady ? 'stateBadge state-functional' : 'stateBadge state-integration_ready'}>Asistencia IA</span>
+            {assistReady === false && <p className="muted small" style={{ marginTop: 8 }}>Necesita <code>OPENAI_TEXT_API_KEY</code> u <code>OPENAI_API_KEY</code> en el servidor.</p>}
+            {assistReady && <>
+              <p className="muted small" style={{ margin: '8px 0 10px' }}>Propone texto a partir de la idea, el brief y la investigación del proyecto. Cada petición tiene coste. Nada se guarda hasta que lo apliques y pulses Guardar.</p>
+              <div className="versionList">
+                <button type="button" className="ghost" disabled={!draft || Boolean(assistBusy)} onClick={() => void assist('hook')}>{assistBusy === 'hook' ? 'Generando…' : 'Proponer hooks'}</button>
+                <button type="button" className="ghost" disabled={!draft || Boolean(assistBusy)} onClick={() => void assist('draft')}>{assistBusy === 'draft' ? 'Generando…' : 'Proponer estructura completa'}</button>
+              </div>
+            </>}
           </section>
         </aside>
 
@@ -262,6 +307,34 @@ export default function ScriptsPage() {
                 <button type="button" onClick={save} disabled={busy || !dirty}>{busy ? 'Guardando…' : 'Guardar'}</button>
               </div>
             </div>
+
+            {proposal && (
+              <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 10, borderColor: 'var(--accent)' }} aria-label="Propuesta de la IA">
+                <div className="cardHead" style={{ marginBottom: 0 }}>
+                  <h3>Propuesta IA {proposal.model && <span className="pill">{proposal.model}</span>}</h3>
+                  <div className="pageActions">
+                    <button type="button" className="ghost" onClick={() => setProposal(null)}>Descartar propuesta</button>
+                    {proposal.mode === 'draft' && <button type="button" onClick={applyProposal}>Aplicar al borrador</button>}
+                  </div>
+                </div>
+                <p className="muted small">Generado por IA: revisa cada dato. Las fuentes solo pueden venir de la investigación del proyecto; los marcadores [PENDIENTE] indican lo que falta investigar.</p>
+                {proposal.hooks.map((h, i) => (
+                  <div key={i} className="listItem">
+                    <span>{h}</span>
+                    {proposal.mode === 'hook' && <button type="button" className="ghost" onClick={() => { update({ hook: h }); setNotice('Hook aplicado al borrador.') }}>Usar</button>}
+                  </div>
+                ))}
+                {proposal.sections.map((s, i) => (
+                  <div key={i} className={`panel section basis-${s.basis}`}>
+                    <b>{s.heading}</b> <span className="pill">{basisLabels[s.basis]}</span>
+                    <p style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{s.text}</p>
+                    {s.sources.length > 0 && <p className="muted small">Fuentes: {s.sources.join(' · ')}</p>}
+                  </div>
+                ))}
+                {proposal.cta && <p><b>Cierre:</b> {proposal.cta}</p>}
+                {proposal.notes.length > 0 && <ul className="warnList">{proposal.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+              </section>
+            )}
 
             <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="field-row">
