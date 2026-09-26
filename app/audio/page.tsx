@@ -173,7 +173,7 @@ export default function AudioPage() {
           <b>{String(a.provenance?.title ?? 'Sin título')}</b>
           <span className="muted small" style={{ display: 'block' }}>
             {a.asset_type === 'music' ? 'Música' : 'Efecto'} · {fmtDuration(a.provenance?.durationSeconds)}{a.provenance?.mood ? ` · ${String(a.provenance.mood)}` : ''} · {licenseLabels[a.license_status] ?? a.license_status}
-            {a.source_url && <> · <a href={a.source_url} target="_blank" rel="noopener noreferrer">origen</a></>}
+            {a.source_url && /^https?:\/\//i.test(a.source_url) && <> · <a href={a.source_url} target="_blank" rel="noopener noreferrer">origen</a></>}
           </span>
           {Boolean(a.provenance?.licenseNotes) && <span className="muted small" style={{ display: 'block' }}>{String(a.provenance?.licenseNotes)}</span>}
         </div>

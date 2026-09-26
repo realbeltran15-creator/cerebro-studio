@@ -64,7 +64,8 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
     asset_type: input.kind,
     storage_path: storagePath,
     source_provider: 'upload',
-    source_url: input.sourceUrl?.trim() || null,
+    // Only http(s) links are stored: the value is rendered as a link later.
+    source_url: /^https?:\/\//i.test(input.sourceUrl?.trim() ?? '') ? input.sourceUrl!.trim() : null,
     license_status: input.license,
     provenance: {
       title: input.title.trim().slice(0, 160) || input.file.name,

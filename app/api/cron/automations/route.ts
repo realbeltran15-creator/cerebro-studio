@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { timingSafeEqual } from 'node:crypto'
 import { executeAutomation, type Automation } from '@/lib/automations/run'
 import { youtubeConfigured } from '@/lib/providers/youtube-data'
 
@@ -15,7 +16,9 @@ export async function GET(request: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
   if (!secret || !serviceKey || !url) return NextResponse.json({ error: 'Scheduler not configured (CRON_SECRET, SUPABASE_SERVICE_ROLE_KEY).' }, { status: 503 })
-  if (request.headers.get('authorization') !== `Bearer ${secret}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const given = Buffer.from(request.headers.get('authorization') ?? '')
+  const expected = Buffer.from(`Bearer ${secret}`)
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!youtubeConfigured()) return NextResponse.json({ error: 'YOUTUBE_API_KEY missing.' }, { status: 503 })
 
   const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
