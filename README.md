@@ -31,13 +31,14 @@ La fuente de verdad es `lib/module-status.ts`; la interfaz la lee para no presen
 |---|---|---|
 | Inicio (dashboard) | Funcional | Datos reales; sin métricas inventadas |
 | Proyectos + espacio de proyecto (`/projects/[id]`) | Funcional | Progreso derivado de los datos: investigación → guion → storyboard → recursos → publicación → resultados |
-| Guiones | Funcional | Versiones, secciones con base factual (hecho / testimonio / reconstrucción / interpretación), avisos de fuentes, conversión a storyboard. IA: preparada para integración |
+| Guiones | Funcional | Versiones, secciones con base factual (hecho / testimonio / reconstrucción / interpretación), avisos de fuentes, conversión a storyboard. Asistencia IA (hooks y estructura) con `OPENAI_TEXT_API_KEY` u `OPENAI_API_KEY`: propone, no guarda; solo cita fuentes de la investigación del proyecto |
 | Storyboard y escenas | Funcional | Cámara, acción, música, SFX, estado final y continuidad entre escenas |
-| Oportunidades | Parcial | Búsqueda, filtros, orden, estados y conversión a proyecto; falta ingesta automática |
-| Investigación / YouTube | Parcial | Registro manual con fuente y control de duplicados; falta YouTube Data API |
+| Oportunidades | Parcial | Búsqueda, filtros, orden, estados y conversión a proyecto; se alimenta desde Investigación |
+| Investigación / YouTube | Parcial | Búsqueda con YouTube Data API (`YOUTUBE_API_KEY`, solo lectura, ~102 unidades de cuota por búsqueda) con métricas observadas y calculadas por separado; registro manual con fuente y control de duplicados |
 | Imágenes / Vídeo / Voz | Preparado para integración | Necesitan claves de servidor. Google Flow sin API pública oficial confirmada; ElevenLabs pendiente |
 | Analytics | Parcial | Lee `metric_snapshots`; falta OAuth de YouTube Analytics |
-| Editor, Reutilización, Miniaturas, Música/SFX, Radar, Automatizaciones | No implementado | |
+| Miniaturas | Preparado para integración | Variantes 16:9 por proyecto con el proveedor de imágenes (`OPENAI_API_KEY`), guardadas como assets `thumbnail`; selección de la definitiva |
+| Editor, Reutilización, Música/SFX, Radar, Automatizaciones | No implementado | |
 
 ## Migraciones
 

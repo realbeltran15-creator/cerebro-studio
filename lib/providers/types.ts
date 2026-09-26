@@ -14,10 +14,16 @@ export interface GeneratedAsset {
   metadata?: Record<string, unknown>
 }
 
+export type ImageSize = '1024x1024' | '1536x1024' | '1024x1536'
+
+export interface ImageGenerationOptions {
+  size?: ImageSize
+}
+
 export interface ImageGenerationProvider {
   readonly id: string
   health(): Promise<ProviderHealth>
-  generateImage(context: ProviderContext, prompt: string): Promise<GeneratedAsset>
+  generateImage(context: ProviderContext, prompt: string, options?: ImageGenerationOptions): Promise<GeneratedAsset>
 }
 
 export interface VoiceProvider {

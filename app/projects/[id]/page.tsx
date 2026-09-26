@@ -168,10 +168,10 @@ export default function ProjectWorkspace() {
         </section>
 
         <section className="panel">
-          <div className="cardHead"><h2>Recursos</h2><Link href="/library">Biblioteca <Icon name="arrow" size={14} /></Link></div>
+          <div className="cardHead"><h2>Recursos</h2><div className="pageActions"><Link href={`/thumbnails?project=${project.id}`}>Miniaturas <Icon name="arrow" size={14} /></Link><Link href="/library">Biblioteca <Icon name="arrow" size={14} /></Link></div></div>
           {assets.length === 0 ? <p className="muted">Sin imágenes, clips ni voces generadas para este proyecto.</p> : (
             <div className="list">{assets.map(a => (
-              <div className="listItem" key={a.id}><div><b>{String(a.provenance?.title || a.provenance?.originalPrompt || a.asset_type).slice(0, 80)}</b><span>{a.asset_type} · {a.source_provider ?? 'importado'}</span></div><span className="pill">{a.license_status}</span></div>
+              <div className="listItem" key={a.id}><div><b>{String(a.provenance?.title || a.provenance?.originalPrompt || a.provenance?.concept || a.asset_type).slice(0, 80)}</b><span>{a.asset_type} · {a.source_provider ?? 'importado'}</span></div><span className="pill">{a.license_status}</span></div>
             ))}</div>
           )}
         </section>
