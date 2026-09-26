@@ -1,10 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { YouTubeResults } from '../components/youtube-results'
-import { recurringTerms } from '@/lib/radar'
+import { recurringTerms, type SnapshotItem, type TrendComparison } from '@/lib/radar'
+import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubeCategory, YouTubeVideoResult } from '@/lib/providers/youtube-data'
 
 const regions = [['ES', 'España'], ['MX', 'México'], ['AR', 'Argentina'], ['CO', 'Colombia'], ['CL', 'Chile'], ['PE', 'Perú'], ['US', 'Estados Unidos'], ['GB', 'Reino Unido'], ['DE', 'Alemania'], ['FR', 'Francia'], ['IT', 'Italia'], ['PT', 'Portugal'], ['BR', 'Brasil']] as const
@@ -18,6 +19,16 @@ export default function RadarPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notConfigured, setNotConfigured] = useState(false)
+  const [comparison, setComparison] = useState<TrendComparison | null>(null)
+  const [history, setHistory] = useState<Array<{ id: string; fetched_at: string; source: string; items: SnapshotItem[] }>>([])
+  const supabase = getSupabaseBrowserClient()
+
+  const loadHistory = useCallback(async (r: string, c: string) => {
+    let q = supabase.from('trend_snapshots').select('id,fetched_at,source,items').eq('region', r)
+    q = c ? q.eq('category_id', c) : q.is('category_id', null)
+    const { data } = await q.order('fetched_at', { ascending: false }).limit(10)
+    setHistory((data ?? []) as typeof history)
+  }, [supabase])
 
   useEffect(() => {
     setCategory('')
@@ -37,14 +48,27 @@ export default function RadarPage() {
       const params = new URLSearchParams({ region })
       if (category) params.set('category', category)
       const response = await fetch(`/api/research/trending?${params}`, { cache: 'no-store' })
-      const json = await response.json() as { results?: YouTubeVideoResult[]; error?: string; configured?: boolean }
+      const json = await response.json() as { results?: YouTubeVideoResult[]; comparison?: TrendComparison; error?: string; configured?: boolean }
       if (json.configured === false) setNotConfigured(true)
       if (!response.ok) throw new Error(json.error ?? 'No se pudo consultar YouTube.')
       setResults(json.results ?? [])
+      setComparison(json.comparison ?? null)
       setLoadedFor({ region, category })
+      void loadHistory(region, category)
     } catch (e) {
       setResults([]); setError(e instanceof Error ? e.message : 'No se pudo consultar YouTube.')
     } finally { setBusy(false) }
+  }
+
+  const moves = comparison ? Object.values(comparison.movements) : []
+  const badge = (v: YouTubeVideoResult) => {
+    const m = comparison?.movements[v.videoId]
+    if (!comparison?.previousAt || !m) return null
+    const gained = m.viewsGained !== null && m.viewsGained > 0 ? ` · +${m.viewsGained.toLocaleString('es-ES')} vistas` : ''
+    if (m.status === 'new') return <span className="pill info">Nuevo en la lista</span>
+    if (m.status === 'up') return <span className="pill ok">↑ {m.rankChange} puestos{gained}</span>
+    if (m.status === 'down') return <span className="pill warn">↓ {Math.abs(m.rankChange ?? 0)} puestos{gained}</span>
+    return <span className="pill">= mismo puesto{gained}</span>
   }
 
   const terms = useMemo(() => recurringTerms(results.map(r => r.title)), [results])
@@ -75,9 +99,22 @@ export default function RadarPage() {
           {terms.map(t => <Link key={t.term} className="pill" href={`/market-intelligence?q=${encodeURIComponent(t.term)}`} title="Investigar este término">{t.term} · {t.titles}</Link>)}
         </div>
       )}
+      {comparison?.previousAt ? <section className="panel" style={{ margin: '12px 0' }}>
+        <b>Desde la lectura anterior ({new Date(comparison.previousAt).toLocaleString()})</b>
+        <p className="small" style={{ marginTop: 4 }}>{moves.filter(m => m.status === 'new').length} nuevos · {moves.filter(m => m.status === 'up').length} suben · {moves.filter(m => m.status === 'down').length} bajan · {comparison.dropped.length} salen de la lista</p>
+        {comparison.dropped.length > 0 && <p className="muted small">Salen: {comparison.dropped.slice(0, 8).map(d => d.title).join(' · ')}</p>}
+        <p className="authNote">Calculado comparando dos lecturas guardadas de la lista oficial. No es una predicción.</p>
+      </section> : <p className="muted small" style={{ margin: '8px 0' }}>Primera lectura guardada para esta combinación: la próxima mostrará qué vídeos entran, suben o salen.</p>}
       <h3 className="sectionTitle">Vídeos en tendencia</h3>
     </>}
     {loadedFor && results.length === 0 && !error && <p className="emptyState">YouTube no devolvió vídeos en tendencia para esta combinación.</p>}
-    <YouTubeResults results={results} context={{ query: `radar:${loadedFor?.region ?? region}${loadedFor?.category ? `:${categoryName(loadedFor.category)}` : ''}`, region: loadedFor?.region ?? region, language: null, origin: 'radar' }} />
+    <YouTubeResults extra={badge} results={results} context={{ query: `radar:${loadedFor?.region ?? region}${loadedFor?.category ? `:${categoryName(loadedFor.category)}` : ''}`, region: loadedFor?.region ?? region, language: null, origin: 'radar' }} />
+    {history.length > 0 && <>
+      <h3 className="sectionTitle">Histórico de lecturas</h3>
+      <div className="list">{history.map(h => <div key={h.id} className="listItem" style={{ flexWrap: 'wrap' }}>
+        <span><b>{new Date(h.fetched_at).toLocaleString()}</b> · {h.source === 'automation' ? 'automatización' : 'Radar'} · {h.items.length} vídeos</span>
+        <span className="muted small">Top 3: {h.items.slice(0, 3).map(i => i.title).join(' · ')}</span>
+      </div>)}</div>
+    </>}
   </StudioShell>
 }

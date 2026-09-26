@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { trendingYouTubeVideos, youtubeVideoId, youtubeVideosByIds, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { recurringTerms } from '@/lib/radar'
+import { recordTrendSnapshot } from '@/lib/radar-history'
 
 /**
  * Server-side automation runner. Works with a user-session client (manual runs, RLS applies)
@@ -63,6 +64,8 @@ function opportunityFromVideo(ownerId: string, v: YouTubeVideoResult, cfg: Trend
 async function runTrendWatch(db: SupabaseClient, a: Automation) {
   const cfg = trendWatchConfig(a.config)
   const videos = await trendingYouTubeVideos({ regionCode: cfg.region, categoryId: cfg.categoryId ?? undefined })
+  const comparison = await recordTrendSnapshot(db, { ownerId: a.owner_id, region: cfg.region, categoryId: cfg.categoryId, source: 'automation', videos })
+  const newEntries = Object.values(comparison.movements).filter(m => m.status === 'new').length
   const matched = matchKeywords(videos, cfg.keywords)
   let saved = 0, duplicates = 0
   if (cfg.autoSave && matched.length) {
@@ -79,6 +82,7 @@ async function runTrendWatch(db: SupabaseClient, a: Automation) {
   }
   return {
     region: cfg.region, categoryId: cfg.categoryId, checked: videos.length, matched: matched.length, saved, duplicates,
+    newSincePrevious: comparison.previousAt ? newEntries : null, previousSnapshotAt: comparison.previousAt,
     matches: matched.slice(0, 10).map(v => ({ title: v.title, url: v.url, views: v.observed.views })),
     recurringTerms: recurringTerms(videos.map(v => v.title), 2, 10),
   }

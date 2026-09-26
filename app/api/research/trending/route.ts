@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { trendingYouTubeVideos, youtubeConfigured, YouTubeApiError } from '@/lib/providers/youtube-data'
+import { recordTrendSnapshot } from '@/lib/radar-history'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,8 @@ export async function GET(request: Request) {
   if (category && !/^\d{1,4}$/.test(category)) return NextResponse.json({ error: 'Categoría no válida.' }, { status: 400 })
   try {
     const results = await trendingYouTubeVideos({ regionCode: region, categoryId: category || undefined })
-    return NextResponse.json({ configured: true, results }, { headers: { 'Cache-Control': 'no-store' } })
+    const comparison = await recordTrendSnapshot(supabase, { ownerId: user.id, region, categoryId: category || null, source: 'radar', videos: results })
+    return NextResponse.json({ configured: true, results, comparison }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('YouTube trending failure', { status: error instanceof YouTubeApiError ? error.status : null, details: error instanceof Error ? error.message : 'unknown' })
     // YouTube answers 400/404 when a category has no trending chart in that region.

@@ -24,3 +24,39 @@ export function recurringTerms(titles: string[], minTitles = 2, limit = 15): Rec
     .slice(0, limit)
     .map(([term, n]) => ({ term, titles: n }))
 }
+
+export type SnapshotItem = { videoId: string; title: string; channelTitle: string; rank: number; views: number | null }
+
+export type TrendMovement = {
+  videoId: string
+  status: 'new' | 'up' | 'down' | 'same'
+  /** Positive = climbed that many positions since the previous snapshot. */
+  rankChange: number | null
+  viewsGained: number | null
+}
+
+export type TrendComparison = {
+  previousAt: string | null
+  movements: Record<string, TrendMovement>
+  dropped: SnapshotItem[]
+}
+
+/** Compares the current chart with the previous snapshot. Calculated, not predicted. */
+export function compareSnapshots(current: SnapshotItem[], previous: SnapshotItem[] | null, previousAt: string | null): TrendComparison {
+  if (!previous) return { previousAt: null, movements: {}, dropped: [] }
+  const before = new Map(previous.map(p => [p.videoId, p]))
+  const now = new Set(current.map(c => c.videoId))
+  const movements: Record<string, TrendMovement> = {}
+  for (const item of current) {
+    const prev = before.get(item.videoId)
+    if (!prev) { movements[item.videoId] = { videoId: item.videoId, status: 'new', rankChange: null, viewsGained: null }; continue }
+    const rankChange = prev.rank - item.rank
+    movements[item.videoId] = {
+      videoId: item.videoId,
+      status: rankChange > 0 ? 'up' : rankChange < 0 ? 'down' : 'same',
+      rankChange,
+      viewsGained: item.views !== null && prev.views !== null ? item.views - prev.views : null,
+    }
+  }
+  return { previousAt, movements, dropped: previous.filter(p => !now.has(p.videoId)) }
+}

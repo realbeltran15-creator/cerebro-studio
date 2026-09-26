@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 
@@ -10,7 +10,7 @@ const fmtDuration = (s: number | null) => (s === null ? '—' : `${Math.floor(s 
 export type YouTubeSaveContext = { query: string | null; region: string | null; language: string | null; origin: 'search' | 'radar' }
 
 /** Result cards with observed/calculated metrics and duplicate-safe saving to Oportunidades. */
-export function YouTubeResults({ results, context, onSaved }: { results: YouTubeVideoResult[]; context: YouTubeSaveContext; onSaved?: () => void }) {
+export function YouTubeResults({ results, context, onSaved, extra }: { results: YouTubeVideoResult[]; context: YouTubeSaveContext; onSaved?: () => void; extra?: (video: YouTubeVideoResult) => ReactNode }) {
   const supabase = getSupabaseBrowserClient()
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [savingId, setSavingId] = useState('')
@@ -65,6 +65,7 @@ export function YouTubeResults({ results, context, onSaved }: { results: YouTube
     <div className="grid" style={{ marginTop: 10 }}>{results.map(v => <article key={v.videoId}>
       {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" style={{ width: '100%', height: 'auto', borderRadius: 8 }} loading="lazy" />}
       <h3 style={{ marginTop: 8 }}><a href={v.url} target="_blank" rel="noopener noreferrer">{v.title}</a></h3>
+      {extra?.(v)}
       <p className="muted small">{v.channelTitle} · {v.publishedAt ? new Date(v.publishedAt).toLocaleDateString() : 'sin fecha'} · {fmtDuration(v.observed.durationSeconds)}</p>
       <p className="small"><b>Observado:</b> {fmt(v.observed.views)} vistas · {fmt(v.observed.likes)} likes · {fmt(v.observed.comments)} comentarios · {fmt(v.observed.channelSubscribers)} suscriptores</p>
       <p className="small muted"><b>Calculado:</b> {fmt(v.calculated.viewsPerDay)} vistas/día · ratio vistas/suscriptores {v.calculated.viewsToSubscribers ?? '—'} · interacción {v.calculated.engagementRate ?? '—'}%</p>
