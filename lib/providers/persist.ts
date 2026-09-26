@@ -13,6 +13,8 @@ export async function persistGeneratedAsset(context:ProviderContext,kind:'image'
  const{bytes,mime}=await materialize(asset);const maxBytes=kind==='image'||kind==='thumbnail'?25*1024*1024:250*1024*1024;if(bytes.byteLength>maxBytes)throw new Error('Generated asset exceeds storage size limit.')
  const storagePath=`${user.id}/${context.projectId}/${context.requestId}.${extFor(mime)}`
  const{error:uploadError}=await supabase.storage.from('generated-assets').upload(storagePath,bytes,{contentType:mime,upsert:false});if(uploadError)throw new Error(`Could not store generated asset: ${uploadError.message}`)
- const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:kind,storage_path:storagePath,source_provider:asset.provider,provenance:{externalId:asset.externalId??null,mimeType:mime,requestId:context.requestId,...(asset.metadata??{})}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
+ // assets.asset_type has no 'render' value: renders are stored as videos tagged with their purpose.
+ const assetType=kind==='render'?'video':kind
+ const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:assetType,storage_path:storagePath,source_provider:asset.provider,provenance:{externalId:asset.externalId??null,mimeType:mime,requestId:context.requestId,...(kind==='render'?{purpose:'render'}:{}),...(asset.metadata??{})}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
  if(error){await supabase.storage.from('generated-assets').remove([storagePath]);throw new Error(`Could not persist generated asset: ${error.message}`)}return data
 }

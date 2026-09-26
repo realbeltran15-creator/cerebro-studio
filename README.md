@@ -40,7 +40,8 @@ La fuente de verdad es `lib/module-status.ts`; la interfaz la lee para no presen
 | Miniaturas | Preparado para integración | Variantes 16:9 por proyecto con el proveedor de imágenes (`OPENAI_API_KEY`), guardadas como assets `thumbnail`; selección de la definitiva |
 | Radar | Parcial | Tendencias oficiales de YouTube (`chart=mostPopular`) por país y categoría, ~2 unidades de cuota por consulta; términos recurrentes calculados sobre los títulos; guardar como oportunidad. Sin histórico todavía |
 | Música y sonidos | Funcional | Subida de música y efectos propios, con licencia o de dominio público al almacenamiento privado, con licencia, enlace de origen, duración y ambiente registrados. Sin proveedor de música generativa |
-| Editor, Reutilización, Automatizaciones | No implementado | |
+| Editor de vídeo | Funcional | Montaje por escenas del storyboard guardado en `render_jobs.composition`: imagen/vídeo, voz (generable por escena), duración ajustable a la voz, zoom lento, transiciones, música con ducking y subtítulos incrustados. Render en el navegador (canvas + WebAudio + MediaRecorder, WebM ≤ 50 MB) guardado en la Biblioteca con procedencia y licencias de las entradas |
+| Reutilización, Automatizaciones | No implementado | |
 
 ## Migraciones
 

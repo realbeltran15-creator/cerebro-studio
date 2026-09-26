@@ -156,7 +156,7 @@ export default function ProjectWorkspace() {
         </section>
 
         <section className="panel">
-          <div className="cardHead"><h2>Storyboards</h2><Link href={`/create?project=${project.id}`}>Abrir <Icon name="arrow" size={14} /></Link></div>
+          <div className="cardHead"><h2>Storyboards</h2><div className="pageActions"><Link href={`/editor?project=${project.id}`}>Montar vídeo <Icon name="arrow" size={14} /></Link><Link href={`/create?project=${project.id}`}>Abrir <Icon name="arrow" size={14} /></Link></div></div>
           {boards.length === 0 ? <p className="muted">Sin storyboard. Genera uno desde un guion para no reescribir la narración.</p> : (
             <div className="list">{boards.map(b => (
               <Link className="listItem" key={b.id} href={`/create?project=${project.id}&storyboard=${b.id}`}>
