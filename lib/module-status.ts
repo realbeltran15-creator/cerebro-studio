@@ -42,7 +42,7 @@ export const studioModules: StudioModule[] = [
   { label: 'Analytics', short: 'Analytics', href: '/analytics', icon: 'chart', state: 'partial', note: 'Importa YouTube Analytics de tu canal (7/28/90 días): serie diaria y vídeos principales, observado y calculado por separado. Requiere el cliente OAuth de Google.' },
   { label: 'Biblioteca', short: 'Biblioteca', href: '/library', icon: 'library', state: 'functional', note: 'Assets privados por proyecto con enlaces temporales.' },
   { label: 'Conectores (APIs)', short: 'Conectores', href: '/connectors', icon: 'link', state: 'functional', note: 'Estado real de proveedores leído del servidor.' },
-  { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'partial', note: 'Vigilancia de tendencias con palabras clave y actualización de métricas de oportunidades, con historial. Ejecución manual; la diaria requiere CRON_SECRET y SUPABASE_SERVICE_ROLE_KEY. Nunca publican.' },
+  { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'partial', note: 'Vigilancia de tendencias con palabras clave y actualización de métricas de oportunidades, con historial. Ejecución manual ya disponible; la diaria (07:00 UTC) queda activa en cuanto la rama llegue a producción: las claves ya están configuradas. Nunca publican.' },
 ]
 
 export function moduleFor(href: string) {
