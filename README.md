@@ -39,7 +39,8 @@ La fuente de verdad es `lib/module-status.ts`; la interfaz la lee para no presen
 | Analytics | Parcial | Lee `metric_snapshots`; falta OAuth de YouTube Analytics |
 | Miniaturas | Preparado para integración | Variantes 16:9 por proyecto con el proveedor de imágenes (`OPENAI_API_KEY`), guardadas como assets `thumbnail`; selección de la definitiva |
 | Radar | Parcial | Tendencias oficiales de YouTube (`chart=mostPopular`) por país y categoría, ~2 unidades de cuota por consulta; términos recurrentes calculados sobre los títulos; guardar como oportunidad. Sin histórico todavía |
-| Editor, Reutilización, Música/SFX, Automatizaciones | No implementado | |
+| Música y sonidos | Funcional | Subida de música y efectos propios, con licencia o de dominio público al almacenamiento privado, con licencia, enlace de origen, duración y ambiente registrados. Sin proveedor de música generativa |
+| Editor, Reutilización, Automatizaciones | No implementado | |
 
 ## Migraciones
 

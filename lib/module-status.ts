@@ -34,7 +34,7 @@ export const studioModules: StudioModule[] = [
   { label: 'Imágenes IA', short: 'Imágenes IA', href: '/images', icon: 'image', state: 'integration_ready', note: 'Genera si OPENAI_API_KEY está configurada en el servidor.', tile: true },
   { label: 'Vídeos IA', short: 'Vídeo IA', href: '/videos', icon: 'video', state: 'integration_ready', note: 'Prueba con fal.ai (FAL_KEY). Google Flow no tiene API pública oficial confirmada: no se integra hasta que exista.', tile: true },
   { label: 'Voces IA', short: 'Voces IA', href: '/voices', icon: 'mic', state: 'integration_ready', note: 'OpenAI TTS o endpoint HTTP. El adaptador de ElevenLabs está pendiente.', tile: true },
-  { label: 'Música y sonidos', short: 'Música / SFX', href: '/audio', icon: 'music', state: 'not_implemented', note: 'Sin proveedor conectado.', tile: true },
+  { label: 'Música y sonidos', short: 'Música / SFX', href: '/audio', icon: 'music', state: 'functional', note: 'Sube música y efectos propios o con licencia, con la licencia registrada. Sin proveedor de música generativa.', tile: true },
   { label: 'Editor de vídeo', short: 'Editor', href: '/editor', icon: 'scissors', state: 'not_implemented', note: 'Requiere un worker de render (FFmpeg).', tile: true },
   { label: 'Shorts / Reels / TikTok', short: 'Convertir a Shorts', href: '/repurpose', icon: 'phone', state: 'not_implemented', note: 'Depende del editor y del render.', tile: true },
   { label: 'Miniaturas', short: 'Miniaturas', href: '/thumbnails', icon: 'thumb', state: 'integration_ready', note: 'Variantes 16:9 por proyecto y selección de la definitiva. Genera si OPENAI_API_KEY está configurada.', tile: true },
