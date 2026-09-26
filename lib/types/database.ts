@@ -64,3 +64,86 @@ export interface DatabaseContract {
   approvals: ApprovalRow
   publication_jobs: PublicationJobRow
 }
+
+export type ScriptBasis = 'verified_fact' | 'testimony' | 'reconstruction' | 'interpretation'
+
+export interface ScriptSection {
+  id: string
+  heading: string
+  basis: ScriptBasis
+  text: string
+  /** URLs or references that support this section. */
+  sources: string[]
+  /** Who is speaking, for verified testimony. */
+  speaker?: string
+}
+
+export interface ScriptRow {
+  id: string
+  owner_id: string
+  project_id: string
+  source_opportunity_id: string | null
+  parent_id: string | null
+  version: number
+  title: string
+  status: 'draft' | 'review' | 'approved' | 'archived'
+  idea: string | null
+  brief: string | null
+  hook: string | null
+  cta: string | null
+  sections: ScriptSection[]
+  review_notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StoryboardRow {
+  id: string
+  owner_id: string
+  project_id: string
+  script_id?: string | null
+  title: string
+  aspect_ratio: string
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SceneRow {
+  id: string
+  owner_id: string
+  storyboard_id: string
+  position: number
+  duration_ms: number
+  narration: string | null
+  visual_prompt: string | null
+  video_prompt: string | null
+  ambient_prompt: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface AssetRow {
+  id: string
+  owner_id: string
+  project_id: string | null
+  asset_type: string
+  storage_path: string | null
+  source_provider: string | null
+  source_url: string | null
+  license_status: string
+  provenance: Record<string, unknown>
+  created_at: string
+}
+
+export interface MetricSnapshotRow {
+  id: number
+  owner_id: string
+  project_id: string | null
+  platform: string
+  external_content_id: string
+  metric_date: string
+  observed: Record<string, unknown>
+  calculated: Record<string, unknown>
+  created_at: string
+}

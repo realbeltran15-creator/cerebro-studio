@@ -1,4 +1,4 @@
-import type { GeneratedAsset, ImageGenerationProvider, ProviderContext, ProviderHealth } from './types'
+import type { GeneratedAsset, ImageGenerationOptions, ImageGenerationProvider, ProviderContext, ProviderHealth } from './types'
 
 export class OpenAIImageProvider implements ImageGenerationProvider {
   readonly id = 'openai-image'
@@ -7,7 +7,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
     return process.env.OPENAI_API_KEY ? 'ready' : 'unconfigured'
   }
 
-  async generateImage(context: ProviderContext, prompt: string): Promise<GeneratedAsset> {
+  async generateImage(context: ProviderContext, prompt: string, options?: ImageGenerationOptions): Promise<GeneratedAsset> {
     const apiKey = process.env.OPENAI_API_KEY
     if (!apiKey) throw new Error('OpenAI image provider is not configured.')
 
@@ -18,7 +18,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
         'Content-Type': 'application/json',
         'X-Client-Request-Id': context.requestId,
       },
-      body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1024' }),
+      body: JSON.stringify({ model: 'gpt-image-1', prompt, size: options?.size ?? '1024x1024' }),
     })
 
     if (!response.ok) {
@@ -36,7 +36,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       provider: this.id,
       mimeType: 'image/png',
       uri,
-      metadata: { requestId: context.requestId, projectId: context.projectId },
+      metadata: { requestId: context.requestId, projectId: context.projectId, size: options?.size ?? '1024x1024' },
     }
   }
 }
