@@ -42,7 +42,7 @@ export const studioModules: StudioModule[] = [
   { label: 'Analytics', short: 'Analytics', href: '/analytics', icon: 'chart', state: 'partial', note: 'Muestra métricas guardadas. Falta importación desde YouTube Analytics (OAuth).' },
   { label: 'Biblioteca', short: 'Biblioteca', href: '/library', icon: 'library', state: 'functional', note: 'Assets privados por proyecto con enlaces temporales.' },
   { label: 'Conectores (APIs)', short: 'Conectores', href: '/connectors', icon: 'link', state: 'functional', note: 'Estado real de proveedores leído del servidor.' },
-  { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'not_implemented', note: 'Pendiente.' },
+  { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'partial', note: 'Vigilancia de tendencias con palabras clave y actualización de métricas de oportunidades, con historial. Ejecución manual; la diaria requiere CRON_SECRET y SUPABASE_SERVICE_ROLE_KEY. Nunca publican.' },
 ]
 
 export function moduleFor(href: string) {

@@ -176,3 +176,29 @@ async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResu
     }
   })
 }
+
+/** Current metrics for known videos: videos.list by id, 1 quota unit per 50 ids (+1 for channels). */
+export async function youtubeVideosByIds(ids: string[]): Promise<YouTubeVideoResult[]> {
+  const key = requireKey()
+  const unique = [...new Set(ids.filter(id => /^[\w-]{6,20}$/.test(id)))]
+  const results: YouTubeVideoResult[] = []
+  for (let i = 0; i < unique.length; i += 50) {
+    const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails', id: unique.slice(i, i + 50).join(',') }, key)
+    results.push(...await enrich(videos.items ?? [], key))
+  }
+  return results
+}
+
+/** Extracts the video id from watch, youtu.be, shorts and embed URLs. */
+export function youtubeVideoId(url: string | null | undefined) {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace(/^(www|m)\./, '')
+    if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null
+    if (host !== 'youtube.com') return null
+    if (u.pathname === '/watch') return u.searchParams.get('v')
+    const m = u.pathname.match(/^\/(shorts|embed|live)\/([\w-]+)/)
+    return m ? m[2] : null
+  } catch { return null }
+}

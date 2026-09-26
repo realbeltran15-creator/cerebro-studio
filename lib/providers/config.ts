@@ -1,5 +1,5 @@
 import type { ProviderHealth } from './types'
-export type ProviderCapability='image'|'video'|'voice'|'render'|'text'|'research'
+export type ProviderCapability='image'|'video'|'voice'|'render'|'text'|'research'|'automation'
 export interface ProviderRuntimeConfig{id:string;capability:ProviderCapability;enabled:boolean;health:ProviderHealth}
 const env=(name:string)=>process.env[name]?.trim()
 const configured=(...names:string[])=>names.every(name=>Boolean(env(name)))
@@ -18,5 +18,6 @@ export function getProviderRuntimeConfigs():ProviderRuntimeConfig[]{return[
  state('render-worker','render','RENDER_WORKER_URL','RENDER_WORKER_TOKEN'),
  anyOf('openai-text','text','OPENAI_TEXT_API_KEY','OPENAI_API_KEY'),
  state('youtube-data','research','YOUTUBE_API_KEY'),
+ state('automation-scheduler','automation','CRON_SECRET','SUPABASE_SERVICE_ROLE_KEY'),
 ]}
 export function publicProviderState(){return getProviderRuntimeConfigs()}
