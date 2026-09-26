@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { StudioShell } from '../components/studio-shell'
 import { createClient } from '../../lib/supabase/client'
 import type { OpportunityRow } from '../../lib/types/database'
 
@@ -73,9 +74,7 @@ export default function MarketIntelligencePage() {
     } finally { setBusy(false) }
   }
 
-  return <main className="projectsPage"><section className="projectsPanel marketPanel">
-    <Link className="backLink" href="/">← Centro de operaciones</Link>
-    <small>INTELIGENCIA DE MERCADO</small><h1>Market Intelligence</h1>
+  return <StudioShell title="Investigación" eyebrow="INTELIGENCIA DE MERCADO" actions={<Link className="buttonLink ghost" href="/youtube">Explorar YouTube</Link>}>
     <p className="connectionStatus">{message}</p>
     {authenticated === false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated === true ? <>
       <form className="marketForm" onSubmit={addOpportunity}>
@@ -92,5 +91,5 @@ export default function MarketIntelligencePage() {
         <p>Fuente: {item.source_platform}{item.query ? ` · ${item.query}` : ''}</p>
       </article>)}</div>
     </> : null}
-  </section></main>
+  </StudioShell>
 }

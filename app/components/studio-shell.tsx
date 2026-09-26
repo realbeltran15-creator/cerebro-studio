@@ -1,13 +1,108 @@
+'use client'
+
 import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
+import { FormEvent, useState } from 'react'
+import { moduleFor, moduleStateLabels, studioModules, type ModuleState } from '@/lib/module-status'
+import { Icon } from './studio-icon'
 
-export const studioModules = [
-  ['Dashboard','/'],['Market Intelligence','/market-intelligence'],['Radar','/radar'],['Oportunidades','/opportunities'],['Proyectos','/projects'],['Crear vídeo','/create'],['Guiones','/scripts'],['Imágenes','/images'],['Vídeos','/videos'],['Voces','/voices'],['Música / SFX','/audio'],['Editor','/editor'],['Shorts / Reels / TikTok','/repurpose'],['Miniaturas','/thumbnails'],['YouTube','/youtube'],['Analytics','/analytics'],['Biblioteca','/library'],['Automatizaciones','/automations'],['Conectores','/connectors']
-] as const
+export { studioModules }
 
-export function StudioShell({title,children}:{title:string;children:React.ReactNode}) {
- return <main><aside><Link href="/" className="brand"><span>◆</span> Cerebro Studio</Link><nav>{studioModules.map(([label,href])=><Link href={href} key={href}>{label}</Link>)}</nav></aside><section className="content"><header><div><small>WORKSPACE</small><h1>{title}</h1></div><Link className="buttonLink" href="/projects">Proyectos</Link></header>{children}</section></main>
+function isActive(pathname: string, href: string) {
+  if (href === '/') return pathname === '/'
+  return pathname === href || pathname.startsWith(`${href}/`)
 }
 
-export function ModulePage({title,description,steps}:{title:string;description:string;steps:string[]}) {
- return <StudioShell title={title}><div className="hero"><div><small>MÓDULO</small><h2>{title}</h2><p>{description}</p></div><div className="status"><b>Estado</b><span>● Interfaz preparada</span><span>○ Integración funcional: fase siguiente</span><span>○ Publicación real bloqueada</span></div></div><h3>Flujo</h3><div className="grid">{steps.map((step,i)=><article key={step}><div className="icon">{i+1}</div><h3>{step}</h3><p>Área preparada para datos, proveedores y automatizaciones.</p></article>)}</div></StudioShell>
+export function StateBadge({ state }: { state: ModuleState }) {
+  return <span className={`stateBadge state-${state}`}>{moduleStateLabels[state]}</span>
+}
+
+export function StudioShell({ title, eyebrow = 'WORKSPACE', actions, children }: {
+  title?: string
+  eyebrow?: string
+  actions?: React.ReactNode
+  children: React.ReactNode
+}) {
+  const pathname = usePathname() ?? '/'
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+
+  function search(event: FormEvent) {
+    event.preventDefault()
+    const q = query.trim()
+    router.push(q ? `/projects?q=${encodeURIComponent(q)}` : '/projects')
+  }
+
+  return (
+    <div className="studio">
+      <header className="topbar">
+        <button type="button" className="iconButton menuToggle" aria-label="Abrir menú" aria-expanded={open} onClick={() => setOpen(v => !v)}>
+          <Icon name="menu" />
+        </button>
+        <Link href="/" className="brand" onClick={() => setOpen(false)}>
+          <span className="brandMark" aria-hidden="true" />
+          <span className="brandText"><b>Cerebro Studio</b><small>IDEA · CREA · EDITA · PUBLICA · CRECE</small></span>
+        </Link>
+        <form className="topSearch" onSubmit={search} role="search">
+          <Icon name="search" size={16} />
+          <input id="global-search" aria-label="Buscar proyectos" value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar proyectos…" />
+        </form>
+        <Link className="buttonLink primary" href="/projects?new=1"><Icon name="plus" size={16} /><span>Nuevo proyecto</span></Link>
+      </header>
+
+      <aside className={open ? 'sidebar open' : 'sidebar'}>
+        <nav aria-label="Módulos">
+          {studioModules.map(m => (
+            <Link key={m.href} href={m.href} className={isActive(pathname, m.href) ? 'navItem active' : 'navItem'} onClick={() => setOpen(false)}
+              title={`${moduleStateLabels[m.state]} · ${m.note}`}>
+              <Icon name={m.icon} />
+              <span>{m.label}</span>
+              {m.state !== 'functional' && <i className={`dot state-${m.state}`} aria-label={moduleStateLabels[m.state]} />}
+            </Link>
+          ))}
+        </nav>
+        <div className="sideNote">
+          <b>Acciones protegidas</b>
+          <span>Publicar, gastar dinero o conectar cuentas siempre requiere tu aprobación explícita.</span>
+        </div>
+      </aside>
+      {open && <button type="button" className="scrim" aria-label="Cerrar menú" onClick={() => setOpen(false)} />}
+
+      <main className="content">
+        {title && (
+          <div className="pageHead">
+            <div><small>{eyebrow}</small><h1>{title}</h1></div>
+            {actions && <div className="pageActions">{actions}</div>}
+          </div>
+        )}
+        {children}
+      </main>
+    </div>
+  )
+}
+
+/** Placeholder for modules that are not built yet. Reads the real state from lib/module-status. */
+export function ModulePage({ title, description, steps, href }: { title: string; description: string; steps: string[]; href?: string }) {
+  const pathname = usePathname() ?? ''
+  const mod = moduleFor(href ?? pathname)
+  const state = mod?.state ?? 'not_implemented'
+  return (
+    <StudioShell title={title} eyebrow="MÓDULO">
+      <section className="panel moduleIntro">
+        <div>
+          <StateBadge state={state} />
+          <h2>{title}</h2>
+          <p>{description}</p>
+          {mod?.note && <p className="muted">{mod.note}</p>}
+        </div>
+        <Link className="buttonLink ghost" href="/projects">Ir a proyectos <Icon name="arrow" size={16} /></Link>
+      </section>
+      <h3 className="sectionTitle">Flujo previsto</h3>
+      <ol className="plannedSteps">
+        {steps.map(step => <li key={step}>{step}</li>)}
+      </ol>
+      <p className="muted small">Este módulo todavía no guarda ni genera nada. Se mostrará como funcional solo cuando lo sea.</p>
+    </StudioShell>
+  )
 }

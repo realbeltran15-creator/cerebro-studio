@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const protectedPrefixes = ['/projects', '/market-intelligence']
+const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices']
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -38,5 +38,8 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/projects/:path*', '/market-intelligence/:path*'],
+  matcher: [
+    '/projects/:path*', '/market-intelligence/:path*', '/opportunities/:path*', '/scripts/:path*', '/create/:path*',
+    '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*',
+  ],
 }
