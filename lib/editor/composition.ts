@@ -14,6 +14,8 @@ export type Clip = {
   voiceAssetId: string | null
   durationMs: number
   motion: 'kenburns' | 'none'
+  /** Horizontal focus 0..1 used when the visual is cropped to a narrower frame (reframing). */
+  focusX?: number
 }
 
 export type Composition = {
@@ -27,6 +29,9 @@ export type Composition = {
   duckMusic: boolean
   subtitles: boolean
   fadeMs: number
+  /** Large on-screen text for the opening seconds (Shorts hook). */
+  hookText?: string | null
+  hookMs?: number
   /** Set when the composition was derived from another one (e.g. a Short). */
   origin?: { kind: 'repurpose'; sourceJobId: string } | null
 }
@@ -61,6 +66,7 @@ export function syncWithScenes(saved: Composition, scenes: SceneLike[]): Composi
       voiceAssetId: prev?.voiceAssetId ?? null,
       durationMs: clampMs(prev?.durationMs ?? scene.duration_ms),
       motion: prev?.motion ?? 'kenburns',
+      focusX: prev?.focusX ?? 0.5,
     } satisfies Clip
   })
   return { ...saved, clips }
@@ -86,12 +92,15 @@ export function parseComposition(value: unknown): Composition | null {
       voiceAssetId: id(c.voiceAssetId),
       durationMs: clampMs(Number(c.durationMs) || 5000),
       motion: c.motion === 'none' ? 'none' : 'kenburns',
+      focusX: typeof c.focusX === 'number' ? Math.min(Math.max(c.focusX, 0), 1) : 0.5,
     } satisfies Clip] : [])),
     musicAssetId: id(v.musicAssetId),
     musicVolume: Math.min(Math.max(Number(v.musicVolume ?? 0.25), 0), 1),
     duckMusic: v.duckMusic !== false,
     subtitles: v.subtitles !== false,
     fadeMs: Math.min(Math.max(Number(v.fadeMs ?? 300), 0), 1500),
+    hookText: typeof v.hookText === 'string' && v.hookText.trim() ? v.hookText.trim().slice(0, 120) : null,
+    hookMs: Math.min(Math.max(Number(v.hookMs ?? 3000), 1000), 8000),
     origin: v.origin && v.origin.kind === 'repurpose' && typeof v.origin.sourceJobId === 'string' ? v.origin : null,
   }
 }
@@ -117,6 +126,28 @@ export function compositionIssues(c: Composition): CompositionIssue[] {
   })
   if (totalDurationMs(c) > 20 * 60 * 1000) issues.push({ message: 'El montaje supera 20 minutos: el render en el navegador no está pensado para esa duración.', blocking: true })
   return issues
+}
+
+/** Platform length limits for vertical video (checked before rendering a Short). */
+export const shortPlatforms = [
+  { id: 'youtube_shorts', label: 'YouTube Shorts', maxMs: 180_000 },
+  { id: 'instagram_reels', label: 'Instagram Reels', maxMs: 90_000 },
+  { id: 'tiktok', label: 'TikTok', maxMs: 600_000 },
+] as const
+
+/** Builds a vertical composition from selected clips of an existing one. */
+export function toShort(source: Composition, sourceJobId: string, sceneIds: string[], hookText: string | null): Composition {
+  const keep = new Set(sceneIds)
+  return {
+    ...source,
+    title: `Short · ${source.title}`.slice(0, 160),
+    format: '9:16',
+    clips: source.clips.filter(c => keep.has(c.sceneId)).map(c => ({ ...c, focusX: c.focusX ?? 0.5 })),
+    subtitles: true,
+    hookText: hookText?.trim() || null,
+    hookMs: 3000,
+    origin: { kind: 'repurpose', sourceJobId },
+  }
 }
 
 /**

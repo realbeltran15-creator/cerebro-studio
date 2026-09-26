@@ -44,10 +44,25 @@ async function loadVisual(source: MediaSource): Promise<LoadedVisual> {
 }
 
 /** Draws source covering the frame, with an optional slow zoom (Ken Burns) driven by progress 0..1. */
-function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number, w: number, h: number, zoom: number) {
+function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number, w: number, h: number, zoom: number, focusX = 0.5) {
   const scale = Math.max(w / sw, h / sh) * zoom
   const dw = sw * scale, dh = sh * scale
-  ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh)
+  // focusX picks which part of a wider source stays in frame (0 = left edge, 1 = right edge).
+  ctx.drawImage(src, (w - dw) * focusX, (h - dh) / 2, dw, dh)
+}
+
+function drawHook(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, alpha: number) {
+  const size = Math.round(w * 0.075)
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.font = `800 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+  const lines = wrap(ctx, text.toUpperCase(), w * 0.86)
+  const lineH = size * 1.15
+  const top = Math.round(h * 0.12)
+  ctx.lineWidth = Math.max(4, size * 0.12); ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#fff'
+  lines.forEach((l, i) => { ctx.strokeText(l, w / 2, top + i * lineH); ctx.fillText(l, w / 2, top + i * lineH) })
+  ctx.restore()
 }
 
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
@@ -189,13 +204,17 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
             activeVideo?.pause()
             activeVideo = visual.el; visual.el.currentTime = 0; visual.el.loop = true; void visual.el.play()
           }
-          drawCover(ctx, visual.el, visual.el.videoWidth || width, visual.el.videoHeight || height, width, height, 1)
+          drawCover(ctx, visual.el, visual.el.videoWidth || width, visual.el.videoHeight || height, width, height, 1, clip.focusX)
         } else {
           if (activeVideo) { activeVideo.pause(); activeVideo = null }
-          if (visual?.kind === 'image') drawCover(ctx, visual.bitmap, visual.bitmap.width, visual.bitmap.height, width, height, clip.motion === 'kenburns' ? 1 + 0.08 * progress : 1)
+          if (visual?.kind === 'image') drawCover(ctx, visual.bitmap, visual.bitmap.width, visual.bitmap.height, width, height, clip.motion === 'kenburns' ? 1 + 0.08 * progress : 1, clip.focusX)
         }
         const cap = captions[i].find(c => local >= c.startMs && local < c.endMs)
         if (cap) drawCaption(ctx, cap.text, width, height)
+        if (composition.hookText && now < (composition.hookMs ?? 3000)) {
+          const hookMs = composition.hookMs ?? 3000
+          drawHook(ctx, composition.hookText, width, height, Math.min(1, (hookMs - now) / 400))
+        }
         // Fade through black at clip boundaries.
         const fade = composition.fadeMs
         if (fade > 0) {

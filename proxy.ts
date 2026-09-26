@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor']
+const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose']
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -40,6 +40,6 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     '/projects/:path*', '/market-intelligence/:path*', '/opportunities/:path*', '/scripts/:path*', '/create/:path*',
-    '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*', '/thumbnails/:path*', '/radar/:path*', '/audio/:path*', '/editor/:path*',
+    '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*', '/thumbnails/:path*', '/radar/:path*', '/audio/:path*', '/editor/:path*', '/repurpose/:path*',
   ],
 }
