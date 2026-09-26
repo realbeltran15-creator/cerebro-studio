@@ -56,7 +56,7 @@ export default function Home() {
         const [p, c, m] = await Promise.all([
           supabase.from('projects').select('id,name,status,target_platforms,updated_at').order('updated_at', { ascending: false }).limit(4),
           supabase.from('channel_connections').select('provider,status,external_account_name'),
-          supabase.from('metric_snapshots').select('observed,metric_date').gte('metric_date', since),
+          supabase.from('metric_snapshots').select('observed,metric_date').gte('metric_date', since).like('external_content_id', 'channel:%'),
         ])
         if (p.error) throw p.error
         const rows = (p.data ?? []) as Project[]

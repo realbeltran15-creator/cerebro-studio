@@ -36,7 +36,7 @@ La fuente de verdad es `lib/module-status.ts`; la interfaz la lee para no presen
 | Oportunidades | Parcial | Búsqueda, filtros, orden, estados y conversión a proyecto; se alimenta desde Investigación |
 | Investigación / YouTube | Parcial | Búsqueda con YouTube Data API (`YOUTUBE_API_KEY`, solo lectura, ~102 unidades de cuota por búsqueda) con métricas observadas y calculadas por separado; registro manual con fuente y control de duplicados |
 | Imágenes / Vídeo / Voz | Preparado para integración | Necesitan claves de servidor. Google Flow sin API pública oficial confirmada; ElevenLabs pendiente |
-| Analytics | Parcial | Lee `metric_snapshots`; falta OAuth de YouTube Analytics |
+| Analytics | Parcial | Conexión OAuth del canal (solo lectura; tokens cifrados AES-256-GCM en `channel_connections`) e importación de YouTube Analytics v2 a `metric_snapshots`: serie diaria del canal y vídeos principales. Requiere `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` y `TOKEN_ENCRYPTION_KEY` |
 | Miniaturas | Preparado para integración | Variantes 16:9 por proyecto con el proveedor de imágenes (`OPENAI_API_KEY`), guardadas como assets `thumbnail`; selección de la definitiva |
 | Radar | Parcial | Tendencias oficiales de YouTube (`chart=mostPopular`) por país y categoría, ~2 unidades de cuota por consulta; términos recurrentes calculados sobre los títulos; guardar como oportunidad. Sin histórico todavía |
 | Música y sonidos | Funcional | Subida de música y efectos propios, con licencia o de dominio público al almacenamiento privado, con licencia, enlace de origen, duración y ambiente registrados. Sin proveedor de música generativa |
