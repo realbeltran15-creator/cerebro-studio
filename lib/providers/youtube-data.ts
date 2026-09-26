@@ -202,3 +202,80 @@ export function youtubeVideoId(url: string | null | undefined) {
     return m ? m[2] : null
   } catch { return null }
 }
+
+export type ChannelAnalysis = {
+  channel: { id: string; title: string; handle: string | null; url: string; thumbnailUrl: string | null; country: string | null }
+  observed: { subscribers: number | null; totalViews: number | null; videoCount: number | null; fetchedAt: string }
+  calculated: {
+    sampleSize: number
+    avgViews: number | null
+    medianViews: number | null
+    uploadsPerWeek: number | null
+    /** Videos with at least 2× the median views of the sample. */
+    outlierIds: string[]
+  }
+  videos: YouTubeVideoResult[]
+}
+
+/** Parses a channel URL, @handle or UC… id into a channels.list selector. */
+export function channelSelector(input: string): Record<string, string> | null {
+  const raw = input.trim()
+  if (/^UC[\w-]{22}$/.test(raw)) return { id: raw }
+  if (/^@[\w.-]{3,100}$/.test(raw)) return { forHandle: raw }
+  try {
+    const u = new URL(raw)
+    if (!/(^|\.)youtube\.com$/.test(u.hostname)) return null
+    const m = u.pathname.match(/^\/(channel\/(UC[\w-]{22})|(@[\w.-]{3,100}))/)
+    if (m?.[2]) return { id: m[2] }
+    if (m?.[3]) return { forHandle: decodeURIComponent(m[3]) }
+  } catch { /* not a URL */ }
+  return null
+}
+
+const median = (xs: number[]) => {
+  if (!xs.length) return null
+  const s = [...xs].sort((a, b) => a - b), mid = Math.floor(s.length / 2)
+  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2)
+}
+
+/** Channel stats plus its latest uploads (~4 quota units). */
+export async function analyzeChannel(input: string, sample = 25): Promise<ChannelAnalysis> {
+  const key = requireKey()
+  const selector = channelSelector(input)
+  if (!selector) throw new YouTubeApiError('Indica la URL del canal, su @handle o su id (UC…).', 400)
+  type ChannelFull = { items?: Array<{ id: string; snippet?: { title?: string; customUrl?: string; country?: string; thumbnails?: Record<string, { url?: string }> }; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean; viewCount?: string; videoCount?: string }; contentDetails?: { relatedPlaylists?: { uploads?: string } } }> }
+  const ch = (await call<ChannelFull>('channels', { part: 'snippet,statistics,contentDetails', ...selector }, key)).items?.[0]
+  if (!ch) throw new YouTubeApiError('No se encontró ese canal.', 404)
+  const uploads = ch.contentDetails?.relatedPlaylists?.uploads
+  const playlist = uploads
+    ? await call<{ items?: Array<{ contentDetails?: { videoId?: string } }> }>('playlistItems', { part: 'contentDetails', playlistId: uploads, maxResults: String(Math.min(Math.max(sample, 1), 50)) }, key)
+    : { items: [] }
+  const ids = (playlist.items ?? []).map(i => i.contentDetails?.videoId).filter((x): x is string => Boolean(x))
+  const videos = ids.length ? await youtubeVideosByIds(ids) : []
+  const order = new Map(ids.map((id, i) => [id, i]))
+  videos.sort((a, b) => (order.get(a.videoId) ?? 0) - (order.get(b.videoId) ?? 0))
+
+  const views = videos.map(v => v.observed.views).filter((v): v is number => v !== null)
+  const med = median(views)
+  const dates = videos.map(v => Date.parse(v.publishedAt)).filter(Number.isFinite).sort((a, b) => a - b)
+  const spanWeeks = dates.length > 1 ? (dates[dates.length - 1] - dates[0]) / (7 * 86400000) : null
+  const thumbs = ch.snippet?.thumbnails ?? {}
+  return {
+    channel: {
+      id: ch.id, title: ch.snippet?.title ?? '', handle: ch.snippet?.customUrl ?? null,
+      url: `https://www.youtube.com/channel/${ch.id}`, thumbnailUrl: thumbs.medium?.url ?? thumbs.default?.url ?? null, country: ch.snippet?.country ?? null,
+    },
+    observed: {
+      subscribers: ch.statistics?.hiddenSubscriberCount ? null : toNumber(ch.statistics?.subscriberCount),
+      totalViews: toNumber(ch.statistics?.viewCount), videoCount: toNumber(ch.statistics?.videoCount), fetchedAt: new Date().toISOString(),
+    },
+    calculated: {
+      sampleSize: videos.length,
+      avgViews: views.length ? Math.round(views.reduce((t, v) => t + v, 0) / views.length) : null,
+      medianViews: med,
+      uploadsPerWeek: spanWeeks && spanWeeks > 0 ? Math.round(((dates.length - 1) / spanWeeks) * 10) / 10 : null,
+      outlierIds: med ? videos.filter(v => (v.observed.views ?? 0) >= 2 * med).map(v => v.videoId) : [],
+    },
+    videos,
+  }
+}

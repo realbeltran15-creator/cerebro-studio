@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { StudioShell } from '../components/studio-shell'
 import { YouTubeResearch } from './youtube-research'
+import { ChannelResearch } from './channel-analysis'
 import { createClient } from '../../lib/supabase/client'
 import type { OpportunityRow } from '../../lib/types/database'
 
@@ -79,6 +80,7 @@ export default function MarketIntelligencePage() {
     <p className="connectionStatus">{message}</p>
     {authenticated === false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated === true ? <>
       <YouTubeResearch onSaved={() => void load()} />
+      <ChannelResearch onSaved={() => void load()} />
       <h3 className="sectionTitle">Registro manual</h3>
       <form className="marketForm" onSubmit={addOpportunity}>
         <input required value={title} onChange={e => setTitle(e.target.value)} placeholder="Oportunidad o tema" />
