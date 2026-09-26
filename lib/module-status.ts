@@ -27,7 +27,7 @@ export const studioModules: StudioModule[] = [
   { label: 'Inicio', short: 'Inicio', href: '/', icon: 'home', state: 'functional', note: 'Centro de operaciones con datos reales del workspace.' },
   { label: 'Investigación', short: 'Investigación', href: '/market-intelligence', icon: 'search', state: 'partial', note: 'Registro manual de hallazgos con fuente. Falta búsqueda automática con YouTube Data API (requiere API key).' },
   { label: 'Radar', short: 'Radar', href: '/radar', icon: 'radar', state: 'not_implemented', note: 'Sin fuente de tendencias conectada todavía.' },
-  { label: 'Oportunidades', short: 'Oportunidades', href: '/opportunities', icon: 'target', state: 'partial', note: 'Evidencia, fuente original y conversión a proyecto. Faltan filtros y orden.' },
+  { label: 'Oportunidades', short: 'Oportunidades', href: '/opportunities', icon: 'target', state: 'partial', note: 'Búsqueda, filtros, orden, estados y conversión a proyecto. Falta ingesta automática.' },
   { label: 'Proyectos', short: 'Proyectos', href: '/projects', icon: 'folder', state: 'functional', note: 'Cada proyecto conecta investigación, guion, storyboard, assets y publicación.' },
   { label: 'Guiones', short: 'Guion', href: '/scripts', icon: 'script', state: 'functional', note: 'Versiones, secciones con base factual, testimonios y conversión a storyboard. La asistencia IA espera un proveedor de texto.', tile: true },
   { label: 'Storyboard y escenas', short: 'Storyboard', href: '/create', icon: 'board', state: 'functional', note: 'Escenas con prompts, cámara, sonido y continuidad entre escenas.', tile: true },
