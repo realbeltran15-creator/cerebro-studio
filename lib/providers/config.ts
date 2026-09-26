@@ -1,5 +1,5 @@
 import type { ProviderHealth } from './types'
-export type ProviderCapability='image'|'video'|'voice'|'render'|'text'|'research'|'automation'|'channel'
+export type ProviderCapability='image'|'video'|'voice'|'render'|'text'|'research'|'automation'|'channel'|'audio'
 export interface ProviderRuntimeConfig{id:string;capability:ProviderCapability;enabled:boolean;health:ProviderHealth}
 const env=(name:string)=>process.env[name]?.trim()
 const configured=(...names:string[])=>names.every(name=>Boolean(env(name)))
@@ -9,6 +9,8 @@ const anyOf=(id:string,capability:ProviderCapability,...vars:string[]):ProviderR
 export function getProviderRuntimeConfigs():ProviderRuntimeConfig[]{return[
  state('openai-image','image','OPENAI_API_KEY'),
  state('image-fallback','image','IMAGE_FALLBACK_ENDPOINT','IMAGE_FALLBACK_API_KEY'),
+ state('elevenlabs-voice','voice','ELEVENLABS_API_KEY','ELEVENLABS_VOICE_ID'),
+ state('elevenlabs-sfx','audio','ELEVENLABS_API_KEY'),
  state('openai-voice','voice','OPENAI_VOICE_API_KEY'),
  state('voice-primary','voice','VOICE_PROVIDER_ENDPOINT','VOICE_PROVIDER_API_KEY'),
  state('voice-fallback','voice','VOICE_FALLBACK_ENDPOINT','VOICE_FALLBACK_API_KEY'),

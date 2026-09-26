@@ -30,6 +30,10 @@ export default function AudioPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [sfxReady, setSfxReady] = useState(false)
+  const [sfxPrompt, setSfxPrompt] = useState('')
+  const [sfxSeconds, setSfxSeconds] = useState('')
+  const [sfxBusy, setSfxBusy] = useState(false)
 
   useEffect(() => {
     const wanted = new URLSearchParams(window.location.search).get('project')
@@ -57,6 +61,24 @@ export default function AudioPage() {
   }, [supabase])
 
   useEffect(() => { if (projectId) void load(projectId) }, [projectId, load])
+
+  useEffect(() => {
+    void fetch('/api/providers/status', { cache: 'no-store' }).then(r => r.json() as Promise<{ providers?: Array<{ id: string; enabled: boolean }> }>)
+      .then(j => setSfxReady(Boolean(j.providers?.some(p => p.id === 'elevenlabs-sfx' && p.enabled)))).catch(() => setSfxReady(false))
+  }, [])
+
+  async function generateSfx(event: FormEvent) {
+    event.preventDefault()
+    if (!projectId || !sfxPrompt.trim() || sfxBusy) return
+    setSfxBusy(true); setError(''); setNotice('')
+    try {
+      const r = await fetch('/api/providers/sfx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId, prompt: sfxPrompt, durationSeconds: Number(sfxSeconds) || undefined }) })
+      const json = await r.json() as { error?: string }
+      if (!r.ok) throw new Error(json.error ?? 'No se pudo generar el efecto.')
+      setSfxPrompt(''); setNotice('Efecto generado y guardado en el proyecto.')
+      await load(projectId)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo generar el efecto.') } finally { setSfxBusy(false) }
+  }
 
   async function upload(event: FormEvent) {
     event.preventDefault()
@@ -123,6 +145,18 @@ export default function AudioPage() {
         <p className="muted small">Máximo 50 MB para música y 20 MB para efectos. Solo sube audio que puedas usar: la licencia queda registrada junto al archivo para revisarla antes de publicar. No hay proveedor de música generativa conectado.</p>
         <div><button disabled={busy || !file || !projectId}><Icon name="plus" size={16} />{busy ? 'Subiendo…' : 'Añadir al proyecto'}</button></div>
       </form>
+    </section>
+
+    <section className="panel" style={{ marginBottom: 18 }}>
+      <h3>Generar efecto de sonido</h3>
+      {sfxReady ? <form onSubmit={generateSfx} style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+        <div className="field-row">
+          <label htmlFor="sfx-prompt">Descripción del sonido<input id="sfx-prompt" value={sfxPrompt} onChange={e => setSfxPrompt(e.target.value)} maxLength={450} placeholder="Viento fuerte en una cumbre nevada, ráfagas" /></label>
+          <label htmlFor="sfx-seconds">Duración (s, opcional)<input id="sfx-seconds" type="number" min={0.5} max={22} step={0.5} value={sfxSeconds} onChange={e => setSfxSeconds(e.target.value)} /></label>
+        </div>
+        <p className="muted small">Generación de pago con ElevenLabs. El efecto se guarda como generado, con el prompt como procedencia.</p>
+        <div><button disabled={sfxBusy || !projectId || !sfxPrompt.trim()}><Icon name="music" size={16} />{sfxBusy ? 'Generando…' : 'Generar efecto'}</button></div>
+      </form> : <p className="muted small" style={{ marginTop: 6 }}>Disponible cuando se configure <code>ELEVENLABS_API_KEY</code> en el servidor. Mientras tanto, sube efectos propios o con licencia.</p>}
     </section>
 
     <div className="cardHead">

@@ -8,7 +8,7 @@ async function materialize(asset:GeneratedAsset){
  const url=new URL(asset.uri);if(url.protocol!=='https:')throw new Error('Generated asset URL must use HTTPS.');const response=await fetch(url,{redirect:'error'});if(!response.ok)throw new Error('Could not retrieve generated asset.');const declared=response.headers.get('content-type')?.split(';')[0];return{bytes:Buffer.from(await response.arrayBuffer()),mime:declared||asset.mimeType}
 }
 
-export async function persistGeneratedAsset(context:ProviderContext,kind:'image'|'thumbnail'|'video'|'voice'|'render',asset:GeneratedAsset){
+export async function persistGeneratedAsset(context:ProviderContext,kind:'image'|'thumbnail'|'video'|'voice'|'render'|'sfx'|'music',asset:GeneratedAsset){
  const supabase=await createServerSupabaseClient();const{data:{user}}=await supabase.auth.getUser();if(!user||user.id!==context.ownerId)throw new Error('Unauthorized provider asset persistence.')
  const{bytes,mime}=await materialize(asset);const maxBytes=kind==='image'||kind==='thumbnail'?25*1024*1024:250*1024*1024;if(bytes.byteLength>maxBytes)throw new Error('Generated asset exceeds storage size limit.')
  const storagePath=`${user.id}/${context.projectId}/${context.requestId}.${extFor(mime)}`
