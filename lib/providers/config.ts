@@ -1,9 +1,11 @@
 import type { ProviderHealth } from './types'
-export type ProviderCapability='image'|'video'|'voice'|'render'
+export type ProviderCapability='image'|'video'|'voice'|'render'|'text'|'research'
 export interface ProviderRuntimeConfig{id:string;capability:ProviderCapability;enabled:boolean;health:ProviderHealth}
 const env=(name:string)=>process.env[name]?.trim()
 const configured=(...names:string[])=>names.every(name=>Boolean(env(name)))
 const state=(id:string,capability:ProviderCapability,...vars:string[]):ProviderRuntimeConfig=>{const ready=configured(...vars);return{id,capability,enabled:ready,health:ready?'ready':'unconfigured'}}
+// Either a dedicated text key or the shared OpenAI key enables text assistance.
+const anyOf=(id:string,capability:ProviderCapability,...vars:string[]):ProviderRuntimeConfig=>{const ready=vars.some(name=>Boolean(env(name)));return{id,capability,enabled:ready,health:ready?'ready':'unconfigured'}}
 export function getProviderRuntimeConfigs():ProviderRuntimeConfig[]{return[
  state('openai-image','image','OPENAI_API_KEY'),
  state('image-fallback','image','IMAGE_FALLBACK_ENDPOINT','IMAGE_FALLBACK_API_KEY'),
@@ -14,5 +16,7 @@ export function getProviderRuntimeConfigs():ProviderRuntimeConfig[]{return[
  state('video-primary','video','VIDEO_PROVIDER_ENDPOINT','VIDEO_PROVIDER_API_KEY'),
  state('video-fallback','video','VIDEO_FALLBACK_ENDPOINT','VIDEO_FALLBACK_API_KEY'),
  state('render-worker','render','RENDER_WORKER_URL','RENDER_WORKER_TOKEN'),
+ anyOf('openai-text','text','OPENAI_TEXT_API_KEY','OPENAI_API_KEY'),
+ state('youtube-data','research','YOUTUBE_API_KEY'),
 ]}
 export function publicProviderState(){return getProviderRuntimeConfigs()}
