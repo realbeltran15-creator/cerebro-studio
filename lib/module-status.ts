@@ -26,7 +26,7 @@ export type StudioModule = {
 export const studioModules: StudioModule[] = [
   { label: 'Inicio', short: 'Inicio', href: '/', icon: 'home', state: 'functional', note: 'Centro de operaciones con datos reales del workspace.' },
   { label: 'Investigación', short: 'Investigación', href: '/market-intelligence', icon: 'search', state: 'partial', note: 'Búsqueda en YouTube Data API con métricas observadas y calculadas por separado (requiere YOUTUBE_API_KEY) y registro manual con fuente.' },
-  { label: 'Radar', short: 'Radar', href: '/radar', icon: 'radar', state: 'not_implemented', note: 'Sin fuente de tendencias conectada todavía.' },
+  { label: 'Radar', short: 'Radar', href: '/radar', icon: 'radar', state: 'partial', note: 'Tendencias oficiales de YouTube por país y categoría, con términos recurrentes calculados. Requiere YOUTUBE_API_KEY; sin histórico todavía.' },
   { label: 'Oportunidades', short: 'Oportunidades', href: '/opportunities', icon: 'target', state: 'partial', note: 'Búsqueda, filtros, orden, estados y conversión a proyecto. Se alimenta desde Investigación (manual o YouTube Data API).' },
   { label: 'Proyectos', short: 'Proyectos', href: '/projects', icon: 'folder', state: 'functional', note: 'Cada proyecto conecta investigación, guion, storyboard, assets y publicación.' },
   { label: 'Guiones', short: 'Guion', href: '/scripts', icon: 'script', state: 'functional', note: 'Versiones, secciones con base factual, testimonios y conversión a storyboard. Asistencia IA revisable si OPENAI_TEXT_API_KEY u OPENAI_API_KEY está configurada.', tile: true },

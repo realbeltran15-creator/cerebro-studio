@@ -2,7 +2,8 @@
  * Read-only YouTube Data API v3 search for research. Server-only: uses YOUTUBE_API_KEY.
  * Observed values come straight from the API; derived values are computed here and
  * returned separately so the UI never mixes them with observations.
- * Quota per search: search.list (100 units) + videos.list (1) + channels.list (1).
+ * Quota: search = search.list (100 units) + videos.list (1) + channels.list (1);
+ * trending = videos.list chart=mostPopular (1) + channels.list (1).
  */
 
 const API = 'https://www.googleapis.com/youtube/v3'
@@ -91,9 +92,7 @@ type VideosResponse = { items?: Array<{
 type ChannelsResponse = { items?: Array<{ id: string; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean } }> }
 
 export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<YouTubeVideoResult[]> {
-  const key = process.env.YOUTUBE_API_KEY?.trim()
-  if (!key) throw new YouTubeApiError('YouTube Data API no está configurada (YOUTUBE_API_KEY).', 503)
-
+  const key = requireKey()
   const params: Record<string, string> = {
     part: 'id', type: 'video', q: input.query, order: input.order ?? 'relevance',
     maxResults: String(Math.min(Math.max(input.maxResults ?? 12, 1), 25)),
@@ -105,20 +104,54 @@ export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<Yo
   const search = await call<SearchResponse>('search', params, key)
   const ids = (search.items ?? []).map(i => i.id?.videoId).filter((id): id is string => Boolean(id))
   if (ids.length === 0) return []
-
   const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails', id: ids.join(',') }, key)
-  const channelIds = [...new Set((videos.items ?? []).map(v => v.snippet?.channelId).filter((id): id is string => Boolean(id)))]
+  const byId = new Map((videos.items ?? []).map(v => [v.id, v]))
+  // Keep the order returned by search.list.
+  return enrich(ids.flatMap(id => byId.get(id) ?? []), key)
+}
+
+export type TrendingInput = { regionCode: string; categoryId?: string; maxResults?: number }
+
+/** Most popular videos for a region (videos.list chart=mostPopular): 1 quota unit + 1 for channels. */
+export async function trendingYouTubeVideos(input: TrendingInput): Promise<YouTubeVideoResult[]> {
+  const key = requireKey()
+  const params: Record<string, string> = {
+    part: 'snippet,statistics,contentDetails', chart: 'mostPopular', regionCode: input.regionCode,
+    maxResults: String(Math.min(Math.max(input.maxResults ?? 25, 1), 50)),
+  }
+  if (input.categoryId) params.videoCategoryId = input.categoryId
+  const videos = await call<VideosResponse>('videos', params, key)
+  return enrich(videos.items ?? [], key)
+}
+
+export type YouTubeCategory = { id: string; title: string }
+
+/** Assignable video categories for a region (1 quota unit). */
+export async function youtubeCategories(regionCode: string, language = 'es'): Promise<YouTubeCategory[]> {
+  const key = requireKey()
+  const data = await call<{ items?: Array<{ id: string; snippet?: { title?: string; assignable?: boolean } }> }>(
+    'videoCategories', { part: 'snippet', regionCode, hl: language }, key)
+  return (data.items ?? []).filter(c => c.snippet?.assignable).map(c => ({ id: c.id, title: c.snippet?.title ?? c.id }))
+}
+
+function requireKey() {
+  const key = process.env.YOUTUBE_API_KEY?.trim()
+  if (!key) throw new YouTubeApiError('YouTube Data API no está configurada (YOUTUBE_API_KEY).', 503)
+  return key
+}
+
+type VideoItem = NonNullable<VideosResponse['items']>[number]
+
+/** Adds channel subscriber counts and derived metrics, keeping observed and calculated values apart. */
+async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResult[]> {
+  if (items.length === 0) return []
+  const channelIds = [...new Set(items.map(v => v.snippet?.channelId).filter((id): id is string => Boolean(id)))]
   const channels = channelIds.length
     ? await call<ChannelsResponse>('channels', { part: 'statistics', id: channelIds.join(',') }, key)
     : { items: [] }
   const subscribers = new Map((channels.items ?? []).map(c => [c.id, c.statistics?.hiddenSubscriberCount ? null : toNumber(c.statistics?.subscriberCount)]))
-
   const fetchedAt = new Date().toISOString()
-  const byId = new Map((videos.items ?? []).map(v => [v.id, v]))
-  // Keep the order returned by search.list.
-  return ids.flatMap(id => {
-    const v = byId.get(id)
-    if (!v) return []
+  return items.map(v => {
     const views = toNumber(v.statistics?.viewCount)
     const likes = toNumber(v.statistics?.likeCount)
     const comments = toNumber(v.statistics?.commentCount)
@@ -126,9 +159,9 @@ export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<Yo
     const publishedAt = v.snippet?.publishedAt ?? ''
     const ageDays = publishedAt ? Math.max((Date.now() - Date.parse(publishedAt)) / 86400000, 1) : null
     const thumbs = v.snippet?.thumbnails ?? {}
-    return [{
-      videoId: id,
-      url: `https://www.youtube.com/watch?v=${id}`,
+    return {
+      videoId: v.id,
+      url: `https://www.youtube.com/watch?v=${v.id}`,
       title: v.snippet?.title ?? '',
       channelId: v.snippet?.channelId ?? '',
       channelTitle: v.snippet?.channelTitle ?? '',
@@ -140,6 +173,6 @@ export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<Yo
         viewsToSubscribers: views !== null && subs ? Math.round((views / subs) * 100) / 100 : null,
         engagementRate: views ? Math.round((((likes ?? 0) + (comments ?? 0)) / views) * 10000) / 100 : null,
       },
-    }]
+    }
   })
 }
