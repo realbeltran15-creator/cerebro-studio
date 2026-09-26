@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { StudioShell } from '../components/studio-shell'
+import { YouTubeResearch } from './youtube-research'
 import { createClient } from '../../lib/supabase/client'
 import type { OpportunityRow } from '../../lib/types/database'
 
@@ -77,6 +78,8 @@ export default function MarketIntelligencePage() {
   return <StudioShell title="Investigación" eyebrow="INTELIGENCIA DE MERCADO" actions={<Link className="buttonLink ghost" href="/youtube">Explorar YouTube</Link>}>
     <p className="connectionStatus">{message}</p>
     {authenticated === false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated === true ? <>
+      <YouTubeResearch onSaved={() => void load()} />
+      <h3 className="sectionTitle">Registro manual</h3>
       <form className="marketForm" onSubmit={addOpportunity}>
         <input required value={title} onChange={e => setTitle(e.target.value)} placeholder="Oportunidad o tema" />
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Consulta de origen" />

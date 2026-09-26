@@ -1,0 +1,145 @@
+/**
+ * Read-only YouTube Data API v3 search for research. Server-only: uses YOUTUBE_API_KEY.
+ * Observed values come straight from the API; derived values are computed here and
+ * returned separately so the UI never mixes them with observations.
+ * Quota per search: search.list (100 units) + videos.list (1) + channels.list (1).
+ */
+
+const API = 'https://www.googleapis.com/youtube/v3'
+
+export type YouTubeSearchOrder = 'relevance' | 'viewCount' | 'date' | 'rating'
+
+export type YouTubeSearchInput = {
+  query: string
+  order?: YouTubeSearchOrder
+  regionCode?: string
+  language?: string
+  publishedWithinDays?: number
+  maxResults?: number
+}
+
+export type YouTubeVideoResult = {
+  videoId: string
+  url: string
+  title: string
+  channelId: string
+  channelTitle: string
+  publishedAt: string
+  thumbnailUrl: string | null
+  observed: {
+    views: number | null
+    likes: number | null
+    comments: number | null
+    durationSeconds: number | null
+    channelSubscribers: number | null
+    fetchedAt: string
+  }
+  calculated: {
+    viewsPerDay: number | null
+    viewsToSubscribers: number | null
+    engagementRate: number | null
+  }
+}
+
+export class YouTubeApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
+export function youtubeConfigured() {
+  return Boolean(process.env.YOUTUBE_API_KEY?.trim())
+}
+
+const toNumber = (value: unknown) => {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Parses ISO-8601 durations such as PT1H2M3S. */
+export function parseIsoDuration(value: string | undefined) {
+  const m = value?.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/)
+  if (!m) return null
+  const [, d, h, min, s] = m.map(x => (x ? Number(x) : 0))
+  return d * 86400 + h * 3600 + min * 60 + s
+}
+
+async function call<T>(path: string, params: Record<string, string>, key: string): Promise<T> {
+  const url = new URL(`${API}/${path}`)
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
+  url.searchParams.set('key', key)
+  const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15000) })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: { errors?: Array<{ reason?: string }> } } | null
+    const reason = body?.error?.errors?.[0]?.reason
+    const message = reason === 'quotaExceeded' || reason === 'dailyLimitExceeded'
+      ? 'Se ha agotado la cuota diaria de YouTube Data API.'
+      : response.status === 400 && reason === 'keyInvalid' ? 'YouTube rechazó la clave API.'
+      : response.status === 403 ? 'YouTube denegó el acceso: revisa que YouTube Data API v3 esté habilitada para la clave.'
+      : `YouTube Data API respondió ${response.status}.`
+    throw new YouTubeApiError(message, response.status)
+  }
+  return response.json() as Promise<T>
+}
+
+type SearchResponse = { items?: Array<{ id?: { videoId?: string } }> }
+type VideosResponse = { items?: Array<{
+  id: string
+  snippet?: { title?: string; channelId?: string; channelTitle?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> }
+  statistics?: { viewCount?: string; likeCount?: string; commentCount?: string }
+  contentDetails?: { duration?: string }
+}> }
+type ChannelsResponse = { items?: Array<{ id: string; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean } }> }
+
+export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<YouTubeVideoResult[]> {
+  const key = process.env.YOUTUBE_API_KEY?.trim()
+  if (!key) throw new YouTubeApiError('YouTube Data API no está configurada (YOUTUBE_API_KEY).', 503)
+
+  const params: Record<string, string> = {
+    part: 'id', type: 'video', q: input.query, order: input.order ?? 'relevance',
+    maxResults: String(Math.min(Math.max(input.maxResults ?? 12, 1), 25)),
+  }
+  if (input.regionCode) params.regionCode = input.regionCode
+  if (input.language) params.relevanceLanguage = input.language
+  if (input.publishedWithinDays) params.publishedAfter = new Date(Date.now() - input.publishedWithinDays * 86400000).toISOString()
+
+  const search = await call<SearchResponse>('search', params, key)
+  const ids = (search.items ?? []).map(i => i.id?.videoId).filter((id): id is string => Boolean(id))
+  if (ids.length === 0) return []
+
+  const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails', id: ids.join(',') }, key)
+  const channelIds = [...new Set((videos.items ?? []).map(v => v.snippet?.channelId).filter((id): id is string => Boolean(id)))]
+  const channels = channelIds.length
+    ? await call<ChannelsResponse>('channels', { part: 'statistics', id: channelIds.join(',') }, key)
+    : { items: [] }
+  const subscribers = new Map((channels.items ?? []).map(c => [c.id, c.statistics?.hiddenSubscriberCount ? null : toNumber(c.statistics?.subscriberCount)]))
+
+  const fetchedAt = new Date().toISOString()
+  const byId = new Map((videos.items ?? []).map(v => [v.id, v]))
+  // Keep the order returned by search.list.
+  return ids.flatMap(id => {
+    const v = byId.get(id)
+    if (!v) return []
+    const views = toNumber(v.statistics?.viewCount)
+    const likes = toNumber(v.statistics?.likeCount)
+    const comments = toNumber(v.statistics?.commentCount)
+    const subs = subscribers.get(v.snippet?.channelId ?? '') ?? null
+    const publishedAt = v.snippet?.publishedAt ?? ''
+    const ageDays = publishedAt ? Math.max((Date.now() - Date.parse(publishedAt)) / 86400000, 1) : null
+    const thumbs = v.snippet?.thumbnails ?? {}
+    return [{
+      videoId: id,
+      url: `https://www.youtube.com/watch?v=${id}`,
+      title: v.snippet?.title ?? '',
+      channelId: v.snippet?.channelId ?? '',
+      channelTitle: v.snippet?.channelTitle ?? '',
+      publishedAt,
+      thumbnailUrl: thumbs.medium?.url ?? thumbs.default?.url ?? null,
+      observed: { views, likes, comments, durationSeconds: parseIsoDuration(v.contentDetails?.duration), channelSubscribers: subs, fetchedAt },
+      calculated: {
+        viewsPerDay: views !== null && ageDays ? Math.round(views / ageDays) : null,
+        viewsToSubscribers: views !== null && subs ? Math.round((views / subs) * 100) / 100 : null,
+        engagementRate: views ? Math.round((((likes ?? 0) + (comments ?? 0)) / views) * 10000) / 100 : null,
+      },
+    }]
+  })
+}
