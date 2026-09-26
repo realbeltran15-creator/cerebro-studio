@@ -90,10 +90,20 @@ async function runTrendWatch(db: SupabaseClient, a: Automation) {
 
 type OppRow = { id: string; source_id: string | null; observed_metrics: Record<string, unknown> | null; calculated_metrics: Record<string, unknown> | null }
 
-async function runOpportunityRefresh(db: SupabaseClient, a: Automation) {
-  const cfg = refreshConfig(a.config)
-  const { data, error } = await db.from('opportunities').select('id,source_id,observed_metrics,calculated_metrics')
-    .eq('owner_id', a.owner_id).eq('source_platform', 'youtube').neq('status', 'discarded').order('updated_at', { ascending: true }).limit(cfg.maxItems)
+function runOpportunityRefresh(db: SupabaseClient, a: Automation) {
+  return refreshOpportunityMetrics(db, a.owner_id, { maxItems: refreshConfig(a.config).maxItems })
+}
+
+/**
+ * Re-reads YouTube metrics for the owner's opportunities (all non-discarded ones, oldest first,
+ * or only the given ids), keeping a 30-entry history and growth since the previous reading.
+ */
+export async function refreshOpportunityMetrics(db: SupabaseClient, ownerId: string, opts: { maxItems?: number; ids?: string[] } = {}) {
+  const a = { owner_id: ownerId }
+  let query = db.from('opportunities').select('id,source_id,observed_metrics,calculated_metrics')
+    .eq('owner_id', ownerId).eq('source_platform', 'youtube').neq('status', 'discarded')
+  if (opts.ids?.length) query = query.in('id', opts.ids.slice(0, 50))
+  const { data, error } = await query.order('updated_at', { ascending: true }).limit(Math.min(opts.maxItems ?? 50, 200))
   if (error) throw new Error(error.message)
   const rows = ((data ?? []) as OppRow[]).map(r => ({ row: r, videoId: youtubeVideoId(r.source_id) })).filter(r => r.videoId)
   if (rows.length === 0) return { checked: 0, updated: 0, missing: 0, top: [] }
