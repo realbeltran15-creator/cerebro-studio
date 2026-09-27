@@ -7,6 +7,7 @@ import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { Automation, AutomationKind } from '@/lib/automations/run'
 import type { YouTubeCategory } from '@/lib/providers/youtube-data'
+import { parseKeywords, trendWatchFormConfig } from '@/lib/automations/keywords'
 
 type Run = { id: string; automation_id: string; trigger: string; status: string; summary: Record<string, unknown>; error: string | null; started_at: string; finished_at: string | null }
 type Status = { providers?: Array<{ id: string; enabled: boolean }> }
@@ -27,7 +28,7 @@ function summaryText(r: Run) {
   const s = r.summary ?? {}
   if (r.status === 'failed') return r.error ?? 'Falló'
   if (r.status === 'running') return 'En curso…'
-  if ('matched' in s) return `${String(s.checked)} en tendencia · ${String(s.matched)} coinciden · ${String(s.saved)} guardadas${Number(s.duplicates) ? ` · ${String(s.duplicates)} ya existían` : ''}`
+  if ('matched' in s) return `${String(s.checked)} en tendencia · ${String(s.matched)} coinciden · ${String(s.saved)} guardadas${Number(s.duplicates) ? ` · ${String(s.duplicates)} ya existían` : ''}${Array.isArray(s.keywords) ? ` · palabras usadas: ${(s.keywords as string[]).join(', ')}` : ''}`
   if ('updated' in s) return `${String(s.updated)} de ${String(s.checked)} actualizadas${Number(s.missing) ? ` · ${String(s.missing)} ya no disponibles` : ''}`
   return 'Completada'
 }
@@ -49,6 +50,9 @@ export default function AutomationsPage() {
   const [running, setRunning] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [editingId, setEditingId] = useState('')
+  const [editKeywords, setEditKeywords] = useState('')
+  const typedKeywords = parseKeywords(keywords)
 
   const load = useCallback(async () => {
     const [{ data: a, error: e }, { data: r }] = await Promise.all([
@@ -76,15 +80,15 @@ export default function AutomationsPage() {
   async function create(event: FormEvent) {
     event.preventDefault()
     setError(''); setNotice('')
-    const words = keywords.split(',').map(k => k.trim()).filter(k => k.length > 1)
-    if (kind === 'trend_watch' && words.length === 0) { setError('Añade al menos una palabra clave para detectar vídeos relevantes.'); return }
+    const config = kind === 'trend_watch' ? trendWatchFormConfig({ region, categoryId, keywords, autoSave }) : { maxItems }
+    if ('keywords' in config && config.keywords.length === 0) { setError('Añade al menos una palabra clave para detectar vídeos relevantes.'); return }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setError('La sesión ha caducado.'); return }
-    const config = kind === 'trend_watch' ? { region, categoryId: categoryId || null, keywords: words, autoSave } : { maxItems }
-    const { error: e } = await supabase.from('automations').insert({ owner_id: user.id, kind, name: name.trim() || kindLabels[kind], schedule, config })
+    const { data: created, error: e } = await supabase.from('automations').insert({ owner_id: user.id, kind, name: name.trim() || kindLabels[kind], schedule, config }).select('config').single()
     if (e) { setError(e.message); return }
+    const stored = (created as { config: Record<string, unknown> } | null)?.config
     setName(''); setKeywords('')
-    setNotice('Automatización creada.')
+    setNotice(Array.isArray(stored?.keywords) ? `Automatización creada con las palabras: ${(stored.keywords as string[]).join(', ')}.` : 'Automatización creada.')
     await load()
   }
 
@@ -97,6 +101,15 @@ export default function AutomationsPage() {
       setNotice(`«${a.name}» ejecutada.`)
     } catch (e) { setError(e instanceof Error ? e.message : 'La ejecución falló.') }
     finally { setRunning(''); await load() }
+  }
+
+  async function saveKeywords(a: Automation) {
+    const words = parseKeywords(editKeywords)
+    if (words.length === 0) { setError('Añade al menos una palabra clave.'); return }
+    const { error: e } = await supabase.from('automations').update({ config: { ...a.config, keywords: words }, updated_at: new Date().toISOString() }).eq('id', a.id)
+    if (e) { setError(e.message); return }
+    setEditingId(''); setNotice(`Palabras de «${a.name}» actualizadas: ${words.join(', ')}.`)
+    await load()
   }
 
   async function toggle(a: Automation) {
@@ -117,7 +130,7 @@ export default function AutomationsPage() {
     {status && !status.scheduler && <p className="warnBox">La ejecución diaria automática no está activa: faltan <code>CRON_SECRET</code> y <code>SUPABASE_SERVICE_ROLE_KEY</code> en Vercel. Mientras tanto puedes ejecutarlas manualmente.</p>}
 
     <section className="panel" style={{ marginBottom: 18 }}>
-      <form onSubmit={create} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <form onSubmit={create} autoComplete="off" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="field-row">
           <label htmlFor="au-kind">Tipo
             <select id="au-kind" value={kind} onChange={e => setKind(e.target.value as AutomationKind)}>
@@ -144,8 +157,9 @@ export default function AutomationsPage() {
                 {categories.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
               </select>
             </label>
-            <label htmlFor="au-keywords">Palabras clave (separadas por comas)<input id="au-keywords" value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="supervivencia, rescate, expedición" /></label>
+            <label htmlFor="au-keywords">Palabras clave (separadas por comas)<input id="au-keywords" name="automation-keywords" autoComplete="off" value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="Ej.: palabra1, palabra2" /></label>
           </div>
+          <p className="small" aria-live="polite">Se guardarán: {typedKeywords.length ? typedKeywords.map(k => <span key={k} className="pill" style={{ marginRight: 4 }}>{k}</span>) : <span className="muted">ninguna palabra todavía</span>}</p>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={autoSave} onChange={e => setAutoSave(e.target.checked)} /> Guardar coincidencias en Oportunidades (sin duplicados)</label>
           <p className="muted small">Cada ejecución consulta la lista oficial de tendencias (unas 2 unidades de cuota) y compara los títulos con tus palabras clave.</p>
         </> : <>
@@ -162,10 +176,16 @@ export default function AutomationsPage() {
         <div style={{ flex: 1, minWidth: 240 }}>
           <b>{a.name}</b> <span className={a.enabled ? 'pill ok' : 'pill'}>{a.enabled ? 'Activa' : 'Pausada'}</span> <span className="pill">{a.schedule === 'daily' ? 'Diaria' : 'Manual'}</span>
           <span className="muted small" style={{ display: 'block' }}>{kindLabels[a.kind]} · {describe(a)}</span>
+          {editingId === a.id && <form onSubmit={e => { e.preventDefault(); void saveKeywords(a) }} style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+            <input aria-label="Palabras clave" autoComplete="off" value={editKeywords} onChange={e => setEditKeywords(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+            <button>Guardar palabras</button>
+            <button type="button" className="ghost" onClick={() => setEditingId('')}>Cancelar</button>
+          </form>}
           <span className="muted small" style={{ display: 'block' }}>Última ejecución: {a.last_run_at ? new Date(a.last_run_at).toLocaleString() : 'nunca'}</span>
         </div>
         <div className="pageActions">
           <button type="button" disabled={Boolean(running)} onClick={() => void run(a)}>{running === a.id ? 'Ejecutando…' : 'Ejecutar ahora'}</button>
+          {a.kind === 'trend_watch' && editingId !== a.id && <button type="button" className="ghost" onClick={() => { setEditingId(a.id); setEditKeywords(Array.isArray(a.config.keywords) ? (a.config.keywords as string[]).join(', ') : '') }}>Editar palabras</button>}
           <button type="button" className="ghost" onClick={() => void toggle(a)}>{a.enabled ? 'Pausar' : 'Activar'}</button>
           <button type="button" className="iconButton" aria-label="Borrar automatización" onClick={() => void remove(a)}><Icon name="trash" size={16} /></button>
         </div>

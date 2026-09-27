@@ -2,6 +2,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { trendingYouTubeVideos, youtubeVideoId, youtubeVideosByIds, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { recurringTerms } from '@/lib/radar'
 import { recordTrendSnapshot } from '@/lib/radar-history'
+import { parseKeywords } from '@/lib/automations/keywords'
+
+export { parseKeywords }
 
 /**
  * Server-side automation runner. Works with a user-session client (manual runs, RLS applies)
@@ -28,7 +31,7 @@ export type RefreshConfig = { maxItems: number }
 export function trendWatchConfig(raw: Record<string, unknown>): TrendWatchConfig {
   const region = typeof raw.region === 'string' && /^[A-Z]{2}$/.test(raw.region) ? raw.region : 'ES'
   const categoryId = typeof raw.categoryId === 'string' && /^\d{1,4}$/.test(raw.categoryId) ? raw.categoryId : null
-  const keywords = Array.isArray(raw.keywords) ? raw.keywords.filter((k): k is string => typeof k === 'string' && k.trim().length > 1).map(k => k.trim().toLowerCase()).slice(0, 20) : []
+  const keywords = Array.isArray(raw.keywords) ? parseKeywords(raw.keywords.filter((k): k is string => typeof k === 'string').join(',')) : []
   return { region, categoryId, keywords, autoSave: raw.autoSave === true }
 }
 
@@ -81,7 +84,7 @@ async function runTrendWatch(db: SupabaseClient, a: Automation) {
     }
   }
   return {
-    region: cfg.region, categoryId: cfg.categoryId, checked: videos.length, matched: matched.length, saved, duplicates,
+    region: cfg.region, categoryId: cfg.categoryId, keywords: cfg.keywords, checked: videos.length, matched: matched.length, saved, duplicates,
     newSincePrevious: comparison.previousAt ? newEntries : null, previousSnapshotAt: comparison.previousAt,
     matches: matched.slice(0, 10).map(v => ({ title: v.title, url: v.url, views: v.observed.views })),
     recurringTerms: recurringTerms(videos.map(v => v.title), 2, 10),

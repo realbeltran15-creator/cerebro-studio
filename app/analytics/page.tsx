@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+import { importSummary, type ImportResult } from '@/lib/analytics/summary'
 
 type Snapshot = { id: number; platform: string; external_content_id: string; metric_date: string; project_id: string | null; observed: Record<string, unknown>; calculated: Record<string, unknown> }
 type Connection = { external_account_name: string | null; status: string; scopes: string[]; updated_at: string }
@@ -40,9 +41,9 @@ export default function AnalyticsPage() {
     setBusy(true); setError(''); setNotice('')
     try {
       const r = await fetch('/api/analytics/youtube/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days }) })
-      const json = await r.json() as { error?: string; days?: number; videos?: number; period?: { startDate: string; endDate: string } }
+      const json = await r.json() as ImportResult & { error?: string }
       if (!r.ok) throw new Error(json.error ?? 'No se pudo importar.')
-      setNotice(`Importados ${json.days} días y ${json.videos} vídeos (${json.period?.startDate} → ${json.period?.endDate}).`)
+      setNotice(importSummary(json))
       await load()
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo importar.') } finally { setBusy(false) }
   }

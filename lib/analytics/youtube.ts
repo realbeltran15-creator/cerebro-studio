@@ -75,5 +75,11 @@ export async function importYouTubeAnalytics(db: SupabaseClient, ownerId: string
     const { error } = await db.from('metric_snapshots').upsert(rows, { onConflict: 'owner_id,platform,external_content_id,metric_date' })
     if (error) throw new Error(`No se pudieron guardar las métricas: ${error.message}`)
   }
-  return { period, days: daily.length, videos: videos.length, linkedToProjects: [...projectFor.keys()].filter(k => ids.includes(k)).length }
+  const returned = daily.map(d => String(d.day)).sort()
+  return {
+    period, requestedDays: days, days: daily.length, videos: videos.length,
+    // YouTube Analytics usually lags 2–3 days, so the last requested days can come back empty.
+    dataRange: returned.length ? { startDate: returned[0], endDate: returned[returned.length - 1] } : null,
+     linkedToProjects: [...projectFor.keys()].filter(k => ids.includes(k)).length,
+  }
 }
