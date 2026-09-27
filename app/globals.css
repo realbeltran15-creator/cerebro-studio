@@ -232,3 +232,12 @@ article p{color:var(--muted);font-size:14px;margin-top:6px}
   .scene dl{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+.viTabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.viTabs button{background:var(--panel-2);color:var(--muted);border:1px solid var(--line-2)}
+.viTabs button[aria-selected="true"]{background:var(--accent,#5b7cfa);color:#fff;border-color:transparent}
+.viThumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:8px}
+.viThumbs figure{margin:0;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:6px;display:flex;flex-direction:column;gap:6px}
+.viThumbs img,.viThumbs video{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;background:#000}
+.viChecks{display:flex;flex-direction:column;gap:8px}
+.viCheck{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg-2)}
+textarea.viText{width:100%;min-height:70px}

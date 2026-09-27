@@ -118,6 +118,21 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 3. Virtual Influencer Studio: automated quality measurements on real media.
+{
+  const server = serve(8793, { 'q.js': await bundle(path.join(dir, 'influencer-quality.harness.ts')) })
+  const page = await browser.newPage()
+  await page.goto('http://127.0.0.1:8793/')
+  const r = await page.evaluate(() => window.runTest())
+  check('influencer: 800x600 image fails the resolution check', r.image.check === 'fail', r.image)
+  check('influencer: 1280x720 video passes resolution', r.stable.res === 'pass', r.stable)
+  check('influencer: A/V drift within tolerance passes', r.stable.av.status === 'pass', r.stable.av)
+  check('influencer: stable video passes flicker', r.stable.flicker.status === 'pass', r.stable.flicker)
+  check('influencer: flickering video fails flicker', r.flickering.flicker.status === 'fail', r.flickering.flicker)
+  check('influencer: video without audio fails A/V sync', r.flickering.av === 'fail', r.flickering)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')
