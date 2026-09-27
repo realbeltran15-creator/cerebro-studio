@@ -19,8 +19,10 @@ export function draftsForStoryboard(rows: DraftRow[], storyboardId: string): Dra
 /** Short description of a saved version so duplicates can be told apart. */
 export function draftSummary(comp: Composition) {
   const visuals = comp.clips.filter(c => c.visualAssetId).length
-  const voices = comp.clips.filter(c => c.voiceAssetId).length
-  return `${comp.clips.length} escenas · ${visuals} con imagen/vídeo · ${voices} con voz${comp.musicAssetId ? ' · música' : ''}`
+  const linked = new Set((comp.audioClips ?? []).filter(a => a.kind === 'voice' && a.linkedClipId).map(a => a.linkedClipId))
+  const voices = comp.clips.filter(c => c.voiceAssetId || linked.has(c.id)).length
+  const extra = (comp.audioClips ?? []).filter(a => !(a.kind === 'voice' && a.linkedClipId)).length
+  return `${comp.clips.length} ${comp.editedManually ? 'clips' : 'escenas'} · ${visuals} con imagen/vídeo · ${voices} con voz${extra ? ` · ${extra} pistas de audio` : ''}${comp.musicAssetId ? ' · música' : ''}${comp.editedManually ? ' · editado a mano' : ''}`
 }
 
 /** A render still "rendering" long after it started was interrupted (tab closed or reloaded). */

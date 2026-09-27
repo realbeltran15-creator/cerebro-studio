@@ -24,13 +24,22 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const busyRef = useRef(false)
+  // Why the current run was aborted: recorded on the render job so a cancelled render is explained.
+  const abortReason = useRef<'user' | 'unmount'>('user')
   const [mode, setMode] = useState<'idle' | 'loading' | 'preview' | 'render' | 'saving'>('idle')
   const [progress, setProgress] = useState({ elapsed: 0, total: 0 })
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [download, setDownload] = useState<{ url: string; name: string } | null>(null)
 
-  useEffect(() => () => abortRef.current?.abort(), [])
+  useEffect(() => () => { abortReason.current = 'unmount'; abortRef.current?.abort() }, [])
+  // Leaving or reloading the tab kills a real-time render: ask before losing it.
+  useEffect(() => {
+    if (mode !== 'render' && mode !== 'saving') return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [mode])
   useEffect(() => () => { if (download) URL.revokeObjectURL(download.url) }, [download])
 
   const issues = compositionIssues(composition)
@@ -45,6 +54,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
     setMode('loading'); setError(''); setStatus(record ? 'Guardando el montaje…' : '')
     const controller = new AbortController()
     abortRef.current = controller
+    abortReason.current = 'user'
     let jobId: string | null = null
     try {
       if (record) await beforeRender?.()
@@ -63,8 +73,9 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         onProgress: (elapsed, t) => setProgress({ elapsed, total: t }),
       })
       if (controller.signal.aborted) {
-        if (jobId) await supabase.from('render_jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', jobId)
-        setStatus('Cancelado.')
+        const reason = (abortReason.current as string) === 'unmount' ? 'Cancelado: se salió del editor antes de terminar el render.' : 'Cancelado por el usuario.'
+        if (jobId) await supabase.from('render_jobs').update({ status: 'cancelled', error: reason, updated_at: new Date().toISOString() }).eq('id', jobId)
+        setStatus(`${reason} No se ha guardado ningún vídeo.`)
         return
       }
       if (record && result.blob && jobId) {
@@ -99,11 +110,11 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
     {!recordingSupported() && <p className="warnBox">Este navegador no puede grabar vídeo desde canvas. Usa Chrome, Edge o Firefox de escritorio.</p>}
     <div className="pageActions">
       {mode === 'idle' ? <>
-        <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa</button>
+        <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>
         <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported()} onClick={() => void run(true)}><Icon name="video" size={16} />Renderizar y guardar</button>
-      </> : <button type="button" className="ghost" onClick={() => abortRef.current?.abort()} disabled={mode === 'saving'}>Cancelar</button>}
+      </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar WebM</a>}
     </div>
-    <p className="muted small">El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos), sin coste externo. Salida WebM (VP9/VP8 + Opus); el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>
+    <p className="muted small">«Vista previa» solo reproduce el montaje; «Renderizar y guardar» graba el vídeo y lo guarda en la Biblioteca. El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos): mantén la pestaña abierta y visible hasta que termine. Sin coste externo. Salida WebM (VP9/VP8 + Opus); el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>
   </section>
 }

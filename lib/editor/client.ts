@@ -29,12 +29,17 @@ export async function signedUrl(assetId: string) {
   return json.url
 }
 
+/** Every asset a composition uses: visuals, clip voices, music and audio-track clips. */
+export function compositionAssetIds(c: Composition) {
+  return [...new Set([...c.clips.flatMap(k => [k.visualAssetId, k.voiceAssetId]), c.musicAssetId, ...(c.audioClips ?? []).map(a => a.assetId)].filter((x): x is string => Boolean(x)))]
+}
+
 const kindOf = (type: string): MediaSource['kind'] => (type === 'video' ? 'video' : visualTypes.includes(type) ? 'image' : 'audio')
 
 /** Downloads every asset the composition uses. Private files are fetched through short-lived signed URLs. */
 export async function downloadCompositionMedia(c: Composition, assets: EditorAsset[], onStep?: (done: number, total: number) => void) {
   const byId = new Map(assets.map(a => [a.id, a]))
-  const ids = [...new Set([...c.clips.flatMap(k => [k.visualAssetId, k.voiceAssetId]), c.musicAssetId].filter((x): x is string => Boolean(x)))]
+  const ids = compositionAssetIds(c)
   const media = new Map<string, MediaSource>()
   let done = 0
   for (const id of ids) {
@@ -71,7 +76,7 @@ export async function saveRender(supabase: SupabaseClient, input: {
 }) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('La sesión ha caducado.')
-  const used = new Set([...input.composition.clips.flatMap(k => [k.visualAssetId, k.voiceAssetId]), input.composition.musicAssetId].filter(Boolean))
+  const used = new Set(compositionAssetIds(input.composition))
   const inputs = input.assets.filter(a => used.has(a.id))
   const storagePath = `${user.id}/${input.projectId}/renders/${input.jobId}.webm`
   const { error: uploadError } = await supabase.storage.from('generated-assets').upload(storagePath, input.blob, { contentType: 'video/webm', upsert: false })
@@ -95,7 +100,7 @@ export async function saveRender(supabase: SupabaseClient, input: {
       renderer: 'browser-mediarecorder',
       renderedAt: new Date().toISOString(),
       settings: {
-        clips: input.composition.clips.length, fadeMs: input.composition.fadeMs, subtitles: input.composition.subtitles,
+        clips: input.composition.clips.length, audioClips: input.composition.audioClips?.length ?? 0, editedManually: input.composition.editedManually === true, fadeMs: input.composition.fadeMs, subtitles: input.composition.subtitles,
         music: Boolean(input.composition.musicAssetId), duckMusic: input.composition.duckMusic, musicVolume: input.composition.musicVolume,
         hookText: input.composition.hookText ?? null, sourceJobId: input.composition.origin?.sourceJobId ?? null,
       },
