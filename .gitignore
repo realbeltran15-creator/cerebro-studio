@@ -7,3 +7,8 @@ out
 .vercel
 *.log
 .DS_Store
+
+# Build artifacts generated locally
+next-env.d.ts
+*.tsbuildinfo
+package-lock.json

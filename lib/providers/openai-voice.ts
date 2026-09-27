@@ -11,6 +11,6 @@ export class OpenAIVoiceProvider implements VoiceProvider {
  if(!response.ok)throw new Error(`OpenAI voice generation failed (${response.status}).`)
  const bytes=Buffer.from(await response.arrayBuffer())
  if(!bytes.length||bytes.byteLength>25*1024*1024)throw new Error('OpenAI voice returned invalid audio size.')
- return{provider:this.id,mimeType:'audio/mpeg',uri:`data:audio/mpeg;base64,${bytes.toString('base64')}`,metadata:{model:'tts-1',voice:selectedVoice}}
+ return{provider:this.id,mimeType:'audio/mpeg',uri:`data:audio/mpeg;base64,${bytes.toString('base64')}`,metadata:{model:'tts-1',voice:selectedVoice,usage:{characters:text.length}}}
  }
 }

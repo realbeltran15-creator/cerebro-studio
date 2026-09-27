@@ -1,0 +1,50 @@
+/**
+ * Single source of truth for how finished each module really is.
+ * Update this file whenever a module changes state — the UI reads it
+ * so a page that merely loads is never presented as a finished feature.
+ */
+export type ModuleState = 'functional' | 'partial' | 'integration_ready' | 'not_implemented'
+
+export const moduleStateLabels: Record<ModuleState, string> = {
+  functional: 'Funcional',
+  partial: 'Parcial',
+  integration_ready: 'Preparado para integración',
+  not_implemented: 'No implementado',
+}
+
+export type StudioModule = {
+  label: string
+  short: string
+  href: string
+  icon: string
+  state: ModuleState
+  note: string
+  /** Shown as a tool tile on the dashboard. */
+  tile?: boolean
+}
+
+export const studioModules: StudioModule[] = [
+  { label: 'Inicio', short: 'Inicio', href: '/', icon: 'home', state: 'functional', note: 'Centro de operaciones con datos reales del workspace.' },
+  { label: 'Investigación', short: 'Investigación', href: '/market-intelligence', icon: 'search', state: 'functional', note: 'Búsqueda de vídeos y análisis de canales con YouTube Data API (mediana, frecuencia, vídeos destacados), métricas observadas y calculadas por separado, y registro manual con fuente. Requiere YOUTUBE_API_KEY.' },
+  { label: 'Radar', short: 'Radar', href: '/radar', icon: 'radar', state: 'functional', note: 'Tendencias oficiales de YouTube por país y categoría con histórico: nuevos, subidas, bajadas y vistas ganadas entre lecturas, más términos recurrentes. Requiere YOUTUBE_API_KEY.' },
+  { label: 'Oportunidades', short: 'Oportunidades', href: '/opportunities', icon: 'target', state: 'functional', note: 'Búsqueda, filtros, estados y conversión a proyecto; métricas observadas y calculadas por separado, orden por rendimiento, historial y actualización desde YouTube.' },
+  { label: 'Proyectos', short: 'Proyectos', href: '/projects', icon: 'folder', state: 'functional', note: 'Cada proyecto conecta investigación, guion, storyboard, assets y publicación.' },
+  { label: 'Guiones', short: 'Guion', href: '/scripts', icon: 'script', state: 'functional', note: 'Versiones, secciones con base factual, testimonios y conversión a storyboard. Asistencia IA revisable si OPENAI_TEXT_API_KEY u OPENAI_API_KEY está configurada.', tile: true },
+  { label: 'Storyboard y escenas', short: 'Storyboard', href: '/create', icon: 'board', state: 'functional', note: 'Escenas con prompts, cámara, sonido y continuidad entre escenas.', tile: true },
+  { label: 'Imágenes IA', short: 'Imágenes IA', href: '/images', icon: 'image', state: 'integration_ready', note: 'Genera si OPENAI_API_KEY está configurada en el servidor.', tile: true },
+  { label: 'Vídeos IA', short: 'Vídeo IA', href: '/videos', icon: 'video', state: 'integration_ready', note: 'Prueba con fal.ai (FAL_KEY). Google Flow no tiene API pública oficial confirmada: no se integra hasta que exista.', tile: true },
+  { label: 'Voces IA', short: 'Voces IA', href: '/voices', icon: 'mic', state: 'integration_ready', note: 'ElevenLabs (voces de la cuenta) con OpenAI TTS como respaldo, o endpoint HTTP. Necesita claves en el servidor.', tile: true },
+  { label: 'Música y sonidos', short: 'Música / SFX', href: '/audio', icon: 'music', state: 'functional', note: 'Sube música y efectos propios o con licencia, con la licencia registrada. Genera efectos con ElevenLabs si hay clave. Sin música generativa.', tile: true },
+  { label: 'Editor de vídeo', short: 'Editor', href: '/editor', icon: 'scissors', state: 'functional', note: 'Modo automático por escenas (imagen o vídeo subido, de la Biblioteca o generado; voz; música con ducking; subtítulos) y Editor manual con timeline: reordenar, recortar, dividir, duplicar, duración, zoom/posición, textos, transiciones, pistas de voz/música/efectos, volumen y deshacer/rehacer. Render WebM en el navegador guardado en la Biblioteca.', tile: true },
+  { label: 'Shorts / Reels / TikTok', short: 'Convertir a Shorts', href: '/repurpose', icon: 'phone', state: 'functional', note: 'Recorta un montaje a 9:16: selección de escenas, reencuadre por escena, hook en pantalla, límites por plataforma y render. No publica.', tile: true },
+  { label: 'Miniaturas', short: 'Miniaturas', href: '/thumbnails', icon: 'thumb', state: 'integration_ready', note: 'Variantes 16:9 por proyecto y selección de la definitiva. Genera si OPENAI_API_KEY está configurada.', tile: true },
+  { label: 'YouTube', short: 'Publicar', href: '/youtube', icon: 'youtube', state: 'partial', note: 'Borradores con vídeo, miniatura, descripción y privacidad; aprobación explícita con resumen de riesgos y licencias; subida privada por defecto e idempotente. Requiere el cliente OAuth y el permiso de subida.', tile: true },
+  { label: 'Analytics', short: 'Analytics', href: '/analytics', icon: 'chart', state: 'partial', note: 'Importa YouTube Analytics de tu canal (7/28/90 días): serie diaria y vídeos principales, observado y calculado por separado. Requiere el cliente OAuth de Google.' },
+  { label: 'Biblioteca', short: 'Biblioteca', href: '/library', icon: 'library', state: 'functional', note: 'Assets privados por proyecto con enlaces temporales.' },
+  { label: 'Conectores (APIs)', short: 'Conectores', href: '/connectors', icon: 'link', state: 'functional', note: 'Estado real de proveedores leído del servidor.' },
+  { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'partial', note: 'Vigilancia de tendencias con palabras clave y actualización de métricas de oportunidades, con historial. Ejecución manual ya disponible; la diaria (07:00 UTC) queda activa en cuanto la rama llegue a producción: las claves ya están configuradas. Nunca publican.' },
+]
+
+export function moduleFor(href: string) {
+  return studioModules.find(m => m.href === href)
+}
