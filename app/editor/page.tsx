@@ -6,14 +6,16 @@ import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { emptyComposition, syncWithScenes, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { emptyComposition, parseComposition, syncWithScenes, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import type { ProjectRow } from '@/lib/types/database'
+import { uploadProjectMedia } from '@/lib/media-upload'
+import { imagePresets, type ImagePreset, type ImageQuality } from '@/lib/providers/image-presets'
 import { draftSummary, draftsForStoryboard, INTERRUPTED_MESSAGE, isStaleRender, SaveConflictError, type Draft, type DraftRow } from '@/lib/editor/jobs'
 
 type Board = { id: string; title: string; aspect_ratio: string; created_at: string }
 type Scene = { id: string; position: number; duration_ms: number; narration: string | null; visual_prompt: string | null }
-type Render = { id: string; status: string; output_format: string; error: string | null; created_at: string; updated_at: string; output_asset_id: string | null; url?: string }
+type Render = { id: string; status: string; output_format: string; error: string | null; created_at: string; updated_at: string; output_asset_id: string | null; composition: unknown; url?: string }
 
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
 const statusLabels: Record<string, string> = { rendering: 'Renderizando', completed: 'Completado', failed: 'Falló', cancelled: 'Cancelado', queued: 'En cola' }
@@ -31,6 +33,8 @@ export default function EditorPage() {
   const [jobUpdatedAt, setJobUpdatedAt] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Draft[]>([])
   const savingRef = useRef(false)
+  const [preset, setPreset] = useState<ImagePreset>('documentary')
+  const [quality, setQuality] = useState<ImageQuality>('medium')
   const [comp, setComp] = useState<Composition | null>(null)
   const [dirty, setDirty] = useState(false)
   const [renders, setRenders] = useState<Render[]>([])
@@ -59,7 +63,7 @@ export default function EditorPage() {
   }, [supabase])
 
   const loadRenders = useCallback(async (pid: string) => {
-    const { data } = await supabase.from('render_jobs').select('id,status,output_format,error,created_at,updated_at,output_asset_id')
+    const { data } = await supabase.from('render_jobs').select('id,status,output_format,error,created_at,updated_at,output_asset_id,composition')
       .eq('project_id', pid).neq('status', 'draft').order('created_at', { ascending: false }).limit(8)
     const rows = ((data ?? []) as Render[]).map(r => ({ ...r }))
     // Renders left "rendering" by a closed tab never finish: record them as interrupted.
@@ -109,7 +113,8 @@ export default function EditorPage() {
       const base = job?.comp ?? emptyComposition(boardId, board?.title ?? 'Montaje', (board?.aspect_ratio as OutputFormat) === '9:16' ? '9:16' : '16:9')
       setJobId(job?.id ?? null)
       setJobUpdatedAt(job?.updatedAt ?? null)
-      setComp(syncWithScenes(base, list))
+      // Manually edited montages are not re-synced with the storyboard (clips may be split, reordered or added).
+      setComp(base.editedManually ? base : syncWithScenes(base, list))
       setDirty(!job)
     })()
   }, [boardId, boards, projectId, supabase])
@@ -122,7 +127,7 @@ export default function EditorPage() {
   function openDraft(id: string) {
     const d = drafts.find(x => x.id === id)
     if (!d || (dirty && !window.confirm('Hay cambios sin guardar. ¿Abrir otra versión?'))) return
-    setJobId(d.id); setJobUpdatedAt(d.updatedAt); setComp(syncWithScenes(d.comp, scenes)); setDirty(false); setNotice('')
+    setJobId(d.id); setJobUpdatedAt(d.updatedAt); setComp(d.comp.editedManually ? d.comp : syncWithScenes(d.comp, scenes)); setDirty(false); setNotice('')
   }
 
   async function save(): Promise<void> {
@@ -162,13 +167,16 @@ export default function EditorPage() {
     try { await save(); setNotice('Montaje guardado.') } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar.') }
   }
 
-  async function generate(clip: Clip, kind: 'voice' | 'image') {
+  async function generate(clip: Clip, kind: 'voice' | 'image' | 'video') {
     const scene = scenes.find(s => s.id === clip.sceneId)
     const text = kind === 'voice' ? clip.narration?.trim() : (scene?.visual_prompt?.trim() || clip.narration?.trim())
     if (!text) { setError(kind === 'voice' ? 'La escena no tiene narración.' : 'La escena no tiene prompt visual ni narración.'); return }
+    if (kind === 'video' && !window.confirm('Genera un clip de vídeo de 5 s con fal.ai (480p). Tiene coste por generación en tu cuenta de fal.ai. ¿Continuar?')) return
     setBusyClip(`${clip.sceneId}:${kind}`); setError(''); setNotice('')
     try {
-      const body = kind === 'voice' ? { projectId, text: text.slice(0, 4000) } : { projectId, prompt: text.slice(0, 4000), style: 'cinematic' }
+      const body = kind === 'voice' ? { projectId, text: text.slice(0, 4000) }
+        : kind === 'image' ? { projectId, prompt: text.slice(0, 4000), preset, quality, format: comp?.format, context: scene?.visual_prompt?.trim() ? clip.narration : null }
+          : { projectId, prompt: `${text.slice(0, 1500)}\n\n${imagePresets[preset].direction}` }
       const r = await fetch(`/api/providers/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const json = await r.json() as { asset?: { id: string }; error?: string }
       if (!r.ok || !json.asset) throw new Error(json.error ?? 'La generación falló.')
@@ -176,11 +184,22 @@ export default function EditorPage() {
       if (kind === 'voice') {
         const ms = await audioDurationMs(json.asset.id).catch(() => null)
         patchClip(clip.sceneId, { voiceAssetId: json.asset.id, ...(ms ? { durationMs: Math.min(Math.max(ms + 400, MIN_CLIP_MS), MAX_CLIP_MS) } : {}) })
-      } else patchClip(clip.sceneId, { visualAssetId: json.asset.id })
-      setNotice(kind === 'voice' ? 'Voz generada, asignada y duración ajustada. Guarda el montaje.' : 'Imagen generada y asignada. Guarda el montaje.')
+      } else patchClip(clip.sceneId, { visualAssetId: json.asset.id, ...(kind === 'video' ? { motion: 'none' as const, trimInMs: 0 } : {}) })
+      setNotice(kind === 'voice' ? 'Voz generada, asignada y duración ajustada. Guarda el montaje.' : kind === 'video' ? 'Vídeo generado y asignado. Guarda el montaje.' : 'Imagen generada y asignada. Guarda el montaje.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'La generación falló.')
     } finally { setBusyClip('') }
+  }
+
+  async function uploadVisual(clip: Clip, file: File) {
+    setBusyClip(`${clip.sceneId}:upload`); setError(''); setNotice('')
+    try {
+      const kind = file.type.startsWith('video/') ? 'video' : 'image'
+      const asset = await uploadProjectMedia(supabase, { projectId, kind, file, title: file.name.replace(/\.[^.]+$/, ''), license: 'owned' })
+      await loadAssets(projectId)
+      patchClip(clip.sceneId, { visualAssetId: asset.id, ...(kind === 'video' ? { motion: 'none' as const, trimInMs: 0 } : {}) })
+      setNotice(`${kind === 'video' ? 'Vídeo' : 'Imagen'} subido a la Biblioteca y asignado. Guarda el montaje.`)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo subir el archivo.') } finally { setBusyClip('') }
   }
 
   async function fitToVoice(clip: Clip) {
@@ -239,10 +258,27 @@ export default function EditorPage() {
         </div>
         <div className="pageActions">
           <Link className="buttonLink ghost" href={`/create?project=${projectId}&storyboard=${boardId}`}>Editar escenas</Link>
+          {jobId && !dirty ? <Link className="buttonLink ghost" href={`/editor/manual?job=${jobId}`}>Abrir en el Editor manual</Link>
+            : <span className="muted small" title="Guarda el montaje para abrirlo en el Editor manual">Guarda para abrir en el Editor manual</span>}
           <button type="button" onClick={() => void saveClick()} disabled={!dirty}>Guardar montaje</button>
         </div>
       </div>
 
+      {comp.editedManually ? <p className="warnBox" style={{ marginBottom: 14 }}>Este montaje se editó en el Editor manual (clips divididos, reordenados o añadidos), así que ya no se sincroniza con las escenas del storyboard. Sigue editándolo en el <Link className="open" href={`/editor/manual?job=${jobId}`}>Editor manual</Link>; aquí puedes previsualizarlo y renderizarlo.</p> : <>
+      <section className="panel" style={{ marginBottom: 14 }}>
+        <div className="field-row">
+          <label>Estilo de las imágenes generadas
+            <select value={preset} onChange={e => setPreset(e.target.value as ImagePreset)}>{Object.entries(imagePresets).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}</select>
+          </label>
+          <label>Calidad de imagen
+            <select value={quality} onChange={e => setQuality(e.target.value as ImageQuality)}>
+              <option value="medium">Media (por defecto)</option>
+              <option value="high">Alta (más detalle, unas 4 veces el coste de Media)</option>
+            </select>
+          </label>
+        </div>
+        <p className="muted small" style={{ marginTop: 6 }}>Las imágenes se generan a {comp.format === '9:16' ? '1024×1536' : comp.format === '1:1' ? '1024×1024' : '1536×1024'} para el formato del montaje, con un prompt fotográfico (cámara, luz natural, imperfecciones reales) que evita el aspecto de «arte IA». El prompt final queda guardado en el asset.</p>
+      </section>
       <h3 className="sectionTitle">Línea de tiempo</h3>
       <div className="list">
         {comp.clips.map((clip, i) => {
@@ -279,11 +315,26 @@ export default function EditorPage() {
             <div className="pageActions">
               <button type="button" className="ghost" disabled={Boolean(busyClip) || !clip.narration?.trim()} onClick={() => void generate(clip, 'voice')}><Icon name="mic" size={16} />{busyClip === `${clip.sceneId}:voice` ? 'Generando voz…' : 'Generar voz'}</button>
               <button type="button" className="ghost" disabled={Boolean(busyClip) || !(scene?.visual_prompt?.trim() || clip.narration?.trim())} onClick={() => void generate(clip, 'image')}><Icon name="image" size={16} />{busyClip === `${clip.sceneId}:image` ? 'Generando imagen…' : 'Generar imagen'}</button>
+              <button type="button" className="ghost" disabled={Boolean(busyClip) || !(scene?.visual_prompt?.trim() || clip.narration?.trim())} onClick={() => void generate(clip, 'video')}><Icon name="video" size={16} />{busyClip === `${clip.sceneId}:video` ? 'Generando vídeo…' : 'Generar vídeo (fal.ai)'}</button>
+              <label className="buttonLink ghost" style={{ cursor: 'pointer' }}>
+                <Icon name="upload" size={16} />{busyClip === `${clip.sceneId}:upload` ? 'Subiendo…' : 'Subir imagen o vídeo'}
+                <input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" hidden disabled={Boolean(busyClip)} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadVisual(clip, f) }} />
+              </label>
               <button type="button" className="ghost" disabled={Boolean(busyClip) || !clip.voiceAssetId} onClick={() => void fitToVoice(clip)}>{busyClip === `${clip.sceneId}:fit` ? 'Midiendo…' : 'Ajustar a la voz'}</button>
             </div>
+            {visuals.find(a => a.id === clip.visualAssetId)?.asset_type === 'video' && <div className="field-row">
+              <label>Empezar el vídeo en (s)
+                <input type="number" min={0} step={0.1} value={(clip.trimInMs ?? 0) / 1000} onChange={e => patchClip(clip.sceneId, { trimInMs: Math.max(0, Math.round(Number(e.target.value) * 1000) || 0) })} />
+              </label>
+              <label>Volumen del audio del vídeo ({Math.round((clip.muted ? 0 : clip.volume ?? 1) * 100)}%)
+                <input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => patchClip(clip.sceneId, { volume: Number(e.target.value), muted: false })} />
+              </label>
+              <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => patchClip(clip.sceneId, { muted: e.target.checked })} /> Silenciar audio del vídeo</label>
+            </div>}
           </section>
         })}
       </div>
+      </>}
 
       <h3 className="sectionTitle">Audio y subtítulos</h3>
       <section className="panel" style={{ marginBottom: 14 }}>
@@ -314,7 +365,7 @@ export default function EditorPage() {
     {renders.length > 0 && <>
       <h3 className="sectionTitle">Renders del proyecto</h3>
       <div className="grid">{renders.map(r => <article key={r.id}>
-        <small>{statusLabels[r.status] ?? r.status} · {r.output_format}</small>
+        <small>{statusLabels[r.status] ?? r.status} · {r.output_format}{(() => { const c = parseComposition(r.composition); return c ? ` · ${draftSummary(c)} · ${fmt(totalDurationMs(c))}` : '' })()}</small>
         {r.url ? <video src={r.url} controls preload="metadata" style={{ width: '100%', borderRadius: 8, marginTop: 6 }} /> : r.error ? <p className="error small">{r.error}</p> : null}
         <p className="muted small">{new Date(r.created_at).toLocaleString()}</p>
       </article>)}</div>

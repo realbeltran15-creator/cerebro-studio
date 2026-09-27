@@ -1,5 +1,8 @@
 import type { GeneratedAsset, ImageGenerationOptions, ImageGenerationProvider, ProviderContext, ProviderHealth } from './types'
 
+/** Model is configurable so a newer OpenAI image model can be selected without code changes. */
+export const imageModel = () => process.env.OPENAI_IMAGE_MODEL?.trim() || 'gpt-image-1'
+
 export class OpenAIImageProvider implements ImageGenerationProvider {
   readonly id = 'openai-image'
 
@@ -18,7 +21,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
         'Content-Type': 'application/json',
         'X-Client-Request-Id': context.requestId,
       },
-      body: JSON.stringify({ model: 'gpt-image-1', prompt, size: options?.size ?? '1024x1024' }),
+      body: JSON.stringify({ model: imageModel(), prompt, size: options?.size ?? '1024x1024', ...(options?.quality ? { quality: options.quality } : {}) }),
     })
 
     if (!response.ok) {
@@ -36,7 +39,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       provider: this.id,
       mimeType: 'image/png',
       uri,
-      metadata: { model: 'gpt-image-1', size: options?.size ?? '1024x1024', usage: payload.usage ?? null },
+      metadata: { model: imageModel(), size: options?.size ?? '1024x1024', quality: options?.quality ?? 'auto', usage: payload.usage ?? null },
     }
   }
 }
