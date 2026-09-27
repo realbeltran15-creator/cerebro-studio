@@ -146,3 +146,22 @@ export function redo(h: History): History {
   if (!h.future.length) return h
   return { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
 }
+
+/**
+ * The part of a composition that starts at a clip, for previewing from that point.
+ * Absolute audio is shifted and trimmed so it stays in sync; audio that ended before is dropped.
+ */
+export function fromClip(c: Composition, clipId: string): Composition {
+  const i = c.clips.findIndex(k => k.id === clipId)
+  if (i <= 0) return c
+  const offset = clipStarts(c)[i]
+  const kept = new Set(c.clips.slice(i).map(k => k.id))
+  const audioClips = (c.audioClips ?? []).flatMap(a => {
+    if (a.linkedClipId) return kept.has(a.linkedClipId) ? [a] : []
+    const end = a.startMs + a.durationMs
+    if (end <= offset) return []
+    const cut = Math.max(offset - a.startMs, 0)
+    return [{ ...a, startMs: Math.max(a.startMs - offset, 0), trimInMs: a.trimInMs + cut, durationMs: a.durationMs - cut }]
+  })
+  return { ...c, clips: c.clips.slice(i), audioClips, hookText: null }
+}

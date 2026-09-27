@@ -96,3 +96,20 @@ describe('timeline operations', () => {
     expect(h.future).toEqual([])
   })
 })
+
+import { fromClip } from '@/lib/editor/timeline'
+
+describe('preview from a clip', () => {
+  it('keeps later clips, linked audio and shifts absolute audio in sync', () => {
+    let m = toManual(auto())
+    m = addAudioClip(m, { assetId: 'mus', kind: 'music', linkedClipId: null, offsetMs: 0, startMs: 1000, trimInMs: 0, durationMs: 12000, volume: 0.3, muted: false })
+    m = addAudioClip(m, { assetId: 'early', kind: 'sfx', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 1000, volume: 1, muted: false })
+    const p = fromClip(m, 'b')
+    expect(p.clips.map(k => k.id)).toEqual(['b', 'c'])
+    expect(p.audioClips!.map(a => a.assetId)).toEqual(['v2', 'mus'])
+    const mus = p.audioClips!.find(a => a.assetId === 'mus')!
+    expect([mus.startMs, mus.trimInMs, mus.durationMs]).toEqual([0, 3000, 9000])
+    expect(audioStartMs(p, p.audioClips![0])).toBe(0)
+    expect(fromClip(m, 'a')).toBe(m)
+  })
+})
