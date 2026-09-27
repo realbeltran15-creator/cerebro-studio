@@ -105,6 +105,10 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const stored = (await db()).render_jobs[0].composition
   check('manual: saved as manual edit with split trims', stored.editedManually === true && stored.clips[2].trimInMs === 1500 && stored.clips[3].text?.content === 'FIN', stored.clips)
   check('manual: saved audio tracks', stored.audioClips.map(a => a.kind).join() === 'voice,voice,music', stored.audioClips)
+  await clips.nth(2).click()
+  await page.getByText('Vista previa desde el clip seleccionado').click()
+  check('manual: partial preview hides rendering', await page.getByRole('button', { name: /Renderizar y guardar/ }).count() === 0)
+  await page.getByText('Vista previa desde el clip seleccionado').click()
   await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 60000 })
   const final = await db()

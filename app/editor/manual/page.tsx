@@ -6,7 +6,7 @@ import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { audioStartMs, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
-import { addAudioClip, addClip, commit, deleteAudioClip, deleteClip, duplicateClip, historyOf, moveAudioClip, moveClip, redo, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, type History } from '@/lib/editor/timeline'
+import { addAudioClip, addClip, commit, fromClip, deleteAudioClip, deleteClip, duplicateClip, historyOf, moveAudioClip, moveClip, redo, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 
@@ -34,6 +34,8 @@ export default function ManualEditorPage() {
   const [addAudio, setAddAudio] = useState('')
   const [addAudioKind, setAddAudioKind] = useState<AudioClip['kind']>('music')
   const [splitAt, setSplitAt] = useState('')
+  const [previewFromSelected, setPreviewFromSelected] = useState(false)
+  const [thumbs, setThumbs] = useState<Record<string, string>>({})
 
   const comp = history?.present ?? null
   const apply = useCallback((next: (c: Composition) => Composition) => {
@@ -101,6 +103,20 @@ export default function ManualEditorPage() {
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
+
+  // Thumbnails of the images used on the timeline (signed URLs, fetched once per asset).
+  const imageIds = useMemo(() => [...new Set((history?.present.clips ?? []).map(c => c.visualAssetId).filter((id): id is string => Boolean(id) && assets.find(a => a.id === id)?.asset_type !== 'video'))].sort().join(','), [history, assets])
+  useEffect(() => {
+    const missing = imageIds ? imageIds.split(',').filter(id => !thumbs[id]) : []
+    if (!missing.length) return
+    let alive = true
+    void Promise.all(missing.map(async id => {
+      const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' })
+      const j = await r.json().catch(() => ({})) as { url?: string }
+      return [id, j.url ?? ''] as const
+    })).then(pairs => { if (alive) setThumbs(t => ({ ...t, ...Object.fromEntries(pairs.filter(([, u]) => u)) })) })
+    return () => { alive = false }
+  }, [imageIds, thumbs])
 
   const visuals = useMemo(() => assets.filter(a => visualTypes.includes(a.asset_type)), [assets])
   const audios = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type) || musicTypes.includes(a.asset_type)), [assets])
@@ -177,7 +193,7 @@ export default function ManualEditorPage() {
             onDragStart={e => { if (drag.current) { e.preventDefault(); return } setDragId(clip.id) }} onDragOver={e => e.preventDefault()}
             onDrop={() => { if (dragId && dragId !== clip.id) apply(c => moveClip(c, dragId, i)); setDragId(null) }}
             onClick={() => setSelection({ kind: 'clip', id: clip.id })}
-            style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: kindColor[typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === clip.id ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
+            style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumbs[clip.visualAssetId ?? ''] ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumbs[clip.visualAssetId ?? '']}) center / cover` : kindColor[typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === clip.id ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
             title={`${label(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
             <b>{i + 1}</b> {label(clip.visualAssetId)}<br />{secs(clip.durationMs)} s{clip.transition === 'cut' ? ' · corte' : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}
             <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => onPointerDown(e, 'resize', clip.id, clip.durationMs)} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} aria-label="Cambiar duración" />
@@ -258,7 +274,10 @@ export default function ManualEditorPage() {
       </section>
     </div>
 
-    <RenderPanel projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} />
+    {selClip && comp.clips[0]?.id !== selClip.id && <label className="pill" style={{ marginBottom: 8 }}><input type="checkbox" checked={previewFromSelected} onChange={e => setPreviewFromSelected(e.target.checked)} /> Vista previa desde el clip seleccionado (sin render)</label>}
+    {previewFromSelected && selClip && comp.clips[0]?.id !== selClip.id
+      ? <RenderPanel key={`preview-${selClip.id}`} projectId={job.project_id} composition={fromClip(comp, selClip.id)} assets={assets} previewOnly />
+      : <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} />}
   </StudioShell>
 }
 

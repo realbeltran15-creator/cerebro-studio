@@ -13,12 +13,14 @@ const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms %
  * Preview and browser render for a composition. Before rendering it asks the parent to persist
  * the composition, then records a snapshot in its own render_jobs row.
  */
-export function RenderPanel({ projectId, composition, assets, beforeRender, onRendered }: {
+export function RenderPanel({ projectId, composition, assets, beforeRender, onRendered, previewOnly }: {
   projectId: string
   composition: Composition
   assets: EditorAsset[]
   beforeRender?: () => Promise<void>
   onRendered?: () => void
+  /** Only preview (e.g. a partial composition); rendering is disabled. */
+  previewOnly?: boolean
 }) {
   const supabase = getSupabaseBrowserClient()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -111,7 +113,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
     <div className="pageActions">
       {mode === 'idle' ? <>
         <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>
-        <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported()} onClick={() => void run(true)}><Icon name="video" size={16} />Renderizar y guardar</button>
+        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported()} onClick={() => void run(true)}><Icon name="video" size={16} />Renderizar y guardar</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar WebM</a>}
     </div>
