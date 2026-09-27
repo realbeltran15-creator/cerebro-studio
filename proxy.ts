@@ -1,7 +1,11 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+<<<<<<< HEAD
 const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose', '/automations', '/studio', '/usage', '/social', '/connectors', '/campaigns', '/shorts']
+=======
+const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose', '/automations', '/influencer']
+>>>>>>> c7aee18 (feat(influencer): private Virtual Influencer Studio on top of projects, Biblioteca, approvals and providers)
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -41,8 +45,12 @@ export const config = {
   matcher: [
     '/studio/:path*', '/usage/:path*',
     '/projects/:path*', '/market-intelligence/:path*', '/opportunities/:path*', '/scripts/:path*', '/create/:path*',
+<<<<<<< HEAD
     '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*', '/thumbnails/:path*', '/radar/:path*', '/audio/:path*', '/editor/:path*', '/repurpose/:path*', '/automations/:path*',
     // Previously missing from the matcher although listed as protected: the pages rendered without a session (data stayed behind RLS).
     '/social/:path*', '/connectors/:path*', '/campaigns/:path*', '/shorts/:path*',
+=======
+    '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*', '/thumbnails/:path*', '/radar/:path*', '/audio/:path*', '/editor/:path*', '/repurpose/:path*', '/automations/:path*', '/influencer/:path*',
+>>>>>>> c7aee18 (feat(influencer): private Virtual Influencer Studio on top of projects, Biblioteca, approvals and providers)
   ],
 }

@@ -125,11 +125,30 @@ Los archivos ya guardados en Supabase siguen funcionando. Configuración CORS de
 - **Aprende de mí** (editor manual): «Grabar mi forma de editar» mide lo que hace el usuario: duración de los cortes, divisiones, transiciones, zoom, textos, volúmenes y efectos en los cortes. Lo guarda como estilo (en `connector_configs`, solo del propietario), lo afina con cada sesión y lo aplica a otros montajes, con opción de deshacer. Graba acciones del editor, no la pantalla: así el resultado es exacto y repetible.
 - CapCut no tiene API oficial de edición; no se integra.
 
+## Virtual Influencer Studio (privado)
+
+Ruta `/influencer`. Reutiliza proyectos (cada persona tiene el suyo, así las referencias y resultados están en la Biblioteca), `assets`, `approvals` y los proveedores existentes.
+
+- **Persona Bible**: adulta, divulgación como IA siempre activa y confirmación de que no imita a una persona real.
+- **Referencias** por categoría; solo cuentan las aprobadas.
+- **Identidad versionada**: rasgos de rostro, ojos, cabello, piel, cuerpo, manos, dientes y marcas. Las versiones aprobadas son inmutables en base de datos.
+- **Voice Profile, Scene Bible y vestuario.**
+- **Trabajos de generación con preflight en el servidor**:
+  - Con presupuesto 0 EUR, todo trabajo de pago queda bloqueado con su motivo.
+  - Un trabajo sin coste estimable no se ejecuta.
+  - Un proveedor sin referencias no sirve para producir con identidad.
+  - Los adaptadores sin credenciales aparecen como `NOT_CONNECTED`.
+- **Revisión de calidad**:
+  - Los controles medidos de verdad en el navegador son resolución, sincronía audio/vídeo y flicker de luminancia.
+  - El resto (rostro, manos, lipsync, voz…) son revisión humana, con el modelo que haría falta para automatizarlos.
+  - Nada se aprueba sin revisión superada y confirmación humana.
+
 ## Migraciones
 
 - `20260926120000_scripts_module.sql` (aditiva): crea `public.scripts` con RLS y añade `storyboards.script_id`. Aplicada en la base desplegada (versión `20260926151554`); esquema, RLS y flujo guion → versión → storyboard → escenas verificados con transacciones revertidas.
 - `20260926190000_automations.sql` (aditiva): crea `public.automations` y `public.automation_runs` con RLS por propietario. Aplicada en la base desplegada; RLS verificado con transacción revertida.
 - `20260926230000_trend_snapshots.sql` (aditiva): histórico del Radar con RLS por propietario. Aplicada; RLS verificado con transacción revertida.
+- `20260927150000_virtual_influencer_studio.sql` (aditiva): tablas `vi_*` del Virtual Influencer Studio con RLS por propietario, triggers de pertenencia (sin referencias a personas, proyectos o assets de otro usuario) e identidades aprobadas inmutables. Aplicada; verificado con transacción revertida.
 - Aviso: los archivos `20260916*` del repositorio no reflejan exactamente el esquema desplegado (p. ej. `scenes.narration`, `metric_snapshots.observed`, `assets.asset_type`). El esquema desplegado es la referencia; `lib/types/database.ts` sigue al desplegado.
 
 ## Dependencias y avisos de `npm audit`
