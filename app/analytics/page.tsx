@@ -19,6 +19,7 @@ export default function AnalyticsPage() {
   const [connection, setConnection] = useState<Connection | null>(null)
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
+  const [busyDays, setBusyDays] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -38,16 +39,23 @@ export default function AnalyticsPage() {
   }, [load])
 
   async function importDays(days: number) {
-    setBusy(true); setError(''); setNotice('')
+    setBusyDays(days); setBusy(true); setError(''); setNotice('')
     try {
       const r = await fetch('/api/analytics/youtube/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days }) })
       const json = await r.json() as ImportResult & { error?: string }
       if (!r.ok) throw new Error(json.error ?? 'No se pudo importar.')
       setNotice(importSummary(json))
       await load()
-    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo importar.') } finally { setBusy(false) }
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo importar.') } finally { setBusy(false); setBusyDays(null) }
   }
 
+  // Traceability: what the most recent import asked for, read back from the stored rows.
+  const lastImport = useMemo(() => {
+    const latest = rows.reduce<Snapshot | null>((best, r) => (String(r.observed.importedAt ?? '') > String(best?.observed.importedAt ?? '') ? r : best), null)
+    if (!latest?.observed.importedAt) return null
+    const same = rows.filter(r => r.observed.importedAt === latest.observed.importedAt && r.external_content_id.startsWith('channel:')).map(r => r.metric_date).sort()
+    return { at: String(latest.observed.importedAt), requestedDays: latest.observed.requestedDays as number | undefined, start: latest.observed.requestedStart as string | undefined, end: latest.observed.requestedEnd as string | undefined, first: same[0], last: same.at(-1), days: same.length }
+  }, [rows])
   const daily = useMemo(() => rows.filter(r => r.external_content_id.startsWith('channel:')).sort((a, b) => a.metric_date.localeCompare(b.metric_date)).slice(-28), [rows])
   const latestEnd = useMemo(() => rows.filter(r => !r.external_content_id.startsWith('channel:')).map(r => r.metric_date).sort().at(-1), [rows])
   const videos = useMemo(() => rows.filter(r => !r.external_content_id.startsWith('channel:') && r.metric_date === latestEnd).sort((a, b) => (n(b.observed.views) ?? 0) - (n(a.observed.views) ?? 0)), [rows, latestEnd])
@@ -63,10 +71,11 @@ export default function AnalyticsPage() {
       <div className="cardHead" style={{ marginBottom: 8 }}>
         <h3>{connection ? `Canal conectado: ${connection.external_account_name ?? 'YouTube'}` : 'Canal de YouTube sin conectar'}</h3>
         {connection ? <div className="pageActions">
-          {[7, 28, 90].map(d => <button key={d} type="button" className={d === 28 ? undefined : 'ghost'} disabled={busy} onClick={() => void importDays(d)}>{busy ? 'Importando…' : `Importar ${d} días`}</button>)}
+          {[7, 28, 90].map(d => <button key={d} type="button" className={d === 28 ? undefined : 'ghost'} disabled={busy} onClick={() => void importDays(d)}>{busyDays === d ? 'Importando…' : `Importar ${d} días`}</button>)}
         </div> : <Link className="buttonLink" href="/connectors">Conectar en Conectores</Link>}
       </div>
       <p className="muted small">Datos de YouTube Analytics de tu propio canal (solo lectura). YouTube consolida las métricas con 1–3 días de retraso. Los valores observados vienen de la API; los calculados los deriva Cerebro y se muestran aparte.</p>
+        {lastImport && <p className="muted small" style={{ marginTop: 6 }}>Última importación: {new Date(lastImport.at).toLocaleString()}{lastImport.requestedDays ? ` · solicitados ${lastImport.requestedDays} días (${lastImport.start} → ${lastImport.end})` : ' · rango solicitado no registrado (importación anterior a este cambio)'} · YouTube devolvió {lastImport.days} días{lastImport.first ? ` (${lastImport.first} → ${lastImport.last})` : ''}.</p>}
     </section>
 
     {daily.length > 0 && <>

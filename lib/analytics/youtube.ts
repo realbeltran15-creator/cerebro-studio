@@ -58,7 +58,7 @@ export async function importYouTubeAnalytics(db: SupabaseClient, ownerId: string
       const views = num(d.views), minutes = num(d.estimatedMinutesWatched)
       return {
         owner_id: ownerId, project_id: null, platform: 'youtube', external_content_id: `channel:${connection.external_account_id}`, metric_date: String(d.day),
-        observed: { views, estimatedMinutesWatched: minutes, averageViewDuration: num(d.averageViewDuration), likes: num(d.likes), comments: num(d.comments), shares: num(d.shares), subscribersGained: num(d.subscribersGained), subscribersLost: num(d.subscribersLost), source: 'youtube_analytics_api', importedAt },
+        observed: { views, estimatedMinutesWatched: minutes, averageViewDuration: num(d.averageViewDuration), likes: num(d.likes), comments: num(d.comments), shares: num(d.shares), subscribersGained: num(d.subscribersGained), subscribersLost: num(d.subscribersLost), source: 'youtube_analytics_api', importedAt, requestedDays: days, requestedStart: period.startDate, requestedEnd: period.endDate },
         calculated: { netSubscribers: (num(d.subscribersGained) ?? 0) - (num(d.subscribersLost) ?? 0), minutesPerView: views ? Math.round(((minutes ?? 0) / views) * 100) / 100 : null },
       }
     }),
@@ -66,7 +66,7 @@ export async function importYouTubeAnalytics(db: SupabaseClient, ownerId: string
       const id = String(v.video), views = num(v.views)
       return {
         owner_id: ownerId, project_id: projectFor.get(id) ?? null, platform: 'youtube', external_content_id: id, metric_date: period.endDate,
-        observed: { title: titles.get(id) ?? null, periodStart: period.startDate, periodEnd: period.endDate, views, estimatedMinutesWatched: num(v.estimatedMinutesWatched), averageViewDuration: num(v.averageViewDuration), averageViewPercentage: num(v.averageViewPercentage), likes: num(v.likes), comments: num(v.comments), subscribersGained: num(v.subscribersGained), source: 'youtube_analytics_api', importedAt },
+        observed: { title: titles.get(id) ?? null, periodStart: period.startDate, periodEnd: period.endDate, views, estimatedMinutesWatched: num(v.estimatedMinutesWatched), averageViewDuration: num(v.averageViewDuration), averageViewPercentage: num(v.averageViewPercentage), likes: num(v.likes), comments: num(v.comments), subscribersGained: num(v.subscribersGained), source: 'youtube_analytics_api', importedAt, requestedDays: days, requestedStart: period.startDate, requestedEnd: period.endDate },
         calculated: { likesPer1000Views: views ? Math.round(((num(v.likes) ?? 0) / views) * 100000) / 100 : null, subscribersPer1000Views: views ? Math.round(((num(v.subscribersGained) ?? 0) / views) * 100000) / 100 : null },
       }
     }),
