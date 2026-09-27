@@ -4,8 +4,8 @@ import { captionChunks, clipStarts, compositionIssues, emptyComposition, parseCo
 const base = () => {
   const c = emptyComposition('sb', 'T')
   c.clips = [
-    { sceneId: 'a', position: 1, narration: 'x', visualAssetId: 'img', voiceAssetId: null, durationMs: 4000, motion: 'none' },
-    { sceneId: 'gone', position: 2, narration: null, visualAssetId: 'v', voiceAssetId: null, durationMs: 3000, motion: 'kenburns' },
+    { id: 'a', sceneId: 'a', position: 1, narration: 'x', visualAssetId: 'img', voiceAssetId: null, durationMs: 4000, motion: 'none' },
+    { id: 'gone', sceneId: 'gone', position: 2, narration: null, visualAssetId: 'v', voiceAssetId: null, durationMs: 3000, motion: 'kenburns' },
   ]
   return c
 }

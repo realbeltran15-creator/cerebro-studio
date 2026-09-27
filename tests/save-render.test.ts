@@ -21,8 +21,8 @@ function fakeSupabase() {
 describe('saving a render to the Biblioteca', () => {
   const comp = emptyComposition('sb1', 'Documental')
   comp.clips = [
-    { sceneId: 'a', position: 1, narration: 'uno', visualAssetId: 'img', voiceAssetId: 'voz', durationMs: 4888, motion: 'kenburns', focusX: 0.5 },
-    { sceneId: 'b', position: 2, narration: 'dos', visualAssetId: 'img', voiceAssetId: null, durationMs: 13000, motion: 'kenburns', focusX: 0.5 },
+    { id: 'a', sceneId: 'a', position: 1, narration: 'uno', visualAssetId: 'img', voiceAssetId: 'voz', durationMs: 4888, motion: 'kenburns', focusX: 0.5 },
+    { id: 'b', sceneId: 'b', position: 2, narration: 'dos', visualAssetId: 'img', voiceAssetId: null, durationMs: 13000, motion: 'kenburns', focusX: 0.5 },
   ]
   const assets = [
     { id: 'img', asset_type: 'image', storage_path: 'p', license_status: 'generated', source_provider: 'openai-image', provenance: {}, created_at: '' },

@@ -1,5 +1,5 @@
 import { applyGainPlan, musicGainPlan } from './audio-plan'
-import { captionChunks, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type Composition } from './composition'
+import { audioStartMs, captionChunks, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type Composition, type TextOverlay } from './composition'
 
 /**
  * Browser renderer: draws the composition on a canvas, mixes audio with WebAudio and,
@@ -45,11 +45,11 @@ async function loadVisual(source: MediaSource): Promise<LoadedVisual> {
 }
 
 /** Draws source covering the frame, with an optional slow zoom (Ken Burns) driven by progress 0..1. */
-function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number, w: number, h: number, zoom: number, focusX = 0.5) {
+function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number, w: number, h: number, zoom: number, focusX = 0.5, focusY = 0.5) {
   const scale = Math.max(w / sw, h / sh) * zoom
   const dw = sw * scale, dh = sh * scale
-  // focusX picks which part of a wider source stays in frame (0 = left edge, 1 = right edge).
-  ctx.drawImage(src, (w - dw) * focusX, (h - dh) / 2, dw, dh)
+  // focusX/focusY pick which part of a larger (or zoomed) source stays in frame (0 = left/top edge, 1 = right/bottom).
+  ctx.drawImage(src, (w - dw) * focusX, (h - dh) * focusY, dw, dh)
 }
 
 function drawHook(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, alpha: number) {
@@ -92,6 +92,22 @@ function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: 
   lines.forEach((l, i) => ctx.fillText(l, w / 2, bottom - boxH + size * 0.3 + (i + 1) * lineH))
 }
 
+function drawText(ctx: CanvasRenderingContext2D, t: TextOverlay, w: number, h: number) {
+  const size = Math.round(Math.min(w, h) * (t.sizePct / 100) * 1.6)
+  ctx.save()
+  ctx.font = `800 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  const lines = wrap(ctx, t.content, w * 0.86)
+  const lineH = size * 1.15
+  const blockH = lines.length * lineH
+  const top = t.position === 'top' ? h * 0.1 : t.position === 'center' ? (h - blockH) / 2 : h * 0.72 - blockH
+  ctx.lineWidth = Math.max(3, size * 0.1); ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#fff'
+  lines.forEach((l, i) => { const y = top + i * lineH + lineH / 2; ctx.strokeText(l, w / 2, y); ctx.fillText(l, w / 2, y) })
+  ctx.restore()
+}
+
+type ClipVideo = { el: HTMLVideoElement; url: string; gain: GainNode }
+
 export async function renderComposition(opts: RenderOptions): Promise<RenderResult> {
   const { composition, canvas, media, record, onProgress, signal } = opts
   const { width, height } = formatSize[composition.format]
@@ -101,64 +117,92 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
 
   const total = totalDurationMs(composition)
   const starts = clipStarts(composition)
+  const audioClips = (composition.audioClips ?? []).filter(a => !a.muted)
 
   // Decode everything up front so playback never waits on the network.
-  const visuals = new Map<string, LoadedVisual>()
+  // Images are shared by asset; every video clip gets its own element so trims, splits and
+  // duplicates of the same source play independently, each with its own audio gain.
+  const images = new Map<string, ImageBitmap>()
+  const videos = new Map<string, ClipVideo>()
   const audio = new AudioContext()
-  const buffers = new Map<string, AudioBuffer>()
-  try {
-    for (const clip of composition.clips) {
-      if (clip.visualAssetId && !visuals.has(clip.visualAssetId)) {
-        const src = media.get(clip.visualAssetId)
-        if (src && src.kind !== 'audio') visuals.set(clip.visualAssetId, await loadVisual(src))
-      }
-      for (const id of [clip.voiceAssetId]) {
-        if (id && !buffers.has(id)) {
-          const src = media.get(id)
-          if (src) buffers.set(id, await audio.decodeAudioData(await src.blob.arrayBuffer()))
-        }
-      }
-    }
-    if (composition.musicAssetId && !buffers.has(composition.musicAssetId)) {
-      const src = media.get(composition.musicAssetId)
-      if (src) buffers.set(composition.musicAssetId, await audio.decodeAudioData(await src.blob.arrayBuffer()))
-    }
-  } catch (error) {
-    await audio.close()
-    visuals.forEach(v => { if (v.kind === 'video') URL.revokeObjectURL(v.url) })
-    throw error instanceof Error ? error : new Error('No se pudieron preparar los recursos.')
-  }
-  if (signal?.aborted) { await audio.close(); return { blob: null, mimeType: null, durationMs: 0 } }
-
-  // Audio graph: voices at their clip offsets; music looped underneath, ducked while a voice plays.
   const out = record ? audio.createMediaStreamDestination() : null
   const master = audio.createGain()
   master.connect(out ?? audio.destination)
+  const buffers = new Map<string, AudioBuffer>()
+  const decode = async (id: string | null) => {
+    if (!id || buffers.has(id)) return
+    const src = media.get(id)
+    if (src) buffers.set(id, await audio.decodeAudioData(await src.blob.arrayBuffer()))
+  }
+  const cleanup = () => { videos.forEach(v => { v.el.pause(); URL.revokeObjectURL(v.url) }); images.forEach(b => b.close()) }
+  try {
+    for (const clip of composition.clips) {
+      const src = clip.visualAssetId ? media.get(clip.visualAssetId) : undefined
+      if (src?.kind === 'image' && !images.has(clip.visualAssetId!)) {
+        const loaded = await loadVisual(src)
+        if (loaded.kind === 'image') images.set(clip.visualAssetId!, loaded.bitmap)
+      } else if (src?.kind === 'video') {
+        const loaded = await loadVisual(src)
+        if (loaded.kind === 'video') {
+          loaded.el.muted = false
+          const gain = audio.createGain()
+          gain.gain.value = clip.muted ? 0 : clip.volume ?? 1
+          audio.createMediaElementSource(loaded.el).connect(gain)
+          gain.connect(master)
+          videos.set(clip.id, { el: loaded.el, url: loaded.url, gain })
+        }
+      }
+      await decode(clip.voiceAssetId)
+    }
+    await decode(composition.musicAssetId)
+    for (const a of audioClips) await decode(a.assetId)
+  } catch (error) {
+    cleanup(); await audio.close()
+    throw error instanceof Error ? error : new Error('No se pudieron preparar los recursos.')
+  }
+  if (signal?.aborted) { cleanup(); await audio.close(); return { blob: null, mimeType: null, durationMs: 0 } }
+
+  // Audio graph: voices at their offsets; music looped underneath, ducked while a voice plays.
   // Small lead so every source can be scheduled before playback starts; it shows as a brief black frame.
   const t0 = audio.currentTime + 0.1
   const sources: AudioScheduledSourceNode[] = []
+  const voiceWindows: Array<{ start: number; end: number }> = []
   composition.clips.forEach((clip, i) => {
     const buf = clip.voiceAssetId ? buffers.get(clip.voiceAssetId) : undefined
     if (!buf) return
     const node = audio.createBufferSource()
     node.buffer = buf
     node.connect(master)
-    node.start(t0 + starts[i] / 1000, 0, Math.min(buf.duration, clip.durationMs / 1000))
+    const start = t0 + starts[i] / 1000, dur = Math.min(buf.duration, clip.durationMs / 1000)
+    node.start(start, 0, dur)
+    voiceWindows.push({ start, end: start + dur })
     sources.push(node)
   })
+  for (const a of audioClips) {
+    const buf = buffers.get(a.assetId)
+    if (!buf) continue
+    const startMs = audioStartMs(composition, a)
+    if (startMs >= total) continue
+    const offset = Math.min(a.trimInMs / 1000, buf.duration)
+    const dur = Math.min(a.durationMs / 1000, buf.duration - offset, (total - startMs) / 1000)
+    if (dur <= 0) continue
+    const node = audio.createBufferSource()
+    node.buffer = buf
+    const gain = audio.createGain()
+    gain.gain.value = a.volume
+    node.connect(gain); gain.connect(master)
+    const start = t0 + startMs / 1000
+    node.start(start, offset, dur)
+    if (a.kind === 'voice') voiceWindows.push({ start, end: start + dur })
+    sources.push(node)
+  }
   const musicBuf = composition.musicAssetId ? buffers.get(composition.musicAssetId) : undefined
   if (musicBuf) {
     const node = audio.createBufferSource()
     node.buffer = musicBuf; node.loop = true
     const gain = audio.createGain()
     const end = t0 + total / 1000
-    const voices = composition.clips.flatMap((clip, i) => {
-      const buf = clip.voiceAssetId ? buffers.get(clip.voiceAssetId) : undefined
-      if (!buf) return []
-      const start = t0 + starts[i] / 1000
-      return [{ start, end: start + Math.min(buf.duration, clip.durationMs / 1000) }]
-    })
-    applyGainPlan(gain.gain, musicGainPlan({ base: composition.musicVolume, t0, end, duck: composition.duckMusic, voices }))
+    applyGainPlan(gain.gain, musicGainPlan({ base: composition.musicVolume, t0, end, duck: composition.duckMusic, voices: voiceWindows }))
     node.connect(gain); gain.connect(master)
     node.start(t0); node.stop(end + 0.1)
     sources.push(node)
@@ -169,7 +213,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   const chunks: Blob[] = []
   const mimeType = record ? pickMimeType() : null
   if (record) {
-    if (!mimeType || !out) throw new Error('Este navegador no puede grabar vídeo WebM. Usa Chrome, Edge o Firefox de escritorio.')
+    if (!mimeType || !out) { cleanup(); await audio.close(); throw new Error('Este navegador no puede grabar vídeo WebM. Usa Chrome, Edge o Firefox de escritorio.') }
     // Frames are pushed explicitly after each draw: with automatic capture, static images can leave
     // the encoder holding an earlier frame (e.g. mid-fade) for a long stretch.
     const stream = canvas.captureStream(0)
@@ -181,7 +225,8 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   }
 
   const captions = composition.clips.map(c => (composition.subtitles ? captionChunks(c.narration, c.durationMs) : []))
-  let activeVideo: HTMLVideoElement | null = null
+  let activeClipId: string | null = null
+  const last = composition.clips.length - 1
 
   await new Promise<void>(resolve => {
     const frame = () => {
@@ -191,31 +236,39 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, width, height)
       if (now >= 0) {
         let i = starts.findIndex((s, k) => now >= s && now < s + composition.clips[k].durationMs)
-        if (i < 0) i = composition.clips.length - 1
+        if (i < 0) i = last
         const clip = composition.clips[i]
         const local = now - starts[i]
         const progress = local / clip.durationMs
-        const visual = clip.visualAssetId ? visuals.get(clip.visualAssetId) : undefined
-        if (visual?.kind === 'video') {
-          if (activeVideo !== visual.el) {
-            activeVideo?.pause()
-            activeVideo = visual.el; visual.el.currentTime = 0; visual.el.loop = true; void visual.el.play()
-          }
-          drawCover(ctx, visual.el, visual.el.videoWidth || width, visual.el.videoHeight || height, width, height, 1, clip.focusX)
-        } else {
-          if (activeVideo) { activeVideo.pause(); activeVideo = null }
-          if (visual?.kind === 'image') drawCover(ctx, visual.bitmap, visual.bitmap.width, visual.bitmap.height, width, height, clip.motion === 'kenburns' ? 1 + 0.08 * progress : 1, clip.focusX)
+        const zoom = clip.zoom ?? 1
+        const video = videos.get(clip.id)
+        if (activeClipId !== clip.id) {
+          if (activeClipId) videos.get(activeClipId)?.el.pause()
+          activeClipId = clip.id
+          if (video) { video.el.currentTime = (clip.trimInMs ?? 0) / 1000; void video.el.play() }
         }
+        if (video) {
+          // A clip longer than the rest of its source loops back to the trim point.
+          const trimIn = (clip.trimInMs ?? 0) / 1000
+          if (video.el.ended || (video.el.duration && video.el.currentTime >= video.el.duration - 0.04)) { video.el.currentTime = trimIn; void video.el.play() }
+          drawCover(ctx, video.el, video.el.videoWidth || width, video.el.videoHeight || height, width, height, zoom, clip.focusX, clip.focusY)
+        } else {
+          const bitmap = clip.visualAssetId ? images.get(clip.visualAssetId) : undefined
+          if (bitmap) drawCover(ctx, bitmap, bitmap.width, bitmap.height, width, height, zoom * (clip.motion === 'kenburns' ? 1 + 0.08 * progress : 1), clip.focusX, clip.focusY)
+        }
+        if (clip.text) drawText(ctx, clip.text, width, height)
         const cap = captions[i].find(c => local >= c.startMs && local < c.endMs)
         if (cap) drawCaption(ctx, cap.text, width, height)
         if (composition.hookText && now < (composition.hookMs ?? 3000)) {
           const hookMs = composition.hookMs ?? 3000
           drawHook(ctx, composition.hookText, width, height, Math.min(1, (hookMs - now) / 400))
         }
-        // Fade through black at clip boundaries.
+        // Fade through black at clip boundaries, except where a cut was chosen.
         const fade = composition.fadeMs
         if (fade > 0) {
-          const edge = Math.min(local, clip.durationMs - local)
+          const fadeIn = i === 0 || composition.clips[i - 1].transition !== 'cut'
+          const fadeOut = i === last || clip.transition !== 'cut'
+          const edge = Math.min(fadeIn ? local : Infinity, fadeOut ? clip.durationMs - local : Infinity)
           if (edge < fade) { ctx.fillStyle = `rgba(0,0,0,${1 - edge / fade})`; ctx.fillRect(0, 0, width, height) }
         }
       }
@@ -225,7 +278,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     requestAnimationFrame(frame)
   })
 
-  ;(activeVideo as HTMLVideoElement | null)?.pause()
+  videos.forEach(v => v.el.pause())
   sources.forEach(s => { try { s.stop() } catch { /* already stopped */ } })
   let blob: Blob | null = null
   if (recorder) {
@@ -236,6 +289,6 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   }
   onProgress?.(total, total)
   await audio.close()
-  visuals.forEach(v => { if (v.kind === 'video') URL.revokeObjectURL(v.url); else v.bitmap.close() })
+  cleanup()
   return { blob, mimeType, durationMs: total }
 }
