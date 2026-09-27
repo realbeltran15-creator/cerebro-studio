@@ -1,3 +1,4 @@
+import { applyGainPlan, musicGainPlan } from './audio-plan'
 import { captionChunks, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type Composition } from './composition'
 
 /**
@@ -150,18 +151,14 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const node = audio.createBufferSource()
     node.buffer = musicBuf; node.loop = true
     const gain = audio.createGain()
-    const base = composition.musicVolume
-    gain.gain.setValueAtTime(0, t0)
-    gain.gain.linearRampToValueAtTime(base, t0 + 1)
-    if (composition.duckMusic) composition.clips.forEach((clip, i) => {
-      if (!clip.voiceAssetId || !buffers.get(clip.voiceAssetId)) return
-      const s = t0 + starts[i] / 1000
-      const e = s + Math.min(buffers.get(clip.voiceAssetId)!.duration, clip.durationMs / 1000)
-      gain.gain.setTargetAtTime(base * 0.35, Math.max(s - 0.15, t0), 0.08)
-      gain.gain.setTargetAtTime(base, e, 0.25)
-    })
     const end = t0 + total / 1000
-    gain.gain.setTargetAtTime(0, Math.max(end - 1.2, t0), 0.3)
+    const voices = composition.clips.flatMap((clip, i) => {
+      const buf = clip.voiceAssetId ? buffers.get(clip.voiceAssetId) : undefined
+      if (!buf) return []
+      const start = t0 + starts[i] / 1000
+      return [{ start, end: start + Math.min(buf.duration, clip.durationMs / 1000) }]
+    })
+    applyGainPlan(gain.gain, musicGainPlan({ base: composition.musicVolume, t0, end, duck: composition.duckMusic, voices }))
     node.connect(gain); gain.connect(master)
     node.start(t0); node.stop(end + 0.1)
     sources.push(node)

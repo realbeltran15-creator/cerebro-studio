@@ -48,9 +48,16 @@ export async function downloadCompositionMedia(c: Composition, assets: EditorAss
   return media
 }
 
-/** Inputs with unverified or restricted licenses make the output unverified too. */
-function outputLicense(inputs: EditorAsset[]) {
-  return inputs.some(a => a.license_status === 'unknown' || a.license_status === 'restricted') ? 'unknown' : 'owned'
+/**
+ * License of a render derived from its inputs: any unverified/restricted input makes it unverified;
+ * otherwise the most constrained status wins (licensed > generated > public domain/owned).
+ */
+export function outputLicense(inputs: Array<Pick<EditorAsset, 'license_status'>>) {
+  const st = new Set(inputs.map(a => a.license_status))
+  if (st.has('unknown') || st.has('restricted')) return 'unknown'
+  if (st.has('licensed')) return 'licensed'
+  if (st.has('generated')) return 'generated'
+  return 'owned'
 }
 
 export async function saveRender(supabase: SupabaseClient, input: {
@@ -86,6 +93,12 @@ export async function saveRender(supabase: SupabaseClient, input: {
       mimeType: input.mimeType,
       bytes: input.blob.size,
       renderer: 'browser-mediarecorder',
+      renderedAt: new Date().toISOString(),
+      settings: {
+        clips: input.composition.clips.length, fadeMs: input.composition.fadeMs, subtitles: input.composition.subtitles,
+        music: Boolean(input.composition.musicAssetId), duckMusic: input.composition.duckMusic, musicVolume: input.composition.musicVolume,
+        hookText: input.composition.hookText ?? null, sourceJobId: input.composition.origin?.sourceJobId ?? null,
+      },
       inputs: inputs.map(a => ({ id: a.id, type: a.asset_type, license: a.license_status, provider: a.source_provider })),
     },
   }).select('id').single()

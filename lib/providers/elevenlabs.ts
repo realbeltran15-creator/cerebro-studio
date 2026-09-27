@@ -32,7 +32,7 @@ export class ElevenLabsVoiceProvider implements VoiceProvider {
     if (!voiceId) throw new Error('ElevenLabs needs ELEVENLABS_VOICE_ID or a voice id.')
     const model = process.env.ELEVENLABS_MODEL_ID?.trim() || 'eleven_multilingual_v2'
     const uri = await audio(`/text-to-speech/${voiceId}?output_format=mp3_44100_128`, { text, model_id: model }, context.requestId)
-    return { provider: this.id, mimeType: 'audio/mpeg', uri, metadata: { model, voiceId, text: text.slice(0, 200) } }
+    return { provider: this.id, mimeType: 'audio/mpeg', uri, metadata: { model, voiceId, text: text.slice(0, 200), usage: { characters: text.length } } }
   }
 }
 

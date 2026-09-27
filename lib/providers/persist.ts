@@ -1,5 +1,6 @@
 import type { GeneratedAsset,ProviderContext } from './types'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { generationProvenance } from './provenance'
 
 const extFor=(mime:string)=>mime.includes('png')?'png':mime.includes('jpeg')||mime.includes('jpg')?'jpg':mime.includes('webp')?'webp':mime.includes('mpeg')?'mp3':mime.includes('wav')?'wav':mime.includes('video')?'mp4':'bin'
 
@@ -15,6 +16,6 @@ export async function persistGeneratedAsset(context:ProviderContext,kind:'image'
  const{error:uploadError}=await supabase.storage.from('generated-assets').upload(storagePath,bytes,{contentType:mime,upsert:false});if(uploadError)throw new Error(`Could not store generated asset: ${uploadError.message}`)
  // assets.asset_type has no 'render' value: renders are stored as videos tagged with their purpose.
  const assetType=kind==='render'?'video':kind
- const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:assetType,storage_path:storagePath,source_provider:asset.provider,provenance:{externalId:asset.externalId??null,mimeType:mime,requestId:context.requestId,...(kind==='render'?{purpose:'render'}:{}),...(asset.metadata??{})}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
+ const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:assetType,storage_path:storagePath,source_provider:asset.provider,license_status:'generated',provenance:generationProvenance({provider:asset.provider,requestId:context.requestId,projectId:context.projectId,mimeType:mime,externalId:asset.externalId,purpose:kind==='render'?'render':undefined,metadata:asset.metadata})}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
  if(error){await supabase.storage.from('generated-assets').remove([storagePath]);throw new Error(`Could not persist generated asset: ${error.message}`)}return data
 }

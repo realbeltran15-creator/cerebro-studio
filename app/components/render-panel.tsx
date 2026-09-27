@@ -23,6 +23,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   const supabase = getSupabaseBrowserClient()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const busyRef = useRef(false)
   const [mode, setMode] = useState<'idle' | 'loading' | 'preview' | 'render' | 'saving'>('idle')
   const [progress, setProgress] = useState({ elapsed: 0, total: 0 })
   const [status, setStatus] = useState('')
@@ -38,14 +39,15 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   const { width, height } = formatSize[composition.format]
 
   async function run(record: boolean) {
-    if (mode !== 'idle') return
-    setError(''); setStatus('')
+    // Synchronous guard: state updates are async, so repeated clicks during the save would pass a mode check.
+    if (busyRef.current) return
+    busyRef.current = true
+    setMode('loading'); setError(''); setStatus(record ? 'Guardando el montaje…' : '')
     const controller = new AbortController()
     abortRef.current = controller
     let jobId: string | null = null
     try {
       if (record) await beforeRender?.()
-      setMode('loading')
       const media = await downloadCompositionMedia(composition, assets, (d, t) => setStatus(`Descargando recursos ${d}/${t}…`))
       if (record) {
         const { data: { user } } = await supabase.auth.getUser()
@@ -79,6 +81,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
       if (jobId) await supabase.from('render_jobs').update({ status: 'failed', error: message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', jobId)
     } finally {
       abortRef.current = null
+      busyRef.current = false
       setMode('idle')
     }
   }

@@ -23,6 +23,8 @@ export type ScriptAssistInput = {
 }
 
 export type ScriptAssistProposal = {
+  /** Token usage reported by OpenAI (no cost is reported by the API). */
+  usage?: Record<string, unknown> | null
   hooks: string[]
   sections: Array<{ heading: string; basis: ScriptBasis; text: string; sources: string[] }>
   cta: string
@@ -107,7 +109,7 @@ export async function proposeScript(input: ScriptAssistInput, requestId: string)
   })
   if (!response.ok) throw new TextProviderError(`OpenAI text generation failed (${response.status}).`, response.status)
 
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }> }
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }>; usage?: Record<string, unknown> }
   const message = payload.choices?.[0]?.message
   if (message?.refusal) throw new TextProviderError('El modelo rechazó la solicitud.', null)
   let parsed: ScriptAssistProposal
@@ -127,5 +129,6 @@ export async function proposeScript(input: ScriptAssistInput, requestId: string)
     sections,
     cta: clip(parsed.cta ?? '', 1500),
     notes,
+    usage: payload.usage ?? null,
   }
 }

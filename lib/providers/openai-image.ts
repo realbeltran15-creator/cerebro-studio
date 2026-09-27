@@ -25,7 +25,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       throw new Error(`OpenAI image generation failed (${response.status}).`)
     }
 
-    const payload = await response.json() as { data?: Array<{ url?: string; b64_json?: string }> }
+    const payload = await response.json() as { data?: Array<{ url?: string; b64_json?: string }>; usage?: Record<string, unknown> }
     const item = payload.data?.[0]
     if (!item) throw new Error('OpenAI image generation returned no asset.')
 
@@ -36,7 +36,7 @@ export class OpenAIImageProvider implements ImageGenerationProvider {
       provider: this.id,
       mimeType: 'image/png',
       uri,
-      metadata: { requestId: context.requestId, projectId: context.projectId, size: options?.size ?? '1024x1024' },
+      metadata: { model: 'gpt-image-1', size: options?.size ?? '1024x1024', usage: payload.usage ?? null },
     }
   }
 }

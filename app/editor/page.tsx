@@ -1,18 +1,19 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { emptyComposition, parseComposition, syncWithScenes, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { emptyComposition, syncWithScenes, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import type { ProjectRow } from '@/lib/types/database'
+import { draftSummary, draftsForStoryboard, INTERRUPTED_MESSAGE, isStaleRender, SaveConflictError, type Draft, type DraftRow } from '@/lib/editor/jobs'
 
 type Board = { id: string; title: string; aspect_ratio: string; created_at: string }
 type Scene = { id: string; position: number; duration_ms: number; narration: string | null; visual_prompt: string | null }
-type Render = { id: string; status: string; output_format: string; error: string | null; created_at: string; output_asset_id: string | null; url?: string }
+type Render = { id: string; status: string; output_format: string; error: string | null; created_at: string; updated_at: string; output_asset_id: string | null; url?: string }
 
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
 const statusLabels: Record<string, string> = { rendering: 'Renderizando', completed: 'Completado', failed: 'Falló', cancelled: 'Cancelado', queued: 'En cola' }
@@ -26,6 +27,10 @@ export default function EditorPage() {
   const [scenes, setScenes] = useState<Scene[]>([])
   const [assets, setAssets] = useState<EditorAsset[]>([])
   const [jobId, setJobId] = useState<string | null>(null)
+  // updated_at of the loaded draft: saves only succeed if nobody saved it since (optimistic lock).
+  const [jobUpdatedAt, setJobUpdatedAt] = useState<string | null>(null)
+  const [drafts, setDrafts] = useState<Draft[]>([])
+  const savingRef = useRef(false)
   const [comp, setComp] = useState<Composition | null>(null)
   const [dirty, setDirty] = useState(false)
   const [renders, setRenders] = useState<Render[]>([])
@@ -54,9 +59,16 @@ export default function EditorPage() {
   }, [supabase])
 
   const loadRenders = useCallback(async (pid: string) => {
-    const { data } = await supabase.from('render_jobs').select('id,status,output_format,error,created_at,output_asset_id')
+    const { data } = await supabase.from('render_jobs').select('id,status,output_format,error,created_at,updated_at,output_asset_id')
       .eq('project_id', pid).neq('status', 'draft').order('created_at', { ascending: false }).limit(8)
-    const rows = (data ?? []) as Render[]
+    const rows = ((data ?? []) as Render[]).map(r => ({ ...r }))
+    // Renders left "rendering" by a closed tab never finish: record them as interrupted.
+    const stale = rows.filter(r => isStaleRender(r))
+    if (stale.length) {
+      const now = new Date().toISOString()
+      await supabase.from('render_jobs').update({ status: 'failed', error: INTERRUPTED_MESSAGE, updated_at: now }).in('id', stale.map(r => r.id)).eq('status', 'rendering')
+      for (const r of stale) Object.assign(r, { status: 'failed', error: INTERRUPTED_MESSAGE, updated_at: now })
+    }
     setRenders(rows)
     const withUrls = await Promise.all(rows.map(async r => {
       if (!r.output_asset_id) return r
@@ -69,7 +81,7 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (!projectId) return
-    setComp(null); setJobId(null); setScenes([]); setError(''); setNotice('')
+    setComp(null); setJobId(null); setJobUpdatedAt(null); setDrafts([]); setScenes([]); setError(''); setNotice('')
     void loadAssets(projectId); void loadRenders(projectId)
     void (async () => {
       const { data } = await supabase.from('storyboards').select('id,title,aspect_ratio,created_at').eq('project_id', projectId).order('created_at', { ascending: false })
@@ -84,16 +96,19 @@ export default function EditorPage() {
     void (async () => {
       setError('')
       const board = boards.find(b => b.id === boardId)
-      const [{ data: sceneRows, error: se }, { data: jobs }] = await Promise.all([
+      const [{ data: sceneRows, error: se }, { data: jobs, error: je }] = await Promise.all([
         supabase.from('scenes').select('id,position,duration_ms,narration,visual_prompt').eq('storyboard_id', boardId).order('position'),
-        supabase.from('render_jobs').select('id,composition').eq('project_id', projectId).eq('status', 'draft').eq('composition->>storyboardId', boardId).order('updated_at', { ascending: false }).limit(1),
+        supabase.from('render_jobs').select('id,updated_at,composition').eq('project_id', projectId).eq('status', 'draft').order('updated_at', { ascending: false }).limit(100),
       ])
-      if (se) { setError(se.message); return }
+      if (se || je) { setError((se ?? je)!.message); return }
       const list = (sceneRows ?? []) as Scene[]
       setScenes(list)
-      const job = (jobs ?? [])[0] as { id: string; composition: unknown } | undefined
-      const base = parseComposition(job?.composition) ?? emptyComposition(boardId, board?.title ?? 'Montaje', (board?.aspect_ratio as OutputFormat) === '9:16' ? '9:16' : '16:9')
+      const found = draftsForStoryboard((jobs ?? []) as DraftRow[], boardId)
+      setDrafts(found)
+      const job = found[0]
+      const base = job?.comp ?? emptyComposition(boardId, board?.title ?? 'Montaje', (board?.aspect_ratio as OutputFormat) === '9:16' ? '9:16' : '16:9')
       setJobId(job?.id ?? null)
+      setJobUpdatedAt(job?.updatedAt ?? null)
       setComp(syncWithScenes(base, list))
       setDirty(!job)
     })()
@@ -104,19 +119,42 @@ export default function EditorPage() {
     setComp(c => c ? { ...c, clips: c.clips.map(k => k.sceneId === sceneId ? { ...k, ...p } : k) } : c); setDirty(true); setNotice('')
   }
 
+  function openDraft(id: string) {
+    const d = drafts.find(x => x.id === id)
+    if (!d || (dirty && !window.confirm('Hay cambios sin guardar. ¿Abrir otra versión?'))) return
+    setJobId(d.id); setJobUpdatedAt(d.updatedAt); setComp(syncWithScenes(d.comp, scenes)); setDirty(false); setNotice('')
+  }
+
   async function save(): Promise<void> {
     if (!comp || !projectId) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) throw new Error('La sesión ha caducado.')
-    if (jobId) {
-      const { error: e } = await supabase.from('render_jobs').update({ composition: comp, output_format: comp.format, updated_at: new Date().toISOString() }).eq('id', jobId)
-      if (e) throw new Error(e.message)
-    } else {
-      const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user.id, project_id: projectId, output_format: comp.format, status: 'draft', composition: comp }).select('id').single()
-      if (e) throw new Error(e.message)
-      setJobId((data as { id: string }).id)
-    }
-    setDirty(false)
+    if (savingRef.current) throw new Error('Ya se está guardando el montaje.')
+    savingRef.current = true
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('La sesión ha caducado.')
+      const now = new Date().toISOString()
+      let stamp = now, id = jobId ?? ''
+      if (jobId && jobUpdatedAt) {
+        const { data, error: e } = await supabase.from('render_jobs').update({ composition: comp, output_format: comp.format, updated_at: now })
+          .eq('id', jobId).eq('updated_at', jobUpdatedAt).select('id,updated_at')
+        if (e) throw new Error(e.message)
+        if (!data?.length) throw new SaveConflictError()
+        stamp = (data[0] as { updated_at: string }).updated_at
+      } else {
+        // A new edit is only created when no saved version exists (e.g. another tab created one).
+        const { data: existing, error: le } = await supabase.from('render_jobs').select('id,updated_at,composition').eq('project_id', projectId).eq('status', 'draft').limit(100)
+        if (le) throw new Error(le.message)
+        if (draftsForStoryboard((existing ?? []) as DraftRow[], comp.storyboardId).length) throw new SaveConflictError()
+        const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user.id, project_id: projectId, output_format: comp.format, status: 'draft', composition: comp, updated_at: now }).select('id,updated_at').single()
+        if (e) throw new Error(e.message)
+        id = (data as { id: string }).id
+        stamp = (data as { updated_at: string }).updated_at
+        setJobId(id)
+      }
+      setJobUpdatedAt(stamp)
+      setDrafts(list => [{ id, updatedAt: stamp, comp }, ...list.filter(d => d.id !== id)])
+      setDirty(false)
+    } finally { savingRef.current = false }
   }
 
   async function saveClick() {
@@ -193,6 +231,11 @@ export default function EditorPage() {
           <span className="pill">{comp.clips.length} escenas</span>
           <span className="pill info">{fmt(totalDurationMs(comp))}</span>
           {dirty && <span className="pill warn">Cambios sin guardar</span>}
+          {drafts.length > 1 && <label className="small" htmlFor="ed-draft">Versión guardada{' '}
+            <select id="ed-draft" value={jobId ?? ''} onChange={e => openDraft(e.target.value)}>
+              {drafts.map(d => <option key={d.id} value={d.id}>{new Date(d.updatedAt).toLocaleString()} · {draftSummary(d.comp)}</option>)}
+            </select>
+          </label>}
         </div>
         <div className="pageActions">
           <Link className="buttonLink ghost" href={`/create?project=${projectId}&storyboard=${boardId}`}>Editar escenas</Link>
