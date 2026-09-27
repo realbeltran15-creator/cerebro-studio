@@ -42,6 +42,7 @@ export const studioModules: StudioModule[] = [
   { label: 'Analytics', short: 'Analytics', href: '/analytics', icon: 'chart', state: 'partial', note: 'Importa YouTube Analytics de tu canal (7/28/90 días): serie diaria y vídeos principales, observado y calculado por separado. Requiere el cliente OAuth de Google.' },
   { label: 'Biblioteca', short: 'Biblioteca', href: '/library', icon: 'library', state: 'functional', note: 'Assets privados por proyecto con enlaces temporales.' },
   { label: 'Conectores (APIs)', short: 'Conectores', href: '/connectors', icon: 'link', state: 'functional', note: 'Estado real de proveedores leído del servidor.' },
+  { label: 'Virtual Influencer Studio', short: 'Influencer IA', href: '/influencer', icon: 'layers', state: 'partial', note: 'Privado. Persona Bible, referencias, identidad versionada e inmutable, Voice Profile, Scene Bible, vestuario, control de costes y revisión de calidad con aprobación humana. La generación queda bloqueada con presupuesto 0 EUR y los modelos de identidad, lipsync y verificación facial están NOT_CONNECTED.' },
   { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'partial', note: 'Vigilancia de tendencias con palabras clave y actualización de métricas de oportunidades, con historial. Ejecución manual ya disponible; la diaria (07:00 UTC) queda activa en cuanto la rama llegue a producción: las claves ya están configuradas. Nunca publican.' },
 ]
 

@@ -45,9 +45,28 @@ La fuente de verdad es `lib/module-status.ts`; la interfaz la lee para no presen
 | Shorts / Reels / TikTok | Funcional | Deriva una versión 9:16 de un montaje del Editor: selección de escenas, reencuadre horizontal por escena, hook en pantalla (prellenado con el hook del guion), subtítulos y comprobación de límites (Shorts 3 min, Reels 90 s, TikTok 10 min). Renderiza con el mismo motor; no publica |
 | Automatizaciones | Parcial | Vigilancia de tendencias (país, categoría, palabras clave, guardado sin duplicados) y actualización de métricas de oportunidades de YouTube con historial y crecimiento. Ejecución manual; la diaria (Vercel Cron 07:00 UTC, `/api/cron/automations`) usa `CRON_SECRET` y `SUPABASE_SERVICE_ROLE_KEY` (ya configuradas) y Vercel solo la dispara en producción. Solo leen fuentes y escriben en el workspace: nunca publican |
 
+## Virtual Influencer Studio (privado)
+
+Ruta `/influencer`. Reutiliza proyectos (cada persona tiene el suyo, así las referencias y resultados están en la Biblioteca), `assets`, `approvals` y los proveedores existentes.
+
+- **Persona Bible**: adulta, divulgación como IA siempre activa y confirmación de que no imita a una persona real.
+- **Referencias** por categoría; solo cuentan las aprobadas.
+- **Identidad versionada**: rasgos de rostro, ojos, cabello, piel, cuerpo, manos, dientes y marcas. Las versiones aprobadas son inmutables en base de datos.
+- **Voice Profile, Scene Bible y vestuario.**
+- **Trabajos de generación con preflight en el servidor**:
+  - Con presupuesto 0 EUR, todo trabajo de pago queda bloqueado con su motivo.
+  - Un trabajo sin coste estimable no se ejecuta.
+  - Un proveedor sin referencias no sirve para producir con identidad.
+  - Los adaptadores sin credenciales aparecen como `NOT_CONNECTED`.
+- **Revisión de calidad**:
+  - Los controles medidos de verdad en el navegador son resolución, sincronía audio/vídeo y flicker de luminancia.
+  - El resto (rostro, manos, lipsync, voz…) son revisión humana, con el modelo que haría falta para automatizarlos.
+  - Nada se aprueba sin revisión superada y confirmación humana.
+
 ## Migraciones
 
 - `20260926120000_scripts_module.sql` (aditiva): crea `public.scripts` con RLS y añade `storyboards.script_id`. Aplicada en la base desplegada (versión `20260926151554`); esquema, RLS y flujo guion → versión → storyboard → escenas verificados con transacciones revertidas.
 - `20260926190000_automations.sql` (aditiva): crea `public.automations` y `public.automation_runs` con RLS por propietario. Aplicada en la base desplegada; RLS verificado con transacción revertida.
 - `20260926230000_trend_snapshots.sql` (aditiva): histórico del Radar con RLS por propietario. Aplicada; RLS verificado con transacción revertida.
+- `20260927150000_virtual_influencer_studio.sql` (aditiva): tablas `vi_*` del Virtual Influencer Studio con RLS por propietario, triggers de pertenencia (sin referencias a personas, proyectos o assets de otro usuario) e identidades aprobadas inmutables. Aplicada; verificado con transacción revertida.
 - Aviso: los archivos `20260916*` del repositorio no reflejan exactamente el esquema desplegado (p. ej. `scenes.narration`, `metric_snapshots.observed`, `assets.asset_type`). El esquema desplegado es la referencia; `lib/types/database.ts` sigue al desplegado.
