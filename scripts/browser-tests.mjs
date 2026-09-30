@@ -118,6 +118,35 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 3. Creation Studio: model availability, scene prefill, cost confirmation, queued job → preview.
+{
+  const server = serve(8793, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'studio.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8793/studio?project=p1')
+  await page.getByRole('radio', { name: /FLUX\.2 Pro/ }).waitFor({ timeout: 20000 })
+  check('studio: unconfigured model is marked', (await page.getByRole('radio', { name: /OpenAI GPT Image/ }).textContent()).includes('Sin clave'))
+  await page.getByRole('radio', { name: /FLUX\.2 Pro/ }).click()
+  await page.getByLabel('Escena (opcional)').selectOption('s2')
+  await page.getByRole('button', { name: 'Usar texto de la escena' }).click()
+  check('studio: scene text fills the prompt', (await page.getByLabel('Describe la imagen').inputValue()).includes('selva peruana'))
+  await page.getByRole('button', { name: '9:16 Shorts' }).click()
+  await page.getByRole('button', { name: /^Generar imagen/ }).click()
+  check('studio: asks to confirm the cost first', await page.getByRole('alertdialog').count() === 1 && (await page.evaluate(() => window.__GEN.length)) === 0)
+  await page.getByRole('button', { name: 'Confirmar y generar' }).click()
+  await page.getByText(/trabajo enviado/).waitFor()
+  const sent = await page.evaluate(() => window.__GEN[0])
+  check('studio: request carries model, scene, format and style', sent.modelId === 'fal:fal-ai/flux-2-pro' && sent.sceneId === 's2' && sent.options.format === '9:16' && sent.preset === 'documentary', sent)
+  await page.getByText(/listo y guardado en la Biblioteca/).waitFor({ timeout: 20000 })
+  check('studio: result previews in the stage', (await page.locator('.stage img').getAttribute('src'))?.startsWith('blob:'))
+  check('studio: result appears in project history', await page.locator('.thumbGrid .thumb').count() === 1)
+  await page.getByRole('button', { name: /Música/ }).click()
+  check('studio: music tab lists ElevenLabs Music as ready', (await page.getByRole('radio', { name: /ElevenLabs Music/ }).textContent()).includes('Listo'))
+  check('studio: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

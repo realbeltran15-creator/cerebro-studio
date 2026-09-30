@@ -53,3 +53,27 @@ export async function listVoices(): Promise<ElevenVoice[]> {
   const j = await r.json() as { voices?: ElevenVoice[] }
   return (j.voices ?? []).map(v => ({ voice_id: v.voice_id, name: v.name, labels: v.labels }))
 }
+
+export type VoiceSettings = { stability?: number; similarity?: number; style?: number; speed?: number }
+const clamp = (v: number | undefined, lo: number, hi: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(Math.max(v, lo), hi) : d)
+
+/** Text-to-speech with an explicit voice and delivery settings (Creation Studio). */
+export async function synthesizeWithSettings(context: ProviderContext, text: string, voiceId: string, s: VoiceSettings = {}): Promise<GeneratedAsset> {
+  if (!elevenLabsConfigured()) throw new Error('ElevenLabs is not configured.')
+  if (!/^[A-Za-z0-9]{20}$/.test(voiceId)) throw new Error('Voz de ElevenLabs no válida.')
+  const model = process.env.ELEVENLABS_MODEL_ID?.trim() || 'eleven_multilingual_v2'
+  const voice_settings = {
+    stability: clamp(s.stability, 0, 1, 0.5), similarity_boost: clamp(s.similarity, 0, 1, 0.75),
+    style: clamp(s.style, 0, 1, 0), use_speaker_boost: true, speed: clamp(s.speed, 0.7, 1.2, 1),
+  }
+  const uri = await audio(`/text-to-speech/${voiceId}?output_format=mp3_44100_128`, { text, model_id: model, voice_settings }, context.requestId)
+  return { provider: 'elevenlabs-voice', mimeType: 'audio/mpeg', uri, metadata: { model, voiceId, voiceSettings: voice_settings, text: text.slice(0, 200), usage: { characters: text.length } } }
+}
+
+/** Music from a text prompt (POST /v1/music, model music_v1). Length 3–600 s per the API; capped at 180 s here. */
+export async function composeMusic(context: ProviderContext, prompt: string, seconds: number, instrumental: boolean): Promise<GeneratedAsset> {
+  if (!elevenLabsConfigured()) throw new Error('ElevenLabs is not configured.')
+  const music_length_ms = Math.round(clamp(seconds, 3, 180, 30) * 1000)
+  const uri = await audio('/music?output_format=mp3_44100_128', { prompt: prompt.slice(0, 4000), music_length_ms, model_id: 'music_v1', force_instrumental: instrumental }, context.requestId)
+  return { provider: 'elevenlabs-music', mimeType: 'audio/mpeg', uri, metadata: { model: 'music_v1', prompt: prompt.slice(0, 300), durationSeconds: music_length_ms / 1000, instrumental } }
+}

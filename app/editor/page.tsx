@@ -7,7 +7,7 @@ import { Icon } from '../components/studio-icon'
 import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { emptyComposition, parseComposition, syncWithScenes, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
-import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
+import { assetLabel, audioDurationMs, sceneFirst, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import type { ProjectRow } from '@/lib/types/database'
 import { uploadProjectMedia } from '@/lib/media-upload'
 import { imagePresets, type ImagePreset, type ImageQuality } from '@/lib/providers/image-presets'
@@ -292,13 +292,13 @@ export default function EditorPage() {
               <label>Imagen o vídeo
                 <select value={clip.visualAssetId ?? ''} onChange={e => patchClip(clip.sceneId, { visualAssetId: e.target.value || null })}>
                   <option value="">— Sin visual (negro)</option>
-                  {visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}
+                  {sceneFirst(visuals, clip.sceneId).map(a => <option key={a.id} value={a.id}>{a.forScene ? '★ ' : ''}[{a.asset_type}] {assetLabel(a)}</option>)}
                 </select>
               </label>
               <label>Voz
                 <select value={clip.voiceAssetId ?? ''} onChange={e => patchClip(clip.sceneId, { voiceAssetId: e.target.value || null })}>
                   <option value="">— Sin voz</option>
-                  {voices.map(a => <option key={a.id} value={a.id}>{assetLabel(a)}</option>)}
+                  {sceneFirst(voices, clip.sceneId).map(a => <option key={a.id} value={a.id}>{a.forScene ? '★ ' : ''}{assetLabel(a)}</option>)}
                 </select>
               </label>
               <label>Duración (s)
@@ -321,6 +321,7 @@ export default function EditorPage() {
                 <input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" hidden disabled={Boolean(busyClip)} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadVisual(clip, f) }} />
               </label>
               <button type="button" className="ghost" disabled={Boolean(busyClip) || !clip.voiceAssetId} onClick={() => void fitToVoice(clip)}>{busyClip === `${clip.sceneId}:fit` ? 'Midiendo…' : 'Ajustar a la voz'}</button>
+              <Link className="buttonLink ghost" href={`/studio?project=${projectId}&scene=${clip.sceneId}&tab=image`} title="Más modelos de imagen, vídeo, voz y música con vista previa"><Icon name="layers" size={16} />Más modelos (Estudio)</Link>
             </div>
             {visuals.find(a => a.id === clip.visualAssetId)?.asset_type === 'video' && <div className="field-row">
               <label>Empezar el vídeo en (s)

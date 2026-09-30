@@ -22,6 +22,12 @@ export function assetLabel(a: EditorAsset) {
   return `${String(text).slice(0, 60)} · ${new Date(a.created_at).toLocaleDateString()}`
 }
 
+/** Assets generated for a given scene (Creation Studio records provenance.sceneId) come first. */
+export function sceneFirst<T extends EditorAsset>(list: T[], sceneId: string): Array<T & { forScene: boolean }> {
+  const tagged = list.map(a => ({ ...a, forScene: a.provenance?.sceneId === sceneId }))
+  return [...tagged.filter(a => a.forScene), ...tagged.filter(a => !a.forScene)]
+}
+
 export async function signedUrl(assetId: string) {
   const r = await fetch(`/api/assets/${assetId}/signed-url`, { cache: 'no-store' })
   const json = await r.json().catch(() => ({})) as { url?: string; error?: string }

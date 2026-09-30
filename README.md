@@ -45,6 +45,24 @@ La fuente de verdad es `lib/module-status.ts`; la interfaz la lee para no presen
 | Shorts / Reels / TikTok | Funcional | Deriva una versión 9:16 de un montaje del Editor: selección de escenas, reencuadre horizontal por escena, hook en pantalla (prellenado con el hook del guion), subtítulos y comprobación de límites (Shorts 3 min, Reels 90 s, TikTok 10 min). Renderiza con el mismo motor; no publica |
 | Automatizaciones | Parcial | Vigilancia de tendencias (país, categoría, palabras clave, guardado sin duplicados) y actualización de métricas de oportunidades de YouTube con historial y crecimiento. Ejecución manual; la diaria (Vercel Cron 07:00 UTC, `/api/cron/automations`) usa `CRON_SECRET` y `SUPABASE_SERVICE_ROLE_KEY` (ya configuradas) y Vercel solo la dispara en producción. Solo leen fuentes y escriben en el workspace: nunca publican |
 
+## Estudio de creación (`/studio`)
+
+Un único lugar para generar con varios proveedores, revisar el resultado en grande y guardarlo en la Biblioteca del proyecto.
+
+| Tipo | Modelos | Variables de servidor |
+|---|---|---|
+| Imagen | OpenAI GPT Image · FLUX.2 Pro · Nano Banana Pro · Ideogram 3 | `OPENAI_API_KEY` · `FAL_KEY` |
+| Vídeo | Kling 2.5 Turbo Pro · Google Veo 3 Fast (con sonido) | `FAL_KEY` |
+| Voz | ElevenLabs Multilingual v2 (voces de la cuenta, estabilidad/expresividad/velocidad) · OpenAI `gpt-4o-mini-tts` con dirección de locución | `ELEVENLABS_API_KEY` · `OPENAI_VOICE_API_KEY` |
+| Música | ElevenLabs Music (`/v1/music`) · Google Lyria 2 | `ELEVENLABS_API_KEY` · `FAL_KEY` |
+| Efectos | ElevenLabs sound generation | `ELEVENLABS_API_KEY` |
+
+- Catálogo en `lib/providers/catalog.ts` (endpoints y precios de lista comprobados el 2026-09-30; los precios son estimaciones y se guardan como tales en la procedencia).
+- "Mejorar con ChatGPT" reescribe la idea como prompt del modelo elegido (`OPENAI_TEXT_API_KEY` u `OPENAI_API_KEY`). No guarda nada.
+- Cada generación pide confirmación con el coste estimado. Nada se reintenta solo.
+- fal.ai funciona por cola: el servidor devuelve un token cifrado (`TOKEN_ENCRYPTION_KEY`) y la página consulta `/api/studio/job`; el resultado se guarda una sola vez aunque se consulte varias veces.
+- Si se elige una escena, el asset guarda `provenance.sceneId` y el editor lo muestra primero (★) en esa escena.
+
 ## Migraciones
 
 - `20260926120000_scripts_module.sql` (aditiva): crea `public.scripts` con RLS y añade `storyboards.script_id`. Aplicada en la base desplegada (versión `20260926151554`); esquema, RLS y flujo guion → versión → storyboard → escenas verificados con transacciones revertidas.

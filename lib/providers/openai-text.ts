@@ -132,3 +132,45 @@ export async function proposeScript(input: ScriptAssistInput, requestId: string)
     usage: payload.usage ?? null,
   }
 }
+
+export type PromptModality = 'image' | 'video' | 'voice' | 'music' | 'sfx'
+export type PromptEnhancement = { prompt: string; negative: string; notes: string[]; usage: Record<string, unknown> | null }
+
+const enhanceGuides: Record<PromptModality, string> = {
+  image: 'Prompt en inglés para un generador de imágenes: sujeto, acción, entorno, época, encuadre y lente, luz real, paleta. Fotografía creíble, anatomía natural, sin texto, logos ni marcas de agua salvo que se pidan.',
+  video: 'Prompt en inglés para un generador de vídeo de 5–10 s: un solo plano, sujeto y acción continua, movimiento de cámara concreto (dolly, pan, handheld), luz, ritmo. Sin cortes ni texto en pantalla.',
+  voice: 'Indicaciones de locución en español para un TTS dirigible: tono, ritmo, pausas, emoción e intención. Máximo 3 frases. No reescribas el texto a locutar.',
+  music: 'Prompt en inglés para un generador de música: género, subgénero, tempo en BPM, instrumentos, estado de ánimo, evolución y uso (fondo de narración documental, sin competir con la voz).',
+  sfx: 'Prompt en inglés para un generador de efectos de sonido: fuente, material, distancia, espacio acústico, duración e intensidad. Sin música.',
+}
+
+/** Rewrites a user's idea into a better provider prompt. Never adds facts about real people or events. */
+export async function enhancePrompt(modality: PromptModality, idea: string, context: string, requestId: string): Promise<PromptEnhancement> {
+  const key = textKey()
+  if (!key) throw new TextProviderError('El proveedor de texto no está configurado.', null)
+  const enhanceSchema = {
+    type: 'object', additionalProperties: false, required: ['prompt', 'negative', 'notes'],
+    properties: { prompt: { type: 'string' }, negative: { type: 'string' }, notes: { type: 'array', items: { type: 'string' } } },
+  }
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Client-Request-Id': requestId },
+    body: JSON.stringify({
+      model: textModel(), temperature: 0.5,
+      messages: [
+        { role: 'system', content: `Eres director de arte y prompt engineer de un estudio de YouTube documental. ${enhanceGuides[modality]}\nReglas: conserva la intención del usuario; no inventes hechos sobre personas o sucesos reales; nada de estilos de artistas vivos ni personajes con derechos. "negative" = lo que conviene evitar (vacío si no aplica). "notes" = 1–3 consejos breves en español.` },
+        { role: 'user', content: JSON.stringify({ idea: idea.slice(0, 3000), contexto_del_proyecto: context.slice(0, 2000) }) },
+      ],
+      response_format: { type: 'json_schema', json_schema: { name: 'prompt_enhancement', strict: true, schema: enhanceSchema } },
+    }),
+    cache: 'no-store', signal: AbortSignal.timeout(60000),
+  })
+  if (!response.ok) throw new TextProviderError(`OpenAI text generation failed (${response.status}).`, response.status)
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }>; usage?: Record<string, unknown> }
+  const message = payload.choices?.[0]?.message
+  if (message?.refusal) throw new TextProviderError('El modelo rechazó la solicitud.', null)
+  let parsed: { prompt?: string; negative?: string; notes?: string[] }
+  try { parsed = JSON.parse(message?.content ?? '') } catch { throw new TextProviderError('El modelo devolvió una respuesta no válida.', null) }
+  if (!parsed.prompt?.trim()) throw new TextProviderError('El modelo no devolvió un prompt.', null)
+  return { prompt: clip(parsed.prompt, 3000), negative: clip(parsed.negative ?? '', 800), notes: (parsed.notes ?? []).map(n => clip(n, 300)).filter(Boolean).slice(0, 3), usage: payload.usage ?? null }
+}
