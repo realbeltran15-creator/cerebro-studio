@@ -71,7 +71,11 @@ Tres piezas desacopladas; añadir un proveedor no cambia el flujo de creación:
 2. **Catálogo** (`lib/providers/catalog.ts`): modelos por tipo (imagen, vídeo, voz, música, efectos, ambientes) con calidad, velocidad, límites, capacidades, formatos y coste estimado (`priceConfirmed: false` = precio de referencia).
 3. **Adaptadores** (`lib/providers/adapters`): `startGeneration` / `pollGeneration` por proveedor (OpenAI, fal.ai, ElevenLabs, Cloudflare Workers AI, Gemini API).
 
-**Selección** (`lib/providers/router.ts`): manual o por estrategia — gratis y créditos primero, solo gratis, más barato, máxima calidad, más rápido — teniendo en cuenta claves configuradas, créditos agotados, formato, duración y capacidades. La estrategia solo elige: generar siempre exige confirmar, y el servidor rechaza una generación de pago sin el coste confirmado.
+**Regla global: calidad primero + optimización de costes** (`lib/providers/router.ts`, `lib/providers/text.ts`): primero se fija la calidad necesaria (Borrador 2 · Estándar 3 · Alta 4 · Máxima 5), después las capacidades (formato, duración, audio…) y solo entre los modelos que las cumplen se elige el más barato: gratis → créditos incluidos → freemium → de pago, y menor precio. Un modelo barato nunca sustituye a uno que la tarea necesita. Modos: *Mejor relación calidad-coste* (por defecto), *Gratis solamente*, *Máxima calidad*, *Más rápido* y *Proveedor específico* (manual). La estrategia solo elige: generar siempre exige confirmar, y el servidor rechaza una generación de pago sin el coste confirmado.
+
+**Texto y razonamiento** (`lib/providers/text.ts`): cada tarea declara su calidad mínima (etiquetas 2, mejorar prompts 3, hooks/packaging/análisis 4, borrador de guion 5). Proveedores: Groq GPT-OSS 120B/20B (freemium), Gemini 3.8 Flash (nivel gratuito, Interactions API) y OpenAI (`OPENAI_TEXT_MODEL`). Salida JSON validada; si un proveedor falla o devuelve algo incompleto se prueba el siguiente que alcance la calidad. Cada llamada registra proveedor, modelo, tarea, tokens y coste estimado (`text-usage` en los logs del servidor).
+
+**Transcripción** (`lib/providers/transcribe.ts`, `/api/transcribe`): Whisper large v3 (Groq) primero por precisión, turbo (Groq o Cloudflare, gratis) como respaldo. Genera subtítulos VTT guardados en la Biblioteca y SRT copiable.
 
 **Bancos gratuitos** (`lib/providers/stock.ts`): Freesound (CC0/BY/BY-NC), Pexels y Pixabay. Se importa a la Biblioteca con autor, licencia, atribución y página de origen.
 
@@ -86,6 +90,14 @@ Tres piezas desacopladas; añadir un proveedor no cambia el flujo de creación:
 | API oficial | Gemini API (`GEMINI_API_KEY`) / Vertex AI | Integrado: Veo 3.1 Fast (vídeo) y Gemini TTS (voz, nivel gratuito) |
 
 Google AI Pro incluye además $10/mes (Ultra $40/mes) en créditos de Google Cloud vía Google Developer Program; hay que confirmar en la consola de facturación que se aplican al proyecto de la API.
+
+## Publicación en redes (`/youtube`, `/social`)
+
+Todo con APIs oficiales y OAuth; los tokens se guardan cifrados (AES-GCM). Ninguna publicación ocurre sin dos acciones del propietario: aprobar (escribiendo APROBAR, con resumen de riesgos y bloqueo por licencias sin verificar) y pulsar publicar. Idempotente por trabajo.
+
+- **YouTube**: YouTube Data API v3, subida reanudable, privado por defecto.
+- **Instagram (Reels)**: Instagram API with Instagram Login (`instagram_business_basic`, `instagram_business_content_publish`). Contenedor `REELS` con URL firmada temporal → espera de procesamiento (reanudable) → `media_publish`. Solo MP4/MOV: los renders WebM del navegador no se aceptan (pendiente: render MP4 en servidor).
+- **TikTok**: Login Kit + Content Posting API (`video.publish`), subida `FILE_UPLOAD` por fragmentos, privacidad validada con `creator_info` y **SELF_ONLY por defecto**; etiqueta de contenido IA activada por defecto. Las apps sin auditar solo pueden publicar en privado.
 
 ## Migraciones
 

@@ -1,4 +1,5 @@
 import type { ScriptBasis } from '@/lib/types/database'
+import { routeText, runTextTask, TextRouteError } from './text'
 
 /**
  * Script assistance through OpenAI Chat Completions with a strict JSON schema.
@@ -37,7 +38,8 @@ export class TextProviderError extends Error {
 
 export const textModel = () => process.env.OPENAI_TEXT_MODEL?.trim() || 'gpt-4.1-mini'
 const textKey = () => process.env.OPENAI_TEXT_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || ''
-export const textConfigured = () => Boolean(textKey())
+/** True when at least one text provider (OpenAI, Gemini or Groq) is configured. */
+export const textConfigured = () => routeText('tags').length > 0 || Boolean(textKey())
 
 const bases: ScriptBasis[] = ['verified_fact', 'testimony', 'reconstruction', 'interpretation']
 
@@ -92,28 +94,24 @@ function userPrompt(input: ScriptAssistInput) {
 const clip = (value: string, max: number) => value.trim().slice(0, max)
 
 export async function proposeScript(input: ScriptAssistInput, requestId: string): Promise<ScriptAssistProposal> {
-  const key = textKey()
-  if (!key) throw new TextProviderError('El proveedor de texto no está configurado.', null)
-
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Client-Request-Id': requestId },
-    body: JSON.stringify({
-      model: textModel(),
-      temperature: 0.6,
-      messages: [{ role: 'system', content: rules }, { role: 'user', content: userPrompt(input) }],
-      response_format: { type: 'json_schema', json_schema: { name: 'script_proposal', strict: true, schema } },
-    }),
-    cache: 'no-store',
-    signal: AbortSignal.timeout(90000),
-  })
-  if (!response.ok) throw new TextProviderError(`OpenAI text generation failed (${response.status}).`, response.status)
-
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }>; usage?: Record<string, unknown> }
-  const message = payload.choices?.[0]?.message
-  if (message?.refusal) throw new TextProviderError('El modelo rechazó la solicitud.', null)
-  let parsed: ScriptAssistProposal
-  try { parsed = JSON.parse(message?.content ?? '') as ScriptAssistProposal } catch { throw new TextProviderError('El modelo devolvió una respuesta no válida.', null) }
+  // Quality first: drafts need the most reliable model available; hooks need good but not maximum quality.
+  let result
+  try {
+    result = await runTextTask(input.mode === 'draft' ? 'script_draft' : 'script_hooks', {
+      system: rules, user: userPrompt(input), schema, schemaName: 'script_proposal', requestId,
+      validate: v => {
+        const p = v as Partial<ScriptAssistProposal>
+        if (!p || !Array.isArray(p.hooks) || !Array.isArray(p.sections) || typeof p.cta !== 'string' || !Array.isArray(p.notes)) return null
+        if (input.mode === 'hook' ? p.hooks.filter(h => typeof h === 'string' && h.trim()).length === 0 : p.sections.length === 0) return null
+        return p as ScriptAssistProposal
+      },
+    })
+  } catch (error) {
+    if (error instanceof TextRouteError) throw new TextProviderError(error.message, error.status)
+    throw error
+  }
+  const parsed = result.data
+  const usage = { provider: result.model.provider, model: result.model.model(), tier: result.model.tier, ...result.usage, estimatedUsd: result.estimatedUsd, fallbacks: result.attempts }
 
   // Enforce the rules server-side instead of trusting the model.
   const allowed = new Set(input.allowedSources)
@@ -129,7 +127,7 @@ export async function proposeScript(input: ScriptAssistInput, requestId: string)
     sections,
     cta: clip(parsed.cta ?? '', 1500),
     notes,
-    usage: payload.usage ?? null,
+    usage,
   }
 }
 
@@ -147,31 +145,23 @@ const enhanceGuides: Record<PromptModality, string> = {
 
 /** Rewrites a user's idea into a better provider prompt. Never adds facts about real people or events. */
 export async function enhancePrompt(modality: PromptModality, idea: string, context: string, requestId: string): Promise<PromptEnhancement> {
-  const key = textKey()
-  if (!key) throw new TextProviderError('El proveedor de texto no está configurado.', null)
   const enhanceSchema = {
     type: 'object', additionalProperties: false, required: ['prompt', 'negative', 'notes'],
     properties: { prompt: { type: 'string' }, negative: { type: 'string' }, notes: { type: 'array', items: { type: 'string' } } },
   }
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Client-Request-Id': requestId },
-    body: JSON.stringify({
-      model: textModel(), temperature: 0.5,
-      messages: [
-        { role: 'system', content: `Eres director de arte y prompt engineer de un estudio de YouTube documental. ${enhanceGuides[modality]}\nReglas: conserva la intención del usuario; no inventes hechos sobre personas o sucesos reales; nada de estilos de artistas vivos ni personajes con derechos. "negative" = lo que conviene evitar (vacío si no aplica). "notes" = 1–3 consejos breves en español.` },
-        { role: 'user', content: JSON.stringify({ idea: idea.slice(0, 3000), contexto_del_proyecto: context.slice(0, 2000) }) },
-      ],
-      response_format: { type: 'json_schema', json_schema: { name: 'prompt_enhancement', strict: true, schema: enhanceSchema } },
-    }),
-    cache: 'no-store', signal: AbortSignal.timeout(60000),
-  })
-  if (!response.ok) throw new TextProviderError(`OpenAI text generation failed (${response.status}).`, response.status)
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string | null; refusal?: string | null } }>; usage?: Record<string, unknown> }
-  const message = payload.choices?.[0]?.message
-  if (message?.refusal) throw new TextProviderError('El modelo rechazó la solicitud.', null)
-  let parsed: { prompt?: string; negative?: string; notes?: string[] }
-  try { parsed = JSON.parse(message?.content ?? '') } catch { throw new TextProviderError('El modelo devolvió una respuesta no válida.', null) }
-  if (!parsed.prompt?.trim()) throw new TextProviderError('El modelo no devolvió un prompt.', null)
-  return { prompt: clip(parsed.prompt, 3000), negative: clip(parsed.negative ?? '', 800), notes: (parsed.notes ?? []).map(n => clip(n, 300)).filter(Boolean).slice(0, 3), usage: payload.usage ?? null }
+  try {
+    const r = await runTextTask('prompt_enhance', {
+      system: `Eres director de arte y prompt engineer de un estudio de YouTube documental. ${enhanceGuides[modality]}\nReglas: conserva la intención del usuario; no inventes hechos sobre personas o sucesos reales; nada de estilos de artistas vivos ni personajes con derechos. "negative" = lo que conviene evitar (vacío si no aplica). "notes" = 1–3 consejos breves en español.`,
+      user: JSON.stringify({ idea: idea.slice(0, 3000), contexto_del_proyecto: context.slice(0, 2000) }),
+      schema: enhanceSchema, schemaName: 'prompt_enhancement', requestId,
+      validate: v => { const p = v as { prompt?: unknown; negative?: unknown; notes?: unknown }; return typeof p?.prompt === 'string' && p.prompt.trim() ? p as { prompt: string; negative?: string; notes?: string[] } : null },
+    })
+    return {
+      prompt: clip(r.data.prompt, 3000), negative: clip(r.data.negative ?? '', 800), notes: (r.data.notes ?? []).map(n => clip(String(n), 300)).filter(Boolean).slice(0, 3),
+      usage: { provider: r.model.provider, model: r.model.model(), tier: r.model.tier, ...r.usage, estimatedUsd: r.estimatedUsd },
+    }
+  } catch (error) {
+    if (error instanceof TextRouteError) throw new TextProviderError(error.message, error.status)
+    throw error
+  }
 }

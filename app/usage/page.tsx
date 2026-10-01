@@ -6,7 +6,7 @@ import { StudioShell } from '../components/studio-shell'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { modelById } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
-import { STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
+import { normalizeStrategy, qualityLevels, STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
 import { summarizeUsage, type UsageAsset } from '@/lib/providers/usage'
 
 type Balance = { used: number; limit: number; remaining: number; resetsAt: string | null; tier: string | null } | null
@@ -20,11 +20,12 @@ export default function UsagePage() {
   const [range, setRange] = useState<'30' | '90' | 'all'>('30')
   const [projectId, setProjectId] = useState('')
   const [strategy, setStrategy] = useState<Strategy | 'manual'>('manual')
+  const [quality, setQuality] = useState(4)
   const [error, setError] = useState('')
   const [now, setNow] = useState(0)
 
   useEffect(() => {
-    try { const v = localStorage.getItem(STRATEGY_KEY); if (v) setStrategy(v as Strategy) } catch { /* private mode */ }
+    try { const v = normalizeStrategy(localStorage.getItem(STRATEGY_KEY)); if (v) setStrategy(v); const q = Number(localStorage.getItem(`${STRATEGY_KEY}.quality`)); if (q >= 1 && q <= 5) setQuality(q) } catch { /* private mode */ }
     void (async () => {
       const [a, p, cat] = await Promise.all([
         supabase.from('assets').select('id,asset_type,project_id,source_provider,license_status,provenance,created_at').order('created_at', { ascending: false }).limit(2000),
@@ -39,6 +40,10 @@ export default function UsagePage() {
     })()
   }, [supabase])
 
+  function saveQuality(q: number) {
+    setQuality(q)
+    try { localStorage.setItem(`${STRATEGY_KEY}.quality`, String(q)) } catch { /* private mode */ }
+  }
   function saveStrategy(v: Strategy | 'manual') {
     setStrategy(v)
     try { localStorage.setItem(STRATEGY_KEY, v) } catch { /* private mode */ }
@@ -61,7 +66,13 @@ export default function UsagePage() {
             {(Object.keys(strategyLabels) as Strategy[]).map(k => <option key={k} value={k}>{strategyLabels[k]}</option>)}
           </select>
         </label>
+        <label htmlFor="u-quality">Calidad necesaria por defecto
+          <select id="u-quality" value={quality} onChange={e => saveQuality(Number(e.target.value))}>
+            {qualityLevels.map(q => <option key={q.value} value={q.value}>{q.label}</option>)}
+          </select>
+        </label>
       </div>
+      <p className="muted small" style={{ marginTop: -6, marginBottom: 14 }}>Regla: primero la calidad necesaria; entre las opciones que la alcanzan se usa el cupo gratuito, luego créditos incluidos y por último el menor coste. Nunca se baja de la calidad elegida para ahorrar.</p>
 
       <div className="kpis" style={{ marginBottom: 16 }}>
         <div className="kpi"><span>Generaciones</span><b>{s.generations}</b></div>

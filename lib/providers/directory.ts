@@ -53,7 +53,7 @@ export const providers: ProviderInfo[] = [
   },
   {
     id: 'gemini', name: 'Google Gemini API (AI Studio)', tier: 'freemium',
-    allowance: 'Nivel gratuito para modelos de texto y para Gemini TTS. Imagen nativa (gemini-3.1-flash-image) y Veo no tienen nivel gratuito en la API.',
+    allowance: 'Nivel gratuito para texto (Gemini 3.8 Flash) y para Gemini TTS. Imagen nativa (gemini-3.1-flash-image) y Veo no tienen nivel gratuito en la API.',
     auth: 'api_key', env: ['GEMINI_API_KEY'], api: 'official_preview',
     docsUrl: 'https://ai.google.dev/gemini-api/docs', pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing', verifiedAt: V,
     terms: 'Vídeos con marca SynthID. Los vídeos generados se conservan 2 días en el servidor de Google: Cerebro los copia a la Biblioteca al terminar.',
@@ -102,12 +102,12 @@ export const providers: ProviderInfo[] = [
     terms: 'Pixabay Content License. No se permite hotlinking permanente: Cerebro copia el archivo a la Biblioteca.',
   },
   {
-    id: 'groq', name: 'Groq (Whisper)', tier: 'free',
-    allowance: 'Plan gratuito: 20 peticiones/día y 28.800 s de audio/día para Whisper.',
+    id: 'groq', name: 'Groq', tier: 'freemium',
+    allowance: 'Plan gratuito sin tarjeta con límites por minuto y día (Whisper: 20 peticiones/día y 28.800 s de audio/día). De pago: GPT-OSS 120B $0.15/$0.60 por 1M tokens; Whisper large v3 $0.111/hora.',
     auth: 'api_key', env: ['GROQ_API_KEY'], api: 'official',
     docsUrl: 'https://console.groq.com/docs/speech-to-text', pricingUrl: 'https://console.groq.com/docs/rate-limits', verifiedAt: V,
-    terms: 'Transcripción para subtítulos.',
-    notes: 'Preparado en el catálogo; el módulo de subtítulos lo usará.',
+    terms: 'Modelos open-weight (GPT-OSS, Whisper) servidos por Groq.',
+    notes: 'Integrado: texto (guiones, prompts) y transcripción para subtítulos.',
   },
   {
     id: 'huggingface', name: 'Hugging Face Inference Providers', tier: 'credits',

@@ -9,7 +9,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { imagePresets } from '@/lib/providers/image-presets'
 import { modalityLabels, modelById, type Format, type Modality } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
-import { rankModels, STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
+import { normalizeStrategy, qualityLevels, rankModels, STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
 import type { ProjectRow } from '@/lib/types/database'
 
 type Model = {
@@ -55,6 +55,7 @@ export default function StudioPage() {
   const supabase = getSupabaseBrowserClient()
   const [models, setModels] = useState<Model[]>([])
   const [strategy, setStrategy] = useState<Strategy | 'manual'>('manual')
+  const [minQuality, setMinQuality] = useState(4)
   const [geminiVoices, setGeminiVoices] = useState<string[]>([])
   const [balance, setBalance] = useState<Balance>(null)
   const [language, setLanguage] = useState('es')
@@ -103,7 +104,7 @@ export default function StudioPage() {
   // ---------- Load ----------
   useEffect(() => {
     setJobs(loadJobs())
-    try { const v = localStorage.getItem(STRATEGY_KEY); if (v && (v === 'manual' || v in strategyLabels)) setStrategy(v as Strategy | 'manual') } catch { /* private mode */ }
+    try { const v = normalizeStrategy(localStorage.getItem(STRATEGY_KEY)); if (v) setStrategy(v); const q = Number(localStorage.getItem(`${STRATEGY_KEY}.quality`)); if (q >= 1 && q <= 5) setMinQuality(q) } catch { /* private mode */ }
     const params = new URLSearchParams(window.location.search)
     const m = params.get('tab') as Modality | null
     if (m && m in modalityLabels) setModality(m)
@@ -138,8 +139,8 @@ export default function StudioPage() {
   const ranked = useMemo(() => {
     const full = modalityModels.map(m => modelById(m.id)).filter((x): x is NonNullable<typeof x> => Boolean(x))
     const availability = Object.fromEntries(modalityModels.map(m => [m.id, { ready: m.ready, creditsExhausted: m.creditsExhausted }]))
-    return rankModels(full, { modality, strategy: strategy === 'manual' ? 'free_first' : strategy }, availability)
-  }, [modalityModels, modality, strategy])
+    return rankModels(full, { modality, strategy: strategy === 'manual' ? 'best_value' : strategy, minQuality: strategy === 'manual' ? undefined : minQuality }, availability)
+  }, [modalityModels, modality, strategy, minQuality])
   const reasonsFor = (id: string) => ranked.find(r => r.model.id === id)?.reasons ?? []
   const orderedModels = strategy === 'manual' ? modalityModels : ranked.map(r => modalityModels.find(m => m.id === r.model.id)!).filter(Boolean)
 
@@ -272,7 +273,7 @@ export default function StudioPage() {
       preset: modality === 'image' && model.id !== 'fal:fal-ai/ideogram/v3' && preset !== 'none' ? preset : undefined, context: scene?.narration ?? undefined,
       options: { format, durationSeconds: duration ?? undefined, variants, quality, audio: audioOn, instrumental },
       voice: voice || undefined, voiceSettings: { stability, style, speed }, instructions, language,
-      selection: strategy, confirmedEstimateUsd: estimate,
+      selection: strategy === 'manual' ? 'manual' : `${strategy}:q${minQuality}`, confirmedEstimateUsd: estimate,
     }
     const r = await fetch('/api/studio/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const j = await r.json().catch(() => ({})) as { error?: string; assets?: Asset[]; job?: { token: string } }
@@ -333,6 +334,13 @@ export default function StudioPage() {
               {(Object.keys(strategyLabels) as Strategy[]).map(k => <option key={k} value={k}>{strategyLabels[k]}</option>)}
             </select>
           </div>
+          {strategy !== 'manual' && strategy !== 'best_quality' && (
+            <label htmlFor="studio-minq" className="inline">Calidad necesaria
+              <select id="studio-minq" value={minQuality} onChange={e => setMinQuality(Number(e.target.value))}>
+                {qualityLevels.map(q => <option key={q.value} value={q.value}>{q.label}</option>)}
+              </select>
+            </label>
+          )}
           {strategy !== 'manual' && <p className="muted small" style={{ marginTop: -6 }}>{ranked.find(r => r.eligible) ? `Elegido: ${ranked.find(r => r.eligible)!.model.label}. Generar seguirá pidiendo tu confirmación.` : 'Ninguna opción cumple esta regla ahora mismo (mira los motivos en cada modelo).'}</p>}
           {balance && ['voice', 'music', 'sfx', 'ambient'].includes(modality) && <p className="pill info" style={{ alignSelf: 'flex-start' }}>ElevenLabs: {balance.remaining.toLocaleString()} de {balance.limit.toLocaleString()} créditos disponibles{balance.resetsAt ? ` · se renuevan el ${new Date(balance.resetsAt).toLocaleDateString()}` : ''}</p>}
           <div className="modelList" role="radiogroup" aria-label="Modelo">

@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!textConfigured()) {
-    return NextResponse.json({ error: 'La asistencia IA necesita OPENAI_TEXT_API_KEY u OPENAI_API_KEY en el servidor.', configured: false }, { status: 503 })
+    return NextResponse.json({ error: 'La asistencia IA necesita un proveedor de texto en el servidor (GROQ_API_KEY, GEMINI_API_KEY u OPENAI_API_KEY).', configured: false }, { status: 503 })
   }
 
   const body = await request.json().catch(() => null) as Body | null
@@ -59,15 +59,16 @@ export async function POST(request: Request) {
       title: text(body.draft.title, 200) ?? project.name, idea: text(body.draft.idea, 2000), brief,
       hook: text(body.draft.hook, 1000), cta: text(body.draft.cta, 1500), sections, research, allowedSources: [...allowed].slice(0, 100),
     }, requestId)
-    return NextResponse.json({ requestId, model: textModel(), proposal }, { headers: { 'Cache-Control': 'no-store' } })
+    const used = proposal.usage as { provider?: string; model?: string } | null | undefined
+    return NextResponse.json({ requestId, model: used?.model ?? textModel(), provider: used?.provider ?? null, proposal }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     const status = error instanceof TextProviderError ? error.status : null
     console.error('Script assist failure', { requestId, status, details: error instanceof Error ? error.message : 'unknown' })
-    const message = status === 401 ? 'OpenAI rechazó la clave API.'
-      : status === 403 ? 'OpenAI rechazó el acceso al modelo o al proyecto.'
-      : status === 404 ? `El modelo ${textModel()} no está disponible para esta clave (OPENAI_TEXT_MODEL).`
-      : status === 429 ? 'OpenAI alcanzó un límite de uso o de facturación.'
-      : status && status >= 500 ? 'El servicio de texto de OpenAI no está disponible.'
+    const message = status === 401 ? 'El proveedor de texto rechazó la clave API.'
+      : status === 403 ? 'El proveedor de texto rechazó el acceso al modelo.'
+      : status === 404 ? `El modelo configurado no está disponible para esta clave (p. ej. OPENAI_TEXT_MODEL=${textModel()}).`
+      : status === 429 ? 'Los proveedores de texto alcanzaron su límite de uso o cupo gratuito.'
+      : status && status >= 500 ? 'El servicio de texto no está disponible.'
       : error instanceof TextProviderError ? error.message : 'No se pudo generar la propuesta.'
     return NextResponse.json({ error: message, requestId }, { status: 502 })
   }

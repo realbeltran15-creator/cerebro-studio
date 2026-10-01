@@ -6,6 +6,8 @@ import { modalityLabels } from '@/lib/providers/catalog'
 
 type Dir = ProviderInfo & { configured: boolean }
 type ModelLite = { id: string; provider: string; modality: keyof typeof modalityLabels; label: string; ready: boolean }
+type TextInfo = { models: Array<{ id: string; label: string; model: string; tier: keyof typeof tierLabels; quality: number; priceNote: string; configured: boolean }>; tasks: Array<{ task: string; label: string; minQuality: number }> }
+type SttInfo = Array<{ id: string; label: string; tier: keyof typeof tierLabels; quality: number; note: string; configured: boolean }>
 
 const apiLabels = { official: 'API oficial', official_preview: 'API oficial (preview)', no_public_api: 'Sin API pública' } as const
 
@@ -13,8 +15,10 @@ const apiLabels = { official: 'API oficial', official_preview: 'API oficial (pre
 export function ProviderDirectory() {
   const [dir, setDir] = useState<Dir[]>([])
   const [models, setModels] = useState<ModelLite[]>([])
+  const [text, setText] = useState<TextInfo | null>(null)
+  const [stt, setStt] = useState<SttInfo>([])
   useEffect(() => {
-    fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j) { setDir(j.providers); setModels(j.models) } }).catch(() => {})
+    fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j) { setDir(j.providers); setModels(j.models); setText(j.text ?? null); setStt(j.transcription ?? []) } }).catch(() => {})
   }, [])
   if (!dir.length) return null
   return <>
@@ -36,6 +40,22 @@ export function ProviderDirectory() {
         )
       })}
     </div>
+
+    {text && <>
+      <h3 className="sectionTitle">Texto y razonamiento (calidad primero)</h3>
+      <section className="panel">
+        <p className="muted small" style={{ marginBottom: 10 }}>Cada tarea exige una calidad mínima. Entre los modelos configurados que la alcanzan se usa primero el gratuito, luego el de menor coste; si uno falla se prueba el siguiente que también la alcance.</p>
+        <div style={{ overflowX: 'auto' }}><table className="dataTable">
+          <thead><tr><th>Modelo</th><th>Coste</th><th>Calidad</th><th>Estado</th><th>Precio</th></tr></thead>
+          <tbody>{text.models.map(m => <tr key={m.id}><td>{m.label}<br /><span className="muted small">{m.model}</span></td><td><span className={`tierBadge tier-${m.tier}`}>{tierLabels[m.tier]}</span></td><td>{'★'.repeat(m.quality)}</td><td>{m.configured ? <span className="pill ok">Configurado</span> : <span className="pill">Sin clave</span>}</td><td className="small">{m.priceNote}</td></tr>)}</tbody>
+        </table></div>
+        <p className="muted small" style={{ marginTop: 10 }}>Calidad mínima por tarea: {text.tasks.map(t => `${t.label} ${t.minQuality}/5`).join(' · ')}</p>
+      </section>
+    </>}
+    {stt.length > 0 && <>
+      <h3 className="sectionTitle">Transcripción y subtítulos</h3>
+      <section className="panel"><div className="list">{stt.map(m => <div key={m.id} className="listItem"><div><b>{m.label}</b><span>{m.note}</span></div><span className={m.configured ? 'pill ok' : 'pill'}>{m.configured ? 'Configurado' : 'Sin clave'}</span></div>)}</div></section>
+    </>}
 
     <h3 className="sectionTitle">Google Flow: qué se puede integrar</h3>
     <section className="panel">

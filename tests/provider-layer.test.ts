@@ -29,10 +29,21 @@ describe('provider directory and catalogue', () => {
 })
 
 describe('selection strategies never require spending', () => {
-  it('free first prefers a free model, then credits, then paid', () => {
-    const r = rankModels(catalog, { modality: 'image', strategy: 'free_first' }, all(true))
+  it('best value with draft quality uses the free model', () => {
+    const r = rankModels(catalog, { modality: 'image', strategy: 'best_value', minQuality: 2 }, all(true))
     expect(r[0].model.tier).toBe('free')
-    expect(r.at(-1)!.model.tier).toBe('paid')
+  })
+  it('best value never drops below the required quality to save money', () => {
+    const r = pickModel(catalog, { modality: 'image', strategy: 'best_value', minQuality: 4 }, all(true))!
+    expect(r.model.quality).toBeGreaterThanOrEqual(4)
+    expect(r.model.id).toBe('fal:fal-ai/flux-2-pro') // cheapest among quality ≥ 4
+    expect(rankModels(catalog, { modality: 'image', strategy: 'best_value', minQuality: 4 }, all(true)).find(x => x.model.tier === 'free')!.eligible).toBe(false)
+  })
+  it('maps old saved strategies', async () => {
+    const { normalizeStrategy } = await import('@/lib/providers/router')
+    expect(normalizeStrategy('free_first')).toBe('best_value')
+    expect(normalizeStrategy('cheapest')).toBe('best_value')
+    expect(normalizeStrategy('nope')).toBeNull()
   })
   it('free only marks paid models as not eligible', () => {
     const r = rankModels(catalog, { modality: 'video', strategy: 'free_only' }, all(true))
@@ -41,13 +52,13 @@ describe('selection strategies never require spending', () => {
   })
   it('best quality and cheapest order differently', () => {
     const best = pickModel(catalog, { modality: 'image', strategy: 'best_quality' }, all(true))!
-    const cheap = pickModel(catalog, { modality: 'image', strategy: 'cheapest' }, all(true))!
+    const cheap = pickModel(catalog, { modality: 'image', strategy: 'best_value', minQuality: 1 }, all(true))!
     expect(best.model.quality).toBe(5)
     expect(cheap.estimateUsd).toBe(0)
   })
   it('skips unconfigured providers and exhausted credits, explaining why', () => {
     const availability = { ...all(false), 'elevenlabs:music_v1': { ready: true, creditsExhausted: true }, 'fal:fal-ai/lyria2': { ready: true } }
-    const r = rankModels(catalog, { modality: 'music', strategy: 'free_first' }, availability)
+    const r = rankModels(catalog, { modality: 'music', strategy: 'best_value' }, availability)
     expect(r[0].model.id).toBe('fal:fal-ai/lyria2')
     expect(r.find(x => x.model.id === 'elevenlabs:music_v1')!.reasons).toContain('Sin créditos disponibles en el proveedor')
   })

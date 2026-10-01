@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from './studio-icon'
 import { modalityLabels, modelById, type Modality } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
-import { rankModels, STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
+import { normalizeStrategy, qualityLevels, rankModels, STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
 
 type Model = { id: string; modality: Modality; label: string; tier: CostTier; price: string; priceConfirmed: boolean; ready: boolean; creditsExhausted: boolean; durations: number[] | null; missing: string[] }
 
@@ -17,7 +17,8 @@ export function QuickGenerate({ modalities, projectId, sceneId, defaultPrompt = 
 }) {
   const [models, setModels] = useState<Model[]>([])
   const [modality, setModality] = useState<Modality>(modalities[0])
-  const [strategy, setStrategy] = useState<Strategy>('free_first')
+  const [strategy, setStrategy] = useState<Strategy>('best_value')
+  const [minQuality, setMinQuality] = useState(4)
   const [modelId, setModelId] = useState('')
   const [prompt, setPrompt] = useState(defaultPrompt)
   const [duration, setDuration] = useState<number | null>(null)
@@ -29,7 +30,7 @@ export function QuickGenerate({ modalities, projectId, sceneId, defaultPrompt = 
   const alive = useRef(true)
 
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  useEffect(() => { try { const v = localStorage.getItem(STRATEGY_KEY); if (v && v in strategyLabels) setStrategy(v as Strategy) } catch { /* private mode */ } }, [])
+  useEffect(() => { try { const v = normalizeStrategy(localStorage.getItem(STRATEGY_KEY)); if (v && v !== 'manual') setStrategy(v); const q = Number(localStorage.getItem(`${STRATEGY_KEY}.quality`)); if (q >= 1 && q <= 5) setMinQuality(q) } catch { /* private mode */ } }, [])
   useEffect(() => {
     fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j) setModels(j.models) }).catch(() => {})
   }, [])
@@ -38,8 +39,8 @@ export function QuickGenerate({ modalities, projectId, sceneId, defaultPrompt = 
   const list = useMemo(() => models.filter(m => m.modality === modality), [models, modality])
   const ranked = useMemo(() => {
     const full = list.map(m => modelById(m.id)).filter((x): x is NonNullable<typeof x> => Boolean(x))
-    return rankModels(full, { modality, strategy }, Object.fromEntries(list.map(m => [m.id, { ready: m.ready, creditsExhausted: m.creditsExhausted }])))
-  }, [list, modality, strategy])
+    return rankModels(full, { modality, strategy, minQuality: strategy === 'best_quality' ? undefined : minQuality }, Object.fromEntries(list.map(m => [m.id, { ready: m.ready, creditsExhausted: m.creditsExhausted }])))
+  }, [list, modality, strategy, minQuality])
   useEffect(() => {
     const best = ranked.find(r => r.eligible)
     setModelId(best?.model.id ?? list[0]?.id ?? '')
@@ -68,7 +69,7 @@ export function QuickGenerate({ modalities, projectId, sceneId, defaultPrompt = 
     try {
       const r = await fetch('/api/studio/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, sceneId: sceneId || null, modelId: model.id, prompt: prompt.trim(), options: { durationSeconds: duration ?? undefined, instrumental }, selection: strategy, confirmedEstimateUsd: estimate }),
+        body: JSON.stringify({ projectId, sceneId: sceneId || null, modelId: model.id, prompt: prompt.trim(), options: { durationSeconds: duration ?? undefined, instrumental }, selection: `${strategy}:q${minQuality}`, confirmedEstimateUsd: estimate }),
       })
       const j = await r.json().catch(() => ({})) as { error?: string; assets?: Array<{ id: string }>; job?: { token: string } }
       if (!r.ok && r.status !== 202) throw new Error(j.error ?? 'No se pudo generar.')
@@ -95,6 +96,11 @@ export function QuickGenerate({ modalities, projectId, sceneId, defaultPrompt = 
             {(Object.keys(strategyLabels) as Strategy[]).map(k => <option key={k} value={k}>{strategyLabels[k]}</option>)}
           </select>
         </label>
+        {strategy !== 'best_quality' && <label>Calidad necesaria
+          <select value={minQuality} onChange={e => setMinQuality(Number(e.target.value))}>
+            {qualityLevels.map(q => <option key={q.value} value={q.value}>{q.label}</option>)}
+          </select>
+        </label>}
         <label>Modelo
           <select value={modelId} onChange={e => setModelId(e.target.value)}>
             {ranked.map(r => { const m = list.find(x => x.id === r.model.id)!; return <option key={m.id} value={m.id} disabled={!m.ready}>{m.label} · {tierLabels[m.tier]}{m.ready ? (m.creditsExhausted ? ' · sin créditos' : '') : ' · sin clave'}</option> })}

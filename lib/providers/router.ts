@@ -9,14 +9,32 @@ import type { CostTier } from './directory'
 /** Browser storage key for the user's default strategy (set in Costes y créditos). */
 export const STRATEGY_KEY = 'cerebro.defaultStrategy'
 
-export type Strategy = 'free_first' | 'free_only' | 'cheapest' | 'best_quality' | 'fastest'
+/**
+ * Quality first: `best_value` keeps only models that reach the required quality and, among them,
+ * prefers free allowance → plan credits/freemium → lowest price. A cheaper model that does not
+ * reach the required quality is never chosen by it.
+ */
+export type Strategy = 'best_value' | 'free_only' | 'best_quality' | 'fastest'
 
 export const strategyLabels: Record<Strategy, string> = {
-  free_first: 'Gratis y créditos primero',
-  free_only: 'Solo opciones gratuitas',
-  cheapest: 'La opción más barata',
+  best_value: 'Mejor relación calidad-coste',
+  free_only: 'Gratis solamente',
   best_quality: 'Máxima calidad',
-  fastest: 'La más rápida',
+  fastest: 'Más rápido',
+}
+
+export const qualityLevels = [
+  { value: 2, label: 'Borrador (pruebas, bocetos)' },
+  { value: 3, label: 'Estándar' },
+  { value: 4, label: 'Alta (publicable)' },
+  { value: 5, label: 'Máxima' },
+] as const
+
+/** Older saved values map onto the current strategies. */
+export function normalizeStrategy(v: unknown): Strategy | 'manual' | null {
+  if (v === 'manual') return 'manual'
+  if (v === 'free_first' || v === 'cheapest') return 'best_value'
+  return typeof v === 'string' && v in strategyLabels ? v as Strategy : null
 }
 
 export type RouteRequest = {
@@ -26,6 +44,8 @@ export type RouteRequest = {
   format?: Format
   durationSeconds?: number
   needs?: Capability[]
+  /** Required quality (1–5). Used by every strategy; best_value then minimises cost among the models that reach it. */
+  minQuality?: number
   /** Only these providers (manual choice, e.g. "usar proveedor X"). */
   providers?: string[]
 }
@@ -47,6 +67,7 @@ export function rankModels(models: CatalogModel[], req: RouteRequest, availabili
     if (!a.ready) reasons.push('Falta configurar la clave en el servidor')
     if (a.creditsExhausted) reasons.push('Sin créditos disponibles en el proveedor')
     if (req.strategy === 'free_only' && !FREE_TIERS.includes(model.tier)) reasons.push('Es de pago')
+    if (req.minQuality && model.quality < req.minQuality) reasons.push(`Calidad ${model.quality}/5, por debajo de la necesaria (${req.minQuality}/5)`)
     if (req.providers?.length && !req.providers.includes(model.provider)) reasons.push('No es el proveedor elegido')
     if (options.format && model.formats && !model.formats.includes(options.format)) reasons.push(`No genera formato ${options.format}`)
     if (options.durationSeconds && model.durations && !model.durations.some(d => d >= options.durationSeconds!)) reasons.push(`No llega a ${options.durationSeconds} s`)
@@ -56,9 +77,8 @@ export function rankModels(models: CatalogModel[], req: RouteRequest, availabili
   const score = (r: Ranked) => {
     const m = r.model
     switch (req.strategy) {
-      case 'free_first':
+      case 'best_value': return [tierRank[m.tier], r.estimateUsd, -m.quality]
       case 'free_only': return [tierRank[m.tier], -m.quality, r.estimateUsd]
-      case 'cheapest': return [r.estimateUsd, tierRank[m.tier], -m.quality]
       case 'best_quality': return [-m.quality, r.estimateUsd]
       case 'fastest': return [speedRank[m.speed], -m.quality]
     }

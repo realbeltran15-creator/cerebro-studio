@@ -6,6 +6,8 @@ import { geminiVoices } from '@/lib/providers/gemini'
 import { textConfigured } from '@/lib/providers/openai-text'
 import { elevenLabsBalance } from '@/lib/providers/elevenlabs'
 import { tokenEncryptionConfigured } from '@/lib/security/tokens'
+import { taskQuality, textConfiguredFor, textModels } from '@/lib/providers/text'
+import { sttConfigured, sttModels } from '@/lib/providers/transcribe'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,5 +32,10 @@ export async function GET() {
   return NextResponse.json({
     models, providers: directory, openAiVoices, geminiVoices, textReady: textConfigured(),
     balances: { elevenlabs: eleven },
+    text: {
+      models: textModels.map(m => ({ id: m.id, label: m.label, provider: m.provider, model: m.model(), tier: m.tier, quality: m.quality, priceNote: m.priceNote, configured: textConfiguredFor(m) })),
+      tasks: Object.entries(taskQuality).map(([task, q]) => ({ task, label: q.label, minQuality: q.min })),
+    },
+    transcription: sttModels.map(m => ({ id: m.id, label: m.label, tier: m.tier, quality: m.quality, note: m.note, configured: sttConfigured(m) })),
   }, { headers: { 'Cache-Control': 'no-store' } })
 }
