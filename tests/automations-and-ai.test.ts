@@ -94,7 +94,7 @@ describe('ElevenLabs', () => {
     await new ElevenLabsVoiceProvider().synthesize(ctx, 'hola', 'not-a-voice')
     const sfx = await generateSoundEffect(ctx, 'viento', 60)
     expect(seen[0]).toContain('/text-to-speech/AAAAAAAAAAAAAAAAAAAA')
-    expect(seen[1]).toContain('"duration_seconds":22')
+    expect(seen[1]).toContain('"duration_seconds":30') // API limit is 30 s (eleven_text_to_sound_v2)
     expect(sfx.uri.startsWith('data:audio/mpeg;base64,')).toBe(true)
   })
 })

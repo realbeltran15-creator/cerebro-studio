@@ -187,6 +187,11 @@ export default function CreatePage() {
                   <dt>Efectos</dt><dd>{meta(s, 'sfx') || '—'}</dd>
                   <dt>Estado final</dt><dd>{meta(s, 'end_state') || '—'}</dd>
                 </dl>
+                <div className="sceneGen" aria-label={`Generar recursos para la escena ${s.position}`}>
+                  {([['image', 'image', 'Imagen'], ['video', 'video', 'Vídeo'], ['voice', 'mic', 'Voz'], ['music', 'music', 'Música'], ['ambient', 'radar', 'Ambiente'], ['sfx', 'bolt', 'Efecto']] as const).map(([tab, icon, label]) => (
+                    <Link key={tab} className="chip" href={`/studio?project=${board.project_id}&scene=${s.id}&tab=${tab}`} title={`Generar ${label.toLowerCase()} para esta escena`}><Icon name={icon} size={13} />{label}</Link>
+                  ))}
+                </div>
               </article>
             )
           })}

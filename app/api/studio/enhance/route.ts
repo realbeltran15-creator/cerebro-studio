@@ -5,7 +5,7 @@ import { enhancePrompt, TextProviderError, type PromptModality } from '@/lib/pro
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const modalities: PromptModality[] = ['image', 'video', 'voice', 'music', 'sfx']
+const modalities: PromptModality[] = ['image', 'video', 'voice', 'music', 'sfx', 'ambient']
 
 /** "Mejorar con ChatGPT": rewrites an idea into a provider prompt. Nothing is saved. */
 export async function POST(request: Request) {

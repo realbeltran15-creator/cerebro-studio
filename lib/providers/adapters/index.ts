@@ -1,0 +1,87 @@
+/**
+ * One entry point per provider. The Creation Studio routes only call `startGeneration` and
+ * `pollGeneration`; adding a provider means adding a case here plus its catalogue entries.
+ */
+import { falEndpoint, falInput, falOutputs, type CatalogModel, type GenerationOptions } from '../catalog'
+import { falResult, falStatus, falSubmit, type FalJob } from '../fal-queue'
+import { OpenAIImageProvider } from '../openai-image'
+import { composeMusic, generateSoundEffect, synthesizeWithSettings, type VoiceSettings } from '../elevenlabs'
+import { synthesizeSteerable } from '../openai-voice'
+import { cloudflareImage, cloudflareSpeech } from '../cloudflare'
+import { geminiSpeech, veoDownload, veoStatus, veoSubmit, type VeoJob } from '../gemini'
+import { sizeForFormat } from '../image-presets'
+import type { GeneratedAsset, ProviderContext } from '../types'
+
+export type GenerationInput = {
+  model: CatalogModel
+  prompt: string
+  finalPrompt: string
+  negative?: string
+  options: GenerationOptions
+  voice?: string
+  voiceSettings?: VoiceSettings
+  instructions?: string
+  language?: string
+  context: ProviderContext
+}
+
+/** A queued job; serialised (encrypted) into the token the page polls with. */
+export type JobRef = { provider: 'fal'; fal: FalJob } | { provider: 'gemini'; veo: VeoJob }
+
+export type StartResult = { kind: 'assets'; assets: GeneratedAsset[] } | { kind: 'job'; job: JobRef; externalId: string }
+
+export type PollMedia = { uri: string; mimeType: string; externalId: string }
+export type PollResult = { state: 'queued' | 'running'; position?: number | null } | { state: 'done'; media: PollMedia[] } | { state: 'failed'; error: string }
+
+export async function startGeneration(input: GenerationInput): Promise<StartResult> {
+  const { model, prompt, finalPrompt, options, context } = input
+  const format = options.format ?? '16:9'
+  switch (model.provider) {
+    case 'fal': {
+      const job = await falSubmit(falEndpoint(model), falInput(model, finalPrompt, options, input.negative))
+      return { kind: 'job', job: { provider: 'fal', fal: job }, externalId: job.requestId }
+    }
+    case 'gemini': {
+      if (model.modality === 'voice') return { kind: 'assets', assets: [await geminiSpeech(context, prompt, input.voice ?? 'Charon', input.instructions)] }
+      if (model.modality === 'video') {
+        const id = model.id.slice('gemini:'.length)
+        const duration = ([4, 6, 8] as const).find(d => d === options.durationSeconds) ?? 8
+        const veo = await veoSubmit(id, finalPrompt, { aspectRatio: format === '9:16' ? '9:16' : '16:9', durationSeconds: duration, negativePrompt: input.negative })
+        return { kind: 'job', job: { provider: 'gemini', veo }, externalId: veo.operation.split('/').pop()! }
+      }
+      break
+    }
+    case 'cloudflare':
+      if (model.modality === 'image') return { kind: 'assets', assets: [await cloudflareImage(context, finalPrompt)] }
+      if (model.modality === 'voice') return { kind: 'assets', assets: [await cloudflareSpeech(context, prompt, input.language ?? 'es')] }
+      break
+    case 'openai':
+      if (model.modality === 'image') return { kind: 'assets', assets: [await new OpenAIImageProvider().generateImage(context, finalPrompt, { size: sizeForFormat(format), quality: options.quality === 'high' ? 'high' : 'medium' })] }
+      if (model.modality === 'voice') return { kind: 'assets', assets: [await synthesizeSteerable(context, prompt, input.voice ?? 'onyx', input.instructions)] }
+      break
+    case 'elevenlabs':
+      if (model.modality === 'voice') {
+        const voice = input.voice?.trim() || process.env.ELEVENLABS_VOICE_ID?.trim() || ''
+        return { kind: 'assets', assets: [await synthesizeWithSettings(context, prompt, voice, input.voiceSettings)] }
+      }
+      if (model.modality === 'music') return { kind: 'assets', assets: [await composeMusic(context, finalPrompt, options.durationSeconds ?? 30, options.instrumental !== false)] }
+      if (model.modality === 'sfx') return { kind: 'assets', assets: [await generateSoundEffect(context, finalPrompt, options.durationSeconds)] }
+      if (model.modality === 'ambient') return { kind: 'assets', assets: [await generateSoundEffect(context, finalPrompt, options.durationSeconds ?? 20, true)] }
+      break
+  }
+  throw new Error(`Sin adaptador para ${model.id}.`)
+}
+
+export async function pollGeneration(model: CatalogModel, job: JobRef): Promise<PollResult> {
+  if (job.provider === 'fal') {
+    const s = await falStatus(job.fal)
+    if (s.state !== 'done') return { state: s.state, position: s.position }
+    const outputs = falOutputs(await falResult(job.fal), model.modality)
+    if (!outputs.length) return { state: 'failed', error: 'fal.ai terminó sin devolver archivos (posible filtro de seguridad). No se ha guardado nada.' }
+    return { state: 'done', media: outputs.map((o, i) => ({ uri: o.url, mimeType: o.contentType, externalId: `${job.fal.requestId}#${i}` })) }
+  }
+  const s = await veoStatus(job.veo)
+  if (s.state === 'running') return { state: 'running' }
+  if (s.state === 'failed') return s
+  return { state: 'done', media: [{ uri: await veoDownload(s.videoUri), mimeType: 'video/mp4', externalId: `${job.veo.operation.split('/').pop()}#0` }] }
+}

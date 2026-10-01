@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
+import { ProviderDirectory } from '../components/provider-directory'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 
 type Connector = { id: string; provider: string; capability: string; enabled: boolean; updated_at: string }
@@ -84,5 +85,6 @@ export default function ConnectorsPage() {
     <h3>Runtime</h3>
     <div className="grid">{runtime.map(c => <article key={c.id}><small>{capabilityLabels[c.capability] ?? c.capability}</small><h3>{c.id}</h3><p>Estado: {c.enabled ? c.health : 'sin configurar'}</p></article>)}</div>
     {rows.length > 0 && <><h3>Configuración registrada</h3><div className="grid">{rows.map(c => <article key={c.id}><small>{c.capability}</small><h3>{c.provider}</h3><p>Estado: {c.enabled ? 'Habilitado' : 'Deshabilitado'}</p></article>)}</div></>}
+    <ProviderDirectory />
   </StudioShell>
 }

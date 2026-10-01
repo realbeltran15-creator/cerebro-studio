@@ -4,15 +4,20 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
+import { StockBrowser } from '../components/stock-browser'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { imagePresets } from '@/lib/providers/image-presets'
 import { modalityLabels, modelById, type Format, type Modality } from '@/lib/providers/catalog'
+import { tierLabels, type CostTier } from '@/lib/providers/directory'
+import { rankModels, STRATEGY_KEY, strategyLabels, type Strategy } from '@/lib/providers/router'
 import type { ProjectRow } from '@/lib/types/database'
 
 type Model = {
-  id: string; modality: Modality; provider: string; label: string; strength: string; price: string; sync: boolean
-  formats: Format[] | null; durations: number[] | null; maxVariants: number; negative: boolean; ready: boolean; missing: string[]
+  id: string; modality: Modality; provider: string; label: string; strength: string; price: string; priceConfirmed: boolean; sync: boolean
+  tier: CostTier; quality: number; speed: 'fast' | 'medium' | 'slow'; limits: string | null; capabilities: string[]
+  formats: Format[] | null; durations: number[] | null; maxVariants: number; negative: boolean; ready: boolean; creditsExhausted: boolean; missing: string[]
 }
+type Balance = { used: number; limit: number; remaining: number; resetsAt: string | null; tier: string | null } | null
 type Asset = { id: string; asset_type: string; provenance: Record<string, unknown> | null; created_at: string; source_provider: string | null }
 type Scene = { id: string; position: number; narration: string | null; visual_prompt: string | null; video_prompt: string | null; ambient_prompt: string | null; metadata: Record<string, unknown>; storyboard_id: string }
 type Board = { id: string; title: string }
@@ -22,18 +27,19 @@ type Job = {
   state: 'sending' | 'queued' | 'running' | 'saving' | 'done' | 'failed'; position?: number | null; token?: string; error?: string; assetIds?: string[]
 }
 
-const modalityIcon: Record<Modality, string> = { image: 'image', video: 'video', voice: 'mic', music: 'music', sfx: 'bolt' }
-const modalityKinds: Record<Modality, string[]> = { image: ['image', 'thumbnail'], video: ['video'], voice: ['voice'], music: ['music'], sfx: ['sfx'] }
+const modalityIcon: Record<Modality, string> = { image: 'image', video: 'video', voice: 'mic', music: 'music', sfx: 'bolt', ambient: 'radar' }
+const modalityKinds: Record<Modality, string[]> = { image: ['image', 'thumbnail'], video: ['video'], voice: ['voice'], music: ['music'], sfx: ['sfx'], ambient: ['sfx'] }
 const promptLabel: Record<Modality, string> = {
   image: 'Describe la imagen', video: 'Describe el plano (un solo movimiento continuo)', voice: 'Texto que se va a locutar',
-  music: 'Describe la música', sfx: 'Describe el sonido',
+  music: 'Describe la música', sfx: 'Describe el sonido', ambient: 'Describe el ambiente',
 }
 const promptHint: Record<Modality, string> = {
   image: 'Quién, qué hace, dónde, cuándo, encuadre y luz. Ej.: una joven sola caminando entre la selva peruana, 1971, luz filtrada tras la lluvia.',
   video: 'Sujeto, acción, movimiento de cámara y luz. Ej.: travelling lento sobre restos de un avión entre la vegetación, niebla matinal.',
   voice: 'Pega la narración de la escena. La voz la leerá tal cual.',
   music: 'Género, tempo, instrumentos y emoción. Ej.: ambient cinematográfico, 70 BPM, cuerdas graves y piano, tensión contenida.',
-  sfx: 'Fuente, espacio y distancia. Ej.: lluvia densa sobre hojas grandes en la selva, truenos lejanos.',
+  sfx: 'Fuente, espacio y distancia. Ej.: golpe metálico seco en un hangar vacío.',
+  ambient: 'Lugar y textura continua; se genera en bucle. Ej.: selva tropical de noche, insectos, lluvia lejana, sin música.',
 }
 const stateLabel: Record<Job['state'], string> = { sending: 'Enviando…', queued: 'En cola', running: 'Generando…', saving: 'Guardando…', done: 'Listo', failed: 'Error' }
 const JOBS_KEY = 'cerebro.studio.jobs.v1'
@@ -48,6 +54,10 @@ function saveJobs(jobs: Job[]) { try { localStorage.setItem(JOBS_KEY, JSON.strin
 export default function StudioPage() {
   const supabase = getSupabaseBrowserClient()
   const [models, setModels] = useState<Model[]>([])
+  const [strategy, setStrategy] = useState<Strategy | 'manual'>('manual')
+  const [geminiVoices, setGeminiVoices] = useState<string[]>([])
+  const [balance, setBalance] = useState<Balance>(null)
+  const [language, setLanguage] = useState('es')
   const [openAiVoices, setOpenAiVoices] = useState<string[]>([])
   const [textReady, setTextReady] = useState(false)
   const [elVoices, setElVoices] = useState<Voice[]>([])
@@ -93,6 +103,7 @@ export default function StudioPage() {
   // ---------- Load ----------
   useEffect(() => {
     setJobs(loadJobs())
+    try { const v = localStorage.getItem(STRATEGY_KEY); if (v && (v === 'manual' || v in strategyLabels)) setStrategy(v as Strategy | 'manual') } catch { /* private mode */ }
     const params = new URLSearchParams(window.location.search)
     const m = params.get('tab') as Modality | null
     if (m && m in modalityLabels) setModality(m)
@@ -101,7 +112,7 @@ export default function StudioPage() {
         fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
         supabase.from('projects').select('*').order('updated_at', { ascending: false }),
       ])
-      if (cat) { setModels(cat.models); setOpenAiVoices(cat.openAiVoices); setTextReady(cat.textReady) } else setError('No se pudo leer el catálogo de modelos. ¿Has iniciado sesión?')
+      if (cat) { setModels(cat.models); setOpenAiVoices(cat.openAiVoices); setGeminiVoices(cat.geminiVoices ?? []); setBalance(cat.balances?.elevenlabs ?? null); setTextReady(cat.textReady) } else setError('No se pudo leer el catálogo de modelos. ¿Has iniciado sesión?')
       const rows = (proj.data ?? []) as ProjectRow[]
       setProjects(rows)
       const wanted = params.get('project')
@@ -123,11 +134,26 @@ export default function StudioPage() {
   const modalityModels = useMemo(() => models.filter(m => m.modality === modality), [models, modality])
   const model = models.find(m => m.id === modelId) ?? null
 
-  // Pick the first ready model when switching tabs; keep choices valid for the model.
+  // Ranking for the chosen strategy (it only selects; generating always needs a confirmation click).
+  const ranked = useMemo(() => {
+    const full = modalityModels.map(m => modelById(m.id)).filter((x): x is NonNullable<typeof x> => Boolean(x))
+    const availability = Object.fromEntries(modalityModels.map(m => [m.id, { ready: m.ready, creditsExhausted: m.creditsExhausted }]))
+    return rankModels(full, { modality, strategy: strategy === 'manual' ? 'free_first' : strategy }, availability)
+  }, [modalityModels, modality, strategy])
+  const reasonsFor = (id: string) => ranked.find(r => r.model.id === id)?.reasons ?? []
+  const orderedModels = strategy === 'manual' ? modalityModels : ranked.map(r => modalityModels.find(m => m.id === r.model.id)!).filter(Boolean)
+
+  // Strategy picks the best eligible model; manual keeps the user's choice (or the first ready model).
   useEffect(() => {
     if (!modalityModels.length) return
+    if (strategy !== 'manual') {
+      const best = ranked.find(r => r.eligible)
+      if (best && best.model.id !== modelId) setModelId(best.model.id)
+      if (!best && !modalityModels.some(m => m.id === modelId)) setModelId(modalityModels[0].id)
+      return
+    }
     if (!modalityModels.some(m => m.id === modelId)) setModelId((modalityModels.find(m => m.ready) ?? modalityModels[0]).id)
-  }, [modalityModels, modelId])
+  }, [modalityModels, modelId, strategy, ranked])
   useEffect(() => {
     if (!model) return
     if (model.formats && !model.formats.includes(format)) setFormat(model.formats[0])
@@ -135,7 +161,8 @@ export default function StudioPage() {
     if (variants > model.maxVariants) setVariants(1)
     if (model.id.startsWith('openai:gpt-4o') && !openAiVoices.includes(voice)) setVoice('onyx')
     if (model.id.startsWith('elevenlabs:eleven') && !elVoices.some(v => v.voice_id === voice)) setVoice(elVoices[0]?.voice_id ?? '')
-  }, [model, format, duration, variants, voice, openAiVoices, elVoices])
+    if (model.id === 'gemini:gemini-3.8-flash-tts' && !geminiVoices.includes(voice)) setVoice(geminiVoices.includes('Charon') ? 'Charon' : geminiVoices[0] ?? '')
+  }, [model, format, duration, variants, voice, openAiVoices, elVoices, geminiVoices])
 
   // Project → storyboards → scenes (for prefill and linking).
   useEffect(() => {
@@ -203,10 +230,19 @@ export default function StudioPage() {
       : modality === 'video' ? scene.video_prompt || scene.visual_prompt || sceneText(scene, 'visual_description')
       : modality === 'voice' ? scene.narration
       : modality === 'music' ? sceneText(scene, 'music')
+      : modality === 'ambient' ? scene.ambient_prompt || sceneText(scene, 'sfx')
       : sceneText(scene, 'sfx') || scene.ambient_prompt
     if (value?.trim()) { setPrompt(value.trim()); setNotice(`Texto tomado de la escena ${scene.position}.`) }
     else setError(`La escena ${scene.position} no tiene datos para ${modalityLabels[modality].toLowerCase()}.`)
   }
+  // Opened from a storyboard scene (?scene=…): prefill once with that scene's text for the current tab.
+  const autoFilled = useRef('')
+  useEffect(() => {
+    if (!scene || prompt.trim() || autoFilled.current === `${scene.id}:${modality}`) return
+    autoFilled.current = `${scene.id}:${modality}`
+    const t = setTimeout(fillFromScene, 0)
+    return () => clearTimeout(t)
+  }, [scene, modality]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function enhance() {
     if (!prompt.trim()) return
@@ -235,7 +271,8 @@ export default function StudioPage() {
       projectId, sceneId: sceneId || null, modelId: model.id, prompt: prompt.trim(), negative: negative.trim() || undefined,
       preset: modality === 'image' && model.id !== 'fal:fal-ai/ideogram/v3' && preset !== 'none' ? preset : undefined, context: scene?.narration ?? undefined,
       options: { format, durationSeconds: duration ?? undefined, variants, quality, audio: audioOn, instrumental },
-      voice: voice || undefined, voiceSettings: { stability, style, speed }, instructions,
+      voice: voice || undefined, voiceSettings: { stability, style, speed }, instructions, language,
+      selection: strategy, confirmedEstimateUsd: estimate,
     }
     const r = await fetch('/api/studio/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const j = await r.json().catch(() => ({})) as { error?: string; assets?: Asset[]; job?: { token: string } }
@@ -289,14 +326,25 @@ export default function StudioPage() {
       <div className="studioGrid">
         {/* ---------- Controls ---------- */}
         <section className="panel studioControls">
-          <h2 className="panelTitle">Modelo</h2>
+          <div className="rowBetween" style={{ marginTop: 0 }}>
+            <h2 className="panelTitle">Modelo</h2>
+            <select aria-label="Cómo elegir el modelo" value={strategy} onChange={e => setStrategy(e.target.value as Strategy | 'manual')} style={{ width: 'auto', fontSize: 13, padding: '6px 10px' }}>
+              <option value="manual">Elección manual</option>
+              {(Object.keys(strategyLabels) as Strategy[]).map(k => <option key={k} value={k}>{strategyLabels[k]}</option>)}
+            </select>
+          </div>
+          {strategy !== 'manual' && <p className="muted small" style={{ marginTop: -6 }}>{ranked.find(r => r.eligible) ? `Elegido: ${ranked.find(r => r.eligible)!.model.label}. Generar seguirá pidiendo tu confirmación.` : 'Ninguna opción cumple esta regla ahora mismo (mira los motivos en cada modelo).'}</p>}
+          {balance && ['voice', 'music', 'sfx', 'ambient'].includes(modality) && <p className="pill info" style={{ alignSelf: 'flex-start' }}>ElevenLabs: {balance.remaining.toLocaleString()} de {balance.limit.toLocaleString()} créditos disponibles{balance.resetsAt ? ` · se renuevan el ${new Date(balance.resetsAt).toLocaleDateString()}` : ''}</p>}
           <div className="modelList" role="radiogroup" aria-label="Modelo">
-            {modalityModels.map(m => (
-              <button key={m.id} type="button" role="radio" aria-checked={m.id === modelId} className={`modelCard${m.id === modelId ? ' active' : ''}${m.ready ? '' : ' off'}`} onClick={() => setModelId(m.id)}>
-                <span className="modelTop"><b>{m.label}</b><span className={m.ready ? 'pill ok' : 'pill'}>{m.ready ? 'Listo' : 'Sin clave'}</span></span>
+            {orderedModels.map(m => (
+              <button key={m.id} type="button" role="radio" aria-checked={m.id === modelId} className={`modelCard${m.id === modelId ? ' active' : ''}${m.ready ? '' : ' off'}`} onClick={() => { setModelId(m.id); setStrategy('manual') }}>
+                <span className="modelTop"><b>{m.label}</b><span className={m.ready && !m.creditsExhausted ? 'pill ok' : 'pill'}>{!m.ready ? 'Sin clave' : m.creditsExhausted ? 'Sin créditos' : 'Listo'}</span></span>
+                <span className="modelBadges"><span className={`tierBadge tier-${m.tier}`}>{tierLabels[m.tier]}</span><span className="quality" aria-label={`Calidad ${m.quality} de 5`}>{'★'.repeat(m.quality)}{'☆'.repeat(5 - m.quality)}</span><span className="muted small">{m.speed === 'fast' ? 'Rápido' : m.speed === 'medium' ? 'Medio' : 'Lento'}</span></span>
                 <span className="modelStrength">{m.strength}</span>
-                <span className="modelPrice">{m.price}</span>
+                <span className="modelPrice">{m.priceConfirmed ? '' : 'Precio de referencia · '}{m.price}</span>
+                {m.limits && <span className="modelStrength">Límites: {m.limits}</span>}
                 {!m.ready && <span className="modelMissing">Falta en Vercel: {m.missing.join(', ')}</span>}
+                {strategy !== 'manual' && m.ready && reasonsFor(m.id).length > 0 && <span className="modelMissing">{reasonsFor(m.id).join(' · ')}</span>}
               </button>
             ))}
             {!modalityModels.length && <p className="muted">Cargando modelos…</p>}
@@ -321,7 +369,7 @@ export default function StudioPage() {
           </label>
           <div className="rowBetween">
             <span className="muted small">{prompt.length}/4000</span>
-            <button type="button" className="ghost small" disabled={!textReady || enhancing || !prompt.trim() || (modality === 'voice' && model?.id !== 'openai:gpt-4o-mini-tts')} onClick={() => void enhance()} title={textReady ? 'Reescribe tu idea con ChatGPT para este modelo' : 'Configura OPENAI_API_KEY para usar ChatGPT'}>
+            <button type="button" className="ghost small" disabled={!textReady || enhancing || !prompt.trim() || (modality === 'voice' && model?.id !== 'openai:gpt-4o-mini-tts' && model?.id !== 'gemini:gemini-3.8-flash-tts')} onClick={() => void enhance()} title={textReady ? 'Reescribe tu idea con ChatGPT para este modelo' : 'Configura OPENAI_API_KEY para usar ChatGPT'}>
               <Icon name="bolt" size={14} />{enhancing ? 'Mejorando…' : modality === 'voice' ? 'Dirigir la voz con ChatGPT' : 'Mejorar con ChatGPT'}
             </button>
           </div>
@@ -376,6 +424,19 @@ export default function StudioPage() {
               <label htmlFor="sl-speed">Velocidad {speed.toFixed(2)}×<input id="sl-speed" type="range" min={0.7} max={1.2} step={0.05} value={speed} onChange={e => setSpeed(Number(e.target.value))} /></label>
             </div>
           </>}
+          {model?.id === 'gemini:gemini-3.8-flash-tts' && <>
+            <label htmlFor="studio-gvoice">Voz de Gemini
+              <select id="studio-gvoice" value={voice} onChange={e => setVoice(e.target.value)}>
+                {geminiVoices.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </label>
+            <label htmlFor="studio-gstyle">Estilo de la locución<textarea id="studio-gstyle" rows={3} value={instructions} onChange={e => setInstructions(e.target.value)} maxLength={500} /></label>
+          </>}
+          {model?.id === 'cloudflare:@cf/myshell-ai/melotts' && (
+            <fieldset className="chips"><legend>Idioma</legend>
+              {[['es', 'Español'], ['en', 'Inglés'], ['fr', 'Francés']].map(([v, l]) => <button key={v} type="button" className={v === language ? 'chip active' : 'chip'} aria-pressed={v === language} onClick={() => setLanguage(v)}>{l}</button>)}
+            </fieldset>
+          )}
           {model?.id === 'openai:gpt-4o-mini-tts' && <>
             <fieldset className="chips"><legend>Voz</legend>
               {openAiVoices.map(v => <button key={v} type="button" className={v === voice ? 'chip active' : 'chip'} aria-pressed={v === voice} onClick={() => setVoice(v)}>{v}</button>)}
@@ -386,11 +447,11 @@ export default function StudioPage() {
           <div className="generateBar">
           {!confirming ? (
             <button type="button" className="generateBtn" disabled={!ready} onClick={() => setConfirming(true)}>
-              <Icon name="bolt" size={16} />Generar {modalityLabels[modality].toLowerCase()} · {usd(estimate)}
+              <Icon name="bolt" size={16} />Generar {modalityLabels[modality].toLowerCase()} · {model && (model.tier === 'free' || model.tier === 'local') ? 'gratis' : estimate > 0 ? usd(estimate) : 'con créditos'}
             </button>
           ) : (
             <div className="confirmBox" role="alertdialog" aria-label="Confirmar gasto">
-              <p><b>¿Generar con {model?.label}?</b> Se usará tu cuenta del proveedor ({usd(estimate)}, precio de lista estimado). Se guardará en la Biblioteca del proyecto.</p>
+              <p><b>¿Generar con {model?.label}?</b> {model && (model.tier === 'free' || model.tier === 'local') ? 'Usa el cupo gratuito del proveedor; no tiene coste.' : model && (model.tier === 'credits' || model.tier === 'freemium') ? 'Consume créditos o el nivel gratuito de tu cuenta del proveedor.' : `Se cobrará en tu cuenta del proveedor (${usd(estimate)}, precio ${model?.priceConfirmed ? 'de lista' : 'de referencia'} estimado).`} Se guardará en la Biblioteca del proyecto.</p>
               <div className="pageActions"><button type="button" onClick={() => void generate()}>Confirmar y generar</button><button type="button" className="ghost" onClick={() => setConfirming(false)}>Cancelar</button></div>
             </div>
           )}
@@ -440,6 +501,14 @@ export default function StudioPage() {
                 </button>
               ))}
             </div>
+          )}
+
+          {modality !== 'voice' && (
+            <details className="freeAlt">
+              <summary><Icon name="search" size={14} /> Alternativas gratuitas: buscar en bancos con licencia</summary>
+              <StockBrowser kind={modality === 'image' ? 'image' : modality === 'video' ? 'video' : 'audio'} projectId={projectId} sceneId={sceneId || null}
+                defaultQuery="" importAs={modality === 'music' ? 'music' : 'sfx'} onImported={id => { void loadHistory(); setSelected(id); setNotice('Importado con su licencia en la Biblioteca.') }} />
+            </details>
           )}
         </section>
       </div>

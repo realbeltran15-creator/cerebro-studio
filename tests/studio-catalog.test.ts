@@ -7,7 +7,7 @@ const m = (id: string) => { const x = modelById(id); if (!x) throw new Error(id)
 describe('creation studio catalogue', () => {
   it('covers every modality with unique ids', () => {
     expect(new Set(catalog.map(c => c.id)).size).toBe(catalog.length)
-    expect(new Set(catalog.map(c => c.modality))).toEqual(new Set(['image', 'video', 'voice', 'music', 'sfx']))
+    expect(new Set(catalog.map(c => c.modality))).toEqual(new Set(['image', 'video', 'voice', 'music', 'sfx', 'ambient']))
   })
   it('is only usable when every required env var is set', () => {
     const flux = m('fal:fal-ai/flux-2-pro')

@@ -19,3 +19,23 @@ export async function persistGeneratedAsset(context:ProviderContext,kind:'image'
  const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:assetType,storage_path:storagePath,source_provider:asset.provider,license_status:'generated',provenance:generationProvenance({provider:asset.provider,requestId:context.requestId,projectId:context.projectId,mimeType:mime,externalId:asset.externalId,purpose:kind==='render'?'render':undefined,metadata:asset.metadata})}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
  if(error){await supabase.storage.from('generated-assets').remove([storagePath]);throw new Error(`Could not persist generated asset: ${error.message}`)}return data
 }
+
+/** Stores a file imported from a free media bank, keeping license, author and source. Idempotent per (source, id). */
+export async function persistImportedAsset(input: {
+  ownerId: string; projectId: string; kind: 'image' | 'video' | 'music' | 'sfx'; source: string; externalId: string
+  downloadUrl: string; mimeType: string; licenseStatus: 'public_domain' | 'licensed' | 'restricted'; sourceUrl: string
+  provenance: Record<string, unknown>
+}) {
+  const supabase=await createServerSupabaseClient();const{data:{user}}=await supabase.auth.getUser();if(!user||user.id!==input.ownerId)throw new Error('Unauthorized import.')
+  const external=`${input.source}:${input.externalId}`
+  const{data:existing}=await supabase.from('assets').select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').eq('owner_id',user.id).eq('project_id',input.projectId).eq('provenance->>externalId',external).maybeSingle()
+  if(existing)return{asset:existing,duplicate:true}
+  const r=await fetch(input.downloadUrl,{redirect:'error',cache:'no-store',signal:AbortSignal.timeout(90000)});if(!r.ok)throw new Error(`No se pudo descargar el archivo (${r.status}).`)
+  const bytes=Buffer.from(await r.arrayBuffer());const mime=r.headers.get('content-type')?.split(';')[0]||input.mimeType
+  const max=input.kind==='image'?25*1024*1024:input.kind==='video'?150*1024*1024:50*1024*1024;if(!bytes.length||bytes.byteLength>max)throw new Error('El archivo es demasiado grande para importarlo.')
+  const storagePath=`${user.id}/${input.projectId}/import-${input.source}-${input.externalId.replace(/[^A-Za-z0-9-]/g,'')}.${extFor(mime)}`
+  const{error:uploadError}=await supabase.storage.from('generated-assets').upload(storagePath,bytes,{contentType:mime,upsert:false});if(uploadError)throw new Error(`No se pudo guardar el archivo: ${uploadError.message}`)
+  const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:input.projectId,asset_type:input.kind,storage_path:storagePath,source_provider:input.source,source_url:input.sourceUrl,license_status:input.licenseStatus,provenance:{...input.provenance,externalId:external,mimeType:mime,importedAt:new Date().toISOString(),cost:{amount:0,currency:'USD',reported:true},costTier:'free'}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').single()
+  if(error){await supabase.storage.from('generated-assets').remove([storagePath]);throw new Error(`No se pudo registrar el archivo: ${error.message}`)}
+  return{asset:data,duplicate:false}
+}

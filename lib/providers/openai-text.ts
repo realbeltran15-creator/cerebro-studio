@@ -133,7 +133,7 @@ export async function proposeScript(input: ScriptAssistInput, requestId: string)
   }
 }
 
-export type PromptModality = 'image' | 'video' | 'voice' | 'music' | 'sfx'
+export type PromptModality = 'image' | 'video' | 'voice' | 'music' | 'sfx' | 'ambient'
 export type PromptEnhancement = { prompt: string; negative: string; notes: string[]; usage: Record<string, unknown> | null }
 
 const enhanceGuides: Record<PromptModality, string> = {
@@ -142,6 +142,7 @@ const enhanceGuides: Record<PromptModality, string> = {
   voice: 'Indicaciones de locución en español para un TTS dirigible: tono, ritmo, pausas, emoción e intención. Máximo 3 frases. No reescribas el texto a locutar.',
   music: 'Prompt en inglés para un generador de música: género, subgénero, tempo en BPM, instrumentos, estado de ánimo, evolución y uso (fondo de narración documental, sin competir con la voz).',
   sfx: 'Prompt en inglés para un generador de efectos de sonido: fuente, material, distancia, espacio acústico, duración e intensidad. Sin música.',
+  ambient: 'Prompt en inglés para un ambiente sonoro continuo que se repetirá en bucle: lugar, capas (fondo, detalles), densidad, distancia, sin eventos bruscos ni música.',
 }
 
 /** Rewrites a user's idea into a better provider prompt. Never adds facts about real people or events. */

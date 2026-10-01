@@ -63,6 +63,30 @@ Un único lugar para generar con varios proveedores, revisar el resultado en gra
 - fal.ai funciona por cola: el servidor devuelve un token cifrado (`TOKEN_ENCRYPTION_KEY`) y la página consulta `/api/studio/job`; el resultado se guarda una sola vez aunque se consulte varias veces.
 - Si se elige una escena, el asset guarda `provenance.sceneId` y el editor lo muestra primero (★) en esa escena.
 
+## Capa multiproveedor
+
+Tres piezas desacopladas; añadir un proveedor no cambia el flujo de creación:
+
+1. **Directorio** (`lib/providers/directory.ts`): quién es cada proveedor, nivel de coste (Gratis · Créditos incluidos · Freemium · De pago · Local), autenticación, cupo gratuito, condiciones, enlaces a documentación y fecha de comprobación.
+2. **Catálogo** (`lib/providers/catalog.ts`): modelos por tipo (imagen, vídeo, voz, música, efectos, ambientes) con calidad, velocidad, límites, capacidades, formatos y coste estimado (`priceConfirmed: false` = precio de referencia).
+3. **Adaptadores** (`lib/providers/adapters`): `startGeneration` / `pollGeneration` por proveedor (OpenAI, fal.ai, ElevenLabs, Cloudflare Workers AI, Gemini API).
+
+**Selección** (`lib/providers/router.ts`): manual o por estrategia — gratis y créditos primero, solo gratis, más barato, máxima calidad, más rápido — teniendo en cuenta claves configuradas, créditos agotados, formato, duración y capacidades. La estrategia solo elige: generar siempre exige confirmar, y el servidor rechaza una generación de pago sin el coste confirmado.
+
+**Bancos gratuitos** (`lib/providers/stock.ts`): Freesound (CC0/BY/BY-NC), Pexels y Pixabay. Se importa a la Biblioteca con autor, licencia, atribución y página de origen.
+
+**Costes y créditos** (`/usage`): generaciones por proveedor/modelo, coste estimado y real, créditos gastados (ElevenLabs devuelve `character-cost`), saldo en vivo de ElevenLabs y estrategia por defecto.
+
+### Google Flow
+
+| Capa | Qué es | Integración |
+|---|---|---|
+| Flow (producto) | Interfaz web; créditos de Flow en Google AI Pro (1.000/mes) y Ultra (10.000/mes) | Sin API pública. No se automatiza con métodos no oficiales |
+| Modelos | Veo 3.1, Imagen, Nano Banana, Lyria, Gemini TTS | — |
+| API oficial | Gemini API (`GEMINI_API_KEY`) / Vertex AI | Integrado: Veo 3.1 Fast (vídeo) y Gemini TTS (voz, nivel gratuito) |
+
+Google AI Pro incluye además $10/mes (Ultra $40/mes) en créditos de Google Cloud vía Google Developer Program; hay que confirmar en la consola de facturación que se aplican al proyecto de la API.
+
 ## Migraciones
 
 - `20260926120000_scripts_module.sql` (aditiva): crea `public.scripts` con RLS y añade `storyboards.script_id`. Aplicada en la base desplegada (versión `20260926151554`); esquema, RLS y flujo guion → versión → storyboard → escenas verificados con transacciones revertidas.

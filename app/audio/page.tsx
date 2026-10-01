@@ -6,11 +6,15 @@ import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { deleteAsset, uploadProjectMedia, type LicenseStatus } from '@/lib/media-upload'
+import { QuickGenerate } from '../components/quick-generate'
+import { StockBrowser } from '../components/stock-browser'
 import type { ProjectRow } from '@/lib/types/database'
 
 type AudioAsset = { id: string; asset_type: 'music' | 'sfx'; storage_path: string | null; source_url: string | null; license_status: string; provenance: Record<string, unknown> | null; created_at: string; url?: string }
 
-const licenseLabels: Record<string, string> = { owned: 'Propio', licensed: 'Con licencia', public_domain: 'Dominio público', generated: 'Generado', unknown: 'Sin verificar', restricted: 'Restringido' }
+const licenseLabels: Record<string, string> = { owned: 'Propio', licensed: 'Con licencia', public_domain: 'Dominio público', generated: 'Generado', unknown: 'Sin verificar', restricted: 'Restringido (no comercial)' }
+type Scene = { id: string; position: number; ambient_prompt: string | null; metadata: Record<string, unknown> | null; storyboard_id: string }
+type Tab = 'generate' | 'free' | 'upload'
 const fmtDuration = (s: unknown) => (typeof s === 'number' ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '—')
 
 export default function AudioPage() {
@@ -30,10 +34,6 @@ export default function AudioPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [sfxReady, setSfxReady] = useState(false)
-  const [sfxPrompt, setSfxPrompt] = useState('')
-  const [sfxSeconds, setSfxSeconds] = useState('')
-  const [sfxBusy, setSfxBusy] = useState(false)
 
   useEffect(() => {
     const wanted = new URLSearchParams(window.location.search).get('project')
@@ -62,23 +62,23 @@ export default function AudioPage() {
 
   useEffect(() => { if (projectId) void load(projectId) }, [projectId, load])
 
+  // Scenes of the project so generated or imported audio can be linked to a scene (Editor shows it first).
+  const [scenes, setScenes] = useState<Scene[]>([])
+  const [sceneId, setSceneId] = useState('')
+  const [tab, setTab] = useState<Tab>('generate')
   useEffect(() => {
-    void fetch('/api/providers/status', { cache: 'no-store' }).then(r => r.json() as Promise<{ providers?: Array<{ id: string; enabled: boolean }> }>)
-      .then(j => setSfxReady(Boolean(j.providers?.some(p => p.id === 'elevenlabs-sfx' && p.enabled)))).catch(() => setSfxReady(false))
-  }, [])
-
-  async function generateSfx(event: FormEvent) {
-    event.preventDefault()
-    if (!projectId || !sfxPrompt.trim() || sfxBusy) return
-    setSfxBusy(true); setError(''); setNotice('')
-    try {
-      const r = await fetch('/api/providers/sfx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId, prompt: sfxPrompt, durationSeconds: Number(sfxSeconds) || undefined }) })
-      const json = await r.json() as { error?: string }
-      if (!r.ok) throw new Error(json.error ?? 'No se pudo generar el efecto.')
-      setSfxPrompt(''); setNotice('Efecto generado y guardado en el proyecto.')
-      await load(projectId)
-    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo generar el efecto.') } finally { setSfxBusy(false) }
-  }
+    if (!projectId) return
+    void (async () => {
+      const { data: b } = await supabase.from('storyboards').select('id').eq('project_id', projectId)
+      const ids = (b ?? []).map((x: { id: string }) => x.id)
+      if (!ids.length) { setScenes([]); return }
+      const { data: s } = await supabase.from('scenes').select('id,position,ambient_prompt,metadata,storyboard_id').in('storyboard_id', ids).order('position')
+      setScenes((s ?? []) as Scene[])
+    })()
+  }, [projectId, supabase])
+  const scene = scenes.find(x => x.id === sceneId) ?? null
+  const scenePrompt = scene ? String(scene.metadata?.music ?? scene.metadata?.sfx ?? scene.ambient_prompt ?? '') : ''
+  const afterNew = () => { setNotice('Guardado en la Biblioteca del proyecto.'); void load(projectId) }
 
   async function upload(event: FormEvent) {
     event.preventDefault()
@@ -103,13 +103,41 @@ export default function AudioPage() {
   }
 
   const visible = filter === 'all' ? items : items.filter(a => a.asset_type === filter)
+  const trackTitle = (a: AudioAsset) => String(a.provenance?.title ?? a.provenance?.originalPrompt ?? a.provenance?.prompt ?? 'Sin título').slice(0, 120)
 
   return <StudioShell title="Música y sonidos" eyebrow="RECURSOS" actions={projectId ? <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link> : null}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
 
-    <section className="panel" style={{ marginBottom: 18 }}>
-      <form onSubmit={upload} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <section className="panel" style={{ marginBottom: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="field-row">
+        <label htmlFor="audio-project-top">Proyecto
+          <select id="audio-project-top" value={projectId} onChange={e => { setProjectId(e.target.value); setSceneId('') }}>
+            {projects.length === 0 && <option value="">Sin proyectos</option>}
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
+        <label htmlFor="audio-scene">Escena (opcional)
+          <select id="audio-scene" value={sceneId} onChange={e => setSceneId(e.target.value)}>
+            <option value="">Sin escena</option>
+            {scenes.map(x => <option key={x.id} value={x.id}>Escena {x.position}{typeof x.metadata?.heading === 'string' ? ` · ${x.metadata.heading}` : ''}</option>)}
+          </select>
+        </label>
+      </div>
+      <nav className="segTabs" aria-label="Cómo conseguir audio" style={{ marginBottom: 0 }}>
+        {([['generate', 'Generar con IA', 'bolt'], ['free', 'Bancos gratuitos', 'search'], ['upload', 'Subir con licencia', 'upload']] as const).map(([k, l, i]) =>
+          <button key={k} type="button" className={tab === k ? 'seg active' : 'seg'} aria-pressed={tab === k} onClick={() => setTab(k)}><Icon name={i} size={16} />{l}</button>)}
+      </nav>
+      {tab === 'generate' && <QuickGenerate modalities={['music', 'sfx', 'ambient']} projectId={projectId} sceneId={sceneId || null} defaultPrompt={scenePrompt} onGenerated={afterNew} />}
+      {tab === 'free' && <>
+        <p className="muted small">Busca efectos, ambientes y música con licencia Creative Commons. Se importa con autor y licencia; las «No comerciales» quedan marcadas como restringidas.</p>
+        <div className="chips">
+          <button type="button" className={kind === 'sfx' ? 'chip active' : 'chip'} onClick={() => setKind('sfx')}>Guardar como efecto</button>
+          <button type="button" className={kind === 'music' ? 'chip active' : 'chip'} onClick={() => setKind('music')}>Guardar como música</button>
+        </div>
+        <StockBrowser kind="audio" projectId={projectId} sceneId={sceneId || null} defaultQuery="" importAs={kind} onImported={afterNew} />
+      </>}
+      {tab === 'upload' && <form onSubmit={upload} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="field-row">
           <label htmlFor="audio-project">Proyecto
             <select id="audio-project" value={projectId} onChange={e => setProjectId(e.target.value)}>
@@ -142,21 +170,9 @@ export default function AudioPage() {
           <label htmlFor="audio-source">Enlace de origen<input id="audio-source" type="url" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="Página de la licencia o de la pista" /></label>
           <label htmlFor="audio-notes">Condiciones de la licencia<input id="audio-notes" value={notes} onChange={e => setNotes(e.target.value)} maxLength={1000} placeholder="Ej.: licencia estándar YouTube, atribución requerida…" /></label>
         </div>
-        <p className="muted small">Máximo 50 MB para música y 20 MB para efectos. Solo sube audio que puedas usar: la licencia queda registrada junto al archivo para revisarla antes de publicar. No hay proveedor de música generativa conectado.</p>
+        <p className="muted small">Máximo 50 MB para música y 20 MB para efectos. Solo sube audio que puedas usar: la licencia queda registrada junto al archivo para revisarla antes de publicar. Para generar música, efectos o ambientes usa la pestaña Generar.</p>
         <div><button disabled={busy || !file || !projectId}><Icon name="plus" size={16} />{busy ? 'Subiendo…' : 'Añadir al proyecto'}</button></div>
-      </form>
-    </section>
-
-    <section className="panel" style={{ marginBottom: 18 }}>
-      <h3>Generar efecto de sonido</h3>
-      {sfxReady ? <form onSubmit={generateSfx} style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-        <div className="field-row">
-          <label htmlFor="sfx-prompt">Descripción del sonido<input id="sfx-prompt" value={sfxPrompt} onChange={e => setSfxPrompt(e.target.value)} maxLength={450} placeholder="Viento fuerte en una cumbre nevada, ráfagas" /></label>
-          <label htmlFor="sfx-seconds">Duración (s, opcional)<input id="sfx-seconds" type="number" min={0.5} max={22} step={0.5} value={sfxSeconds} onChange={e => setSfxSeconds(e.target.value)} /></label>
-        </div>
-        <p className="muted small">Generación de pago con ElevenLabs. El efecto se guarda como generado, con el prompt como procedencia.</p>
-        <div><button disabled={sfxBusy || !projectId || !sfxPrompt.trim()}><Icon name="music" size={16} />{sfxBusy ? 'Generando…' : 'Generar efecto'}</button></div>
-      </form> : <p className="muted small" style={{ marginTop: 6 }}>Disponible cuando se configure <code>ELEVENLABS_API_KEY</code> en el servidor. Mientras tanto, sube efectos propios o con licencia.</p>}
+      </form>}
     </section>
 
     <div className="cardHead">
@@ -170,12 +186,15 @@ export default function AudioPage() {
     {visible.length === 0 ? <p className="emptyState">Todavía no hay música ni efectos en este proyecto.</p> : <div className="list">
       {visible.map(a => <div key={a.id} className="listItem" style={{ flexWrap: 'wrap' }}>
         <div style={{ minWidth: 220, flex: 1 }}>
-          <b>{String(a.provenance?.title ?? 'Sin título')}</b>
+          <b>{trackTitle(a)}</b>
           <span className="muted small" style={{ display: 'block' }}>
             {a.asset_type === 'music' ? 'Música' : 'Efecto'} · {fmtDuration(a.provenance?.durationSeconds)}{a.provenance?.mood ? ` · ${String(a.provenance.mood)}` : ''} · {licenseLabels[a.license_status] ?? a.license_status}
             {a.source_url && /^https?:\/\//i.test(a.source_url) && <> · <a href={a.source_url} target="_blank" rel="noopener noreferrer">origen</a></>}
           </span>
           {Boolean(a.provenance?.licenseNotes) && <span className="muted small" style={{ display: 'block' }}>{String(a.provenance?.licenseNotes)}</span>}
+          {Boolean(a.provenance?.catalogModel || a.provenance?.provider) && <span className="muted small" style={{ display: 'block' }}>Origen: {String(a.provenance?.providerName ?? a.provenance?.provider ?? '')}{a.provenance?.catalogModel ? ` · ${String(a.provenance.catalogModel).split(':').slice(1).join(':')}` : ''}{a.provenance?.originalPrompt ? ` · «${String(a.provenance.originalPrompt).slice(0, 90)}»` : ''}</span>}
+          {Boolean(a.provenance?.attribution) && <span className="muted small" style={{ display: 'block' }}>Atribución: {String(a.provenance?.attribution)}</span>}
+          {typeof a.provenance?.sceneId === 'string' && <span className="pill" style={{ marginTop: 4 }}>Escena {scenes.find(x => x.id === a.provenance?.sceneId)?.position ?? '—'}</span>}
         </div>
         {a.url ? <audio src={a.url} controls preload="none" style={{ maxWidth: 320 }} /> : <span className="muted small">Cargando…</span>}
         <button type="button" className="iconButton" aria-label="Borrar pista" onClick={() => void remove(a)}><Icon name="trash" size={16} /></button>
