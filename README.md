@@ -168,3 +168,7 @@ Además de sugerir el tramo, la pantalla propone el **hook en pantalla** (la fra
 ## Aprendizaje desde Analytics (2026-10-07)
 
 `lib/analytics/learning.ts` compara tus vídeos entre sí con las métricas observadas importadas: cuáles superaron 2× la mediana de vistas, cuáles retienen más (porcentaje visto) y las vistas medianas por duración aproximada. Es **descriptivo y calculado**, no explica causas, exige al menos 5 vídeos y lo dice en pantalla. Probado con tests unitarios y navegador sobre datos sembrados; **no** probado con datos reales porque depende del OAuth de Google. Pendiente: usar estas señales para sugerir temas/formatos al crear guiones y priorizar oportunidades.
+
+## Duplicados de oportunidades (2026-10-07)
+
+Antes solo había comprobación en la aplicación (consultar y luego insertar), sin restricción en la base: dos pestañas o una automatización a la vez podían duplicar. Comprobado en la base desplegada (solo lectura): 1 oportunidad, sin duplicados ni índice único. Preparada la migración **`20261007120000_opportunities_unique_source.sql`** (índice único parcial por propietario + plataforma + `source_id`; las manuales sin fuente no se ven afectadas) y **NO aplicada**, porque modifica la base en uso: pendiente de que el propietario la apruebe. El código ya trata el conflicto (`23505`) como «ya estaba guardado» (`lib/opportunities.ts`, usado por automatizaciones, resultados de YouTube y captura manual), con tests de concurrencia simulada.

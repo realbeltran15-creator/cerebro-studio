@@ -1,5 +1,6 @@
 'use client'
 
+import { isUniqueViolation } from '@/lib/opportunities'
 import Link from 'next/link'
 import { FormEvent, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
@@ -38,6 +39,7 @@ export function ResearchCapture() {
         owner_id: user.id, title: title.trim(), source_platform: 'youtube', source_id: parsed.toString(), query: query.trim() || null, status: 'discovered',
         observed_metrics: {}, calculated_metrics: {}, evidence: [{ url: parsed.toString(), note: note.trim(), captured_at: new Date().toISOString(), source: 'manual' }],
       })
+      if (saveError && isUniqueViolation(saveError)) { setKind('warning'); setStatus('Este enlace ya está guardado en Oportunidades. No se ha creado un duplicado.'); return }
       if (saveError) throw saveError
       setUrl(''); setTitle(''); setNote('')
       setStatus('Hallazgo guardado en Oportunidades. No se han importado métricas automáticamente.')

@@ -1,5 +1,6 @@
 'use client'
 
+import { isUniqueViolation } from '@/lib/opportunities'
 import { useEffect, useState, type ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
@@ -48,8 +49,9 @@ export function YouTubeResults({ results, context, onSaved, extra }: { results: 
         calculated_metrics: { ...video.calculated, formula: { viewsPerDay: 'views / días desde publicación', viewsToSubscribers: 'views / suscriptores del canal', engagementRate: '(likes + comentarios) / views × 100' } },
         evidence: [{ url: video.url, source: 'youtube_data_api', captured_at: video.observed.fetchedAt, note: `Canal: ${video.channelTitle}${context.origin === 'radar' ? ' · detectado en Radar (tendencias)' : ''}` }],
       })
-      if (insertError) throw insertError
+      if (insertError && !isUniqueViolation(insertError)) throw insertError
       setSaved(s => new Set(s).add(video.url))
+      if (insertError) { setNotice('Este vídeo ya estaba guardado en Oportunidades.'); return }
       setNotice('Guardado en Oportunidades con las métricas observadas de la API.')
       onSaved?.()
     } catch (e) {

@@ -1,3 +1,4 @@
+import { insertOpportunities } from '@/lib/opportunities'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { trendingYouTubeVideos, youtubeVideoId, youtubeVideosByIds, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { recurringTerms } from '@/lib/radar'
@@ -78,9 +79,9 @@ async function runTrendWatch(db: SupabaseClient, a: Automation) {
     const fresh = matched.filter(v => !known.has(v.url))
     duplicates = matched.length - fresh.length
     if (fresh.length) {
-      const { error: insertError } = await db.from('opportunities').insert(fresh.map(v => opportunityFromVideo(a.owner_id, v, cfg, a.name)))
-      if (insertError) throw new Error(insertError.message)
-      saved = fresh.length
+      const r = await insertOpportunities(db, fresh.map(v => opportunityFromVideo(a.owner_id, v, cfg, a.name)))
+      saved = r.saved
+      duplicates += r.duplicates
     }
   }
   return {
