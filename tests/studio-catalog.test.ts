@@ -44,3 +44,12 @@ describe('creation studio catalogue', () => {
     expect(falEndpoint(m('fal:fal-ai/lyria2'))).toBe('fal-ai/lyria2')
   })
 })
+
+import { projectProgress } from '../lib/progress'
+describe('project progress links keep the project context', () => {
+  it('assets and edit steps open Studio/Editor for the project', () => {
+    const steps = projectProgress({ opportunities: 0, scripts: 0, approvedScripts: 0, storyboards: 0, scenes: 0, assets: 0, renders: 0, publications: 0, metrics: 0 })
+    expect(steps.find(s => s.key === 'assets')!.href('p1')).toBe('/studio?project=p1')
+    expect(steps.find(s => s.key === 'edit')!.href('p1')).toBe('/editor?project=p1')
+  })
+})

@@ -168,7 +168,7 @@ export default function ProjectWorkspace() {
         </section>
 
         <section className="panel">
-          <div className="cardHead"><h2>Recursos</h2><div className="pageActions"><Link href={`/thumbnails?project=${project.id}`}>Miniaturas <Icon name="arrow" size={14} /></Link><Link href="/library">Biblioteca <Icon name="arrow" size={14} /></Link></div></div>
+          <div className="cardHead"><h2>Recursos</h2><div className="pageActions"><Link href={`/thumbnails?project=${project.id}`}>Miniaturas <Icon name="arrow" size={14} /></Link><Link href={`/audio?project=${project.id}`}>Música y sonidos <Icon name="arrow" size={14} /></Link><Link href={`/studio?project=${project.id}`}>Generar en el Estudio <Icon name="arrow" size={14} /></Link><Link href="/library">Biblioteca <Icon name="arrow" size={14} /></Link></div></div>
           {assets.length === 0 ? <p className="muted">Sin imágenes, clips ni voces generadas para este proyecto.</p> : (
             <div className="list">{assets.map(a => (
               <div className="listItem" key={a.id}><div><b>{String(a.provenance?.title || a.provenance?.originalPrompt || a.provenance?.concept || a.asset_type).slice(0, 80)}</b><span>{a.asset_type} · {a.source_provider ?? 'importado'}</span></div><span className="pill">{a.license_status}</span></div>
@@ -177,7 +177,7 @@ export default function ProjectWorkspace() {
         </section>
 
         <section className="panel">
-          <div className="cardHead"><h2>Publicación</h2><Link href={`/youtube?project=${project.id}`}>Preparar <Icon name="arrow" size={14} /></Link></div>
+          <div className="cardHead"><h2>Publicación</h2><div className="pageActions"><Link href={`/youtube?project=${project.id}`}>YouTube <Icon name="arrow" size={14} /></Link><Link href={`/social?project=${project.id}`}>Instagram / TikTok <Icon name="arrow" size={14} /></Link></div></div>
           {jobs.length === 0 ? <p className="muted">Nada preparado. Preparar no publica: publicar exige OAuth y tu aprobación.</p> : (
             <div className="list">{jobs.map(j => (
               <div className="listItem" key={j.id}><div><b>{String(j.payload?.title || 'Sin título')}</b><span>{j.platform} · {new Date(j.created_at).toLocaleDateString()}</span></div><span className="pill">{j.status === 'draft' ? 'Preparado, sin publicar' : j.status}</span></div>
