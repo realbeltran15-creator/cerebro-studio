@@ -11,7 +11,7 @@
 import type { CostTier } from './directory'
 
 export type Modality = 'image' | 'video' | 'voice' | 'music' | 'sfx' | 'ambient'
-export type ProviderId = 'openai' | 'fal' | 'elevenlabs' | 'cloudflare' | 'gemini'
+export type ProviderId = 'openai' | 'fal' | 'elevenlabs' | 'cloudflare' | 'gemini' | 'higgsfield'
 export type Format = '16:9' | '9:16' | '1:1'
 export type Capability = 'text_in_image' | 'native_audio' | 'loop' | 'instrumental' | 'vocals' | 'voice_direction' | 'account_voices' | 'spanish' | 'negative_prompt' | 'variants'
 
@@ -43,6 +43,8 @@ export type CatalogModel = {
   maxVariants?: number
   /** Accepts a negative prompt. */
   negative?: boolean
+  /** Spends account credits with an unpublished per-model price: always needs an explicit confirmation. */
+  confirm?: boolean
 }
 
 export type GenerationOptions = {
@@ -102,6 +104,27 @@ export const catalog: CatalogModel[] = [
     estimateUsd: o => n(o.durationSeconds, 8) * 0.15, quality: 5, speed: 'slow',
     limits: '4, 6 u 8 s; 720p por defecto. El resultado se borra de Google a los 2 días (Cerebro lo copia antes).', capabilities: ['native_audio'],
     env: ['GEMINI_API_KEY'], sync: false, formats: ['16:9', '9:16'], durations: [4, 6, 8],
+  },
+  {
+    id: 'higgsfield:higgsfield-ai/soul/standard', modality: 'image', provider: 'higgsfield', label: 'Higgsfield Soul',
+    strength: 'Fotografía realista y estética editorial; hasta 4 variantes en 2K.',
+    tier: 'credits', price: 'Créditos de tu cuenta Higgsfield (coste por modelo en la consola; no publicado en la documentación).', priceConfirmed: false,
+    estimateUsd: () => 0, quality: 4, speed: 'medium', limits: '2K, 1–4 imágenes; formatos 16:9, 9:16, 1:1 y otros.', capabilities: ['variants'],
+    env: ['HIGGSFIELD_API_KEY_ID', 'HIGGSFIELD_API_KEY_SECRET'], sync: false, formats: ['16:9', '9:16', '1:1'], maxVariants: 4, confirm: true,
+  },
+  {
+    id: 'higgsfield:kling-video/v2.5-turbo/pro/text-to-video', modality: 'video', provider: 'higgsfield', label: 'Kling 2.5 Turbo Pro (Higgsfield)',
+    strength: 'El mismo Kling 2.5 Turbo Pro pagando con tus créditos de Higgsfield.',
+    tier: 'credits', price: 'Créditos de tu cuenta Higgsfield (coste por modelo en la consola).', priceConfirmed: false,
+    estimateUsd: () => 0, quality: 4, speed: 'slow', limits: '5 o 10 s. La API documentada no tiene parámetro de formato.', capabilities: ['negative_prompt'],
+    env: ['HIGGSFIELD_API_KEY_ID', 'HIGGSFIELD_API_KEY_SECRET'], sync: false, formats: ['16:9'], durations: [5, 10], negative: true, confirm: true,
+  },
+  {
+    id: 'higgsfield:minimax/hailuo-2.3/standard/text-to-video', modality: 'video', provider: 'higgsfield', label: 'Hailuo 2.3 (Higgsfield)',
+    strength: 'Movimiento natural y buena física; optimiza el prompt automáticamente.',
+    tier: 'credits', price: 'Créditos de tu cuenta Higgsfield (coste por modelo en la consola).', priceConfirmed: false,
+    estimateUsd: () => 0, quality: 4, speed: 'slow', limits: '6 o 10 s. La API documentada no tiene parámetro de formato.', capabilities: [],
+    env: ['HIGGSFIELD_API_KEY_ID', 'HIGGSFIELD_API_KEY_SECRET'], sync: false, formats: ['16:9'], durations: [6, 10], confirm: true,
   },
   {
     id: 'fal:fal-ai/kling-video/v2.5-turbo/pro/text-to-video', modality: 'video', provider: 'fal', label: 'Kling 2.5 Turbo Pro',

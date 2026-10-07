@@ -215,7 +215,7 @@ export default function EditorPage() {
   const voices = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type)), [assets])
   const music = useMemo(() => assets.filter(a => musicTypes.includes(a.asset_type)), [assets])
 
-  return <StudioShell title="Editor" eyebrow="POSTPRODUCCIÓN" actions={projectId ? <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link> : null}>
+  return <StudioShell title="Editor" eyebrow="POSTPRODUCCIÓN" actions={<><Link className="buttonLink" href={`/editor/auto${projectId ? `?project=${projectId}` : ''}`}>Montaje automático</Link>{projectId && <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link>}</>}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
 

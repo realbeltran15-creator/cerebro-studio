@@ -5,6 +5,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { compositionIssues, formatSize, totalDurationMs, type Composition } from '@/lib/editor/composition'
 import { downloadCompositionMedia, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
+import { containerOf } from '@/lib/editor/container'
 import { Icon } from './studio-icon'
 
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
@@ -81,10 +82,10 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         return
       }
       if (record && result.blob && jobId) {
-        const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}.webm`
+        const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}.${containerOf(result.mimeType)}`
         setDownload({ url: URL.createObjectURL(result.blob), name })
-        setMode('saving'); setStatus('Guardando el vídeo en la Biblioteca…')
-        await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets })
+        setMode('saving'); setStatus('Guardando el vídeo en la nube…')
+        await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets, onUploadProgress: f => setStatus(`Subiendo a la nube… ${Math.round(f * 100)} %`) })
         setStatus(`Vídeo guardado en la Biblioteca (${Math.round(result.blob.size / 1048576 * 10) / 10} MB).`)
         onRendered?.()
       } else if (!record) setStatus('Vista previa terminada.')

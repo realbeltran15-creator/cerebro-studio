@@ -3,7 +3,7 @@ import { audioStartMs, captionChunks, clipStarts, formatSize, totalDurationMs, v
 
 /**
  * Browser renderer: draws the composition on a canvas, mixes audio with WebAudio and,
- * when recording, captures both with MediaRecorder into a WebM file.
+ * when recording, captures both with MediaRecorder into an MP4 file (WebM where the browser cannot record MP4).
  * Runs in real time and uses the audio clock as the timeline clock, so the tab must stay visible.
  */
 
@@ -27,9 +27,16 @@ export function recordingSupported() {
   return typeof MediaRecorder !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function'
 }
 
-export function pickMimeType() {
-  const candidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-  return candidates.find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) ?? null
+/**
+ * MP4 (H.264 + AAC) first: it is what Instagram Reels requires and what every platform and player
+ * accepts. Chrome/Edge 126+ and Safari record MP4 natively; Firefox falls back to WebM.
+ */
+export const MP4_CANDIDATES = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.4D401F,mp4a.40.2', 'video/mp4;codecs=avc1.42E01F,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2']
+export const WEBM_CANDIDATES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+
+export function pickMimeType(supports: (t: string) => boolean = t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+  // Explicit H.264 MP4 first; plain "video/mp4" (codec chosen by the browser, may not be H.264) only as a last resort.
+  return [...MP4_CANDIDATES, ...WEBM_CANDIDATES, 'video/mp4'].find(supports) ?? null
 }
 
 async function loadVisual(source: MediaSource): Promise<LoadedVisual> {
@@ -213,7 +220,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   const chunks: Blob[] = []
   const mimeType = record ? pickMimeType() : null
   if (record) {
-    if (!mimeType || !out) { cleanup(); await audio.close(); throw new Error('Este navegador no puede grabar vídeo WebM. Usa Chrome, Edge o Firefox de escritorio.') }
+    if (!mimeType || !out) { cleanup(); await audio.close(); throw new Error('Este navegador no puede grabar vídeo. Usa Chrome, Edge, Safari o Firefox de escritorio.') }
     // Frames are pushed explicitly after each draw: with automatic capture, static images can leave
     // the encoder holding an earlier frame (e.g. mid-fade) for a long stretch.
     const stream = canvas.captureStream(0)
@@ -285,10 +292,10 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const stopped = new Promise<void>(r => { recorder!.onstop = () => r() })
     recorder.stop()
     await stopped
-    blob = signal?.aborted ? null : new Blob(chunks, { type: mimeType ?? 'video/webm' })
+    blob = signal?.aborted ? null : new Blob(chunks, { type: (recorder?.mimeType || mimeType || 'video/webm').split(';')[0] })
   }
   onProgress?.(total, total)
   await audio.close()
   cleanup()
-  return { blob, mimeType, durationMs: total }
+  return { blob, mimeType: recorder?.mimeType || mimeType, durationMs: total }
 }

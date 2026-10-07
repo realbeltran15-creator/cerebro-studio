@@ -8,6 +8,7 @@ import { elevenLabsBalance } from '@/lib/providers/elevenlabs'
 import { tokenEncryptionConfigured } from '@/lib/security/tokens'
 import { taskQuality, textConfiguredFor, textModels } from '@/lib/providers/text'
 import { sttConfigured, sttModels } from '@/lib/providers/transcribe'
+import { storageDriver } from '@/lib/storage/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,6 +37,9 @@ export async function GET() {
       models: textModels.map(m => ({ id: m.id, label: m.label, provider: m.provider, model: m.model(), tier: m.tier, quality: m.quality, priceNote: m.priceNote, configured: textConfiguredFor(m) })),
       tasks: Object.entries(taskQuality).map(([task, q]) => ({ task, label: q.label, minQuality: q.min })),
     },
+    storage: storageDriver() === 'r2'
+      ? { driver: 'r2', label: 'Cloudflare R2', note: '10 GB gratis al mes, descargas gratis, archivos de hasta ~5 TB.' }
+      : { driver: 'supabase', label: 'Supabase Storage', note: 'Plan gratuito: 50 MB por archivo y 1 GB en total. Configura Cloudflare R2 para vídeo.' },
     transcription: sttModels.map(m => ({ id: m.id, label: m.label, tier: m.tier, quality: m.quality, note: m.note, configured: sttConfigured(m) })),
   }, { headers: { 'Cache-Control': 'no-store' } })
 }

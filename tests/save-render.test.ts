@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pickMimeType } from '@/lib/editor/renderer'
 import { outputLicense, saveRender } from '@/lib/editor/client'
 import { emptyComposition, toShort } from '@/lib/editor/composition'
 
@@ -19,6 +20,15 @@ function fakeSupabase() {
 }
 
 describe('saving a render to the Biblioteca', () => {
+  beforeEach(() => {
+    // Upload target from /api/storage/upload-url: Supabase driver (R2 not configured).
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ driver: 'supabase', storagePath: `user-1/${body.projectId}/${body.folder}/${body.name}.${body.ext}`, maxBytes: 50 * 1024 * 1024 }))
+    }))
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
   const comp = emptyComposition('sb1', 'Documental')
   comp.clips = [
     { id: 'a', sceneId: 'a', position: 1, narration: 'uno', visualAssetId: 'img', voiceAssetId: 'voz', durationMs: 4888, motion: 'kenburns', focusX: 0.5 },
@@ -47,6 +57,21 @@ describe('saving a render to the Biblioteca', () => {
     await saveRender(client, { projectId: 'p1', jobId: 'job-2', composition: short, blob: new Blob([new Uint8Array(4)]), mimeType: 'video/webm', durationMs: 4888, assets })
     const row = calls.find(c => c.op === 'insert').row
     expect(row.provenance).toMatchObject({ purpose: 'short', format: '9:16', settings: { hookText: 'Imagina vivir sin hablar', sourceJobId: 'job-source' } })
+  })
+
+  it('stores MP4 renders with the .mp4 extension and MIME type', async () => {
+    const { client, calls } = fakeSupabase()
+    await saveRender(client, { projectId: 'p1', jobId: 'job-3', composition: comp, blob: new Blob([new Uint8Array(4)], { type: 'video/mp4' }), mimeType: 'video/mp4;codecs=avc1.640028,mp4a.40.2', durationMs: 4888, assets })
+    expect(calls[0]).toMatchObject({ op: 'upload', path: 'user-1/p1/renders/job-3.mp4', opts: { contentType: 'video/mp4' } })
+    expect(calls.find(c => c.op === 'insert').row.provenance).toMatchObject({ container: 'mp4' })
+  })
+
+  it('records MP4 first and falls back to WebM', () => {
+    expect(pickMimeType(t => t.startsWith('video/mp4'))).toBe('video/mp4;codecs=avc1.640028,mp4a.40.2')
+    expect(pickMimeType(t => t === 'video/mp4' || t.startsWith('video/webm'))).toBe('video/webm;codecs=vp9,opus')
+    expect(pickMimeType(t => t === 'video/mp4')).toBe('video/mp4')
+    expect(pickMimeType(t => t.startsWith('video/webm'))).toBe('video/webm;codecs=vp9,opus')
+    expect(pickMimeType(() => false)).toBeNull()
   })
 
   it('derives the output license from the inputs', () => {

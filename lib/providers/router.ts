@@ -69,6 +69,8 @@ export function rankModels(models: CatalogModel[], req: RouteRequest, availabili
     if (req.strategy === 'free_only' && !FREE_TIERS.includes(model.tier)) reasons.push('Es de pago')
     if (req.minQuality && model.quality < req.minQuality) reasons.push(`Calidad ${model.quality}/5, por debajo de la necesaria (${req.minQuality}/5)`)
     if (req.providers?.length && !req.providers.includes(model.provider)) reasons.push('No es el proveedor elegido')
+    // Unpublished price (account credits): automatic strategies cannot compare its cost, so only an explicit choice uses it.
+    if (model.confirm && !req.providers?.includes(model.provider)) reasons.push('Precio no publicado: elígelo como proveedor específico')
     if (options.format && model.formats && !model.formats.includes(options.format)) reasons.push(`No genera formato ${options.format}`)
     if (options.durationSeconds && model.durations && !model.durations.some(d => d >= options.durationSeconds!)) reasons.push(`No llega a ${options.durationSeconds} s`)
     for (const need of req.needs ?? []) if (!model.capabilities.includes(need)) reasons.push(`Sin capacidad: ${need}`)

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { downloadObject, putObject, removeObject } from '@/lib/storage/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { routeStt, toSrt, toVtt, transcribe } from '@/lib/providers/transcribe'
 
@@ -27,16 +28,16 @@ export async function POST(request: Request) {
   const { data: existing } = await supabase.from('assets').select('id,provenance').eq('owner_id', user.id).eq('asset_type', 'subtitle').eq('provenance->>sourceAssetId', a.id).maybeSingle()
   if (existing) return NextResponse.json({ asset: existing, duplicate: true })
 
-  const { data: file, error: dlError } = await supabase.storage.from('generated-assets').download(a.storage_path)
-  if (dlError || !file) return NextResponse.json({ error: 'No se pudo leer el archivo.' }, { status: 502 })
+  let file: Blob
+  try { file = await downloadObject(supabase, user.id, a.storage_path) } catch { return NextResponse.json({ error: 'No se pudo leer el archivo.' }, { status: 502 }) }
   let t
-  try { t = await transcribe(file, a.storage_path.split('/').pop() ?? 'audio', language) }
+  try { t = await transcribe(file, (a.storage_path.split('/').pop() ?? 'audio').replace(/^r2:/, ''), language) }
   catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Transcripción no disponible.', attempts: (error as { attempts?: string[] }).attempts ?? [] }, { status: 502 }) }
 
   const vtt = toVtt(t.segments), srt = toSrt(t.segments)
-  const path = `${user.id}/${a.project_id}/subtitles/${a.id}.vtt`
-  const { error: upError } = await supabase.storage.from('generated-assets').upload(path, new Blob([vtt], { type: 'text/vtt' }), { contentType: 'text/vtt', upsert: false })
-  if (upError) return NextResponse.json({ error: `No se pudo guardar el subtítulo: ${upError.message}` }, { status: 500 })
+  let path: string
+  try { path = await putObject(supabase, user.id, `${user.id}/${a.project_id}/subtitles/${a.id}.vtt`, new Blob([vtt], { type: 'text/vtt' }), 'text/vtt') }
+  catch (e) { return NextResponse.json({ error: `No se pudo guardar el subtítulo: ${e instanceof Error ? e.message : ''}` }, { status: 500 }) }
   const { data: saved, error } = await supabase.from('assets').insert({
     owner_id: user.id, project_id: a.project_id, asset_type: 'subtitle', storage_path: path, source_provider: t.provider, license_status: 'generated',
     provenance: {
@@ -45,6 +46,6 @@ export async function POST(request: Request) {
       mimeType: 'text/vtt', generatedAt: new Date().toISOString(), fallbacks: t.attempts, cost: { amount: null, currency: null, reported: false },
     },
   }).select('id,provenance').single()
-  if (error) { await supabase.storage.from('generated-assets').remove([path]); return NextResponse.json({ error: error.message }, { status: 500 }) }
+  if (error) { await removeObject(supabase, user.id, path).catch(() => undefined); return NextResponse.json({ error: error.message }, { status: 500 }) }
   return NextResponse.json({ asset: saved, duplicate: false }, { status: 201 })
 }

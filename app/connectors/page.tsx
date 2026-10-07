@@ -32,7 +32,7 @@ export default function ConnectorsPage() {
 
   const load = useCallback(async () => {
     const [db, res, ch] = await Promise.all([
-      supabase.from('connector_configs').select('id,provider,capability,enabled,updated_at').order('provider'),
+      supabase.from('connector_configs').select('id,provider,capability,enabled,updated_at').neq('provider', 'cerebro-editor').order('provider'),
       fetch('/api/providers/status', { cache: 'no-store' }),
       supabase.from('channel_connections').select('id,external_account_name,status,scopes,updated_at').eq('provider', 'youtube').order('updated_at', { ascending: false }),
     ])

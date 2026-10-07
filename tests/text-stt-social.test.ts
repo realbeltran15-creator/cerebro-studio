@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { geminiOutputText, routeText, runTextTask, estimateTextCost, textModels } from '@/lib/providers/text'
+import { extractJson, geminiOutputText, routeText, runTextTask, estimateTextCost, textModels } from '@/lib/providers/text'
 import { routeStt, toSrt, toVtt } from '@/lib/providers/transcribe'
 import { socialAuthUrl, SOCIAL_SCOPES } from '@/lib/oauth/social'
 import { publishSocialJob, socialApprovalKey, tiktokChunks, validateSocialPayload } from '@/lib/publication/social'
@@ -16,6 +16,18 @@ describe('text router: quality first, then cost', () => {
     const ids = routeText('prompt_enhance', env).map(m => m.id)
     expect(ids[0]).toBe('groq:openai/gpt-oss-20b')
     expect(ids[ids.length - 1]).toBe('openai:configured')
+  })
+  it('uses an own gateway (OmniRoute) first for tasks within its declared quality', () => {
+    vi.stubEnv('TEXT_GATEWAY_QUALITY', '3')
+    const e = { ...env, TEXT_GATEWAY_BASE_URL: 'https://gw.example/v1' }
+    expect(routeText('prompt_enhance', e)[0].id).toBe('gateway:configured')
+    expect(routeText('script_draft', e).map(m => m.provider)).not.toContain('gateway')
+    vi.stubEnv('TEXT_GATEWAY_QUALITY', '5')
+    expect(routeText('script_draft', e)[0].id).toBe('gateway:configured')
+  })
+  it('extracts JSON wrapped in prose or code fences', () => {
+    expect(extractJson('```json\n{"a":1}\n```')).toBe('{"a":1}')
+    expect(extractJson('Aquí está: {"a":{"b":2}} gracias')).toBe('{"a":{"b":2}}')
   })
   it('returns nothing when no provider is configured', () => {
     expect(routeText('tags', {})).toEqual([])

@@ -9,6 +9,7 @@ import { audioStartMs, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_
 import { addAudioClip, addClip, commit, fromClip, deleteAudioClip, deleteClip, duplicateClip, historyOf, moveAudioClip, moveClip, redo, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
+import { LearnPanel } from '../../components/learn-panel'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
 type Selection = { kind: 'clip' | 'audio'; id: string } | null
@@ -273,6 +274,9 @@ export default function ManualEditorPage() {
         <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
       </section>
     </div>
+
+    <LearnPanel composition={comp} kindOf={id => { const t = assets.find(a => a.id === id)?.asset_type; return t === 'video' ? 'video' : t && visualTypes.includes(t) ? 'image' : 'other' }}
+      onApply={(next, changes) => { apply(() => next); setNotice(`Estilo aplicado (puedes deshacerlo): ${changes.join(' ')}`) }} />
 
     {selClip && comp.clips[0]?.id !== selClip.id && <label className="pill" style={{ marginBottom: 8 }}><input type="checkbox" checked={previewFromSelected} onChange={e => setPreviewFromSelected(e.target.checked)} /> Vista previa desde el clip seleccionado (sin render)</label>}
     {previewFromSelected && selClip && comp.clips[0]?.id !== selClip.id

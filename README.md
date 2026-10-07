@@ -75,6 +75,10 @@ Tres piezas desacopladas; añadir un proveedor no cambia el flujo de creación:
 
 **Texto y razonamiento** (`lib/providers/text.ts`): cada tarea declara su calidad mínima (etiquetas 2, mejorar prompts 3, hooks/packaging/análisis 4, borrador de guion 5). Proveedores: Groq GPT-OSS 120B/20B (freemium), Gemini 3.8 Flash (nivel gratuito, Interactions API) y OpenAI (`OPENAI_TEXT_MODEL`). Salida JSON validada; si un proveedor falla o devuelve algo incompleto se prueba el siguiente que alcance la calidad. Cada llamada registra proveedor, modelo, tarea, tokens y coste estimado (`text-usage` en los logs del servidor).
 
+**Pasarela propia** (`TEXT_GATEWAY_*`): cualquier endpoint compatible con OpenAI, como OmniRoute con `eco-router`, entra como proveedor local y gratuito. Su calidad la declara el usuario (`TEXT_GATEWAY_QUALITY`) y solo se usa en las tareas que no exigen más.
+
+**Higgsfield** (API oficial): imagen Soul y vídeo Kling 2.5 Turbo Pro y Hailuo 2.3, pagados con créditos de la cuenta. Su precio por modelo no está publicado, así que nunca lo elige una estrategia automática: hay que escogerlo a mano y confirmar.
+
 **Transcripción** (`lib/providers/transcribe.ts`, `/api/transcribe`): Whisper large v3 (Groq) primero por precisión, turbo (Groq o Cloudflare, gratis) como respaldo. Genera subtítulos VTT guardados en la Biblioteca y SRT copiable.
 
 **Bancos gratuitos** (`lib/providers/stock.ts`): Freesound (CC0/BY/BY-NC), Pexels y Pixabay. Se importa a la Biblioteca con autor, licencia, atribución y página de origen.
@@ -98,6 +102,26 @@ Todo con APIs oficiales y OAuth; los tokens se guardan cifrados (AES-GCM). Ningu
 - **YouTube**: YouTube Data API v3, subida reanudable, privado por defecto.
 - **Instagram (Reels)**: Instagram API with Instagram Login (`instagram_business_basic`, `instagram_business_content_publish`). Contenedor `REELS` con URL firmada temporal → espera de procesamiento (reanudable) → `media_publish`. Solo MP4/MOV: los renders WebM del navegador no se aceptan (pendiente: render MP4 en servidor).
 - **TikTok**: Login Kit + Content Posting API (`video.publish`), subida `FILE_UPLOAD` por fragmentos, privacidad validada con `creator_info` y **SELF_ONLY por defecto**; etiqueta de contenido IA activada por defecto. Las apps sin auditar solo pueden publicar en privado.
+
+## Almacenamiento en la nube
+
+Todo lo que se crea (renders, subidas, generaciones, importaciones, subtítulos) se guarda en la nube, nunca en el equipo del usuario. `lib/storage/server.ts` elige el destino:
+
+- **Cloudflare R2** (si `R2_*` está configurado): 10 GB-mes gratis, salida gratis y archivos de hasta ~5 TB. El navegador sube directamente con URLs presignadas (SigV4, probada con el vector oficial de AWS); las rutas se guardan como `r2:<clave>`.
+- **Supabase Storage** (por defecto): el plan gratuito limita a 50 MB por archivo y 1 GB en total.
+
+Los archivos ya guardados en Supabase siguen funcionando. Configuración CORS del bucket R2 (Cloudflare → R2 → bucket → Settings → CORS policy):
+
+```json
+[{ "AllowedOrigins": ["https://cerebro-studio.vercel.app", "http://localhost:3000"], "AllowedMethods": ["GET", "PUT", "HEAD"], "AllowedHeaders": ["Content-Type"], "MaxAgeSeconds": 3600 }]
+```
+
+## Edición automática y «Aprende de mí»
+
+- **Render MP4**: el editor graba MP4 (H.264 + AAC) en Chrome, Edge y Safari, que es lo que piden Reels, TikTok y YouTube; Firefox sigue en WebM.
+- **Montaje automático** (`/editor/auto`): sin IA ni coste. Analiza el vídeo en bruto en el navegador, quita silencios (jump cuts), corta en los cambios de plano y divide las tomas largas. Después pone transiciones, música y subtítulos de la transcripción, y exporta.
+- **Aprende de mí** (editor manual): «Grabar mi forma de editar» mide lo que hace el usuario: duración de los cortes, divisiones, transiciones, zoom, textos, volúmenes y efectos en los cortes. Lo guarda como estilo (en `connector_configs`, solo del propietario), lo afina con cada sesión y lo aplica a otros montajes, con opción de deshacer. Graba acciones del editor, no la pantalla: así el resultado es exacto y repetible.
+- CapCut no tiene API oficial de edición; no se integra.
 
 ## Migraciones
 

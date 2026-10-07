@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
 
 /** Client-side upload of user-provided media into the private generated-assets bucket plus an assets row. */
 
@@ -47,17 +48,15 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
   sourceUrl?: string | null
   licenseNotes?: string | null
   extra?: Record<string, unknown>
+  onProgress?: (fraction: number) => void
 }) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('La sesión ha caducado.')
   const problem = validateUpload(input.kind, input.file)
   if (problem) throw new Error(problem)
   const durationSeconds = input.kind === 'image' ? null : await mediaDuration(input.file)
-  const id = crypto.randomUUID()
-  // First folder must be the user id: the storage policies check it.
-  const storagePath = `${user.id}/${input.projectId}/uploads/${id}.${extFor(input.file)}`
-  const { error: uploadError } = await supabase.storage.from('generated-assets').upload(storagePath, input.file, { contentType: input.file.type, upsert: false })
-  if (uploadError) throw new Error(`No se pudo subir el archivo: ${uploadError.message}`)
+  // Cloud storage (R2 when configured, otherwise Supabase); the key always starts with the user id.
+  const storagePath = await uploadToCloud(supabase, { projectId: input.projectId, folder: 'uploads', ext: extFor(input.file), body: input.file, contentType: input.file.type || 'application/octet-stream', onProgress: input.onProgress })
   const { data, error } = await supabase.from('assets').insert({
     owner_id: user.id,
     project_id: input.projectId,
@@ -79,7 +78,7 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
     },
   }).select('id').single()
   if (error) {
-    await supabase.storage.from('generated-assets').remove([storagePath])
+    await removeFromCloud(storagePath).catch(() => undefined)
     throw new Error(`No se pudo registrar el archivo: ${error.message}`)
   }
   return data as { id: string }
@@ -87,8 +86,7 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
 
 export async function deleteAsset(supabase: SupabaseClient, asset: { id: string; storage_path: string | null }) {
   if (asset.storage_path) {
-    const { error } = await supabase.storage.from('generated-assets').remove([asset.storage_path])
-    if (error) throw new Error(`No se pudo borrar el archivo: ${error.message}`)
+    await removeFromCloud(asset.storage_path)
   }
   const { error } = await supabase.from('assets').delete().eq('id', asset.id)
   if (error) throw new Error(`No se pudo borrar el registro: ${error.message}`)

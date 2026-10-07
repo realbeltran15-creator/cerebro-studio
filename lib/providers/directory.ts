@@ -81,6 +81,13 @@ export const providers: ProviderInfo[] = [
     terms: 'Cada modelo tiene su licencia; las URLs de resultados caducan, por eso se copian a la Biblioteca.',
   },
   {
+    id: 'higgsfield', name: 'Higgsfield', tier: 'credits',
+    allowance: 'Créditos de tu cuenta (caducan al año). Los fallidos y bloqueados se reembolsan. Sin nivel gratuito confirmado en la documentación.',
+    auth: 'api_key', env: ['HIGGSFIELD_API_KEY_ID', 'HIGGSFIELD_API_KEY_SECRET'], api: 'official',
+    docsUrl: 'https://docs.higgsfield.ai', pricingUrl: 'https://console.higgsfield.ai', verifiedAt: '2026-10-07',
+    terms: 'Claves solo en el servidor. Resultados disponibles al menos 7 días: Cerebro los copia a tu nube.',
+  },
+  {
     id: 'freesound', name: 'Freesound', tier: 'free',
     allowance: 'API gratuita con token (solo lectura). Descargar el original requiere OAuth2; Cerebro importa la vista previa HQ (MP3).',
     auth: 'api_key', env: ['FREESOUND_API_KEY'], api: 'official',

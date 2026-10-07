@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { socialAccessToken, socialConnection, SOCIAL_SCOPES, type SocialPlatform } from '@/lib/oauth/social'
+import { downloadObject, signedReadUrl } from '@/lib/storage/server'
 import { assertPublicationApproved, publicationApprovalKey, type ApprovalRecord } from './guard'
 
 /**
@@ -70,12 +71,13 @@ async function publishInstagram(db: SupabaseClient, job: SocialJob, token: strin
   let containerId = typeof job.result?.containerId === 'string' ? job.result.containerId : null
   if (!containerId) {
     const v = await videoAsset(db, job.owner_id, job.payload.videoAssetId!)
-    if (v.mime !== 'video/mp4' && v.mime !== 'video/quicktime') throw new SocialPublishError('Instagram solo acepta MP4/MOV. Este vídeo es WebM (render del navegador): súbelo o genéralo en MP4.', 409)
-    const { data: signed } = await db.storage.from('generated-assets').createSignedUrl(v.path, 3600)
-    if (!signed?.signedUrl) throw new SocialPublishError('No se pudo preparar el enlace temporal del vídeo.', 502)
+    if (/codecs=/i.test(v.mime) && !/avc1|h264|hvc1|hev1/i.test(v.mime)) throw new SocialPublishError('Instagram necesita vídeo H.264/HEVC y este MP4 usa otro códec. Renderízalo en Google Chrome, Edge o Safari.', 409)
+    if (!/^video\/(mp4|quicktime)/.test(v.mime)) throw new SocialPublishError('Instagram solo acepta MP4/MOV. Este vídeo es WebM: vuelve a renderizarlo con Chrome, Edge o Safari (graban MP4), o usa un vídeo MP4 generado o subido.', 409)
+    let signedUrl: string
+    try { signedUrl = await signedReadUrl(db, job.owner_id, v.path, 3600) } catch { throw new SocialPublishError('No se pudo preparar el enlace temporal del vídeo.', 502) }
     const created = await igJson(await fetch(`${igGraph}/${encodeURIComponent(igUserId)}/media`, {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ media_type: 'REELS', video_url: signed.signedUrl, caption: job.payload.caption ?? '', share_to_feed: String(job.payload.shareToFeed !== false), access_token: token }),
+      body: new URLSearchParams({ media_type: 'REELS', video_url: signedUrl, caption: job.payload.caption ?? '', share_to_feed: String(job.payload.shareToFeed !== false), access_token: token }),
     }))
     containerId = String(created.id ?? '')
     if (!containerId) throw new SocialPublishError('Instagram no devolvió un contenedor.', 502)
@@ -125,8 +127,9 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string) 
     const privacy = job.payload.privacyLevel ?? 'SELF_ONLY'
     if (!options.includes(privacy)) throw new SocialPublishError(`Privacidad no permitida para esta cuenta. Opciones: ${options.join(', ')}.`, 409)
     const v = await videoAsset(db, job.owner_id, job.payload.videoAssetId!)
-    const { data: file, error } = await db.storage.from('generated-assets').download(v.path)
-    if (error || !file) throw new SocialPublishError('No se pudo leer el vídeo.', 502)
+    let file: Blob
+    try { file = await downloadObject(db, job.owner_id, v.path) } catch { throw new SocialPublishError('No se pudo leer el vídeo.', 502) }
+    const uploadMime = v.mime.split(';')[0]
     const size = file.size
     const { chunkSize, count } = tiktokChunks(size)
     const init = await ttJson(await fetch(`${TT}/video/init/`, {
@@ -143,7 +146,7 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string) 
     for (let i = 0; i < count; i++) {
       const start = i * chunkSize
       const end = i === count - 1 ? size - 1 : start + chunkSize - 1
-      const r = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': v.mime, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}` }, body: file.slice(start, end + 1) })
+      const r = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': uploadMime, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}` }, body: file.slice(start, end + 1) })
       if (!r.ok && r.status !== 206 && r.status !== 201) throw new SocialPublishError(`La subida a TikTok falló (${r.status}).`, 502)
     }
   }

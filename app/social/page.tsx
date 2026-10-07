@@ -188,7 +188,7 @@ export default function SocialPage() {
           <label>Vídeo<select value={form.videoAssetId} onChange={e => setForm({ ...form, videoAssetId: e.target.value })}><option value="">— Elige un vídeo</option>{videos.map(v => <option key={v.id} value={v.id}>{String(v.provenance?.title ?? 'Vídeo')}{isMp4(v) ? '' : ' (WebM)'} · {new Date(v.created_at).toLocaleDateString()}</option>)}</select></label>
         </div>
         {videos.length === 0 && <p className="muted small">Este proyecto no tiene vídeos. <Link className="open" href={`/repurpose?project=${projectId}`}>Crea un vertical en Repurposing</Link>.</p>}
-        {igFormatProblem && <p className="error small">Instagram solo acepta MP4/MOV. Este vídeo es WebM (render del navegador): usa un vídeo MP4 (por ejemplo generado con IA o subido) o publícalo en TikTok.</p>}
+        {igFormatProblem && <p className="error small">Instagram solo acepta MP4/MOV. Este vídeo es WebM (render de Firefox o anterior): vuelve a renderizarlo con Chrome, Edge o Safari, que graban MP4, o publícalo en TikTok.</p>}
         <label>Texto / título ({form.caption.length}/2200)<textarea rows={4} value={form.caption} onChange={e => setForm({ ...form, caption: e.target.value })} maxLength={2200} placeholder="Descripción, hashtags y créditos de música o material con licencia." /></label>
         {form.platform === 'tiktok' ? <div className="pageActions">
           <label>Privacidad<select value={form.privacyLevel} onChange={e => setForm({ ...form, privacyLevel: e.target.value as typeof form.privacyLevel })}>{Object.entries(ttPrivacy).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>

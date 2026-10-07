@@ -17,11 +17,13 @@ export function ProviderDirectory() {
   const [models, setModels] = useState<ModelLite[]>([])
   const [text, setText] = useState<TextInfo | null>(null)
   const [stt, setStt] = useState<SttInfo>([])
+  const [storage, setStorage] = useState<{ driver: string; label: string; note: string } | null>(null)
   useEffect(() => {
-    fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j) { setDir(j.providers); setModels(j.models); setText(j.text ?? null); setStt(j.transcription ?? []) } }).catch(() => {})
+    fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j) { setDir(j.providers); setModels(j.models); setText(j.text ?? null); setStt(j.transcription ?? []); setStorage(j.storage ?? null) } }).catch(() => {})
   }, [])
   if (!dir.length) return null
   return <>
+    {storage && <p className={storage.driver === 'r2' ? 'notice small' : 'warnBox small'} style={{ marginBottom: 12 }}><b>Almacenamiento en la nube:</b> {storage.label}. {storage.note}</p>}
     <h3 className="sectionTitle">Proveedores de generación y bancos de medios</h3>
     <div className="provGrid">
       {dir.map(p => {

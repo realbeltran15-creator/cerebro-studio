@@ -53,7 +53,7 @@ function fakeDb(state: { job: Record<string, any>; approval: Record<string, any>
         if (table === 'publication_jobs') return { data: state.job, error: null }
         if (table === 'approvals') return { data: state.approval, error: null }
         if (table === 'channel_connections') return { data: state.connection ? [state.connection] : [], error: null }
-        if (table === 'assets') return { data: { asset_type: q.filters.id === 'thumb' ? 'thumbnail' : 'video', storage_path: 'p', provenance: { mimeType: 'video/webm' } }, error: null }
+        if (table === 'assets') return { data: { asset_type: q.filters.id === 'thumb' ? 'thumbnail' : 'video', storage_path: 'u1/p1/renders/vid.webm', provenance: { mimeType: 'video/webm' } }, error: null }
         return { data: null, error: null }
       }
       const chain: any = new Proxy({}, { get(_, p) {

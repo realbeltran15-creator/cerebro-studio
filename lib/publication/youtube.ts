@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { accessTokenFor, hasScope, SCOPES, youtubeConnection } from '@/lib/oauth/google'
+import { downloadObject } from '@/lib/storage/server'
 import { assertPublicationApproved, publicationApprovalKey, type ApprovalRecord } from './guard'
 
 /**
@@ -54,9 +55,10 @@ async function download(db: SupabaseClient, ownerId: string, assetId: string, ty
   const { data: asset } = await db.from('assets').select('id,asset_type,storage_path,provenance').eq('id', assetId).eq('owner_id', ownerId).maybeSingle()
   const a = asset as { asset_type: string; storage_path: string | null; provenance: Record<string, unknown> | null } | null
   if (!a?.storage_path || !types.includes(a.asset_type)) throw new PublishError('El recurso elegido no existe o no es del tipo correcto.', 404)
-  const { data, error } = await db.storage.from('generated-assets').download(a.storage_path)
-  if (error || !data) throw new PublishError('No se pudo leer el archivo del almacenamiento.', 502)
-  return { blob: data, mime: typeof a.provenance?.mimeType === 'string' ? a.provenance.mimeType : data.type || 'application/octet-stream' }
+  let data: Blob
+  try { data = await downloadObject(db, ownerId, a.storage_path) } catch { throw new PublishError('No se pudo leer el archivo del almacenamiento.', 502) }
+  const mime = typeof a.provenance?.mimeType === 'string' ? a.provenance.mimeType : data.type || 'application/octet-stream'
+  return { blob: data, mime: mime.split(';')[0] }
 }
 
 export async function publishJob(db: SupabaseClient, ownerId: string, jobId: string) {

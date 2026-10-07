@@ -25,6 +25,10 @@ window.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input.url
   const m = url.match(/\/api\/assets\/([^/]+)\/signed-url/)
   if (m) { await window.__MEDIA_READY; return new Response(JSON.stringify({ url: window.__URLS[m[1]] }), { headers: { 'content-type': 'application/json' } }) }
+  if (url.endsWith('/api/storage/upload-url')) {
+    const b = JSON.parse(init.body)
+    return new Response(JSON.stringify({ driver: 'supabase', storagePath: `u1/${b.projectId}/${b.folder}/${b.name ?? 'x'}.${b.ext}`, maxBytes: 50 * 1024 * 1024 }), { headers: { 'content-type': 'application/json' } })
+  }
   return realFetch(input, init)
 }
 const asset = (id, type, title) => ({ id, project_id: 'p1', owner_id: 'u1', asset_type: type, storage_path: `u1/p1/${id}`, license_status: 'generated', source_provider: 'test', provenance: { title }, created_at: '2026-09-27T20:00:00Z' })

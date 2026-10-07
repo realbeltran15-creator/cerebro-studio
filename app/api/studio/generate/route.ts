@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   const options: GenerationOptions = body?.options ?? {}
   const estimateUsd = Math.round(model.estimateUsd(options) * 1000) / 1000
   // A paid generation must carry the estimate the user confirmed; a bigger one is refused.
-  if (model.tier === 'paid' && !(typeof body?.confirmedEstimateUsd === 'number' && body.confirmedEstimateUsd + 1e-6 >= estimateUsd)) {
+  if ((model.tier === 'paid' || model.confirm) && !(typeof body?.confirmedEstimateUsd === 'number' && body.confirmedEstimateUsd + 1e-6 >= estimateUsd)) {
     return NextResponse.json({ error: 'Falta confirmar el coste estimado antes de generar.' }, { status: 409 })
   }
 

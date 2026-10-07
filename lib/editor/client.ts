@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Composition } from './composition'
 import type { MediaSource } from './renderer'
+import { containerOf } from './container'
+import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
 
 export type EditorAsset = {
   id: string
@@ -79,14 +81,19 @@ export async function saveRender(supabase: SupabaseClient, input: {
   mimeType: string
   durationMs: number
   assets: EditorAsset[]
+  onUploadProgress?: (fraction: number) => void
 }) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('La sesión ha caducado.')
   const used = new Set(compositionAssetIds(input.composition))
   const inputs = input.assets.filter(a => used.has(a.id))
-  const storagePath = `${user.id}/${input.projectId}/renders/${input.jobId}.webm`
-  const { error: uploadError } = await supabase.storage.from('generated-assets').upload(storagePath, input.blob, { contentType: 'video/webm', upsert: false })
-  if (uploadError) throw new Error(`No se pudo subir el vídeo (${Math.round(input.blob.size / 1048576)} MB): ${uploadError.message}. Puedes descargarlo desde esta página.`)
+  const ext = containerOf(input.mimeType)
+  let storagePath: string
+  try {
+    storagePath = await uploadToCloud(supabase, { projectId: input.projectId, folder: 'renders', ext, name: input.jobId, body: input.blob, contentType: ext === 'mp4' ? 'video/mp4' : 'video/webm', onProgress: input.onUploadProgress })
+  } catch (e) {
+    throw new Error(`${e instanceof Error ? e.message : 'No se pudo subir el vídeo.'} Puedes descargarlo desde esta página.`)
+  }
   const { data: asset, error } = await supabase.from('assets').insert({
     owner_id: user.id,
     project_id: input.projectId,
@@ -102,6 +109,7 @@ export async function saveRender(supabase: SupabaseClient, input: {
       format: input.composition.format,
       durationMs: input.durationMs,
       mimeType: input.mimeType,
+      container: ext,
       bytes: input.blob.size,
       renderer: 'browser-mediarecorder',
       renderedAt: new Date().toISOString(),
@@ -114,7 +122,7 @@ export async function saveRender(supabase: SupabaseClient, input: {
     },
   }).select('id').single()
   if (error) {
-    await supabase.storage.from('generated-assets').remove([storagePath])
+    await removeFromCloud(storagePath).catch(() => undefined)
     throw new Error(`No se pudo registrar el vídeo: ${error.message}`)
   }
   const { error: jobError } = await supabase.from('render_jobs').update({ status: 'completed', output_asset_id: asset.id, error: null, updated_at: new Date().toISOString() }).eq('id', input.jobId)

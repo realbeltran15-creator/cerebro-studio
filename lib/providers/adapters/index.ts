@@ -10,6 +10,7 @@ import { synthesizeSteerable } from '../openai-voice'
 import { cloudflareImage, cloudflareSpeech } from '../cloudflare'
 import { geminiSpeech, veoDownload, veoStatus, veoSubmit, type VeoJob } from '../gemini'
 import { sizeForFormat } from '../image-presets'
+import { higgsfieldInput, higgsfieldStatus, higgsfieldSubmit, type HiggsfieldJob } from '../higgsfield'
 import type { GeneratedAsset, ProviderContext } from '../types'
 
 export type GenerationInput = {
@@ -26,7 +27,7 @@ export type GenerationInput = {
 }
 
 /** A queued job; serialised (encrypted) into the token the page polls with. */
-export type JobRef = { provider: 'fal'; fal: FalJob } | { provider: 'gemini'; veo: VeoJob }
+export type JobRef = { provider: 'fal'; fal: FalJob } | { provider: 'gemini'; veo: VeoJob } | { provider: 'higgsfield'; hf: HiggsfieldJob }
 
 export type StartResult = { kind: 'assets'; assets: GeneratedAsset[] } | { kind: 'job'; job: JobRef; externalId: string }
 
@@ -40,6 +41,11 @@ export async function startGeneration(input: GenerationInput): Promise<StartResu
     case 'fal': {
       const job = await falSubmit(falEndpoint(model), falInput(model, finalPrompt, options, input.negative))
       return { kind: 'job', job: { provider: 'fal', fal: job }, externalId: job.requestId }
+    }
+    case 'higgsfield': {
+      const path = model.id.slice('higgsfield:'.length)
+      const hf = await higgsfieldSubmit(path, higgsfieldInput(path, finalPrompt, { format, durationSeconds: options.durationSeconds, variants: options.variants, negative: input.negative }), context.requestId)
+      return { kind: 'job', job: { provider: 'higgsfield', hf }, externalId: hf.requestId }
     }
     case 'gemini': {
       if (model.modality === 'voice') return { kind: 'assets', assets: [await geminiSpeech(context, prompt, input.voice ?? 'Charon', input.instructions)] }
@@ -79,6 +85,14 @@ export async function pollGeneration(model: CatalogModel, job: JobRef): Promise<
     const outputs = falOutputs(await falResult(job.fal), model.modality)
     if (!outputs.length) return { state: 'failed', error: 'fal.ai terminó sin devolver archivos (posible filtro de seguridad). No se ha guardado nada.' }
     return { state: 'done', media: outputs.map((o, i) => ({ uri: o.url, mimeType: o.contentType, externalId: `${job.fal.requestId}#${i}` })) }
+  }
+  if (job.provider === 'higgsfield') {
+    const s = await higgsfieldStatus(job.hf)
+    if (s.status === 'queued' || s.status === 'in_progress') return { state: s.status === 'queued' ? 'queued' : 'running' }
+    if (s.status !== 'completed') return { state: 'failed', error: s.status === 'nsfw' ? 'Higgsfield bloqueó el contenido (filtro de seguridad). Los créditos se reembolsan.' : `Higgsfield: ${s.error || s.status}. Los créditos de peticiones fallidas se reembolsan.` }
+    const urls = model.modality === 'video' ? (s.video?.url ? [s.video.url] : []) : (s.images ?? []).map(i => i.url)
+    if (!urls.length) return { state: 'failed', error: 'Higgsfield terminó sin devolver archivos.' }
+    return { state: 'done', media: urls.map((uri, i) => ({ uri, mimeType: model.modality === 'video' ? 'video/mp4' : 'image/png', externalId: `${job.hf.requestId}#${i}` })) }
   }
   const s = await veoStatus(job.veo)
   if (s.state === 'running') return { state: 'running' }

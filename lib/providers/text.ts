@@ -11,7 +11,7 @@
  */
 import type { CostTier } from './directory'
 
-export type TextProvider = 'openai' | 'gemini' | 'groq'
+export type TextProvider = 'openai' | 'gemini' | 'groq' | 'gateway'
 export type TextTask = 'prompt_enhance' | 'script_hooks' | 'script_draft' | 'tags' | 'packaging' | 'analysis'
 
 export type TextModel = {
@@ -40,6 +40,13 @@ export const textModels: TextModel[] = [
   {
     id: 'gemini:gemini-3.8-flash', provider: 'gemini', model: () => 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', tier: 'freemium', quality: 4,
     price: { input: 0.75, output: 3.75 }, priceNote: 'Nivel gratuito en Gemini API; de pago $0.75/$3.75 por 1M tokens (precio hasta el 31-12-2026).', env: ['GEMINI_API_KEY'],
+  },
+  {
+    // Any OpenAI-compatible gateway (e.g. OmniRoute with model "eco-router", LiteLLM, Ollama, LM Studio).
+    // Quality is declared by the owner because the gateway decides the underlying model.
+    id: 'gateway:configured', provider: 'gateway', model: () => process.env.TEXT_GATEWAY_MODEL?.trim() || 'eco-router', label: 'Pasarela propia (OmniRoute u otra compatible con OpenAI)', tier: 'local',
+    get quality() { const q = Number(process.env.TEXT_GATEWAY_QUALITY); return (q >= 1 && q <= 5 ? Math.round(q) : 3) as 1 | 2 | 3 | 4 | 5 },
+    price: null, priceNote: 'Coste según los modelos que elija tu pasarela (OmniRoute: gratis primero). Desde Vercel solo funciona si la pasarela es accesible por HTTPS.', env: ['TEXT_GATEWAY_BASE_URL'],
   },
   {
     id: 'openai:configured', provider: 'openai', model: () => process.env.OPENAI_TEXT_MODEL?.trim() || 'gpt-4.1-mini', label: 'OpenAI (modelo configurado)', tier: 'paid', quality: 5,
@@ -107,6 +114,28 @@ async function callGroq(m: TextModel, system: string, user: string, schema: obje
   return { text: j.choices?.[0]?.message?.content ?? '', usage: { inputTokens: j.usage?.prompt_tokens ?? null, outputTokens: j.usage?.completion_tokens ?? null } }
 }
 
+/** First JSON object in a model reply (gateways may wrap it in prose or code fences). */
+export function extractJson(text: string) {
+  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim()
+  if (t.startsWith('{')) return t
+  const a = t.indexOf('{'), b = t.lastIndexOf('}')
+  return a >= 0 && b > a ? t.slice(a, b + 1) : t
+}
+
+async function callGateway(m: TextModel, system: string, user: string, schema: object) {
+  const base = (process.env.TEXT_GATEWAY_BASE_URL?.trim() ?? '').replace(/\/+$/, '')
+  if (!/^https?:\/\//.test(base)) throw new Error('TEXT_GATEWAY_BASE_URL no válida')
+  const key = process.env.TEXT_GATEWAY_API_KEY?.trim()
+  const r = await fetch(`${base}/chat/completions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+    body: JSON.stringify({ model: m.model(), temperature: 0.5, messages: [{ role: 'system', content: `${system}\nResponde SOLO con un objeto JSON válido que cumpla este JSON Schema:\n${JSON.stringify(schema)}` }, { role: 'user', content: user }] }),
+    cache: 'no-store', signal: AbortSignal.timeout(120000),
+  })
+  if (!r.ok) throw Object.assign(new Error(`Pasarela ${r.status}`), { status: r.status })
+  const j = await r.json() as { choices?: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string }
+  return { text: extractJson(j.choices?.[0]?.message?.content ?? ''), usage: { inputTokens: j.usage?.prompt_tokens ?? null, outputTokens: j.usage?.completion_tokens ?? null } }
+}
+
 /** Extracts the text of a Gemini Interactions response, tolerating the documented shapes. */
 export function geminiOutputText(j: Record<string, unknown>): string {
   const direct = (j.output_text ?? (j.interaction as Record<string, unknown> | undefined)?.output_text)
@@ -146,6 +175,7 @@ export async function runTextTask<T>(task: TextTask, input: { system: string; us
     try {
       const raw = m.provider === 'openai' ? await callOpenAI(m, input.system, input.user, input.schema, input.schemaName, input.requestId)
         : m.provider === 'groq' ? await callGroq(m, input.system, input.user, input.schema)
+        : m.provider === 'gateway' ? await callGateway(m, input.system, input.user, input.schema)
         : await callGemini(m, input.system, input.user, input.schema)
       let parsed: unknown
       try { parsed = JSON.parse(raw.text) } catch { throw new Error('JSON no válido') }
