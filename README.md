@@ -133,3 +133,12 @@ Los archivos ya guardados en Supabase siguen funcionando. Configuración CORS de
 ## Dependencias y avisos de `npm audit`
 
 `npm audit --omit=dev` → 0 vulnerabilidades (producción). Los 5 avisos altos restantes son solo de desarrollo y transitivos: `braces` (DoS por patrones glob muy anidados) vía `micromatch` → `fast-glob` → `@next/eslint-plugin-next` → `eslint-config-next`. Solo se ejecutan en el linter con patrones propios, sin entrada de usuarios. `npm audit fix --force` propone fijar `eslint-config-next@14.2.35` (un cambio de versión mayor incompatible con la versión de Next del proyecto), por lo que no se aplica; se resolverá al actualizar `eslint-config-next` junto con Next.
+
+## Verificación de Gemini (2026-10-07)
+
+Comprobado contra la API oficial sin generar nada (listado de modelos, `models.get` y `countTokens`, gratuitos):
+
+- La clave llegó a esta sesión como *Network Secret* de `generativelanguage.googleapis.com`: el proxy añade `x-goog-api-key` a la petición, así que el proceso **no** ve `process.env.GEMINI_API_KEY`. El código de Cerebro Studio es compatible: envía la cabecera con lo que haya en la variable (vacía o de relleno) y el proxy la sustituye. En Vercel la variable real existe y no hace falta cambiar nada.
+- Consecuencia solo en entornos con Network Secret: `isConfigured` mira la variable de entorno, por lo que el Estudio mostraría «Sin clave» para Gemini aunque la API respondiera. Para probar la app allí hay que definir `GEMINI_API_KEY` con un valor de relleno no secreto.
+- Los identificadores que usa el código existen hoy: `gemini-3.8-flash` (texto), `gemini-3.8-flash-tts` (voz) y `veo-3.1-fast-generate-preview` (vídeo). `gemini-2.5-flash` ya no está disponible para cuentas nuevas y el código no lo usa.
+- No se ha probado todavía ninguna generación (texto, voz ni vídeo): no se puede confirmar desde la API que la clave esté en el nivel gratuito sin facturación.
