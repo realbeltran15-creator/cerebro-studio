@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { compositionIssues, formatSize, totalDurationMs, type Composition } from '@/lib/editor/composition'
@@ -116,8 +117,9 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>
         {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported()} onClick={() => void run(true)}><Icon name="video" size={16} />Renderizar y guardar</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
-      {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar WebM</a>}
+      {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}
     </div>
+    {download && mode === 'idle' && !error && <p className="notice" role="status">Guardado en la Biblioteca. Siguiente: <Link className="open" href={`/repurpose?project=${projectId}`}>versión vertical</Link> · <Link className="open" href={`/youtube?project=${projectId}`}>preparar YouTube</Link> · <Link className="open" href={`/social?project=${projectId}`}>preparar Instagram / TikTok</Link>. Preparar no publica.</p>}
     <p className="muted small">«Vista previa» solo reproduce el montaje; «Renderizar y guardar» graba el vídeo y lo guarda en la Biblioteca. El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos): mantén la pestaña abierta y visible hasta que termine. Sin coste externo. Salida WebM (VP9/VP8 + Opus); el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>
   </section>
 }
