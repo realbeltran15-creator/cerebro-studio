@@ -39,7 +39,7 @@ export const textModels: TextModel[] = [
   },
   {
     id: 'gemini:gemini-3.8-flash', provider: 'gemini', model: () => 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', tier: 'freemium', quality: 4,
-    price: { input: 0.75, output: 3.75 }, priceNote: 'Nivel gratuito en Gemini API; de pago $0.75/$3.75 por 1M tokens (precio hasta el 31-12-2026).', env: ['GEMINI_API_KEY'],
+    price: { input: 0.75, output: 3.75 }, priceNote: 'Nivel gratuito en Gemini API, limitado a unas 20 solicitudes al día para este modelo (límite informado por la propia API el 2026-10-07; puede cambiar); de pago $0.75/$3.75 por 1M tokens (precio hasta el 31-12-2026).', env: ['GEMINI_API_KEY'],
   },
   {
     // Any OpenAI-compatible gateway (e.g. OmniRoute with model "eco-router", LiteLLM, Ollama, LM Studio).

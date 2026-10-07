@@ -30,7 +30,7 @@ describe.skipIf(!live)('Gemini through the real integration', () => {
       validate: v => { const t = (v as { tags?: unknown }).tags; return Array.isArray(t) && t.length > 0 && t.every(x => typeof x === 'string') ? t as string[] : null },
     }).catch((e: unknown) => {
       // Google answers 502/503 during demand spikes: the integration must report it, not crash.
-      if (e instanceof TextRouteError && e.status !== null && e.status >= 500) { console.warn('Gemini text unavailable (provider overload):', e.status, e.attempts); return null }
+      if (e instanceof TextRouteError && e.status !== null && (e.status >= 500 || e.status === 429)) { console.warn('Gemini text unavailable (provider overload or daily free-tier quota):', e.status, e.attempts); return null }
       throw e
     })
     if (!r) return

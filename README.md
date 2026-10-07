@@ -227,3 +227,7 @@ Para probar un servicio desde el sandbox hay que (1) permitir sus dominios en *N
 | Pixabay | `PIXABAY_API_KEY` | `pixabay.com`, `cdn.pixabay.com` | **No admite cabecera**: la API exige la clave en la URL (`key=`); no se puede inyectar como Network Secret, va como variable de entorno | ⏳ |
 
 Los dominios de descarga están restringidos en el código por servicio (`allowedDownload`, `isFalMediaUrl`): un resultado nunca puede apuntar al servidor hacia otro host.
+
+## Gemini texto: cupo gratuito (2026-10-07)
+
+Al repetir la prueba, la API respondió 429 con el mensaje «Rate limit exceeded for model gemini-3.8-flash (limit: 20 requests per day on Free Tier)»: **el nivel gratuito de ese modelo admite solo unas 20 solicitudes al día** (dato de la propia respuesta; puede cambiar). Las agoté yo con los reintentos durante la saturación de ese día. Consecuencias: (1) la integración trata el 429 como cupo agotado, no lo reintenta y muestra «límite de uso o cupo gratuito» (ya probado con simulaciones); (2) el catálogo lo indica en la nota de precio; (3) con ese cupo, Gemini sirve como apoyo gratuito, no como único proveedor de texto: conviene configurar también Groq u otro, y el enrutador pasa al siguiente modelo elegible cuando uno falla; (4) la validación en vivo del texto queda pendiente de que se renueve el cupo y no se vuelve a gastar en pruebas repetidas.
