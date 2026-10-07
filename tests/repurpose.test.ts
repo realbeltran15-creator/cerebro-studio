@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { suggestSegment } from '@/lib/editor/repurpose'
+import { suggestHook, suggestPackaging, suggestSegment } from '@/lib/editor/repurpose'
 import type { Clip } from '@/lib/editor/composition'
 
 const clip = (n: number, narration: string | null, seconds: number, visual = true): Clip => ({ id: `c${n}`, sceneId: `s${n}`, position: n, narration, visualAssetId: visual ? `a${n}` : null, voiceAssetId: null, durationMs: seconds * 1000, motion: 'none' })
@@ -33,5 +33,24 @@ describe('suggestSegment (calculated, deterministic)', () => {
   it('returns null when nothing fits or there are no clips', () => {
     expect(suggestSegment([], { maxMs: 60_000 })).toBeNull()
     expect(suggestSegment([clip(1, 'x', 120)], { maxMs: 60_000 })).toBeNull()
+  })
+})
+
+describe('hook and packaging drafts (calculated)', () => {
+  it('picks the strongest first sentence and fits the overlay', () => {
+    expect(suggestHook(['Contexto histórico de 1971. ¿Por qué nadie sobrevivió a aquella caída de 3000 metros? Respuesta más abajo.'])).toBe('¿Por qué nadie sobrevivió a aquella caída de 3000 metros?')
+    const long = suggestHook(['Una frase extremadamente larga que sigue y sigue sin terminar nunca porque no tiene ningún signo de puntuación final en todo el texto que cabe en pantalla'], 60)!
+    expect(long.length).toBeLessThanOrEqual(60)
+    expect(long.endsWith('…')).toBe(true)
+  })
+  it('returns null without usable narration', () => {
+    expect(suggestHook([null, '', 'ok'])).toBeNull()
+  })
+  it('drafts title, caption and hashtags from the project text', () => {
+    const p = suggestPackaging({ projectName: 'Juliane Koepcke: superviviente de la selva', hook: '¿Por qué sobrevivió?', narrations: ['Despertó sola en la selva peruana.'] })
+    expect(p.title).toBe('¿Por qué sobrevivió?')
+    expect(p.caption).toContain('Despertó sola en la selva peruana.')
+    expect(p.caption).toMatch(/#Juliane/)
+    expect(p.caption.length).toBeLessThanOrEqual(2200)
   })
 })

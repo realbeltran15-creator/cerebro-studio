@@ -271,6 +271,29 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   }
 }
 
+// 8. Repurpose with a real saved edit: suggestion, hook draft, packaging draft and platform limits through the UI.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/repurpose/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8')
+  const server = serve(8798, { 'setup.js': setup, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8798/repurpose?project=p1')
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.getByRole('button', { name: 'Sugerir para Instagram Reels' }).waitFor({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Sugerir para Instagram Reels' }).click()
+  await page.getByText(/Sugerencia para Instagram Reels/).waitFor()
+  const checked = await page.locator('input[type="checkbox"]:checked').count()
+  check('repurpose: suggestion selects a coherent run of scenes', checked >= 2 && checked <= 3, checked)
+  check('repurpose: hook is drafted from the narration', (await page.getByLabel(/Hook en pantalla/).inputValue()).includes('¿Por qué nadie sobrevivió'))
+  check('repurpose: suggestion is labelled as calculated, not AI', await page.getByText('Calculado, no IA').count() >= 2)
+  check('repurpose: packaging draft is shown', await page.getByText(/Borrador de título y descripción/).count() === 1)
+  check('repurpose: no horizontal overflow at 390 px', (await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 1)
+  check('repurpose: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

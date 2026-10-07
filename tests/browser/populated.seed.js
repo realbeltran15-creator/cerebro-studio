@@ -18,3 +18,16 @@
   db.scripts = [{ id: 'sc1', owner_id: 'u1', project_id: 'p1', title: long.slice(0, 110), version: 3, status: 'approved', hook: long.slice(0, 80), sections: [{ id: 'a', heading: 'H', basis: 'verified_fact', text: long, sources: [] }], updated_at: '2026-09-29T00:00:00Z', created_at: '2026-09-28T00:00:00Z' }]
   db.publication_jobs = [{ id: 'j1', owner_id: 'u1', project_id: 'p1', platform: 'youtube', status: 'draft', payload: { title: long.slice(0, 100) }, created_at: '2026-09-29T00:00:00Z' }]
 })()
+;(() => {
+  const db = window.__DB
+  const clip = (n, narration, seconds, visual) => ({ id: `c${n}`, sceneId: `rs${n}`, position: n, narration, visualAssetId: visual ? `as${n}` : null, voiceAssetId: null, durationMs: seconds * 1000, motion: 'none' })
+  db.render_jobs = [{
+    id: 'rj1', owner_id: 'u1', project_id: 'p1', status: 'draft', output_format: '16:9', created_at: '2026-09-29T00:00:00Z', updated_at: '2026-09-29T00:00:00Z',
+    composition: { version: 1, storyboardId: 'b1', title: 'Juliane larga', format: '16:9', fadeMs: 400, subtitles: true, clips: [
+      clip(1, 'Una introducción larga con contexto histórico que no engancha a nadie todavía', 20, false),
+      clip(2, '¿Por qué nadie sobrevivió a aquella caída de 3000 metros?', 12, true),
+      clip(3, 'Ella despertó sola en la selva y caminó once días siguiendo un arroyo.', 20, true),
+      clip(4, 'Así volvió a la civilización.', 10, true),
+    ] },
+  }]
+})()

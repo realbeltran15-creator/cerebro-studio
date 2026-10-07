@@ -53,3 +53,28 @@ export function suggestSegment(clips: Clip[], opts: { maxMs: number; minMs?: num
   }
   return best
 }
+
+const clean = (t: string) => t.replace(/\s+/g, ' ').trim()
+const clip = (t: string, max: number) => {
+  if (t.length <= max) return t
+  const cut = t.slice(0, max - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[,;:\s]+$/, '')}…`
+}
+
+/** On-screen hook (CALCULATED): the strongest of the first sentences of the segment, trimmed to fit the 3-second overlay. */
+export function suggestHook(narrations: Array<string | null>, max = 90): string | null {
+  const sentences = narrations.flatMap(n => (n ? clean(n).match(/[^.!?…]+[.!?…]?/g) ?? [] : [])).map(clean).filter(s => s.length >= 8).slice(0, 6)
+  if (!sentences.length) return null
+  const best = sentences.reduce((a, b) => (hookStrength(b) > hookStrength(a) ? b : a))
+  return clip(best.replace(/[.…]+$/, ''), max)
+}
+
+/** Title and caption drafts for the vertical post (CALCULATED from the project's own text; the owner reviews them). */
+export function suggestPackaging(input: { projectName: string; hook: string | null; narrations: Array<string | null> }) {
+  const title = clip(input.hook ?? input.projectName, 100)
+  const body = clip(clean(input.narrations.filter(Boolean).join(' ')), 220)
+  const tag = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '')
+  const tags = [...new Set(input.projectName.split(/\s+/).map(tag).filter(w => w.length >= 4))].slice(0, 3).map(w => `#${w}`)
+  return { title, caption: [input.hook ?? '', body && body !== input.hook ? body : '', tags.join(' ')].filter(Boolean).join('\n\n').slice(0, 2200) }
+}

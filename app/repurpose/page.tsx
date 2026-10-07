@@ -7,7 +7,7 @@ import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { parseComposition, shortPlatforms, toShort, totalDurationMs, type Composition } from '@/lib/editor/composition'
 import type { EditorAsset } from '@/lib/editor/client'
-import { suggestSegment, type SegmentSuggestion } from '@/lib/editor/repurpose'
+import { suggestHook, suggestPackaging, suggestSegment, type SegmentSuggestion } from '@/lib/editor/repurpose'
 import type { ProjectRow } from '@/lib/types/database'
 
 type Job = { id: string; status: string; created_at: string; updated_at: string; composition: Composition }
@@ -81,6 +81,11 @@ export default function RepurposePage() {
     })()
   }, [source, supabase])
 
+  const selectedNarrations = useMemo(() => source ? source.composition.clips.filter(c => selected.has(c.sceneId)).map(c => c.narration) : [], [source, selected])
+  const projectName = projects.find(p => p.id === projectId)?.name ?? ''
+  const packaging = useMemo(() => selected.size ? suggestPackaging({ projectName, hook: hook.trim() || null, narrations: selectedNarrations }) : null, [selected.size, projectName, hook, selectedNarrations])
+  const [copied, setCopied] = useState('')
+  async function copy(label: string, text: string) { try { await navigator.clipboard.writeText(text); setCopied(label) } catch { setCopied('No se pudo copiar: selecciona el texto manualmente.') } }
   const selectedMs = useMemo(() => source ? source.composition.clips.filter(c => selected.has(c.sceneId)).reduce((t, c) => t + c.durationMs, 0) : 0, [source, selected])
 
   // Platform sweet spots for retention (not the hard limits): Shorts/TikTok about a minute, Reels up to its 90 s cap.
@@ -90,6 +95,7 @@ export default function RepurposePage() {
     const r = suggestSegment(source.composition.clips, { maxMs: t.maxMs, targetMs: t.targetMs })
     if (!r) { setSuggestion(null); setSuggestMsg(`Ninguna escena o grupo de escenas cabe en ${Math.round(t.maxMs / 1000)} s. Divide las escenas largas en el Editor.`); return }
     setSuggestMsg(''); setSuggestion({ ...r, label: t.label }); setSelected(new Set(r.sceneIds))
+    if (!hook.trim()) { const h = suggestHook(source.composition.clips.filter(c => r.sceneIds.includes(c.sceneId)).map(c => c.narration)); if (h) setHook(h) }
   }
 
   function toggle(id: string) { setSelected(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n }) }
@@ -161,7 +167,16 @@ export default function RepurposePage() {
       </div>
       <label htmlFor="rp-hook">2 · Hook en pantalla (primeros 3 s)
         <input id="rp-hook" value={hook} onChange={e => setHook(e.target.value)} maxLength={90} placeholder="Frase corta que engancha; se rellena con el hook del guion" />
+        <button type="button" className="ghost small" style={{ marginTop: 6 }} disabled={selected.size === 0} onClick={() => { const h = suggestHook(selectedNarrations); if (h) setHook(h) }}>Proponer hook desde la narración (calculado)</button>
       </label>
+      {packaging && <div className="panel" style={{ background: 'var(--panel-2)' }}>
+        <h4>Borrador de título y descripción <span className="pill">Calculado, no IA</span></h4>
+        <p className="small"><b>Título:</b> {packaging.title}</p>
+        <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{packaging.caption}</p>
+        <div className="pageActions"><button type="button" className="ghost small" onClick={() => void copy('Título copiado.', packaging.title)}>Copiar título</button><button type="button" className="ghost small" onClick={() => void copy('Descripción copiada.', packaging.caption)}>Copiar descripción</button></div>
+        {copied && <p className="muted small" role="status">{copied}</p>}
+        <p className="muted small">Se arma con el texto de tu propio proyecto; revísalo antes de usarlo en YouTube, Instagram o TikTok.</p>
+      </div>}
       <div><button type="button" disabled={selected.size === 0} onClick={build}>Preparar versión vertical 9:16</button></div>
     </section>}
 
