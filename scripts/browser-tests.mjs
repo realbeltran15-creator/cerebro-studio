@@ -245,6 +245,32 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 7. Mobile with awkward, populated data (long titles, long unbroken URLs, many rows): no overflow, no errors, axe clean.
+{
+  const populated = [['/opportunities', 'app/opportunities/page', '/opportunities'], ['/library', 'app/library/page', '/library'], ['/projects', 'app/projects/page', '/projects'],
+    ['/projects/[id]', 'app/projects/[id]/page', '/projects/p1', { id: 'p1' }], ['/studio', 'app/studio/page', '/studio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/youtube', 'app/youtube/page', '/youtube?project=p1']]
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const axeSrc = readFileSync(path.join(root, 'node_modules/axe-core/axe.min.js'), 'utf8')
+  for (const [name, mod, url, params] of populated) {
+    const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/${mod}'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+    const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8') + (params ? `\nwindow.__PARAMS = ${JSON.stringify(params)}` : '')
+    const server = serve(8797, { 'setup.js': setup, 'app.js': code })
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
+    const errors = []
+    page.on('pageerror', e => errors.push(e.message))
+    await page.goto(`http://127.0.0.1:8797${url}`)
+    await page.addStyleTag({ content: css })
+    await page.waitForTimeout(900)
+    const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - window.innerWidth, rows: document.querySelectorAll('article,.listItem,.thumb,tr').length, wide: [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest('table,pre,code,[style*="overflow"],.tableWrap')).slice(0, 3).map(e => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 30)}`) }))
+    check(`mobile (populated): ${name} fits 390 px`, m.over <= 1, m)
+    check(`mobile (populated): ${name} has no page errors`, errors.length === 0, errors.slice(0, 2))
+    await page.addScriptTag({ content: axeSrc })
+    const v = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ['wcag2a', 'wcag2aa'] })).violations.filter(x => !['document-title', 'html-has-lang'].includes(x.id)).map(x => ({ id: x.id, impact: x.impact, nodes: x.nodes.length, sample: x.nodes[0]?.target?.[0] })))
+    check(`a11y (populated): ${name} has no WCAG A/AA violations`, v.length === 0, v)
+    await page.close(); server.close()
+  }
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')
