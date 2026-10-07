@@ -7,7 +7,7 @@ const extFor=(mime:string)=>mime.includes('png')?'png':mime.includes('jpeg')||mi
 
 async function materialize(asset:GeneratedAsset){
  if(asset.uri.startsWith('data:')){const match=asset.uri.match(/^data:([^;]+);base64,(.+)$/);if(!match)throw new Error('Unsupported generated data URI.');return{bytes:Buffer.from(match[2],'base64'),mime:match[1]}}
- const url=new URL(asset.uri);if(url.protocol!=='https:')throw new Error('Generated asset URL must use HTTPS.');const response=await fetch(url,{redirect:'error'});if(!response.ok)throw new Error('Could not retrieve generated asset.');const declared=response.headers.get('content-type')?.split(';')[0];return{bytes:Buffer.from(await response.arrayBuffer()),mime:declared||asset.mimeType}
+ const url=new URL(asset.uri);if(url.protocol!=='https:')throw new Error('Generated asset URL must use HTTPS.');const response=await fetch(url,{redirect:'error',cache:'no-store',signal:AbortSignal.timeout(180000)});if(!response.ok)throw new Error(`Could not retrieve generated asset (${response.status}).`);const declaredLength=Number(response.headers.get('content-length'));if(Number.isFinite(declaredLength)&&declaredLength>250*1024*1024)throw new Error('Generated asset exceeds storage size limit.');const declared=response.headers.get('content-type')?.split(';')[0];return{bytes:Buffer.from(await response.arrayBuffer()),mime:declared||asset.mimeType}
 }
 
 export async function persistGeneratedAsset(context:ProviderContext,kind:'image'|'thumbnail'|'video'|'voice'|'render'|'sfx'|'music',asset:GeneratedAsset){

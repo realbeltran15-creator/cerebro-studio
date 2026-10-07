@@ -134,6 +134,13 @@ export const catalog: CatalogModel[] = [
     env: ['FAL_KEY'], sync: false, formats: ['16:9', '9:16', '1:1'], durations: [5, 10], negative: true,
   },
   {
+    id: 'fal:fal-ai/wan/v2.2-5b/text-to-video/fast-wan', modality: 'video', provider: 'fal', label: 'Wan 2.2 5B Fast (vídeo borrador, coste mínimo)',
+    strength: 'Clips cortos de borrador (unos 3–5 s, 720p) para probar ideas o la integración al menor coste; no es calidad final.',
+    tier: 'paid', price: 'Unos $0.025 por clip a 720p según la ficha pública de fal (a confirmar en la cuenta)', priceConfirmed: false,
+    estimateUsd: () => 0.025, quality: 2, speed: 'fast', capabilities: [],
+    env: ['FAL_KEY'], sync: false, formats: ['16:9', '9:16', '1:1'], limits: 'Duración fija del modelo; sin audio.',
+  },
+  {
     id: 'fal:fal-ai/veo3/fast', modality: 'video', provider: 'fal', label: 'Google Veo 3 Fast (vía fal)',
     strength: 'Vídeo con sonido generado; muy buena física y luz.',
     tier: 'paid', price: '$0.10/s sin audio · $0.15/s con audio', priceConfirmed: true,
@@ -242,6 +249,9 @@ export function falInput(model: CatalogModel, prompt: string, o: GenerationOptio
       return { prompt, image_size: falImageSize[format], num_images: variants, rendering_speed: 'BALANCED', expand_prompt: false, ...neg }
     case 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video':
       return { prompt, duration: String(duration ?? 5), aspect_ratio: format, ...neg }
+    case 'fal-ai/wan/v2.2-5b/text-to-video/fast-wan':
+      // Minimal body: the model's own defaults decide length and resolution (that is what the public price refers to).
+      return format === '16:9' ? { prompt } : { prompt, aspect_ratio: format }
     case 'fal-ai/veo3/fast':
       return { prompt, duration: `${duration ?? 8}s`, aspect_ratio: format === '9:16' ? '9:16' : '16:9', resolution: '720p', generate_audio: o.audio !== false, ...neg }
     case 'fal-ai/lyria2':
@@ -250,6 +260,8 @@ export function falInput(model: CatalogModel, prompt: string, o: GenerationOptio
       throw new Error(`No input mapping for ${model.id}.`)
   }
 }
+
+import { isFalMediaUrl } from './fal-queue'
 
 export type FalMedia = { url: string; contentType: string }
 
@@ -260,7 +272,7 @@ export function falOutputs(result: unknown, modality: Modality): FalMedia[] {
   const one = (f: unknown, fallback: string): FalMedia | null => {
     if (!f || typeof f !== 'object') return null
     const file = f as Record<string, unknown>
-    return typeof file.url === 'string' && file.url.startsWith('https://')
+    return isFalMediaUrl(file.url) && typeof file.url === 'string'
       ? { url: file.url, contentType: typeof file.content_type === 'string' ? file.content_type : fallback }
       : null
   }

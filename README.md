@@ -180,3 +180,15 @@ La clave llegó como Network Secret (`www.googleapis.com`, cabecera `x-goog-api-
 Sigue sin probarse con cuenta real: analytics privado, subida y publicación (requieren OAuth del propietario; no se hace nada de escritura).
 
 La vigilancia de tendencias también se validó con datos reales de YouTube y una base simulada en memoria (`tests/live/automation.live.test.ts`, sin escribir en ningún sitio): coincidencia por palabra clave con una palabra real de los títulos en tendencia, oportunidades con métricas observadas y evidencia (URL del vídeo, sin la clave) y deduplicación en una segunda ejecución. Nota: la automatización ignora palabras clave de menos de 3 letras.
+
+## fal.ai (vídeo, imagen, música) — integración y puesta en marcha (2026-10-07)
+
+**Estado:** integración completa en código y probada con servidor simulado; **sin validar con la cuenta real** (falta la clave). Cola `queue.fal.run` (envío único, nunca se reenvía; estado y resultado con hasta 2 reintentos solo en lecturas), token cifrado por trabajo, guardado idempotente en la Biblioteca con proyecto, escena, modelo, prompt, parámetros, coste estimado y `externalId`, y mensajes claros para clave inválida (401), cuenta sin saldo o sin permiso (403), parámetros no válidos (422), límite (429) y filtro de seguridad.
+
+**Dominios necesarios:** `queue.fal.run` (API) y la CDN de archivos `v3.fal.media`, `v3b.fal.media` y `fal.media` (descarga del resultado; el código acepta `fal.media` y subdominios y rechaza cualquier otro host; si fal cambiara de CDN, se añade en `FAL_EXTRA_MEDIA_HOSTS` sin tocar código). El dominio `fal.run` ya no se usa (se eliminó el adaptador de prueba síncrono sin verificar).
+
+**Autenticación:** cabecera `Authorization` con valor `Key <clave>` (prefijo `Key ` con espacio). Variable de servidor: `FAL_KEY` (Vercel). Para pruebas desde el sandbox, Network Secret con host `queue.fal.run`, cabecera `Authorization` y prefijo `Key `.
+
+**Modelos de vídeo:** Kling 2.5 Turbo Pro (5 s ≈ $0.35, +$0.07/s), Veo 3 Fast ($0.10/s sin audio, $0.15/s con audio) y, para pruebas de coste mínimo, **Wan 2.2 5B Fast** (`fal-ai/wan/v2.2-5b/text-to-video/fast-wan`, ≈ $0.025 por clip a 720p según la ficha pública de fal; calidad de borrador, precio sin confirmar). Los precios proceden de la información pública de fal y deben confirmarse en el panel.
+
+**Pruebas:** `tests/fal-integration.test.ts` (sin red ni gasto). En vivo y opcionales: `tests/live/fal.live.test.ts` con dos permisos separados: `LIVE_FAL=1` (sondeo con cuerpo vacío: se espera 422, sin trabajo ni cobro) y `FAL_ALLOW_SPEND=yes` (una generación real de borrador, solo con autorización de coste del propietario).

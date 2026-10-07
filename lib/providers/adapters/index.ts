@@ -82,8 +82,14 @@ export async function pollGeneration(model: CatalogModel, job: JobRef): Promise<
   if (job.provider === 'fal') {
     const s = await falStatus(job.fal)
     if (s.state !== 'done') return { state: s.state, position: s.position }
-    const outputs = falOutputs(await falResult(job.fal), model.modality)
-    if (!outputs.length) return { state: 'failed', error: 'fal.ai terminó sin devolver archivos (posible filtro de seguridad). No se ha guardado nada.' }
+    const raw = await falResult(job.fal)
+    const outputs = falOutputs(raw, model.modality)
+    if (!outputs.length) {
+      // Files hosted outside fal's CDN are refused on purpose; say so instead of blaming the safety filter.
+      const foreign = [...new Set((JSON.stringify(raw).match(/https:\/\/[^"\\\s]+/g) ?? []).map(u => { try { return new URL(u).hostname } catch { return '' } }).filter(Boolean))]
+      if (foreign.length) return { state: 'failed', error: `fal.ai devolvió el archivo en un dominio no permitido (${foreign.slice(0, 3).join(', ')}). Por seguridad no se descarga; si es legítimo, añádelo a FAL_EXTRA_MEDIA_HOSTS. No se ha guardado nada.` }
+      return { state: 'failed', error: 'fal.ai terminó sin devolver archivos (posible filtro de seguridad). No se ha guardado nada.' }
+    }
     return { state: 'done', media: outputs.map((o, i) => ({ uri: o.url, mimeType: o.contentType, externalId: `${job.fal.requestId}#${i}` })) }
   }
   if (job.provider === 'higgsfield') {
