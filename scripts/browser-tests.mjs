@@ -226,6 +226,25 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   }
 }
 
+// 6. Mobile: the manual editor with a populated project (timeline, tracks, inspector) fits a 390 px phone and passes axe.
+{
+  const server = serve(8796, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8796/editor/manual?job=job1')
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
+  await page.waitForTimeout(500)
+  const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - window.innerWidth, wide: [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest('[style*="overflow"],.timeline,[aria-label*="tiempo"],[aria-label^="Pista"]')).slice(0, 4).map(e => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 30)}`) }))
+  check('mobile: manual editor with data fits 390 px', m.over <= 1, m)
+  await page.addScriptTag({ content: readFileSync(path.join(root, 'node_modules/axe-core/axe.min.js'), 'utf8') })
+  const v = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ['wcag2a', 'wcag2aa'] })).violations.filter(x => !['document-title', 'html-has-lang'].includes(x.id)).map(x => ({ id: x.id, impact: x.impact, nodes: x.nodes.length, sample: x.nodes[0]?.target?.[0] })))
+  check('a11y: manual editor with data has no WCAG A/AA violations', v.length === 0, v)
+  check('mobile: manual editor has no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

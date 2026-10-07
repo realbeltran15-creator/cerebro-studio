@@ -16,7 +16,8 @@ type Selection = { kind: 'clip' | 'audio'; id: string } | null
 
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}.${Math.floor((ms % 1000) / 100)}`
 const secs = (ms: number) => Math.round(ms / 100) / 10
-const kindColor: Record<string, string> = { image: '#3b6fd8', video: '#8b5cf6', none: '#444', voice: '#2f9e6b', music: '#c77d1f', sfx: '#c0463a' }
+// Track colours keep white text at >= 4.5:1 (WCAG AA).
+const kindColor: Record<string, string> = { image: '#2f62c4', video: '#7c4fe0', none: '#444', voice: '#23805a', music: '#9a5b0f', sfx: '#b03a2e' }
 
 export default function ManualEditorPage() {
   const supabase = getSupabaseBrowserClient()
@@ -197,7 +198,7 @@ export default function ManualEditorPage() {
             style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumbs[clip.visualAssetId ?? ''] ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumbs[clip.visualAssetId ?? '']}) center / cover` : kindColor[typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === clip.id ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
             title={`${label(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
             <b>{i + 1}</b> {label(clip.visualAssetId)}<br />{secs(clip.durationMs)} s{clip.transition === 'cut' ? ' · corte' : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}
-            <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => onPointerDown(e, 'resize', clip.id, clip.durationMs)} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} aria-label="Cambiar duración" />
+            <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => onPointerDown(e, 'resize', clip.id, clip.durationMs)} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />
           </div>)}
         </div>
         {rows.map(row => <div key={row.key} style={{ position: 'relative', height: 34, marginTop: 6, background: 'var(--bg-2)', borderRadius: 6 }} aria-label={`Pista de ${row.label}`}>
