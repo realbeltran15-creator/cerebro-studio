@@ -17,7 +17,8 @@ export type TranscodeConfig = { baseUrl: string; /** Overrides where the vendore
 
 export function transcodeConfigFromEnv(): TranscodeConfig | null {
   const base = (process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL ?? '').trim().replace(/\/+$/, '')
-  return /^https:\/\/[^\s]+$/.test(base) ? { baseUrl: base } : null
+  // https only, except localhost for development and tests.
+  return /^(https:\/\/[^\s]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/[^\s]*)?)$/.test(base) ? { baseUrl: base } : null
 }
 
 export const H264_MIME = 'video/mp4;codecs=avc1.640028,mp4a.40.2'

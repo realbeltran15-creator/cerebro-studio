@@ -18,10 +18,10 @@ const chrome = process.env.CHROMIUM_PATH || (() => {
 })()
 if (!chrome || !existsSync(chrome)) { console.log('Chromium not found (set CHROMIUM_PATH); browser tests skipped.'); process.exit(0) }
 
-async function bundle(entry, stdinContents) {
+async function bundle(entry, stdinContents, extraDefine = {}) {
   const out = await build({
     ...(stdinContents ? { stdin: { contents: stdinContents, resolveDir: root, loader: 'tsx' } } : { entryPoints: [entry] }), bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
-    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? '') }, alias: { '@': root },
+    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), ...extraDefine }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
       b.onResolve({ filter: /^@\/lib\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
@@ -342,6 +342,49 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const empty = await page.evaluate(() => window.runTranscodeEmpty())
   check('transcode: an empty video is refused', /vacío/.test(empty.error ?? ''), empty)
   check('transcode: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 11. The editor's render panel end to end: render -> not Instagram-ready -> convert to H.264/AAC -> derived asset with lineage.
+{
+  const files = {
+    '/core/ffmpeg-core.js': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', 'text/javascript'],
+    '/core/ffmpeg-core.wasm': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', 'application/wasm'],
+  }
+  for (const f of readdirSync(path.join(root, 'public/vendor/ffmpeg')).filter(n => n.endsWith('.js'))) files[`/vendor/ffmpeg/${f}`] = [`public/vendor/ffmpeg/${f}`, 'text/javascript']
+  const setup = readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8')
+  const appJs = await bundle(path.join(dir, 'manual-editor.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify('http://127.0.0.1:8801/core') })
+  const server = http.createServer((q, r) => {
+    const name = q.url.split('?')[0]
+    if (name === '/setup.js') { r.writeHead(200, { 'content-type': 'text/javascript' }); return r.end(setup) }
+    if (name === '/app.js') { r.writeHead(200, { 'content-type': 'text/javascript' }); return r.end(appJs) }
+    if (files[name]) { r.writeHead(200, { 'content-type': files[name][1] }); return r.end(readFileSync(path.join(root, files[name][0]))) }
+    r.writeHead(200, { 'content-type': 'text/html' }); r.end('<!doctype html><meta charset="utf-8"><div id="root"></div><script src="/setup.js"></script><script src="/app.js"></script>')
+  }).listen(8801)
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  page.on('dialog', d => d.accept())
+  await page.goto('http://127.0.0.1:8801/editor/manual?job=job1')
+  await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
+  await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
+  await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 90000 })
+  const convert = page.getByRole('button', { name: /Convertir a MP4 compatible/ })
+  await convert.waitFor({ timeout: 15000 }).catch(() => undefined)
+  const needsConversion = await convert.count()
+  check('render panel: a VP9/WebM render is flagged as not Instagram-ready and offers the conversion', needsConversion === 1 && await page.getByText(/Instagram/).count() >= 1)
+  if (needsConversion) {
+    await convert.click()
+    await page.getByText(/MP4 compatible con Instagram guardado/).waitFor({ timeout: 240000 })
+    const db = await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
+    const original = db.assets.find(a => a.source_provider === 'browser-render')
+    const derived = db.assets.find(a => a.source_provider === 'browser-transcode')
+    check('render panel: the converted copy is a new asset that keeps lineage and license', Boolean(derived) && derived.provenance.derivedFromAssetId === original?.id && derived.license_status === original?.license_status, { original: original?.id, derived: derived?.provenance })
+    check('render panel: the copy is recorded as real H.264 + AAC (not a renamed file)', derived?.provenance.conversion?.codecs?.video === 'h264' && derived?.provenance.conversion?.codecs?.audio === 'aac' && /avc1/.test(derived?.provenance.mimeType ?? ''), derived?.provenance.conversion)
+    check('render panel: the original render is kept untouched', original?.provenance.container !== 'mp4' || /avc1/.test(original?.provenance.mimeType ?? ''), original?.provenance.mimeType)
+    check('render panel: the conversion button disappears once the compatible copy exists', await page.getByRole('button', { name: /Convertir a MP4 compatible/ }).count() === 0)
+  }
+  check('render panel: no page errors during render and conversion', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
