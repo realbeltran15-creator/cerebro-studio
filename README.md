@@ -192,3 +192,19 @@ La vigilancia de tendencias también se validó con datos reales de YouTube y un
 **Modelos de vídeo:** Kling 2.5 Turbo Pro (5 s ≈ $0.35, +$0.07/s), Veo 3 Fast ($0.10/s sin audio, $0.15/s con audio) y, para pruebas de coste mínimo, **Wan 2.2 5B Fast** (`fal-ai/wan/v2.2-5b/text-to-video/fast-wan`, ≈ $0.025 por clip a 720p según la ficha pública de fal; calidad de borrador, precio sin confirmar). Los precios proceden de la información pública de fal y deben confirmarse en el panel.
 
 **Pruebas:** `tests/fal-integration.test.ts` (sin red ni gasto). En vivo y opcionales: `tests/live/fal.live.test.ts` con dos permisos separados: `LIVE_FAL=1` (sondeo con cuerpo vacío: se espera 422, sin trabajo ni cobro) y `FAL_ALLOW_SPEND=yes` (una generación real de borrador, solo con autorización de coste del propietario).
+
+## MP4 compatible con Instagram/TikTok/YouTube: comparación y solución (2026-10-07)
+
+| Vía | Coste | Resultado | Estado |
+|---|---|---|---|
+| **Chrome, Edge, Safari recientes** (`MediaRecorder` con `avc1` + `mp4a`) | Gratis | MP4 H.264 + AAC nativo, tiempo real | **Vía principal.** El renderer ya la elige primero. No verificable en el Chromium de pruebas (sin H.264). |
+| **Firefox / navegadores sin H.264** | — | Solo WebM (o MP4 con VP9, que Instagram rechaza) | Se detecta y se avisa (`instagramReadiness`); se puede convertir con la vía siguiente. |
+| **ffmpeg.wasm en el navegador** | Gratis | Recodifica a H.264 (High, yuv420p, 30 fps constantes) + AAC 128k, `faststart` | **Implementada y probada** (`lib/editor/transcode.ts`): un WebM VP9/Opus real sale como MP4 `avc1`+`mp4a`, comprobado leyendo el contenedor. **Desactivada por defecto** (ver licencia). |
+| WebCodecs + muxer MIT | Gratis | Rápido y sin núcleo GPL | **No implementada**: `VideoEncoder`/`AudioEncoder` no existen en el Chromium de pruebas, así que no se podría verificar aquí, y el codificador AAC varía por navegador. Candidata futura. |
+| Worker propio con FFmpeg en servidor | Pago (infraestructura) | La más fiable para lotes | **No contratada.** En Vercel gratuito las funciones son demasiado cortas para recodificar y no incluyen FFmpeg; haría falta un servicio aparte (y FFmpeg con x264 también es GPL). |
+
+**Cómo funciona la conversión.** Tras renderizar y guardar, si el archivo no sirve para Instagram aparece el botón «Convertir a MP4 compatible (H.264 + AAC)». Re-codifica el vídeo guardado (sin volver a renderizar), comprueba los códecs leyendo la caja `stsd` del MP4 resultante (`mp4Codecs`) y lo guarda como **recurso derivado** (`source_provider: browser-transcode`) que conserva la licencia y las entradas del original y registra `derivedFromAssetId` y los ajustes; el original no se toca. Límite: 200 MB; cancelable; sin telemetría.
+
+**Licencia — decisión del propietario.** El envoltorio `@ffmpeg/ffmpeg` es MIT y está copiado sin cambios en `public/vendor/ffmpeg` (48 KB; un test garantiza que coincide byte a byte con la versión instalada y que no hay `.wasm` ni núcleo en `public`). El **núcleo `@ffmpeg/core` es GPL-2.0-or-later** (incluye x264) y pesa ~32 MB: **no se incluye en el repositorio ni en el despliegue**. Solo se activa si se define `NEXT_PUBLIC_FFMPEG_CORE_BASE_URL` apuntando a una carpeta con `ffmpeg-core.js` y `ffmpeg-core.wasm`; así el navegador del usuario lo descarga bajo demanda. Si distribuir ese binario a los usuarios es aceptable para el producto es una decisión legal que no he tomado.
+
+**Límites reales.** Probado con un clip de 2 s a 320×180 en Chromium; el rendimiento con 1080×1920 y varios minutos en ffmpeg.wasm (un solo hilo) no está medido y puede ser lento: es una vía de rescate, no la principal. La reproducción del MP4 resultante no se verificó porque el Chromium de pruebas no decodifica H.264; sí se verificaron los códecs del contenedor.

@@ -17,5 +17,6 @@ export default defineConfig([
     files: ['tests/**'],
     rules: { '@typescript-eslint/no-explicit-any': 'off' },
   },
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts']),
+  // public/vendor holds third-party code copied unmodified (see its NOTICE.txt).
+  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', 'public/vendor/**']),
 ])

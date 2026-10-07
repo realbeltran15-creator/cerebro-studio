@@ -139,3 +139,47 @@ export async function audioDurationMs(assetId: string) {
     return Math.round(buffer.duration * 1000)
   } finally { await ctx.close() }
 }
+
+/**
+ * Saves a converted copy (e.g. WebM/VP9 -> MP4/H.264) as a new video asset that keeps the source's license and inputs,
+ * and records how it was derived. The original stays untouched.
+ */
+export async function saveDerivedVideo(supabase: SupabaseClient, input: {
+  projectId: string
+  sourceAssetId: string
+  blob: Blob
+  mimeType: string
+  codecs: { video: string | null; audio: string | null }
+  tool: string
+  onUploadProgress?: (fraction: number) => void
+}) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('La sesión ha caducado.')
+  const { data: src, error: srcError } = await supabase.from('assets').select('id,license_status,source_provider,provenance').eq('id', input.sourceAssetId).eq('owner_id', user.id).maybeSingle()
+  if (srcError || !src) throw new Error('No se encontró el vídeo original.')
+  const ext = containerOf(input.mimeType)
+  let storagePath: string
+  try {
+    storagePath = await uploadToCloud(supabase, { projectId: input.projectId, folder: 'renders', ext, name: `${input.sourceAssetId}-h264`, body: input.blob, contentType: 'video/mp4', onProgress: input.onUploadProgress })
+  } catch (e) {
+    throw new Error(`${e instanceof Error ? e.message : 'No se pudo subir el vídeo convertido.'} Puedes descargarlo desde esta página.`)
+  }
+  const base = (src.provenance ?? {}) as Record<string, unknown>
+  const { data: asset, error } = await supabase.from('assets').insert({
+    owner_id: user.id, project_id: input.projectId, asset_type: 'video', storage_path: storagePath,
+    source_provider: 'browser-transcode', license_status: src.license_status,
+    provenance: {
+      ...base,
+      title: `${String(base.title ?? 'Vídeo')} · MP4 compatible`,
+      purpose: base.purpose ?? 'render',
+      mimeType: input.mimeType, container: ext, bytes: input.blob.size,
+      derivedFromAssetId: input.sourceAssetId,
+      conversion: { tool: input.tool, from: base.mimeType ?? null, to: input.mimeType, codecs: input.codecs, convertedAt: new Date().toISOString(), note: 'Recodificado (no es un cambio de extensión).' },
+    },
+  }).select('id').single()
+  if (error) {
+    await removeFromCloud(storagePath).catch(() => undefined)
+    throw new Error(`No se pudo registrar el vídeo convertido: ${error.message}`)
+  }
+  return asset as { id: string }
+}

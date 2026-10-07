@@ -84,3 +84,26 @@ describe('Instagram readiness from the recorded MIME type', () => {
     expect(instagramReadiness(null).ok).toBe(false)
   })
 })
+
+import { isInstagramReadyMp4, mp4Codecs } from '@/lib/editor/container'
+const box = (type: string, payload: number[]) => { const size = 8 + payload.length; return [size >>> 24 & 255, size >>> 16 & 255, size >>> 8 & 255, size & 255, ...[...type].map(c => c.charCodeAt(0)), ...payload] }
+const stsd = (fourcc: string) => box('stsd', [0, 0, 0, 0, 0, 0, 0, 1, ...box(fourcc, new Array(8).fill(0))])
+const file = (...fourccs: string[]) => new Uint8Array([...box('ftyp', [105, 115, 111, 109, 0, 0, 0, 0]), ...box('moov', fourccs.flatMap(stsd))])
+describe('mp4Codecs reads the real codecs from the container', () => {
+  it('recognises H.264 + AAC and HEVC', () => {
+    expect(mp4Codecs(file('avc1', 'mp4a'))).toEqual({ video: 'h264', audio: 'aac' })
+    expect(mp4Codecs(file('hvc1', 'mp4a')).video).toBe('hevc')
+    expect(isInstagramReadyMp4(file('avc1', 'mp4a'))).toBe(true)
+    expect(isInstagramReadyMp4(file('avc1'))).toBe(true) // silent video is allowed
+  })
+  it('rejects a VP9/AV1 MP4 and Opus audio even though the extension and MIME say mp4', () => {
+    expect(mp4Codecs(file('vp09', 'Opus'))).toEqual({ video: 'vp9', audio: 'opus' })
+    expect(isInstagramReadyMp4(file('vp09', 'mp4a'))).toBe(false)
+    expect(isInstagramReadyMp4(file('av01'))).toBe(false)
+    expect(isInstagramReadyMp4(file('avc1', 'Opus'))).toBe(false)
+  })
+  it('does not invent codecs for files that are not MP4', () => {
+    expect(mp4Codecs(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]))).toEqual({ video: null, audio: null })
+    expect(isInstagramReadyMp4(new Uint8Array(0))).toBe(false)
+  })
+})

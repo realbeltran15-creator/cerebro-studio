@@ -21,7 +21,7 @@ if (!chrome || !existsSync(chrome)) { console.log('Chromium not found (set CHROM
 async function bundle(entry, stdinContents) {
   const out = await build({
     ...(stdinContents ? { stdin: { contents: stdinContents, resolveDir: root, loader: 'tsx' } } : { entryPoints: [entry] }), bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
-    define: { 'process.env.NODE_ENV': '"development"' }, alias: { '@': root },
+    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? '') }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
       b.onResolve({ filter: /^@\/lib\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
@@ -309,6 +309,39 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('analytics: panel is labelled calculated and not causal', await page.getByText('Calculado, no IA').count() === 1 && await page.getByText(/describe qué pasó, no por qué/).count() === 1)
   check('analytics: no horizontal overflow at 390 px', (await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 1)
   check('analytics: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 10. Real conversion VP9/Opus -> H.264/AAC MP4 with ffmpeg.wasm (core served from node_modules only for this test).
+{
+  const files = {
+    '/core/ffmpeg-core.js': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', 'text/javascript'],
+    '/core/ffmpeg-core.wasm': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', 'application/wasm'],
+  }
+  // The vendored (committed) wrapper is served exactly as the app serves it from /public.
+  for (const f of readdirSync(path.join(root, 'public/vendor/ffmpeg')).filter(n => n.endsWith('.js'))) files[`/vendor/ffmpeg/${f}`] = [`public/vendor/ffmpeg/${f}`, 'text/javascript']
+  const appJs = await bundle(path.join(dir, 'transcode.entry.ts'))
+  const server = http.createServer((q, r) => {
+    const name = q.url.split('?')[0]
+    if (name === '/app.js') { r.writeHead(200, { 'content-type': 'text/javascript' }); return r.end(appJs) }
+    if (files[name]) { r.writeHead(200, { 'content-type': files[name][1], 'access-control-allow-origin': '*' }); return r.end(readFileSync(path.join(root, files[name][0]))) }
+    r.writeHead(200, { 'content-type': 'text/html' }); r.end('<!doctype html><meta charset="utf-8"><script src="/app.js"></script>')
+  }).listen(8800)
+  const page = await browser.newPage()
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8800/')
+  await page.waitForFunction(() => typeof window.runTranscode === 'function')
+  const t = await page.evaluate(() => window.runTranscode('http://127.0.0.1:8800/core', '/vendor/ffmpeg'))
+  check('transcode: the source really was not H.264 (WebM / VP9)', t.srcType === 'video/webm', t)
+  check('transcode: output container is MP4 and was re-encoded to H.264 + AAC (read from the file itself)', t.head === 'ftyp' && t.codecs.video === 'h264' && t.codecs.audio === 'aac', t)
+  check('transcode: reported MIME names the real codecs and progress stayed within 0..1', t.mimeCodec === 'h264' && t.progressSeen, t)
+  check('transcode: output is a non-trivial file', t.outSize > 2000, t.outSize)
+  const bad = await page.evaluate(() => window.runTranscodeBadHost())
+  check('transcode: an unreachable converter is reported with a readable message', typeof bad.error === 'string' && /No se pudo cargar el convertidor/.test(bad.error), bad)
+  const empty = await page.evaluate(() => window.runTranscodeEmpty())
+  check('transcode: an empty video is refused', /vacío/.test(empty.error ?? ''), empty)
+  check('transcode: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
