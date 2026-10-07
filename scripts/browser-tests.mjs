@@ -294,6 +294,24 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 9. Analytics learning panel: outperformers, retention and honesty labels from seeded YouTube metrics.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/analytics/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8')
+  const server = serve(8799, { 'setup.js': setup, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8799/analytics')
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.getByText('Qué ha funcionado').waitFor({ timeout: 20000 })
+  check('analytics: outperformer is found with its ratio and project link', await page.getByText(/Vídeo analizado 1 · .*vistas \(\d+(\.\d+)?× la mediana\)/).count() === 1 && await page.locator('a[href="/projects/p1"]').count() >= 1)
+  check('analytics: panel is labelled calculated and not causal', await page.getByText('Calculado, no IA').count() === 1 && await page.getByText(/describe qué pasó, no por qué/).count() === 1)
+  check('analytics: no horizontal overflow at 390 px', (await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 1)
+  check('analytics: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

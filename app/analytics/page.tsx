@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { learnFromVideos } from '@/lib/analytics/learning'
 import { StudioShell } from '../components/studio-shell'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { importSummary, type ImportResult } from '@/lib/analytics/summary'
@@ -59,6 +60,7 @@ export default function AnalyticsPage() {
   const daily = useMemo(() => rows.filter(r => r.external_content_id.startsWith('channel:')).sort((a, b) => a.metric_date.localeCompare(b.metric_date)).slice(-28), [rows])
   const latestEnd = useMemo(() => rows.filter(r => !r.external_content_id.startsWith('channel:')).map(r => r.metric_date).sort().at(-1), [rows])
   const videos = useMemo(() => rows.filter(r => !r.external_content_id.startsWith('channel:') && r.metric_date === latestEnd).sort((a, b) => (n(b.observed.views) ?? 0) - (n(a.observed.views) ?? 0)), [rows, latestEnd])
+  const learning = useMemo(() => learnFromVideos(videos.map(v => ({ id: v.external_content_id, title: String(v.observed.title ?? v.external_content_id), projectId: v.project_id ?? null, views: n(v.observed.views), avgViewPercentage: n(v.observed.averageViewPercentage), avgViewDurationSeconds: n(v.observed.averageViewDuration) }))), [videos])
   const sum = (key: string) => daily.reduce<number | null>((t, r) => (n(r.observed[key]) === null ? t : (t ?? 0) + (n(r.observed[key]) ?? 0)), null)
   const views = sum('views'), minutes = sum('estimatedMinutesWatched'), gained = sum('subscribersGained'), lost = sum('subscribersLost')
 
@@ -109,6 +111,17 @@ export default function AnalyticsPage() {
           <span className="small muted" style={{ display: 'block' }}>Calculado: {fmt(n(v.calculated.likesPer1000Views), 2)} likes/1000 vistas · {fmt(n(v.calculated.subscribersPer1000Views), 2)} subs/1000 vistas</span>
         </div>
       </div>)}</div>
+    </>}
+
+    {videos.length > 0 && <>
+      <h3 className="sectionTitle">Qué ha funcionado <span className="pill">Calculado, no IA</span></h3>
+      {!learning.enough ? <p className="muted">{learning.notes[0]}</p> : <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <p className="small">Mediana de vistas del periodo: <b>{fmt(learning.medianViews)}</b> ({learning.sampleSize} vídeos).</p>
+        {learning.outperformers.length > 0 ? <div><b className="small">Superaron 2× la mediana</b><ul className="small" style={{ margin: '4px 0 0 18px' }}>{learning.outperformers.map(o => <li key={o.id}>{o.title} · {fmt(o.views)} vistas ({o.ratio}× la mediana){o.projectId && <> · <Link className="open" href={`/projects/${o.projectId}`}>proyecto</Link></>}</li>)}</ul></div> : <p className="muted small">Ningún vídeo superó 2× la mediana en este periodo.</p>}
+        {learning.retentionLeaders.length > 0 && <div><b className="small">Mayor porcentaje visto</b><ul className="small" style={{ margin: '4px 0 0 18px' }}>{learning.retentionLeaders.map(o => <li key={o.id}>{o.title} · {o.percentage}% visto</li>)}</ul></div>}
+        {learning.lengthBuckets.length > 1 && <div><b className="small">Vistas medianas según duración (aproximada)</b><ul className="small" style={{ margin: '4px 0 0 18px' }}>{learning.lengthBuckets.map(b => <li key={b.label}>{b.label}: {fmt(b.medianViews)} vistas ({b.count} vídeos)</li>)}</ul></div>}
+        {learning.notes.map((t, i) => <p key={i} className="muted small">{t}</p>)}
+      </div>}
     </>}
 
     {rows.length === 0 && !error && <p className="emptyState">Sin métricas importadas todavía.</p>}

@@ -164,3 +164,7 @@ Chromium real con Supabase y `next/*` simulados (nada sale de la máquina): rend
 ## Repurposing: hook y paquete (2026-10-07)
 
 Además de sugerir el tramo, la pantalla propone el **hook en pantalla** (la frase inicial más fuerte del tramo: pregunta, cifra, frase corta, recortada a 90 caracteres) y un **borrador de título, descripción y hashtags** con el texto del propio proyecto, con botones de copiar. Todo es heurístico, determinista, sin IA ni coste y rotulado «Calculado, no IA». Probado con tests unitarios y una prueba de navegador con un montaje sembrado a 390 px. Pendiente: usar la transcripción/audio (picos de energía, pausas) y el reencuadre automático por contenido.
+
+## Aprendizaje desde Analytics (2026-10-07)
+
+`lib/analytics/learning.ts` compara tus vídeos entre sí con las métricas observadas importadas: cuáles superaron 2× la mediana de vistas, cuáles retienen más (porcentaje visto) y las vistas medianas por duración aproximada. Es **descriptivo y calculado**, no explica causas, exige al menos 5 vídeos y lo dice en pantalla. Probado con tests unitarios y navegador sobre datos sembrados; **no** probado con datos reales porque depende del OAuth de Google. Pendiente: usar estas señales para sugerir temas/formatos al crear guiones y priorizar oportunidades.

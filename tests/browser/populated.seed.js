@@ -31,3 +31,8 @@
     ] },
   }]
 })()
+;(() => {
+  const db = window.__DB
+  const vid = (i, views, pct, dur) => ({ id: i, owner_id: 'u1', platform: 'youtube', external_content_id: `vid${i}`, metric_date: '2026-09-28', project_id: i === 1 ? 'p1' : null, observed: { title: `Vídeo analizado ${i}`, periodStart: '2026-09-01', periodEnd: '2026-09-28', views, averageViewPercentage: pct, averageViewDuration: dur, estimatedMinutesWatched: views / 3, subscribersGained: 3 }, calculated: { likesPer1000Views: 20, subscribersPer1000Views: 1 } })
+  db.metric_snapshots = [vid(1, 5000, 70, 40), vid(2, 400, 50, 30), vid(3, 500, 45, 200), vid(4, 450, 40, 180), vid(5, 520, 35, 30), vid(6, 480, 30, 150)]
+})()
