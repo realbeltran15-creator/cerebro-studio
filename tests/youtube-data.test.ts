@@ -4,12 +4,14 @@ import { recurringTerms } from '@/lib/radar'
 
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status })
 let calls: string[] = []
+let headers: Array<Record<string, string>> = []
 
 beforeEach(() => {
   process.env.YOUTUBE_API_KEY = 'k'
   calls = []
-  vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
-    const url = String(input); calls.push(url)
+  headers = []
+  vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
+    const url = String(input); calls.push(url); headers.push((init?.headers ?? {}) as Record<string, string>)
     if (url.includes('/search?')) return json({ items: [{ id: { videoId: 'b' } }, { id: { videoId: 'a' } }] })
     if (url.includes('chart=mostPopular')) {
       if (url.includes('videoCategoryId=99')) return json({ error: { errors: [{ reason: 'notFound' }] } }, 404)
@@ -27,6 +29,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('YouTube Data API adapter', () => {
+  it('sends the key in the x-goog-api-key header and never in the URL', async () => {
+    await youtubeCategories('ES')
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.every(u => !/[?&]key=/.test(u))).toBe(true)
+    expect(headers.every(h => h['x-goog-api-key'] === 'k')).toBe(true)
+  })
   it('keeps search order and separates observed from calculated metrics', async () => {
     const r = await searchYouTubeVideos({ query: 'q', order: 'viewCount', regionCode: 'ES', publishedWithinDays: 30 })
     expect(r.map(v => v.videoId)).toEqual(['b', 'a'])

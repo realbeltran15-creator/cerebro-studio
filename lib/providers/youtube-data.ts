@@ -67,8 +67,8 @@ export function parseIsoDuration(value: string | undefined) {
 async function call<T>(path: string, params: Record<string, string>, key: string): Promise<T> {
   const url = new URL(`${API}/${path}`)
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-  url.searchParams.set('key', key)
-  const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(15000) })
+  // The key travels in a header, never in the URL, so it cannot leak into logs, referrers or error traces.
+  const response = await fetch(url, { headers: { 'x-goog-api-key': key }, cache: 'no-store', signal: AbortSignal.timeout(15000) })
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: { errors?: Array<{ reason?: string }> } } | null
     const reason = body?.error?.errors?.[0]?.reason
