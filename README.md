@@ -172,3 +172,9 @@ Además de sugerir el tramo, la pantalla propone el **hook en pantalla** (la fra
 ## Duplicados de oportunidades (2026-10-07)
 
 Antes solo había comprobación en la aplicación (consultar y luego insertar), sin restricción en la base: dos pestañas o una automatización a la vez podían duplicar. Comprobado en la base desplegada (solo lectura): 1 oportunidad, sin duplicados ni índice único. Preparada la migración **`20261007120000_opportunities_unique_source.sql`** (índice único parcial por propietario + plataforma + `source_id`; las manuales sin fuente no se ven afectadas) y **NO aplicada**, porque modifica la base en uso: pendiente de que el propietario la apruebe. El código ya trata el conflicto (`23505`) como «ya estaba guardado» (`lib/opportunities.ts`, usado por automatizaciones, resultados de YouTube y captura manual), con tests de concurrencia simulada.
+
+## YouTube Data API: validación real (2026-10-07)
+
+La clave llegó como Network Secret (`www.googleapis.com`, cabecera `x-goog-api-key`, restringida a YouTube Data API v3) y **las pruebas en vivo de solo lectura pasan** a través del código de la app (`tests/live/youtube.live.test.ts`, 5 pruebas): búsqueda con deduplicación (5 resultados, 5 únicos) y métricas observadas separadas de las calculadas (vistas, suscriptores, vistas/día, ratio vistas/suscriptores, engagement, fecha de lectura), vídeos por id (ids desconocidos ignorados), 14 categorías asignables de España, tendencias por país, análisis de canal (muestra, mediana, subidas por semana, vídeos destacados) y un rechazo real de la API (región inválida) convertido en `YouTubeApiError` sin la clave en el mensaje. Coste de cuota: ~100 unidades por la búsqueda más unas pocas unidades por lectura (cuota diaria gratuita de 10 000).
+
+Sigue sin probarse con cuenta real: analytics privado, subida y publicación (requieren OAuth del propietario; no se hace nada de escritura).

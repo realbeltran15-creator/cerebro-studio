@@ -6,7 +6,7 @@
  * and the proxy replaces the x-goog-api-key header (the app never puts the key in the URL).
  */
 import { describe, expect, it } from 'vitest'
-import { analyzeChannel, searchYouTubeVideos, trendingYouTubeVideos, youtubeCategories, youtubeVideosByIds } from '@/lib/providers/youtube-data'
+import { analyzeChannel, searchYouTubeVideos, trendingYouTubeVideos, youtubeCategories, youtubeVideosByIds, YouTubeApiError } from '@/lib/providers/youtube-data'
 
 const live = process.env.LIVE_YOUTUBE === '1'
 if (live && !process.env.YOUTUBE_API_KEY?.trim()) process.env.YOUTUBE_API_KEY = 'proxy-injected-placeholder'
@@ -41,5 +41,14 @@ describe.skipIf(!live)('YouTube Data API through the real integration (read-only
     expect(a.observed.subscribers === null || a.observed.subscribers > 0).toBe(true)
     expect(a.calculated.sampleSize).toBeGreaterThan(0)
     expect(a.videos.length).toBe(a.calculated.sampleSize)
+  }, 60000)
+
+  it('turns a real API rejection into a typed, explainable error (no secret in the message)', async () => {
+    const err = await trendingYouTubeVideos({ regionCode: 'ZZ', maxResults: 1 }).then(() => null, e => e as unknown)
+    expect(err).toBeInstanceOf(YouTubeApiError)
+    const e = err as YouTubeApiError
+    expect(e.status).toBeGreaterThanOrEqual(400)
+    expect(e.message.length).toBeGreaterThan(5)
+    expect(e.message).not.toMatch(/key=|AIza/i)
   }, 60000)
 })
