@@ -110,3 +110,24 @@ export async function falResult(job: FalJob): Promise<unknown> {
   }
   return r.json()
 }
+
+export type FalCheck = { state: 'ok' | 'not_configured' | 'invalid_key' | 'no_access' | 'unreachable' | 'unexpected'; message: string }
+
+/**
+ * Credential and reachability check without generating anything: an empty body has no prompt, so after
+ * authenticating the key fal answers 422 and queues no job. 401/403 mean a bad key or an account without access/balance.
+ * If fal ever accepted the empty body (2xx) the queued request is reported, never retried.
+ */
+export async function checkFalConnection(): Promise<FalCheck> {
+  if (!falConfigured()) return { state: 'not_configured', message: 'FAL_KEY no está definida en este despliegue.' }
+  try {
+    const r = await fetch(`${QUEUE}/fal-ai/wan/v2.2-5b/text-to-video/fast-wan`, {
+      method: 'POST', headers: headers(), body: '{}', cache: 'no-store', signal: AbortSignal.timeout(20000),
+    })
+    if (r.status === 422) return { state: 'ok', message: 'Clave aceptada por fal.ai (rechazó la petición vacía, como se esperaba; no se creó ningún trabajo).' }
+    if (r.status === 401) return { state: 'invalid_key', message: 'fal.ai no acepta la clave (401). Revisa que FAL_KEY sea la clave nueva y que el despliegue sea posterior al cambio.' }
+    if (r.status === 403) return { state: 'no_access', message: 'fal.ai deniega el acceso (403): clave sin permiso o cuenta sin saldo.' }
+    if (r.ok) return { state: 'unexpected', message: `fal.ai aceptó la petición vacía (${r.status}); puede haberse creado un trabajo. Revisa el panel de fal.` }
+    return { state: 'unexpected', message: `Respuesta inesperada de fal.ai (${r.status}).` }
+  } catch { return { state: 'unreachable', message: 'No se pudo contactar con queue.fal.run desde el servidor.' } }
+}

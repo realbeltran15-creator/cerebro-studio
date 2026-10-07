@@ -29,6 +29,8 @@ export default function ConnectorsPage() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [falCheck, setFalCheck] = useState('')
+  const [checking, setChecking] = useState(false)
 
   const load = useCallback(async () => {
     // A failed or non-JSON status response (network error, proxy error page) must show a message, not crash the page.
@@ -54,6 +56,16 @@ export default function ConnectorsPage() {
     }
     void load()
   }, [load])
+
+  async function checkFal() {
+    setChecking(true); setFalCheck('')
+    try {
+      const res = await fetch('/api/providers/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'fal' }) })
+      const data = await res.json().catch(() => null) as { message?: string; error?: string } | null
+      setFalCheck(data?.message ?? data?.error ?? 'No se pudo comprobar fal.ai.')
+    } catch { setFalCheck('No se pudo comprobar fal.ai.') }
+    finally { setChecking(false) }
+  }
 
   async function disconnect() {
     if (!window.confirm('¿Desconectar el canal? Se revocará el acceso en Google y se borrarán las credenciales guardadas.')) return
@@ -87,6 +99,10 @@ export default function ConnectorsPage() {
     </section>
 
     <h3>Runtime</h3>
+    <div className="pageActions" style={{ marginBottom: 10 }}>
+      <button type="button" className="ghost" onClick={checkFal} disabled={checking}>{checking ? 'Comprobando…' : 'Comprobar conexión con fal.ai (sin coste)'}</button>
+      {falCheck && <span role="status">{falCheck}</span>}
+    </div>
     <div className="grid">{runtime.map(c => <article key={c.id}><small>{capabilityLabels[c.capability] ?? c.capability}</small><h3>{c.id}</h3><p>Estado: {c.enabled ? c.health : 'sin configurar'}</p></article>)}</div>
     {rows.length > 0 && <><h3>Configuración registrada</h3><div className="grid">{rows.map(c => <article key={c.id}><small>{c.capability}</small><h3>{c.provider}</h3><p>Estado: {c.enabled ? 'Habilitado' : 'Deshabilitado'}</p></article>)}</div></>}
     <ProviderDirectory />
