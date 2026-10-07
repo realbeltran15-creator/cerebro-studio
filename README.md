@@ -129,3 +129,7 @@ Los archivos ya guardados en Supabase siguen funcionando. Configuración CORS de
 - `20260926190000_automations.sql` (aditiva): crea `public.automations` y `public.automation_runs` con RLS por propietario. Aplicada en la base desplegada; RLS verificado con transacción revertida.
 - `20260926230000_trend_snapshots.sql` (aditiva): histórico del Radar con RLS por propietario. Aplicada; RLS verificado con transacción revertida.
 - Aviso: los archivos `20260916*` del repositorio no reflejan exactamente el esquema desplegado (p. ej. `scenes.narration`, `metric_snapshots.observed`, `assets.asset_type`). El esquema desplegado es la referencia; `lib/types/database.ts` sigue al desplegado.
+
+## Dependencias y avisos de `npm audit`
+
+`npm audit --omit=dev` → 0 vulnerabilidades (producción). Los 5 avisos altos restantes son solo de desarrollo y transitivos: `braces` (DoS por patrones glob muy anidados) vía `micromatch` → `fast-glob` → `@next/eslint-plugin-next` → `eslint-config-next`. Solo se ejecutan en el linter con patrones propios, sin entrada de usuarios. `npm audit fix --force` propone fijar `eslint-config-next@14.2.35` (un cambio de versión mayor incompatible con la versión de Next del proyecto), por lo que no se aplica; se resolverá al actualizar `eslint-config-next` junto con Next.
