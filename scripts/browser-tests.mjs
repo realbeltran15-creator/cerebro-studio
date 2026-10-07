@@ -18,9 +18,9 @@ const chrome = process.env.CHROMIUM_PATH || (() => {
 })()
 if (!chrome || !existsSync(chrome)) { console.log('Chromium not found (set CHROMIUM_PATH); browser tests skipped.'); process.exit(0) }
 
-async function bundle(entry) {
+async function bundle(entry, stdinContents) {
   const out = await build({
-    entryPoints: [entry], bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
+    ...(stdinContents ? { stdin: { contents: stdinContents, resolveDir: root, loader: 'tsx' } } : { entryPoints: [entry] }), bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
     define: { 'process.env.NODE_ENV': '"development"' }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
@@ -189,6 +189,35 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await btn.scrollIntoViewIfNeeded()
   check('mobile: generate button is visible and within the viewport', await btn.isVisible() && (await btn.boundingBox()).x >= 0)
   await page.close(); server.close()
+}
+
+// 5. Mobile smoke: every client page mounts at 390 px with the seeded mock database, shows no horizontal overflow and throws no page errors.
+{
+  const pages = [
+    ['/', 'app/page', '/'], ['/projects', 'app/projects/page', '/projects'], ['/projects/[id]', 'app/projects/[id]/page', '/projects/p1', { id: 'p1' }],
+    ['/opportunities', 'app/opportunities/page', '/opportunities'], ['/market-intelligence', 'app/market-intelligence/page', '/market-intelligence'],
+    ['/radar', 'app/radar/page', '/radar'], ['/scripts', 'app/scripts/page', '/scripts?project=p1'], ['/create', 'app/create/page', '/create?project=p1'],
+    ['/editor', 'app/editor/page', '/editor?project=p1'], ['/editor/auto', 'app/editor/auto/page', '/editor/auto?project=p1'], ['/repurpose', 'app/repurpose/page', '/repurpose?project=p1'],
+    ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
+    ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
+    ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
+  ]
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  for (const [name, mod, url, params] of pages) {
+    let code
+    try { code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/${mod}'\ncreateRoot(document.getElementById('root')).render(<Page />)`) } catch (e) { check(`mobile: ${name} bundles`, false, String(e.message).slice(0, 160)); continue }
+    const server = serve(8795, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + (params ? `\nwindow.__PARAMS = ${JSON.stringify(params)}` : ''), 'app.js': code })
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
+    const errors = []
+    page.on('pageerror', e => errors.push(e.message))
+    await page.goto(`http://127.0.0.1:8795${url}`)
+    await page.addStyleTag({ content: css })
+    await page.waitForTimeout(700)
+    const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - window.innerWidth, text: document.body.innerText.length, wide: [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest('table,pre,code,[style*="overflow"],.tableWrap')).slice(0, 3).map(e => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 30)}`) }))
+    check(`mobile: ${name} fits 390 px`, m.over <= 1 && m.text > 20, m)
+    check(`mobile: ${name} has no page errors`, errors.length === 0, errors.slice(0, 2))
+    await page.close(); server.close()
+  }
 }
 
 await browser.close()

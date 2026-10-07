@@ -31,13 +31,17 @@ export default function ConnectorsPage() {
   const [notice, setNotice] = useState('')
 
   const load = useCallback(async () => {
-    const [db, res, ch] = await Promise.all([
+    // A failed or non-JSON status response (network error, proxy error page) must show a message, not crash the page.
+    const status = fetch('/api/providers/status', { cache: 'no-store' })
+      .then(async res => res.ok ? { providers: ((await res.json()) as { providers?: Runtime[] }).providers ?? [] } : null)
+      .catch(() => null)
+    const [db, providers, ch] = await Promise.all([
       supabase.from('connector_configs').select('id,provider,capability,enabled,updated_at').neq('provider', 'cerebro-editor').order('provider'),
-      fetch('/api/providers/status', { cache: 'no-store' }),
+      status,
       supabase.from('channel_connections').select('id,external_account_name,status,scopes,updated_at').eq('provider', 'youtube').order('updated_at', { ascending: false }),
     ])
     if (db.error) setError(db.error.message); else setRows((db.data ?? []) as Connector[])
-    if (res.ok) { const json = await res.json() as { providers?: Runtime[] }; setRuntime(json.providers ?? []) } else setError(v => v || 'No se pudo leer el estado de proveedores.')
+    if (providers) setRuntime(providers.providers); else setError(v => v || 'No se pudo leer el estado de proveedores.')
     setChannels((ch.data ?? []) as Channel[])
   }, [supabase])
 

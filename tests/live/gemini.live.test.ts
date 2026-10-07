@@ -37,7 +37,7 @@ describe.skipIf(!live)('Gemini through the real integration', () => {
     expect(r.data.length).toBeGreaterThan(0)
     expect(r.model.id).toBe('gemini:gemini-3.8-flash')
     expect(r.usage.inputTokens === null || r.usage.inputTokens > 0).toBe(true)
-  }, 60000)
+  }, 240000)
 
   it('fails honestly when no eligible model exists', async () => {
     await expect(runTextTask('script_draft', { system: 's', user: 'u', schema: { type: 'object' }, schemaName: 'x', requestId: 'live-test', validate: v => v })).rejects.toBeInstanceOf(TextRouteError)
