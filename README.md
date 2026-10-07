@@ -154,3 +154,9 @@ Comprobado contra la API oficial sin generar nada (listado de modelos, `models.g
 ## Pruebas de navegador (`npm run test:browser`)
 
 Chromium real con Supabase y `next/*` simulados (nada sale de la máquina): renderer de vídeo, editor manual, «Aprende de mí», Estudio de creación, y una **batería móvil** que monta 20 pantallas reales a 390 px y comprueba que no hay desbordamiento horizontal ni errores de página, y que `axe-core` (WCAG A/AA) no detecta fallos de contraste, nombres o etiquetas. Limitaciones: se ejecuta con datos de prueba casi vacíos (cubre estados vacíos y la estructura, no listas largas reales) y no monta `app/layout.tsx` (idioma y título se comprueban aparte). `--faint` se aclaró a `#8189a8` porque el gris anterior no llegaba a 4,5:1 sobre los fondos oscuros.
+
+## MP4 y Instagram (2026-10-07)
+
+- El renderer graba con `MediaRecorder`: elige primero MP4 con H.264 + AAC (Chrome, Edge y Safari de escritorio), después WebM, y como último recurso `video/mp4` sin códec. Comprobado en el Chromium de pruebas (sin H.264): ese último recurso produce un **MP4 válido pero con vídeo VP9**, que Instagram rechaza (pide H.264 o HEVC con AAC).
+- Por eso el tipo MIME completo (con códec) se guarda en la procedencia y `instagramReadiness()` (`lib/editor/container.ts`) decide en un solo sitio: aviso al terminar el render, marca en la lista de vídeos y bloqueo al publicar. MP4 antiguos sin códec registrado se permiten con aviso.
+- No hay conversión en servidor: en Vercel gratuito no hay FFmpeg, y no se simula cambiando la extensión. Quien renderice en Firefox obtiene WebM; para Instagram debe renderizar en Chrome, Edge o Safari. Una conversión WebM→MP4 en el navegador (ffmpeg.wasm) o en un worker propio sería una decisión de coste/arquitectura pendiente.

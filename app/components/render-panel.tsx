@@ -6,7 +6,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { compositionIssues, formatSize, totalDurationMs, type Composition } from '@/lib/editor/composition'
 import { downloadCompositionMedia, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
-import { containerOf } from '@/lib/editor/container'
+import { containerOf, instagramReadiness } from '@/lib/editor/container'
 import { Icon } from './studio-icon'
 
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
@@ -87,7 +87,8 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         setDownload({ url: URL.createObjectURL(result.blob), name })
         setMode('saving'); setStatus('Guardando el vídeo en la nube…')
         await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets, onUploadProgress: f => setStatus(`Subiendo a la nube… ${Math.round(f * 100)} %`) })
-        setStatus(`Vídeo guardado en la Biblioteca (${Math.round(result.blob.size / 1048576 * 10) / 10} MB).`)
+        const ig = instagramReadiness(result.mimeType)
+        setStatus(`Vídeo guardado en la Biblioteca (${Math.round(result.blob.size / 1048576 * 10) / 10} MB).${ig.ok ? '' : ` Aviso: ${ig.reason}`}`)
         onRendered?.()
       } else if (!record) setStatus('Vista previa terminada.')
     } catch (e) {

@@ -65,3 +65,22 @@ describe('music ducking plan', () => {
     expect(ev.map(e => e.time)).toEqual([...ev.map(e => e.time)].sort((a, b) => a - b))
   })
 })
+
+import { instagramReadiness, videoCodecOf } from '@/lib/editor/container'
+describe('Instagram readiness from the recorded MIME type', () => {
+  it('reads the video codec', () => {
+    expect(videoCodecOf('video/mp4;codecs=avc1.640028,mp4a.40.2')).toBe('h264')
+    expect(videoCodecOf('video/mp4;codecs=vp9')).toBe('vp9')
+    expect(videoCodecOf('video/webm;codecs=vp9,opus')).toBe('vp9')
+    expect(videoCodecOf('video/mp4')).toBeNull()
+  })
+  it('accepts H.264/HEVC MP4, flags VP9/AV1 MP4 and WebM, and tolerates MP4 without a recorded codec', () => {
+    expect(instagramReadiness('video/mp4;codecs=avc1.640028,mp4a.40.2')).toMatchObject({ ok: true, unknown: false })
+    expect(instagramReadiness('video/mp4;codecs=hvc1')).toMatchObject({ ok: true })
+    expect(instagramReadiness('video/mp4;codecs=vp9')).toMatchObject({ ok: false, reason: expect.stringContaining('VP9') })
+    expect(instagramReadiness('video/mp4;codecs=av01')).toMatchObject({ ok: false })
+    expect(instagramReadiness('video/webm;codecs=vp9,opus')).toMatchObject({ ok: false, reason: expect.stringContaining('WebM') })
+    expect(instagramReadiness('video/mp4')).toEqual({ ok: true, unknown: true, reason: null })
+    expect(instagramReadiness(null).ok).toBe(false)
+  })
+})

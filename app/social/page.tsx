@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
+import { instagramReadiness } from '@/lib/editor/container'
 import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { SocialPayload } from '@/lib/publication/social'
@@ -19,10 +20,11 @@ const statusLabels: Record<string, string> = { draft: 'Borrador', awaiting_appro
 const ttPrivacy = { SELF_ONLY: 'Solo yo (privado)', MUTUAL_FOLLOW_FRIENDS: 'Amigos', FOLLOWER_OF_CREATOR: 'Seguidores', PUBLIC_TO_EVERYONE: 'Público' } as const
 const publishScope: Record<Platform, string> = { instagram: 'instagram_business_content_publish', tiktok: 'video.publish' }
 
-const isMp4 = (a?: Asset) => {
+const mimeOf = (a?: Asset) => {
   const mime = typeof a?.provenance?.mimeType === 'string' ? a.provenance.mimeType : ''
-  return mime ? /mp4|quicktime/.test(mime) : !/\.webm$/i.test(a?.storage_path ?? '')
+  return mime || (/\.webm$/i.test(a?.storage_path ?? '') ? 'video/webm' : 'video/mp4')
 }
+const isMp4 = (a?: Asset) => /^video\/(mp4|quicktime)/i.test(mimeOf(a))
 
 const emptyForm = { platform: 'instagram' as Platform, videoAssetId: '', caption: '', privacyLevel: 'SELF_ONLY' as NonNullable<SocialPayload['privacyLevel']>, shareToFeed: true, isAigc: true, disableComment: false, disableDuet: false, disableStitch: false }
 
@@ -78,7 +80,8 @@ export default function SocialPage() {
   const conn = (p: Platform) => conns.find(c => c.provider === p) ?? null
   const cfg = (p: Platform) => status.find(s => s.platform === p)
   const selected = useMemo(() => videos.find(v => v.id === form.videoAssetId), [videos, form.videoAssetId])
-  const igFormatProblem = form.platform === 'instagram' && selected && !isMp4(selected)
+  const igReady = form.platform === 'instagram' && selected ? instagramReadiness(mimeOf(selected)) : null
+  const igFormatProblem = Boolean(igReady && !igReady.ok)
 
   async function disconnect(p: Platform) {
     if (!window.confirm(`¿Desconectar ${names[p]}? Se borrarán las credenciales guardadas.`)) return
@@ -185,10 +188,11 @@ export default function SocialPage() {
         <div className="field-row">
           <label>Proyecto<select value={projectId} onChange={e => setProjectId(e.target.value)} disabled={Boolean(editing)}>{projects.length === 0 && <option value="">Sin proyectos</option>}{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
           <label>Plataforma<select value={form.platform} onChange={e => setForm({ ...form, platform: e.target.value as Platform })} disabled={Boolean(editing)}>{(['instagram', 'tiktok'] as Platform[]).map(p => <option key={p} value={p}>{names[p]}</option>)}</select></label>
-          <label>Vídeo<select value={form.videoAssetId} onChange={e => setForm({ ...form, videoAssetId: e.target.value })}><option value="">— Elige un vídeo</option>{videos.map(v => <option key={v.id} value={v.id}>{String(v.provenance?.title ?? 'Vídeo')}{isMp4(v) ? '' : ' (WebM)'} · {new Date(v.created_at).toLocaleDateString()}</option>)}</select></label>
+          <label>Vídeo<select value={form.videoAssetId} onChange={e => setForm({ ...form, videoAssetId: e.target.value })}><option value="">— Elige un vídeo</option>{videos.map(v => <option key={v.id} value={v.id}>{String(v.provenance?.title ?? 'Vídeo')}{!isMp4(v) ? ' (WebM)' : form.platform === 'instagram' && !instagramReadiness(mimeOf(v)).ok ? ' (códec no válido para Instagram)' : ''} · {new Date(v.created_at).toLocaleDateString()}</option>)}</select></label>
         </div>
         {videos.length === 0 && <p className="muted small">Este proyecto no tiene vídeos. <Link className="open" href={`/repurpose?project=${projectId}`}>Crea un vertical en Repurposing</Link>.</p>}
-        {igFormatProblem && <p className="error small">Instagram solo acepta MP4/MOV. Este vídeo es WebM (render de Firefox o anterior): vuelve a renderizarlo con Chrome, Edge o Safari, que graban MP4, o publícalo en TikTok.</p>}
+        {igFormatProblem && <p className="error small" role="alert">{igReady?.reason} También puedes publicarlo en TikTok.</p>}
+        {igReady?.ok && igReady.unknown && <p className="warnBox small">No se registró el códec de este MP4. Instagram necesita H.264 o HEVC con audio AAC; si lo rechaza, vuelve a renderizarlo en Chrome, Edge o Safari.</p>}
         <label>Texto / título ({form.caption.length}/2200)<textarea rows={4} value={form.caption} onChange={e => setForm({ ...form, caption: e.target.value })} maxLength={2200} placeholder="Descripción, hashtags y créditos de música o material con licencia." /></label>
         {form.platform === 'tiktok' ? <div className="pageActions">
           <label>Privacidad<select value={form.privacyLevel} onChange={e => setForm({ ...form, privacyLevel: e.target.value as typeof form.privacyLevel })}>{Object.entries(ttPrivacy).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>

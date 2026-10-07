@@ -1,3 +1,4 @@
+import { instagramReadiness } from '@/lib/editor/container'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { socialAccessToken, socialConnection, SOCIAL_SCOPES, type SocialPlatform } from '@/lib/oauth/social'
 import { downloadObject, signedReadUrl } from '@/lib/storage/server'
@@ -71,8 +72,8 @@ async function publishInstagram(db: SupabaseClient, job: SocialJob, token: strin
   let containerId = typeof job.result?.containerId === 'string' ? job.result.containerId : null
   if (!containerId) {
     const v = await videoAsset(db, job.owner_id, job.payload.videoAssetId!)
-    if (/codecs=/i.test(v.mime) && !/avc1|h264|hvc1|hev1/i.test(v.mime)) throw new SocialPublishError('Instagram necesita vídeo H.264/HEVC y este MP4 usa otro códec. Renderízalo en Google Chrome, Edge o Safari.', 409)
-    if (!/^video\/(mp4|quicktime)/.test(v.mime)) throw new SocialPublishError('Instagram solo acepta MP4/MOV. Este vídeo es WebM: vuelve a renderizarlo con Chrome, Edge o Safari (graban MP4), o usa un vídeo MP4 generado o subido.', 409)
+    const ready = instagramReadiness(v.mime)
+    if (!ready.ok) throw new SocialPublishError(ready.reason ?? 'Este vídeo no es válido para Instagram.', 409)
     let signedUrl: string
     try { signedUrl = await signedReadUrl(db, job.owner_id, v.path, 3600) } catch { throw new SocialPublishError('No se pudo preparar el enlace temporal del vídeo.', 502) }
     const created = await igJson(await fetch(`${igGraph}/${encodeURIComponent(igUserId)}/media`, {
