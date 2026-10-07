@@ -83,26 +83,3 @@ export function StudioShell({ title, eyebrow = 'WORKSPACE', actions, children }:
 }
 
 /** Placeholder for modules that are not built yet. Reads the real state from lib/module-status. */
-export function ModulePage({ title, description, steps, href }: { title: string; description: string; steps: string[]; href?: string }) {
-  const pathname = usePathname() ?? ''
-  const mod = moduleFor(href ?? pathname)
-  const state = mod?.state ?? 'not_implemented'
-  return (
-    <StudioShell title={title} eyebrow="MÓDULO">
-      <section className="panel moduleIntro">
-        <div>
-          <StateBadge state={state} />
-          <h2>{title}</h2>
-          <p>{description}</p>
-          {mod?.note && <p className="muted">{mod.note}</p>}
-        </div>
-        <Link className="buttonLink ghost" href="/projects">Ir a proyectos <Icon name="arrow" size={16} /></Link>
-      </section>
-      <h3 className="sectionTitle">Flujo previsto</h3>
-      <ol className="plannedSteps">
-        {steps.map(step => <li key={step}>{step}</li>)}
-      </ol>
-      <p className="muted small">Este módulo todavía no guarda ni genera nada. Se mostrará como funcional solo cuando lo sea.</p>
-    </StudioShell>
-  )
-}

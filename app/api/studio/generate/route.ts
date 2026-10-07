@@ -7,6 +7,7 @@ import type { VoiceSettings } from '@/lib/providers/elevenlabs'
 import { buildImagePrompt, isPreset } from '@/lib/providers/image-presets'
 import { persistGeneratedAsset } from '@/lib/providers/persist'
 import { encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
+import { thumbnailPrompt, validThumbnail } from '@/lib/providers/thumbnail-prompt'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -16,6 +17,8 @@ type Body = {
   options?: GenerationOptions; voice?: string; voiceSettings?: VoiceSettings; instructions?: string; context?: string; language?: string
   /** How the model was chosen (manual or a strategy), recorded for traceability. */
   selection?: string; confirmedEstimateUsd?: number
+  /** 'thumbnail': a 16:9 YouTube thumbnail saved as asset_type thumbnail (Miniaturas page). */
+  purpose?: string; thumbnail?: { concept?: string; overlayText?: string; style?: string }
 }
 
 /**
@@ -50,15 +53,19 @@ export async function POST(request: Request) {
     sceneId = scene.id
   }
 
+  const thumb = body?.purpose === 'thumbnail' ? validThumbnail(body.thumbnail) : null
+  if (body?.purpose === 'thumbnail' && (!thumb || model.modality !== 'image')) return NextResponse.json({ error: 'Miniatura no válida: elige un modelo de imagen, un concepto (máx. 1500) y un texto de hasta 40 caracteres.' }, { status: 400 })
+  if (thumb) options.format = '16:9'
   const format = options.format ?? '16:9'
-  const preset = model.modality === 'image' && isPreset(body?.preset) ? body.preset : null
-  const finalPrompt = preset ? buildImagePrompt({ subject: prompt, preset, format, context: body?.context ?? null }) : prompt
+  const preset = !thumb && model.modality === 'image' && isPreset(body?.preset) ? body.preset : null
+  const finalPrompt = thumb ? thumbnailPrompt(thumb) : preset ? buildImagePrompt({ subject: prompt, preset, format, context: body?.context ?? null }) : prompt
   const provider = providerById(model.provider)
   const trace = {
     catalogModel: model.id, providerName: provider?.name ?? model.provider, costTier: model.tier,
     originalPrompt: prompt, finalPrompt: finalPrompt.slice(0, 4000), negativePrompt: body?.negative?.trim() || null, preset, sceneId, options,
     voice: body?.voice ?? null, instructions: body?.instructions?.trim().slice(0, 500) || null, selection: body?.selection ?? 'manual',
     estimateUsd, priceConfirmed: model.priceConfirmed, estimateNote: 'Precio de lista estimado; la factura del proveedor es la referencia.',
+    ...(thumb ? { purpose: 'thumbnail', concept: thumb.concept, overlayText: thumb.overlayText, style: thumb.style, selected: false } : {}),
   }
   const requestId = crypto.randomUUID()
   const context = { ownerId: user.id, projectId, requestId }
@@ -87,7 +94,7 @@ export async function POST(request: Request) {
     const assets = []
     for (const [i, generated] of result.assets.entries()) {
       generated.metadata = { ...(generated.metadata ?? {}), ...trace }
-      assets.push(await persistGeneratedAsset(i === 0 ? context : { ...context, requestId: `${requestId}-${i}` }, assetKindFor[model.modality], generated))
+      assets.push(await persistGeneratedAsset(i === 0 ? context : { ...context, requestId: `${requestId}-${i}` }, thumb ? 'thumbnail' : assetKindFor[model.modality], generated))
     }
     return NextResponse.json({ assets, estimateUsd }, { status: 201 })
   } catch (error) {

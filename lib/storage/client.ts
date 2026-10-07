@@ -6,7 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * presigned URL (they never pass through the app server); without R2 they go to Supabase Storage.
  */
 export async function uploadToCloud(supabase: SupabaseClient, input: { projectId: string; folder: 'renders' | 'uploads' | 'subtitles' | 'auto-edit'; ext: string; name?: string; body: Blob; contentType: string; onProgress?: (fraction: number) => void }) {
-  const r = await fetch('/api/storage/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: input.projectId, folder: input.folder, ext: input.ext, name: input.name, contentType: input.contentType.split(';')[0] }) })
+  const r = await fetch('/api/storage/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: input.projectId, folder: input.folder, ext: input.ext, name: input.name, contentType: input.contentType.split(';')[0], size: input.body.size }) })
   const target = await r.json().catch(() => ({})) as { driver?: 'r2' | 'supabase'; storagePath?: string; uploadUrl?: string; maxBytes?: number; error?: string }
   if (!r.ok || !target.storagePath) throw new Error(target.error ?? 'No se pudo preparar la subida.')
   const mb = Math.round(input.body.size / 1048576)

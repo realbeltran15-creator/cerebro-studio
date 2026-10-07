@@ -1,2 +1,4 @@
-import { ProviderGenerator } from '../components/provider-generator'
-export default function Page(){return <ProviderGenerator title="Voces" kind="voice" description="Convierte texto en narración con el proveedor configurado y registra automáticamente el audio generado."/>}
+import { redirect } from 'next/navigation'
+
+/** Generation moved to the Creation Studio (multi-provider, cost confirmation). */
+export default function Page() { redirect('/studio?tab=voice') }

@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     if (existing) { assets.push(existing); continue }
     const requestId = `${job.provider}-${media.externalId.replace(/[^A-Za-z0-9-]/g, '')}-${i}`
     try {
-      assets.push(await persistGeneratedAsset({ ownerId: user.id, projectId: t.projectId, requestId }, assetKindFor[model.modality], {
+      assets.push(await persistGeneratedAsset({ ownerId: user.id, projectId: t.projectId, requestId }, t.trace.purpose === 'thumbnail' && model.modality === 'image' ? 'thumbnail' : assetKindFor[model.modality], {
         provider: `${model.provider}:${model.label}`, externalId: media.externalId, uri: media.uri, mimeType: media.mimeType,
         metadata: { ...t.trace, model: model.id.slice(model.provider.length + 1), variant: i + 1, variants: outputs.length },
       }))

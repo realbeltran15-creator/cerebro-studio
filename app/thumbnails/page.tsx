@@ -1,11 +1,17 @@
 'use client'
 
 import Link from 'next/link'
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { ProjectRow } from '@/lib/types/database'
+import { modelById } from '@/lib/providers/catalog'
+import { tierLabels, type CostTier } from '@/lib/providers/directory'
+import { rankModels } from '@/lib/providers/router'
+
+type ModelLite = { id: string; modality: string; label: string; tier: CostTier; quality: number; ready: boolean; creditsExhausted?: boolean; capabilities: string[]; price: string }
+const AUTO = 'auto'
 
 type Thumb = { id: string; created_at: string; provenance: Record<string, unknown> | null; url?: string }
 
@@ -19,7 +25,11 @@ export default function ThumbnailsPage() {
   const [overlayText, setOverlayText] = useState('')
   const [style, setStyle] = useState('documentary')
   const [thumbs, setThumbs] = useState<Thumb[]>([])
-  const [imageReady, setImageReady] = useState<boolean | null>(null)
+  const [models, setModels] = useState<ModelLite[] | null>(null)
+  const [choice, setChoice] = useState(AUTO)
+  const [confirming, setConfirming] = useState(false)
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -33,10 +43,9 @@ export default function ThumbnailsPage() {
       setProjects(rows)
       setProjectId(wanted && rows.some(p => p.id === wanted) ? wanted : rows[0]?.id ?? '')
     })()
-    void fetch('/api/providers/status', { cache: 'no-store' })
-      .then(r => r.json() as Promise<{ providers?: Array<{ capability: string; enabled: boolean }> }>)
-      .then(j => setImageReady(Boolean(j.providers?.some(p => p.capability === 'image' && p.enabled))))
-      .catch(() => setImageReady(false))
+    void fetch('/api/studio/catalog', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
+      .then((j: { models?: ModelLite[] } | null) => setModels((j?.models ?? []).filter(m => m.modality === 'image')))
+      .catch(() => setModels([]))
   }, [supabase])
 
   const load = useCallback(async (pid: string) => {
@@ -67,22 +76,53 @@ export default function ThumbnailsPage() {
     })()
   }, [projectId, projects, load, supabase])
 
-  async function generate(event: FormEvent) {
+  // Quality first: a thumbnail must read at small size (quality ≥ 4) and, with overlay text, render text reliably.
+  const ranked = useMemo(() => {
+    if (!models) return []
+    const full = models.map(m => modelById(m.id)).filter((x): x is NonNullable<typeof x> => Boolean(x))
+    return rankModels(full, { modality: 'image', strategy: 'best_value', minQuality: 4, format: '16:9', needs: overlayText.trim() ? ['text_in_image'] : [] }, Object.fromEntries(models.map(m => [m.id, { ready: m.ready, creditsExhausted: m.creditsExhausted }])))
+  }, [models, overlayText])
+  const auto = ranked.find(r => r.eligible) ?? null
+  const chosen = choice === AUTO ? auto?.model ?? null : modelById(choice) ?? null
+  const chosenLite = models?.find(m => m.id === chosen?.id)
+  const estimate = chosen?.estimateUsd({ format: '16:9' }) ?? 0
+  const costText = !chosen ? '' : chosen.tier === 'free' || chosen.tier === 'local' ? 'gratis' : estimate > 0 ? `≈ $${estimate.toFixed(2)}` : 'con créditos de tu cuenta'
+  const readyModels = (models ?? []).filter(m => m.ready)
+
+  async function poll(token: string) {
+    for (let i = 0; i < 90 && alive.current; i++) {
+      await new Promise(r => setTimeout(r, 4000))
+      const r = await fetch('/api/studio/job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) })
+      const j = await r.json().catch(() => ({})) as { state?: string; error?: string }
+      if (j.state === 'done') return
+      if (j.state === 'failed' || j.state === 'expired') throw new Error(j.error ?? 'Falló la generación.')
+      if (alive.current) setNotice(j.state === 'queued' ? 'En cola en el proveedor…' : 'Generando…')
+    }
+    throw new Error('Sigue en proceso; aparecerá aquí al terminar.')
+  }
+
+  function generate(event: FormEvent) {
     event.preventDefault()
-    if (!projectId || !concept.trim() || busy) return
-    setBusy(true); setError(''); setNotice('')
+    if (!projectId || !concept.trim() || busy || !chosen) return
+    setError(''); setNotice(''); setConfirming(true)
+  }
+
+  async function confirmGenerate() {
+    if (!chosen) return
+    setConfirming(false); setBusy(true); setNotice('Generando…')
     try {
-      const r = await fetch('/api/providers/thumbnail', {
+      const r = await fetch('/api/studio/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, concept, overlayText, style }),
+        body: JSON.stringify({ projectId, modelId: chosen.id, prompt: concept.trim(), purpose: 'thumbnail', thumbnail: { concept: concept.trim(), overlayText: overlayText.trim() || null, style }, options: { format: '16:9' }, selection: choice === AUTO ? 'best_value:q4' : 'manual', confirmedEstimateUsd: estimate }),
       })
-      const json = await r.json() as { error?: string }
-      if (!r.ok) throw new Error(json.error ?? 'No se pudo generar la miniatura.')
-      setNotice('Variante generada y guardada en la Biblioteca del proyecto.')
+      const j = await r.json().catch(() => ({})) as { error?: string; job?: { token: string } }
+      if (!r.ok && r.status !== 202) throw new Error(j.error ?? 'No se pudo generar la miniatura.')
+      if (j.job) await poll(j.job.token)
+      if (alive.current) setNotice(`Variante generada con ${chosen.label} y guardada en la Biblioteca del proyecto.`)
       await load(projectId)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo generar la miniatura.')
-    } finally { setBusy(false) }
+      if (alive.current) { setNotice(''); setError(e instanceof Error ? e.message : 'No se pudo generar la miniatura.') }
+    } finally { if (alive.current) setBusy(false) }
   }
 
   async function select(id: string) {
@@ -101,7 +141,7 @@ export default function ThumbnailsPage() {
   return <StudioShell title="Miniaturas" eyebrow="PRODUCCIÓN" actions={projectId ? <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link> : null}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
-    {imageReady === false && <p className="warnBox">No hay proveedor de imágenes configurado. Añade <code>OPENAI_API_KEY</code> (o el endpoint de respaldo) en el servidor para generar variantes.</p>}
+    {models && readyModels.length === 0 && <p className="warnBox">No hay ningún proveedor de imágenes configurado. Revisa <Link className="open" href="/connectors">Conectores</Link>: Cloudflare Workers AI es gratuito.</p>}
 
     <section className="panel" style={{ marginBottom: 18 }}>
       <form onSubmit={generate} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -124,8 +164,20 @@ export default function ThumbnailsPage() {
         <label htmlFor="thumb-concept">Concepto visual
           <textarea id="thumb-concept" rows={3} value={concept} onChange={e => setConcept(e.target.value)} maxLength={1500} placeholder="Qué debe verse: sujeto, situación y emoción. Se rellena con el hook del último guion." />
         </label>
-        <p className="muted small">Cada variante es una generación de pago (1536×1024). No se muestran personas reales ni marcas; la selección no publica nada.</p>
-        <div><button disabled={busy || !projectId || !concept.trim() || imageReady === false}><Icon name="image" size={16} />{busy ? 'Generando…' : 'Generar variante'}</button></div>
+        <div className="field-row">
+          <label htmlFor="thumb-model">Modelo
+            <select id="thumb-model" value={choice} onChange={e => { setChoice(e.target.value); setConfirming(false) }}>
+              <option value={AUTO}>Automático · calidad alta al menor coste{auto ? ` (${auto.model.label})` : ''}</option>
+              {readyModels.map(m => <option key={m.id} value={m.id}>{m.label} · {tierLabels[m.tier]} · calidad {m.quality}/5</option>)}
+            </select>
+          </label>
+        </div>
+        {choice === AUTO && !auto && models && <p className="warnBox small">Ningún modelo configurado alcanza la calidad que necesita una miniatura{overlayText.trim() ? ' con texto legible' : ''}. Elige uno manualmente o configura otro proveedor.</p>}
+        {chosen && <p className="muted small">{chosen.label}: {chosenLite?.price ?? chosen.price}. No se muestran personas reales ni marcas; seleccionar no publica nada.</p>}
+        {confirming && chosen ? <div className="warnBox" role="alertdialog" aria-label="Confirmar generación">
+          <p><b>¿Generar una variante con {chosen.label}?</b> {chosen.tier === 'free' || chosen.tier === 'local' ? 'Usa el cupo gratuito; no tiene coste.' : `Coste: ${costText} (estimado).`}</p>
+          <div className="pageActions"><button type="button" onClick={() => void confirmGenerate()}>Sí, generar</button><button type="button" className="ghost" onClick={() => setConfirming(false)}>Cancelar</button></div>
+        </div> : <div><button disabled={busy || !projectId || !concept.trim() || !chosen}><Icon name="image" size={16} />{busy ? 'Generando…' : `Generar variante${costText ? ` (${costText})` : ''}`}</button></div>}
       </form>
     </section>
 

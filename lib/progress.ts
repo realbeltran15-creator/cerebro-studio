@@ -29,7 +29,7 @@ const definitions: Array<Omit<ProgressStep, 'state' | 'detail'> & { done: (p: Pr
   { key: 'approval', label: 'Guion aprobado', overview: 1, href: id => `/scripts?project=${id}`, done: p => p.approvedScripts > 0, detail: p => p.approvedScripts ? 'Aprobado' : 'Pendiente de revisión' },
   { key: 'storyboard', label: 'Storyboard', overview: 2, href: id => `/create?project=${id}`, done: p => p.storyboards > 0 && p.scenes > 0, detail: p => p.storyboards ? `${p.scenes} escena(s)` : 'Sin storyboard' },
   { key: 'assets', label: 'Recursos', overview: 2, href: () => '/library', done: p => p.assets > 0, detail: p => p.assets ? `${p.assets} asset(s)` : 'Sin imágenes, vídeo ni voz' },
-  { key: 'edit', label: 'Montaje', overview: 3, href: () => '/editor', done: p => p.renders > 0, detail: () => 'Editor no implementado' },
+  { key: 'edit', label: 'Montaje', overview: 3, href: () => '/editor', done: p => p.renders > 0, detail: p => p.renders ? `${p.renders} render(s)` : 'Sin montaje' },
   { key: 'publish', label: 'Publicación', overview: 4, href: id => `/youtube?project=${id}`, done: p => p.publications > 0, detail: p => p.publications ? `${p.publications} preparada(s), sin publicar` : 'Nada preparado' },
   { key: 'results', label: 'Resultados', overview: 5, href: () => '/analytics', done: p => p.metrics > 0, detail: p => p.metrics ? `${p.metrics} registro(s) de métricas` : 'Sin métricas' },
 ]

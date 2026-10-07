@@ -220,13 +220,13 @@ export default function Home() {
       <div className="bottomRow">
         <section className="panel promo">
           <span className="bigIcon"><Icon name="link" /></span>
-          <div><h3>Proveedores de IA</h3><p>Imágenes, vídeo y voz se activan con claves de servidor. Consulta qué está listo de verdad.</p></div>
+          <div><h3>Proveedores de IA</h3><p>Imagen, vídeo, voz, música y texto con varios proveedores; gratis primero sin bajar la calidad. Consulta qué está activo.</p></div>
           <Link className="buttonLink ghost small" href="/connectors">Ver estado</Link>
         </section>
         <section className="panel promo">
           <span className="bigIcon"><Icon name="bolt" /></span>
-          <div><h3>Automatizaciones</h3><p>Todavía no implementadas. Las acciones sensibles quedarán siempre tras tu aprobación.</p></div>
-          <Link className="buttonLink ghost small" href="/automations">Ver plan</Link>
+          <div><h3>Automatizaciones</h3><p>Vigilancia de tendencias y actualización de oportunidades con historial. Nunca publican ni gastan sin tu aprobación.</p></div>
+          <Link className="buttonLink ghost small" href="/automations">Abrir</Link>
         </section>
       </div>
     </StudioShell>

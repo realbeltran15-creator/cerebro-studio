@@ -16,7 +16,7 @@ export async function persistGeneratedAsset(context:ProviderContext,kind:'image'
  const storagePath=await putObject(supabase,user.id,`${user.id}/${context.projectId}/${context.requestId}.${extFor(mime)}`,bytes,mime)
  // assets.asset_type has no 'render' value: renders are stored as videos tagged with their purpose.
  const assetType=kind==='render'?'video':kind
- const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:assetType,storage_path:storagePath,source_provider:asset.provider,license_status:'generated',provenance:generationProvenance({provider:asset.provider,requestId:context.requestId,projectId:context.projectId,mimeType:mime,externalId:asset.externalId,purpose:kind==='render'?'render':undefined,metadata:asset.metadata})}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
+ const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:context.projectId,asset_type:assetType,storage_path:storagePath,source_provider:asset.provider,license_status:'generated',provenance:{...generationProvenance({provider:asset.provider,requestId:context.requestId,projectId:context.projectId,mimeType:mime,externalId:asset.externalId,purpose:kind==='render'?'render':undefined,metadata:asset.metadata}),bytes:bytes.byteLength}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,provenance,created_at').single()
  if(error){await removeObject(supabase,user.id,storagePath).catch(()=>undefined);throw new Error(`Could not persist generated asset: ${error.message}`)}return data
 }
 
@@ -34,7 +34,7 @@ export async function persistImportedAsset(input: {
   const bytes=Buffer.from(await r.arrayBuffer());const mime=r.headers.get('content-type')?.split(';')[0]||input.mimeType
   const max=input.kind==='image'?25*1024*1024:input.kind==='video'?150*1024*1024:50*1024*1024;if(!bytes.length||bytes.byteLength>max)throw new Error('El archivo es demasiado grande para importarlo.')
   const storagePath=await putObject(supabase,user.id,`${user.id}/${input.projectId}/import-${input.source}-${input.externalId.replace(/[^A-Za-z0-9-]/g,'')}.${extFor(mime)}`,bytes,mime)
-  const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:input.projectId,asset_type:input.kind,storage_path:storagePath,source_provider:input.source,source_url:input.sourceUrl,license_status:input.licenseStatus,provenance:{...input.provenance,externalId:external,mimeType:mime,importedAt:new Date().toISOString(),cost:{amount:0,currency:'USD',reported:true},costTier:'free'}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').single()
+  const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:input.projectId,asset_type:input.kind,storage_path:storagePath,source_provider:input.source,source_url:input.sourceUrl,license_status:input.licenseStatus,provenance:{...input.provenance,externalId:external,mimeType:mime,importedAt:new Date().toISOString(),bytes:bytes.byteLength,cost:{amount:0,currency:'USD',reported:true},costTier:'free'}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').single()
   if(error){await removeObject(supabase,user.id,storagePath).catch(()=>undefined);throw new Error(`No se pudo registrar el archivo: ${error.message}`)}
   return{asset:data,duplicate:false}
 }
