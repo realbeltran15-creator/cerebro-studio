@@ -216,6 +216,12 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - window.innerWidth, text: document.body.innerText.length, wide: [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest('table,pre,code,[style*="overflow"],.tableWrap')).slice(0, 3).map(e => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 30)}`) }))
     check(`mobile: ${name} fits 390 px`, m.over <= 1 && m.text > 20, m)
     check(`mobile: ${name} has no page errors`, errors.length === 0, errors.slice(0, 2))
+    await page.addScriptTag({ content: readFileSync(path.join(root, 'node_modules/axe-core/axe.min.js'), 'utf8') })
+    const axeResult = await page.evaluate(async () => (await window.axe.run(document, { runOnly: ['wcag2a', 'wcag2aa'] })).violations.map(v => ({ id: v.id, impact: v.impact, nodes: v.nodes.length, sample: v.nodes[0]?.target?.[0] })))
+    if (process.env.AXE_REPORT) console.log(`  axe ${name}:`, JSON.stringify(axeResult))
+    // document-title and html-has-lang belong to app/layout.tsx, which this harness does not mount (the real layout sets both).
+    const blocking = axeResult.filter(v => !['document-title', 'html-has-lang'].includes(v.id))
+    check(`a11y: ${name} has no WCAG A/AA violations (contrast, names, labels)`, blocking.length === 0, blocking)
     await page.close(); server.close()
   }
 }

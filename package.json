@@ -21,6 +21,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "axe-core": "^4.14.0",
     "esbuild": "^0.28.2",
     "eslint": "latest",
     "eslint-config-next": "latest",
