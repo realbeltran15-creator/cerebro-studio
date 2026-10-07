@@ -176,6 +176,21 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 4. Mobile: the Studio fits a 390 px phone without horizontal scrolling and keeps the main action reachable.
+{
+  const server = serve(8794, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'studio.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
+  await page.goto('http://127.0.0.1:8794/studio?project=p1')
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.getByRole('radio', { name: /FLUX\.2 Pro/ }).waitFor({ timeout: 20000 })
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  check('mobile: studio has no horizontal overflow at 390 px', overflow <= 1, overflow)
+  const btn = page.getByRole('button', { name: /^Generar imagen/ })
+  await btn.scrollIntoViewIfNeeded()
+  check('mobile: generate button is visible and within the viewport', await btn.isVisible() && (await btn.boundingBox()).x >= 0)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')
