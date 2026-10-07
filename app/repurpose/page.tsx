@@ -7,6 +7,7 @@ import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { parseComposition, shortPlatforms, toShort, totalDurationMs, type Composition } from '@/lib/editor/composition'
 import type { EditorAsset } from '@/lib/editor/client'
+import { suggestSegment, type SegmentSuggestion } from '@/lib/editor/repurpose'
 import type { ProjectRow } from '@/lib/types/database'
 
 type Job = { id: string; status: string; created_at: string; updated_at: string; composition: Composition }
@@ -22,6 +23,8 @@ export default function RepurposePage() {
   const [sourceId, setSourceId] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [hook, setHook] = useState('')
+  const [suggestion, setSuggestion] = useState<(SegmentSuggestion & { label: string }) | null>(null)
+  const [suggestMsg, setSuggestMsg] = useState('')
   const [assets, setAssets] = useState<EditorAsset[]>([])
   const [draft, setDraft] = useState<{ id: string | null; comp: Composition } | null>(null)
   const [error, setError] = useState('')
@@ -80,6 +83,15 @@ export default function RepurposePage() {
 
   const selectedMs = useMemo(() => source ? source.composition.clips.filter(c => selected.has(c.sceneId)).reduce((t, c) => t + c.durationMs, 0) : 0, [source, selected])
 
+  // Platform sweet spots for retention (not the hard limits): Shorts/TikTok about a minute, Reels up to its 90 s cap.
+  const suggestTargets = [{ label: 'YouTube Shorts', maxMs: 60_000, targetMs: 45_000 }, { label: 'Instagram Reels', maxMs: 90_000, targetMs: 60_000 }, { label: 'TikTok', maxMs: 60_000, targetMs: 45_000 }]
+  function suggest(t: typeof suggestTargets[number]) {
+    if (!source) return
+    const r = suggestSegment(source.composition.clips, { maxMs: t.maxMs, targetMs: t.targetMs })
+    if (!r) { setSuggestion(null); setSuggestMsg(`Ninguna escena o grupo de escenas cabe en ${Math.round(t.maxMs / 1000)} s. Divide las escenas largas en el Editor.`); return }
+    setSuggestMsg(''); setSuggestion({ ...r, label: t.label }); setSelected(new Set(r.sceneIds))
+  }
+
   function toggle(id: string) { setSelected(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n }) }
 
   function build() {
@@ -132,6 +144,11 @@ export default function RepurposePage() {
 
     {source && !draft && <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
       <h3>1 · Elige las escenas</h3>
+      <div className="pageActions" role="group" aria-label="Sugerir fragmento">
+        {suggestTargets.map(t => <button key={t.label} type="button" className="ghost small" onClick={() => suggest(t)}>Sugerir para {t.label}</button>)}
+      </div>
+      {suggestMsg && <p className="warnBox small" role="status">{suggestMsg}</p>}
+      {suggestion && <p className="notice small" role="status"><b>Sugerencia para {suggestion.label}</b> (escenas {suggestion.startIndex + 1}–{suggestion.endIndex + 1}, {fmt(suggestion.durationMs)}). <span className="pill">Calculado, no IA</span> {suggestion.reasons.join(' · ')}. Puedes ajustar la selección antes de preparar la versión.</p>}
       <div className="list">{source.composition.clips.map((c, i) => (
         <label key={c.sceneId} className="listItem" style={{ cursor: 'pointer' }}>
           <span><input type="checkbox" checked={selected.has(c.sceneId)} onChange={() => toggle(c.sceneId)} /> <b>Escena {i + 1}</b> · {(c.durationMs / 1000).toFixed(1)} s{!c.visualAssetId ? ' · sin visual' : ''}</span>
