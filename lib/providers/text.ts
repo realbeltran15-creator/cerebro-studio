@@ -144,12 +144,17 @@ export function geminiOutputText(j: Record<string, unknown>): string {
   return steps.filter(s => s.type === 'model_output').flatMap(s => s.content ?? []).filter(c => c.type === 'text' && typeof c.text === 'string').map(c => c.text).join('')
 }
 
+/** Google answers 502/503/504 during demand spikes ("high demand… try again later"): retry the same model once. */
+const TRANSIENT = new Set([502, 503, 504])
+
 async function callGemini(m: TextModel, system: string, user: string, schema: object) {
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+  const send = () => fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
     method: 'POST', headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY?.trim() ?? '', 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: m.model(), input: user, system_instruction: system, response_format: { type: 'text', mime_type: 'application/json', schema }, generation_config: { temperature: 0.5 } }),
     cache: 'no-store', signal: AbortSignal.timeout(90000),
   })
+  let r = await send()
+  if (TRANSIENT.has(r.status)) { await new Promise(done => setTimeout(done, 1500)); r = await send() }
   if (!r.ok) throw Object.assign(new Error(`Gemini ${r.status}`), { status: r.status })
   const j = await r.json() as Record<string, unknown>
   const u = (j.usage ?? j.usage_metadata ?? j.usageMetadata ?? {}) as Record<string, number | undefined>

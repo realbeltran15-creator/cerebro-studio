@@ -56,6 +56,46 @@ describe('text router: quality first, then cost', () => {
   })
 })
 
+describe('Gemini text: transient provider errors', () => {
+  const task = () => runTextTask('tags', { system: 's', user: 'u', schema: {}, schemaName: 'x', requestId: 'r', validate: v => ((v as { tags?: string[] }).tags?.length ? v as { tags: string[] } : null) })
+  it('retries the same model once on a 503 demand spike and then succeeds', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('GEMINI_API_KEY', 'k'); vi.stubEnv('GROQ_API_KEY', ''); vi.stubEnv('OPENAI_API_KEY', ''); vi.stubEnv('OPENAI_TEXT_API_KEY', '')
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"error":{"code":"service_unavailable"}}', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ output_text: '{"tags":["selva"]}' })))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const pending = task()
+    await vi.advanceTimersByTimeAsync(2000)
+    const r = await pending
+    vi.useRealTimers()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(r.data.tags).toEqual(['selva'])
+    expect(r.attempts).toEqual([])
+  })
+  it('reports the provider status when the spike persists, so the UI can explain it', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('GEMINI_API_KEY', 'k'); vi.stubEnv('GROQ_API_KEY', ''); vi.stubEnv('OPENAI_API_KEY', ''); vi.stubEnv('OPENAI_TEXT_API_KEY', '')
+    const fetchMock = vi.fn(async () => new Response('x', { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const pending = task().catch(e => e)
+    await vi.advanceTimersByTimeAsync(2000)
+    const e = await pending as { status: number | null; attempts: Array<{ model: string }> }
+    vi.useRealTimers()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(e.status).toBe(503)
+    expect(e.attempts[0].model).toBe('gemini:gemini-3.8-flash')
+  })
+  it('does not retry quota errors (429)', async () => {
+    vi.stubEnv('GEMINI_API_KEY', 'k'); vi.stubEnv('GROQ_API_KEY', ''); vi.stubEnv('OPENAI_API_KEY', ''); vi.stubEnv('OPENAI_TEXT_API_KEY', '')
+    const fetchMock = vi.fn(async () => new Response('x', { status: 429 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(task()).rejects.toMatchObject({ status: 429 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('transcription', () => {
   it('prefers the most accurate configured model', () => {
     expect(routeStt({ GROQ_API_KEY: 'g', CLOUDFLARE_ACCOUNT_ID: 'a', CLOUDFLARE_API_TOKEN: 't' })[0].id).toBe('groq:whisper-large-v3')

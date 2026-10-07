@@ -68,7 +68,7 @@ export async function POST(request: Request) {
       : status === 403 ? 'El proveedor de texto rechazó el acceso al modelo.'
       : status === 404 ? `El modelo configurado no está disponible para esta clave (p. ej. OPENAI_TEXT_MODEL=${textModel()}).`
       : status === 429 ? 'Los proveedores de texto alcanzaron su límite de uso o cupo gratuito.'
-      : status && status >= 500 ? 'El servicio de texto no está disponible.'
+      : status && status >= 500 ? 'El servicio de texto no está disponible ahora mismo (suele ser temporal por alta demanda): inténtalo de nuevo en unos minutos.'
       : error instanceof TextProviderError ? error.message : 'No se pudo generar la propuesta.'
     return NextResponse.json({ error: message, requestId }, { status: 502 })
   }
