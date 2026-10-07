@@ -111,6 +111,13 @@ describe('free media banks', () => {
   it('only downloads from the bank’s own hosts', () => {
     expect(allowedDownload('pixabay', 'https://cdn.pixabay.com/photo/x.jpg')).toBe(true)
     expect(allowedDownload('pixabay', 'https://evil.com/pixabay.com.jpg')).toBe(false)
+    expect(allowedDownload('pexels', 'https://videos.pexels.com/video-files/1/1-hd.mp4')).toBe(true)
+    expect(allowedDownload('pexels', 'https://images.pexels.com/photos/1/a.jpeg')).toBe(true)
+    expect(allowedDownload('pexels', 'https://player.vimeo.com/external/123.hd.mp4?s=x&profile_id=175')).toBe(true)
+    expect(allowedDownload('pexels', 'https://player.vimeo.com/video/123')).toBe(false)
+    expect(allowedDownload('pixabay', 'https://player.vimeo.com/external/123.hd.mp4')).toBe(false)
+    expect(allowedDownload('pexels', 'https://user:pw@videos.pexels.com/x.mp4')).toBe(false)
+    expect(allowedDownload('freesound', 'https://cdn.freesound.org/previews/1/1_1-hq.mp3')).toBe(true)
     expect(allowedDownload('freesound', 'http://cdn.freesound.org/a.mp3')).toBe(false)
   })
 })

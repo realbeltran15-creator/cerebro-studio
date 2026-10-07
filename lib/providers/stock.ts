@@ -46,7 +46,13 @@ const downloadHosts: Record<StockSource, RegExp> = {
   pixabay: /(^|\.)pixabay\.com$/,
 }
 export function allowedDownload(source: StockSource, url: string) {
-  try { const u = new URL(url); return u.protocol === 'https:' && downloadHosts[source].test(u.hostname) } catch { return false }
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:' || u.username || u.password) return false
+    if (downloadHosts[source].test(u.hostname)) return true
+    // Some Pexels responses (older API docs) serve video renditions from Vimeo's external player; only that path is accepted.
+    return source === 'pexels' && u.hostname === 'player.vimeo.com' && u.pathname.startsWith('/external/')
+  } catch { return false }
 }
 
 async function getJson(url: string, headers: Record<string, string> = {}) {

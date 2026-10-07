@@ -171,7 +171,7 @@ Además de sugerir el tramo, la pantalla propone el **hook en pantalla** (la fra
 
 ## Duplicados de oportunidades (2026-10-07)
 
-Antes solo había comprobación en la aplicación (consultar y luego insertar), sin restricción en la base: dos pestañas o una automatización a la vez podían duplicar. Comprobado en la base desplegada (solo lectura): 1 oportunidad, sin duplicados ni índice único. Preparada la migración **`20261007120000_opportunities_unique_source.sql`** (índice único parcial por propietario + plataforma + `source_id`; las manuales sin fuente no se ven afectadas) y **NO aplicada**, porque modifica la base en uso: pendiente de que el propietario la apruebe. El código ya trata el conflicto (`23505`) como «ya estaba guardado» (`lib/opportunities.ts`, usado por automatizaciones, resultados de YouTube y captura manual), con tests de concurrencia simulada.
+Antes solo había comprobación en la aplicación (consultar y luego insertar), sin restricción en la base: dos pestañas o una automatización a la vez podían duplicar. Comprobado en la base desplegada (solo lectura): 1 oportunidad, sin duplicados ni índice único. Preparada la migración **`20261007120000_opportunities_unique_source.sql`** (índice único parcial por propietario + plataforma + `source_id`; las manuales sin fuente no se ven afectadas) y **aplicada el 2026-10-07** tras comprobar que era segura (1 fila, 0 duplicados, índice inexistente, sin cambios de datos), con prueba de rechazo de duplicado revertida y retroceso con `drop index public.opportunities_owner_source_unique`. El código ya trata el conflicto (`23505`) como «ya estaba guardado» (`lib/opportunities.ts`, usado por automatizaciones, resultados de YouTube y captura manual), con tests de concurrencia simulada.
 
 ## YouTube Data API: validación real (2026-10-07)
 
@@ -208,3 +208,22 @@ La vigilancia de tendencias también se validó con datos reales de YouTube y un
 **Licencia — decisión del propietario.** El envoltorio `@ffmpeg/ffmpeg` es MIT y está copiado sin cambios en `public/vendor/ffmpeg` (48 KB; un test garantiza que coincide byte a byte con la versión instalada y que no hay `.wasm` ni núcleo en `public`). El **núcleo `@ffmpeg/core` es GPL-2.0-or-later** (incluye x264) y pesa ~32 MB: **no se incluye en el repositorio ni en el despliegue**. Solo se activa si se define `NEXT_PUBLIC_FFMPEG_CORE_BASE_URL` apuntando a una carpeta con `ffmpeg-core.js` y `ffmpeg-core.wasm`; así el navegador del usuario lo descarga bajo demanda. Si distribuir ese binario a los usuarios es aceptable para el producto es una decisión legal que no he tomado.
 
 **Límites reales.** Probado con un clip de 2 s a 320×180 en Chromium; el rendimiento con 1080×1920 y varios minutos en ffmpeg.wasm (un solo hilo) no está medido y puede ser lento: es una vía de rescate, no la principal. La reproducción del MP4 resultante no se verificó porque el Chromium de pruebas no decodifica H.264; sí se verificaron los códecs del contenedor.
+
+## Credenciales, dominios y cabeceras por proveedor (2026-10-07)
+
+Para probar un servicio desde el sandbox hay que (1) permitir sus dominios en *Network access* del entorno y (2) añadir la clave como *Network secret* con el host, la cabecera y el prefijo indicados (el proceso solo necesita un valor de relleno no secreto en la variable para que la app considere el servicio configurado). En producción (Vercel) la variable de entorno lleva el valor real. Estado: ✔ validado en vivo · ⏳ preparado y probado con simulaciones, sin validación real.
+
+| Servicio | Variable | Dominios (API y descarga) | Cabecera y valor | Estado |
+|---|---|---|---|---|
+| Gemini | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` | `x-goog-api-key`, sin prefijo | ✔ voz · texto sin validar (503 de Google) |
+| YouTube Data | `YOUTUBE_API_KEY` | `www.googleapis.com` | `x-goog-api-key`, sin prefijo | ✔ solo lectura |
+| fal.ai | `FAL_KEY` | `queue.fal.run`, `*.fal.media` | `Authorization`: `Key <clave>` | ⏳ |
+| Groq | `GROQ_API_KEY` | `api.groq.com` | `Authorization`: `Bearer <clave>` | ⏳ |
+| Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | `api.cloudflare.com` | `Authorization`: `Bearer <token>`; el ID de cuenta no es secreto y va en la URL, así que debe ser una variable de entorno normal | ⏳ |
+| OpenAI | `OPENAI_API_KEY` (y variantes) | `api.openai.com` | `Authorization`: `Bearer <clave>` | ⏳ |
+| ElevenLabs | `ELEVENLABS_API_KEY` | `api.elevenlabs.io` | `xi-api-key`, sin prefijo | ⏳ |
+| Freesound | `FREESOUND_API_KEY` | `freesound.org`, `cdn.freesound.org` | `Authorization`: `Token <clave>` | ⏳ |
+| Pexels | `PEXELS_API_KEY` | `api.pexels.com`, `images.pexels.com`, `videos.pexels.com` (y `player.vimeo.com/external/` si la API aún lo devuelve) | `Authorization`: `<clave>` (sin prefijo) | ⏳ |
+| Pixabay | `PIXABAY_API_KEY` | `pixabay.com`, `cdn.pixabay.com` | **No admite cabecera**: la API exige la clave en la URL (`key=`); no se puede inyectar como Network Secret, va como variable de entorno | ⏳ |
+
+Los dominios de descarga están restringidos en el código por servicio (`allowedDownload`, `isFalMediaUrl`): un resultado nunca puede apuntar al servidor hacia otro host.
