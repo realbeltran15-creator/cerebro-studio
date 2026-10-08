@@ -167,7 +167,7 @@ Además de sugerir el tramo, la pantalla propone el **hook en pantalla** (la fra
 
 ## Aprendizaje desde Analytics (2026-10-07)
 
-`lib/analytics/learning.ts` compara tus vídeos entre sí con las métricas observadas importadas: cuáles superaron 2× la mediana de vistas, cuáles retienen más (porcentaje visto) y las vistas medianas por duración aproximada. Es **descriptivo y calculado**, no explica causas, exige al menos 5 vídeos y lo dice en pantalla. Probado con tests unitarios y navegador sobre datos sembrados; **no** probado con datos reales porque depende del OAuth de Google. Pendiente: usar estas señales para sugerir temas/formatos al crear guiones y priorizar oportunidades.
+`lib/analytics/learning.ts` compara tus vídeos entre sí con las métricas observadas importadas: cuáles superaron 2× la mediana de vistas, cuáles retienen más (porcentaje visto) y las vistas medianas por duración aproximada. Es **descriptivo y calculado**, no explica causas, exige al menos 5 vídeos y lo dice en pantalla. Probado con tests unitarios y navegador sobre datos sembrados; **no** probado con datos reales porque depende del OAuth de Google. Desde 2026-10-08 el panel de Guiones muestra el mismo resumen («Lo que ha funcionado en tu canal», etiquetado como calculado, sin llamada de IA) junto al borrador. Pendiente: priorizar oportunidades con estas señales.
 
 ## Duplicados de oportunidades (2026-10-07)
 

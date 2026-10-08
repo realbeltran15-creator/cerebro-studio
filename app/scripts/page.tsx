@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { learningFromSnapshots, type Learning, type SnapshotRow } from '@/lib/analytics/learning'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
@@ -52,6 +53,7 @@ export default function ScriptsPage() {
   const [requestedScript, setRequestedScript] = useState('')
   const [assistReady, setAssistReady] = useState<boolean | null>(null)
   const [assistBusy, setAssistBusy] = useState<ScriptAssistMode | null>(null)
+  const [learning, setLearning] = useState<Learning | null>(null)
   const [proposal, setProposal] = useState<(ScriptAssistProposal & { mode: ScriptAssistMode; model: string }) | null>(null)
 
   const project = projects.find(p => p.id === projectId) ?? null
@@ -90,6 +92,12 @@ export default function ScriptsPage() {
     setSelectedId(pick?.id ?? '')
     setDraft(pick ? toDraft(pick) : null)
     setDirty(false)
+  }, [supabase])
+
+  // Closing the loop: what already worked on the owner's channel, shown beside the script (calculated, descriptive; no AI call).
+  useEffect(() => {
+    void supabase.from('metric_snapshots').select('external_content_id,metric_date,project_id,observed').eq('platform', 'youtube').order('metric_date', { ascending: false }).limit(400)
+      .then((res: { data: SnapshotRow[] | null }) => setLearning(res.data?.length ? learningFromSnapshots(res.data) : null), () => setLearning(null))
   }, [supabase])
 
   useEffect(() => { if (projectId) void loadProject(projectId, requestedScript) }, [projectId, requestedScript, loadProject])
@@ -268,6 +276,18 @@ export default function ScriptsPage() {
             <div className="legend">{(Object.keys(basisLabels) as ScriptBasis[]).map(b => <span key={b} className="pill" title={basisHelp[b]}>{basisLabels[b]}</span>)}</div>
             <p className="muted small" style={{ marginTop: 10 }}>Los hechos y testimonios necesitan fuente. La reconstrucción no inventa emociones, diálogos ni detalles.</p>
           </section>
+          {learning?.enough && (learning.outperformers.length > 0 || learning.lengthBuckets.length > 0) && (
+            <section className="panel">
+              <h3 style={{ marginBottom: 8 }}>Lo que ha funcionado en tu canal</h3>
+              <span className="pill info" title="Calculado a partir de tus vídeos importados. Describe qué pasó, no por qué.">Calculado</span>
+              {learning.outperformers.length > 0 && <>
+                <p className="muted small" style={{ margin: '8px 0 4px' }}>Vídeos con al menos 2× la mediana de vistas:</p>
+                <ul className="small" style={{ paddingLeft: 18 }}>{learning.outperformers.slice(0, 3).map(v => <li key={v.id}>{v.title} ({v.ratio}×)</li>)}</ul>
+              </>}
+              {learning.lengthBuckets.length > 0 && <p className="muted small" style={{ marginTop: 8 }}>Mediana de vistas por duración: {learning.lengthBuckets.map(b => `${b.label} → ${Math.round(b.medianViews).toLocaleString('es-ES')} (${b.count} vídeos)`).join(' · ')}.</p>}
+              <p className="muted small" style={{ marginTop: 8 }}>Úsalo como referencia al elegir hook y duración; con pocos vídeos puede ser casualidad.</p>
+            </section>
+          )}
           <section className="panel">
             <span className={assistReady ? 'stateBadge state-functional' : 'stateBadge state-integration_ready'}>Asistencia IA</span>
             {assistReady === false && <p className="muted small" style={{ marginTop: 8 }}>Necesita <code>OPENAI_TEXT_API_KEY</code> u <code>OPENAI_API_KEY</code> en el servidor.</p>}

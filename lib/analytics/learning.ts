@@ -39,3 +39,16 @@ export function learnFromVideos(videos: LearningVideo[]): Learning {
   base.notes.push('La duración del vídeo se deduce de la duración media vista dividida por el porcentaje visto (dato calculado, aproximado).')
   return base
 }
+
+export type SnapshotRow = { external_content_id: string; metric_date: string; project_id?: string | null; observed: Record<string, unknown> }
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** Learning from stored YouTube snapshots: only per-video rows of the most recent import day (channel rows are skipped). */
+export function learningFromSnapshots(rows: SnapshotRow[]): Learning {
+  const perVideo = rows.filter(r => !r.external_content_id.startsWith('channel:'))
+  const latest = perVideo.map(r => r.metric_date).sort().at(-1)
+  return learnFromVideos(perVideo.filter(r => r.metric_date === latest).map(r => ({
+    id: r.external_content_id, title: String(r.observed.title ?? r.external_content_id), projectId: r.project_id ?? null,
+    views: num(r.observed.views), avgViewPercentage: num(r.observed.averageViewPercentage), avgViewDurationSeconds: num(r.observed.averageViewDuration),
+  })))
+}

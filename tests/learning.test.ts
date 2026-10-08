@@ -26,3 +26,25 @@ describe('learnFromVideos (calculated, descriptive)', () => {
     expect(learnFromVideos([v(1, null), v(2, null)]).sampleSize).toBe(0)
   })
 })
+
+describe('learningFromSnapshots', () => {
+  const row = (id: string, date: string, views: number, extra: Record<string, unknown> = {}) => ({ external_content_id: id, metric_date: date, observed: { title: `T ${id}`, views, ...extra } })
+  it('ignores channel rows and older import days', async () => {
+    const { learningFromSnapshots } = await import('@/lib/analytics/learning')
+    const rows = [
+      row('channel:daily', '2026-10-07', 99999),
+      ...['a', 'b', 'c', 'd'].map(id => row(id, '2026-10-07', 100)),
+      row('e', '2026-10-07', 1000),
+      row('old', '2026-09-01', 5000),
+    ]
+    const out = learningFromSnapshots(rows)
+    expect(out.sampleSize).toBe(5)
+    expect(out.outperformers.map(v => v.id)).toEqual(['e'])
+  })
+  it('reports too little data instead of conclusions', async () => {
+    const { learningFromSnapshots } = await import('@/lib/analytics/learning')
+    const out = learningFromSnapshots([row('a', '2026-10-07', 10)])
+    expect(out.enough).toBe(false)
+    expect(out.outperformers).toEqual([])
+  })
+})
