@@ -6,7 +6,8 @@ vi.mock('../lib/shorts/gemini', async () => {
 })
 import { generateJson } from '../lib/shorts/gemini'
 import { verifySources } from '../lib/shorts/sources'
-import { decryptTokens, encryptTokens, initPrivateUpload } from '../lib/shorts/youtube'
+import { decryptJson, encryptJson } from '../lib/security/tokens'
+import { initPrivateUpload } from '../lib/shorts/youtube'
 import { DEFAULT_CONFIG } from '../lib/shorts/types'
 
 const PAGE_A = `<html><title>Pulpo</title><body>${'Texto de relleno. '.repeat(30)} Los pulpos tienen tres corazones: dos bombean sangre a las branquias y uno al cuerpo. ${'Más texto. '.repeat(20)}</body></html>`
@@ -68,19 +69,19 @@ describe('verificación de fuentes', () => {
   })
 })
 
-describe('tokens de YouTube', () => {
+describe('tokens de YouTube (cifrado compartido con el flujo OAuth)', () => {
   beforeEach(() => { process.env.TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64') })
   it('usa el formato v1.iv.tag.datos del flujo OAuth existente y hace ida y vuelta', () => {
     const t = { access_token: 'a', refresh_token: 'r', expires_at: 1, scope: 's', token_type: 'Bearer' }
-    const enc = encryptTokens(t)
+    const enc = encryptJson(t)
     expect(enc.split('.')).toHaveLength(4)
     expect(enc.startsWith('v1.')).toBe(true)
-    expect(decryptTokens(enc)).toEqual(t)
+    expect(decryptJson(enc)).toEqual(t)
   })
   it('falla con un token manipulado', () => {
-    const enc = encryptTokens({ access_token: 'a', expires_at: 1, scope: 's', token_type: 'Bearer' })
+    const enc = encryptJson({ access_token: 'a', expires_at: 1, scope: 's', token_type: 'Bearer' })
     const parts = enc.split('.'); parts[3] = Buffer.from('zzzz').toString('base64url')
-    expect(() => decryptTokens(parts.join('.'))).toThrow()
+    expect(() => decryptJson(parts.join('.'))).toThrow()
   })
 })
 

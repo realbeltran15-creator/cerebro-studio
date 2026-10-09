@@ -1,2 +1,2 @@
-import { ModulePage } from '../components/studio-shell'
-export default function Page(){return <ModulePage title="Voces" description="Configura narración, idioma, voz y versiones de locución." steps={['Texto','Voz','Idioma','Generar']}/>}
+import { ProviderGenerator } from '../components/provider-generator'
+export default function Page(){return <ProviderGenerator title="Voces" kind="voice" description="Convierte texto en narración con el proveedor configurado y registra automáticamente el audio generado."/>}

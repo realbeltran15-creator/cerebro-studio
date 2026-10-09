@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "node scripts/browser-tests.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "latest",
@@ -21,9 +22,11 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "esbuild": "^0.28.2",
     "eslint": "latest",
     "eslint-config-next": "latest",
+    "playwright-core": "^1.56.1",
     "typescript": "latest",
-    "vitest": "^5.0.3"
+    "vitest": "latest"
   }
 }

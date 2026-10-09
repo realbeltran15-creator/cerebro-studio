@@ -1,0 +1,4 @@
+import { NextResponse } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+export const dynamic='force-dynamic'
+export async function GET(_request:Request,{params}:{params:Promise<{id:string}>}){const{id}=await params;const supabase=await createServerSupabaseClient();const{data:{user}}=await supabase.auth.getUser();if(!user)return NextResponse.json({error:'Unauthorized'},{status:401});const{data:asset}=await supabase.from('assets').select('id,owner_id,storage_path').eq('id',id).eq('owner_id',user.id).maybeSingle();if(!asset?.storage_path)return NextResponse.json({error:'Asset not found'},{status:404});const{data,error}=await supabase.storage.from('generated-assets').createSignedUrl(asset.storage_path,300);if(error||!data?.signedUrl)return NextResponse.json({error:'Could not create asset access URL'},{status:503});return NextResponse.json({url:data.signedUrl,expiresIn:300},{headers:{'Cache-Control':'no-store'}})}
