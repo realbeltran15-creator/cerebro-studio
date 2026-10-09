@@ -1,3 +1,4 @@
+import { ArrayBufferTarget, Muxer } from 'mp4-muxer'
 import type { Manifest } from './types'
 
 /**
@@ -5,7 +6,12 @@ import type { Manifest } from './types'
  * Se graba en tiempo real, así que dura lo mismo que el Short y la pestaña debe seguir visible.
  */
 
-export type RenderedVideo = { blob: Blob; mime: string; ext: 'mp4' | 'webm'; seconds: number }
+export type RenderedVideo = {
+  blob: Blob; mime: string; ext: 'mp4' | 'webm'; seconds: number
+  /** webcodecs: más rápido que tiempo real y exacto fotograma a fotograma; mediarecorder: tiempo real, pestaña visible. */
+  method: 'webcodecs' | 'mediarecorder'
+  codecs: string
+}
 
 const MIME_CANDIDATES = [
   'video/mp4;codecs=avc1.640028,mp4a.40.2',
@@ -149,7 +155,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, m: Manifest, images: Ca
 
 // ---------- Render ----------
 
-export async function renderShort(
+async function renderRealtime(
   m: Manifest,
   images: CanvasImageSource[],
   voice: ArrayBuffer,
@@ -200,5 +206,112 @@ export async function renderShort(
   stream.getTracks().forEach(tr => tr.stop())
   await audio.close()
   const type = mime.startsWith('video/mp4') ? 'video/mp4' : 'video/webm'
-  return { blob: new Blob(chunks, { type }), mime: type, ext: type === 'video/mp4' ? 'mp4' : 'webm', seconds: m.duration }
+  return { blob: new Blob(chunks, { type }), mime: type, ext: type === 'video/mp4' ? 'mp4' : 'webm', seconds: m.duration, method: 'mediarecorder', codecs: mime }
+}
+
+// ---------- Render rápido con WebCodecs (preferido) ----------
+
+const VIDEO_CODECS = [
+  { webcodecs: 'avc1.640028', muxer: 'avc' as const },
+  { webcodecs: 'avc1.4d0028', muxer: 'avc' as const },
+  { webcodecs: 'vp09.00.40.08', muxer: 'vp9' as const },
+]
+const AUDIO_CODECS = [
+  { webcodecs: 'mp4a.40.2', muxer: 'aac' as const },
+  { webcodecs: 'opus', muxer: 'opus' as const },
+]
+const AUDIO_RATE = 48000
+
+export const webCodecsAvailable = () =>
+  typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined' && typeof VideoFrame !== 'undefined' && typeof AudioData !== 'undefined'
+
+/** Voz + música mezcladas offline (la música a 13 % para que nunca tape la voz). */
+async function mixAudio(m: Manifest, voice: ArrayBuffer) {
+  const decoder = new OfflineAudioContext(1, AUDIO_RATE, AUDIO_RATE)
+  const voiceBuffer = await decoder.decodeAudioData(voice.slice(0))
+  const music = await buildMusic(m.music.seed, m.duration)
+  const ctx = new OfflineAudioContext(2, Math.ceil(AUDIO_RATE * m.duration), AUDIO_RATE)
+  const v = ctx.createBufferSource(); v.buffer = voiceBuffer
+  const mu = ctx.createBufferSource(); mu.buffer = music
+  const mg = ctx.createGain(); mg.gain.value = 0.13
+  v.connect(ctx.destination); mu.connect(mg).connect(ctx.destination)
+  v.start(0); mu.start(0)
+  return ctx.startRendering()
+}
+
+/** Cede el hilo sin el límite de 1 s por tick que los navegadores aplican a setTimeout en pestañas ocultas. */
+const yieldNow = () => new Promise<void>(resolve => { const c = new MessageChannel(); c.port1.onmessage = () => { c.port1.close(); resolve() }; c.port2.postMessage(0) })
+
+async function renderFast(m: Manifest, images: CanvasImageSource[], voice: ArrayBuffer, onProgress: (f: number) => void): Promise<RenderedVideo> {
+  const vc = await (async () => {
+    for (const c of VIDEO_CODECS) {
+      const cfg = { codec: c.webcodecs, width: m.width, height: m.height, bitrate: 6_000_000, framerate: m.fps }
+      if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { ...c, cfg }
+    }
+    return null
+  })()
+  const ac = await (async () => {
+    for (const c of AUDIO_CODECS) {
+      const cfg = { codec: c.webcodecs, sampleRate: AUDIO_RATE, numberOfChannels: 2, bitrate: 160_000 }
+      if ((await AudioEncoder.isConfigSupported(cfg)).supported) return { ...c, cfg }
+    }
+    return null
+  })()
+  if (!vc || !ac) throw new Error('WebCodecs sin códec de vídeo/audio soportado')
+
+  const target = new ArrayBufferTarget()
+  const muxer = new Muxer({
+    target, fastStart: 'in-memory',
+    video: { codec: vc.muxer, width: m.width, height: m.height, frameRate: m.fps },
+    audio: { codec: ac.muxer, sampleRate: AUDIO_RATE, numberOfChannels: 2 },
+  })
+  const state: { failure: Error | null } = { failure: null }
+  const fail = (e: { message: string }) => { state.failure = new Error(e.message) }
+  const venc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: fail })
+  venc.configure(vc.cfg)
+  const aenc = new AudioEncoder({ output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), error: fail })
+  aenc.configure(ac.cfg)
+
+  // Audio (rápido): mezcla offline → AudioData planar en bloques de 1 s.
+  const mix = await mixAudio(m, voice)
+  const block = AUDIO_RATE
+  for (let at = 0; at < mix.length; at += block) {
+    const n = Math.min(block, mix.length - at)
+    const planar = new Float32Array(n * 2)
+    planar.set(mix.getChannelData(0).subarray(at, at + n), 0)
+    planar.set(mix.getChannelData(1).subarray(at, at + n), n)
+    const data = new AudioData({ format: 'f32-planar', sampleRate: AUDIO_RATE, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round((at / AUDIO_RATE) * 1e6), data: planar })
+    aenc.encode(data); data.close()
+    if (state.failure) throw state.failure
+  }
+
+  // Vídeo: un fotograma por 1/fps, sin depender del reloj ni de la visibilidad de la pestaña.
+  const canvas = document.createElement('canvas')
+  canvas.width = m.width; canvas.height = m.height
+  const ctx = canvas.getContext('2d')!
+  const frames = Math.ceil(m.duration * m.fps)
+  for (let i = 0; i < frames; i++) {
+    drawFrame(ctx, m, images, Math.min(i / m.fps, m.duration - 0.001))
+    const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / m.fps), duration: Math.round(1e6 / m.fps) })
+    venc.encode(frame, { keyFrame: i % (m.fps * 2) === 0 })
+    frame.close()
+    while (venc.encodeQueueSize > 6) await yieldNow()
+    if (state.failure) throw state.failure
+    if (i % 5 === 0) { onProgress(i / frames); await yieldNow() }
+  }
+  await venc.flush(); await aenc.flush()
+  if (state.failure) throw state.failure
+  muxer.finalize()
+  venc.close(); aenc.close()
+  onProgress(1)
+  return { blob: new Blob([target.buffer], { type: 'video/mp4' }), mime: 'video/mp4', ext: 'mp4', seconds: m.duration, method: 'webcodecs', codecs: `${vc.webcodecs} + ${ac.webcodecs}` }
+}
+
+/** Intenta primero WebCodecs; si el navegador no puede, graba en tiempo real con MediaRecorder. */
+export async function renderShort(m: Manifest, images: CanvasImageSource[], voice: ArrayBuffer, onProgress: (fraction: number) => void): Promise<RenderedVideo> {
+  if (webCodecsAvailable()) {
+    try { return await renderFast(m, images, voice, onProgress) } catch (e) { console.warn('Render rápido no disponible, uso MediaRecorder:', e) }
+  }
+  onProgress(0)
+  return renderRealtime(m, images, voice, onProgress)
 }

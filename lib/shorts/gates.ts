@@ -215,3 +215,24 @@ export function isSameTopic(a: string, b: string, threshold = 0.6) {
   const inter = [...A].filter(x => B.has(x)).length
   return inter / (A.size + B.size - inter) >= threshold
 }
+
+/**
+ * Acerca cada corte de escena (calculado por caracteres) a la pausa real de la voz más cercana.
+ * Mantiene el orden y una separación mínima; si no hay pausa a ≤ tol segundos, deja el corte inferido.
+ */
+export function snapToPauses(targets: number[], pauses: number[], tol = 1.2, minGap = 1.2) {
+  const out: number[] = []
+  let prev = 0
+  for (const t of targets) {
+    let best = t
+    let bestD = tol
+    for (const p of pauses) {
+      const d = Math.abs(p - t)
+      if (d <= bestD && p > prev + minGap) { best = p; bestD = d }
+    }
+    best = Math.max(best, prev + minGap)
+    out.push(Math.round(best * 1000) / 1000)
+    prev = best
+  }
+  return out
+}

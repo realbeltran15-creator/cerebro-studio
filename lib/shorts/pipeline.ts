@@ -3,7 +3,7 @@ import { generateImage } from './cloudflare'
 import { pipelineMissing } from './env'
 import { FreeTierExhausted, generateJson, synthesizeSpeech } from './gemini'
 import {
-  allocateTimes, audioGates, chunkWords, evaluateInterest, hookGates, isSameTopic, scoreCandidate, scriptGates, sourceGate,
+  allocateTimes, audioGates, chunkWords, evaluateInterest, hookGates, isSameTopic, scoreCandidate, scriptGates, snapToPauses, sourceGate,
 } from './gates'
 import { loadRetention } from './metrics'
 import { enrichOpportunity, ideateTopics, loadCandidates, YouTubeQuotaError } from './radar'
@@ -193,7 +193,12 @@ export async function prepareDailyShort(db: SupabaseClient, ownerId: string, opt
     const scenes: Manifest['scenes'] = []
     const texts = script.beats.map((b, i) => (i === 0 ? `${script.hook} ${b.text}` : b.text))
     const total = voice.seconds + 0.8
-    const sceneTimes = allocateTimes(texts, total)
+    // Cortes de escena: primero por caracteres (inferido) y luego anclados a las pausas reales de la voz cuando existen.
+    const proportional = allocateTimes(texts, total)
+    const cuts = snapToPauses(proportional.slice(0, -1).map(t => t.end), voice.pauses ?? [])
+    const bounds = [0, ...cuts, total]
+    const sceneTimes = texts.map((text, i) => ({ text, start: bounds[i], end: bounds[i + 1] }))
+    const snapped = cuts.filter((c, i) => Math.abs(c - proportional[i].end) > 0.001).length
     for (let i = 0; i < script.beats.length; i++) {
       const img = await generateImage(`${script.beats[i].visual_prompt}. Vertical 9:16 composition, subject centered, cinematic lighting, highly detailed, no text, no letters, no watermark.`)
       const imagePath = `${base}/scene-${i}.${img.mime === 'image/png' ? 'png' : 'jpg'}`
@@ -209,7 +214,7 @@ export async function prepareDailyShort(db: SupabaseClient, ownerId: string, opt
       width: 1080, height: 1920, fps: 30, duration: total, voice_path: voicePath, voice_duration: voice.seconds,
       scenes, hook: { text: script.hook, key_datum: facts.key_datum, overlay_until: Math.min(2.6, voice.seconds) },
       music: { kind: 'procedural', seed: Math.floor(Date.now() / 1000) % 100000, license: 'Generada proceduralmente en el navegador (Web Audio); sin material de terceros ni derechos de autor ajenos.' },
-      timing_basis: 'inferred_from_characters',
+      timing_basis: snapped ? 'scene_cuts_snapped_to_voice_pauses' : 'inferred_from_characters',
     }
 
     const sourcesText = facts.sources.map(s => `• ${s.title ?? s.domain}: ${s.url}`).join('\n')

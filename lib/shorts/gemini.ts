@@ -1,4 +1,4 @@
-import { pcmToWav, pcmSeconds, sampleRateFromMime, trimSilence } from './wav'
+import { detectPauses, pcmToWav, pcmSeconds, sampleRateFromMime, trimSilence } from './wav'
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta'
 
@@ -60,5 +60,5 @@ export async function synthesizeSpeech(text: string, voiceName: string) {
   if (!inline?.data) throw new Error('Gemini TTS no devolvió audio')
   const rate = sampleRateFromMime(inline.mimeType)
   const pcm = trimSilence(new Uint8Array(Buffer.from(inline.data, 'base64')), rate)
-  return { wav: pcmToWav(pcm, rate), seconds: pcmSeconds(pcm, rate), sampleRate: rate }
+  return { wav: pcmToWav(pcm, rate), seconds: pcmSeconds(pcm, rate), sampleRate: rate, pauses: detectPauses(pcm, rate) }
 }

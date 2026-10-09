@@ -84,7 +84,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   for (const [k, v] of Object.entries(env)) process.env[k] = v
   vi.mocked(verifySources).mockResolvedValue({ sources: SOURCES, checked: [] })
-  vi.mocked(synthesizeSpeech).mockResolvedValue({ wav: new Uint8Array(100), seconds: 32, sampleRate: 24000 })
+  vi.mocked(synthesizeSpeech).mockResolvedValue({ wav: new Uint8Array(100), seconds: 32, sampleRate: 24000, pauses: [] })
   vi.mocked(generateImage).mockResolvedValue({ bytes: new Uint8Array(20000), mime: 'image/jpeg' })
   mockLLM()
 })
@@ -117,6 +117,19 @@ describe('pipeline de la Fábrica de Shorts', () => {
     expect(uploads).toHaveLength(6) // 5 imágenes + voz
     expect(uploads.every(p => p.startsWith(`${OWNER}/`))).toBe(true)
     expect(tables.opportunities[0].status).toBe('experiment_approved')
+  })
+
+  it('ancla los cortes de escena a las pausas reales de la voz', async () => {
+    vi.mocked(synthesizeSpeech).mockResolvedValue({ wav: new Uint8Array(100), seconds: 32, sampleRate: 24000, pauses: [8.0, 14.0, 20.2, 26.1] })
+    const { db, tables } = fakeDb(seed())
+    await prepareDailyShort(db, OWNER, { today: '2026-10-09' })
+    const m = tables.shorts[0].manifest
+    const ends = m.scenes.slice(0, -1).map((x: any) => x.end)
+    expect(ends.every((e: number) => [8.0, 14.0, 20.2, 26.1].some(p => Math.abs(p - e) < 0.01))).toBe(true)
+    expect(m.timing_basis).toBe('scene_cuts_snapped_to_voice_pauses')
+    expect(m.scenes[0].start).toBe(0)
+    expect(m.scenes.at(-1).end).toBeCloseTo(32.8, 1)
+    expect(m.scenes.every((x: any, i: number) => i === 0 || Math.abs(x.start - m.scenes[i - 1].end) < 1e-6)).toBe(true)
   })
 
   it('no crea un segundo Short el mismo día', async () => {
@@ -153,7 +166,7 @@ describe('pipeline de la Fábrica de Shorts', () => {
   })
 
   it('descarta si la voz gratuita no cumple duración/hook (no se paga otra voz)', async () => {
-    vi.mocked(synthesizeSpeech).mockResolvedValue({ wav: new Uint8Array(100), seconds: 75, sampleRate: 24000 })
+    vi.mocked(synthesizeSpeech).mockResolvedValue({ wav: new Uint8Array(100), seconds: 75, sampleRate: 24000, pauses: [] })
     const { db } = fakeDb(seed())
     const r = await prepareDailyShort(db, OWNER, { today: '2026-10-09' })
     expect(r).toMatchObject({ status: 'discarded', reason: 'audio_bajo_calidad_minima' })

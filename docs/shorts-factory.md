@@ -21,7 +21,7 @@ Pantallas: `/automations/shorts` (panel) y `/automations/shorts/[id]` (aprobaci�
 ## Flujo
 
 1. **Cron diario** (`/api/cron/shorts-daily`, 05:30 UTC) o botón «Preparar Short de hoy»: tema → hechos y fuentes → guion → voz → imágenes → manifiesto 9:16 con subtítulos. Todo queda en `shorts` + bucket privado `shorts-assets`.
-2. **Al abrir la pantalla de aprobación** el navegador renderiza el vídeo (canvas 1080×1920 + voz + música procedural → MediaRecorder). MP4 si el navegador lo soporta (Chrome/Edge/Safari recientes), si no WebM. Se graba en tiempo real: ~35 s con la pestaña visible.
+2. **Al abrir la pantalla de aprobación** el navegador renderiza el vídeo (canvas 1080×1920 + voz + música procedural). Modo rápido con WebCodecs + `mp4-muxer` (MP4 H.264/AAC en Chrome/Edge/Safari recientes; VP9/Opus si el navegador no trae H.264), más rápido que tiempo real y sin depender de que la pestaña esté visible. Si el navegador no admite WebCodecs, respaldo con MediaRecorder en tiempo real (~35 s, pestaña visible; MP4 o WebM).
 3. Jesús revisa controles, fuentes y vídeo, marca las dos confirmaciones y **aprueba** (o rechaza).
 4. «Subir como privado»: el servidor abre una subida reanudable (el token no sale del servidor) y el navegador sube el archivo directamente a YouTube; el servidor verifica que el vídeo quedó privado.
 5. **Cron de métricas** (`/api/cron/shorts-metrics`, 09:15 UTC): cuando el vídeo es público y su ventana de 7 días lleva cerrada ≥2 días, guarda la retención media.
@@ -55,14 +55,14 @@ Además: **aplicar la migración** `supabase/migrations/20261009090000_shorts_fa
 
 ## Supuestos y límites conocidos
 
-- **Tiempos de subtítulos y de escena**: se reparten por número de caracteres sobre la duración real de la voz (inferido, no alineado palabra a palabra).
+- **Tiempos**: los cortes de escena se calculan por caracteres y se anclan a la pausa real de la voz más cercana (≤1,2 s) cuando existe; los subtítulos dentro de cada escena se reparten por caracteres (inferido, no alineado palabra a palabra). El manifiesto lo indica en `timing_basis`.
 - **Retención**: mientras el vídeo esté privado no hay audiencia; la ventana de 7 días empieza en `snippet.publishedAt` cuando ya es público. Con <30 vistas se guarda pero no se usa para priorizar.
 - **Cuota de YouTube Data API**: cada candidato nuevo cuesta ~101 unidades (de 10 000/día); la mediana del nicho se cachea 7 días.
 - **Gemini free tier cambia sin aviso**: si deja de ofrecer un modelo o baja la cuota, ese día no hay Short. No hay *grounding* con Google Search porque agota la cuota gratuita; las fuentes se verifican descargándolas.
-- El render exige pestaña visible y un navegador con `MediaRecorder`.
+- El render necesita un navegador con WebCodecs o `MediaRecorder` (este último, con pestaña visible).
 - `lib/publication/guard.ts` asume una columna `action_key` que no existe en el esquema desplegado de `approvals`; los Shorts usan `entity_type='short'`/`entity_id` (`lib/shorts/approval.ts`).
 - El OAuth/cifrado vive también en la rama `claude/happy-albattani-qthwrp` (`lib/oauth/google.ts`, `lib/security/tokens.ts`); `lib/shorts/youtube.ts` implementa el mismo formato para no depender de ella. Al fusionar conviene consolidar.
 
 ## Pruebas
 
-`npm test` (vitest): reglas de interés/fuentes/hook, aprobación, pipeline completo con BD y servicios simulados (camino feliz y cada descarte), verificación de fuentes (cita literal, SSRF), cifrado de tokens y petición de subida privada.
+`npm test` (vitest): reglas de interés/fuentes/hook, pausas y anclaje de escenas, aprobación, pipeline completo con BD y servicios simulados (camino feliz y cada descarte), verificación de fuentes (cita literal, SSRF), cifrado de tokens y petición de subida privada.

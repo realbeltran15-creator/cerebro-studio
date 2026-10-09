@@ -33,3 +33,32 @@ export function trimSilence(pcm: Uint8Array, sampleRate = 24000, threshold = 400
   const to = Math.min(s.length, b + 1 + pad)
   return aligned.slice(from * 2, to * 2)
 }
+
+/**
+ * Pausas reales de la voz (puntos medios en segundos, relativos al inicio del audio ya recortado).
+ * Umbral adaptativo respecto al nivel de la propia locución; solo pausas ≥ minMs, que son las de fin de frase.
+ */
+export function detectPauses(pcm: Uint8Array, sampleRate = 24000, minMs = 160) {
+  const aligned = pcm.slice()
+  const s = new Int16Array(aligned.buffer, 0, Math.floor(aligned.length / 2))
+  const win = Math.floor(sampleRate * 0.02)
+  const rms: number[] = []
+  for (let i = 0; i + win <= s.length; i += win) {
+    let acc = 0
+    for (let j = 0; j < win; j++) acc += s[i + j] * s[i + j]
+    rms.push(Math.sqrt(acc / win))
+  }
+  if (!rms.length) return []
+  const sorted = [...rms].sort((a, b) => a - b)
+  const loud = sorted[Math.floor(sorted.length * 0.9)]
+  const threshold = Math.max(loud * 0.06, 60)
+  const pauses: number[] = []
+  let start = -1
+  const flush = (endIdx: number) => {
+    if (start >= 0 && (endIdx - start) * 20 >= minMs) pauses.push(((start + endIdx) / 2) * 0.02)
+    start = -1
+  }
+  rms.forEach((v, i) => { if (v < threshold) { if (start < 0) start = i } else flush(i) })
+  // Una pausa al final del audio no separa nada: se ignora.
+  return pauses
+}

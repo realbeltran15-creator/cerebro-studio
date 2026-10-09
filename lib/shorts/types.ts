@@ -70,7 +70,7 @@ export type Manifest = {
   scenes: ManifestScene[]
   hook: { text: string; key_datum: string; overlay_until: number }
   music: { kind: 'procedural'; seed: number; license: string }
-  timing_basis: 'inferred_from_characters'
+  timing_basis: 'inferred_from_characters' | 'scene_cuts_snapped_to_voice_pauses'
 }
 
 export type GateResult = { name: string; pass: boolean; detail: string }

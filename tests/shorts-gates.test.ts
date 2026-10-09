@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  allocateTimes, audioGates, categoryRetention, chunkWords, evaluateInterest, hookGates, independentReliableSources, isPublicHttpUrl,
+  allocateTimes, audioGates, snapToPauses, categoryRetention, chunkWords, evaluateInterest, hookGates, independentReliableSources, isPublicHttpUrl,
   isSameTopic, measuredHookSeconds, normalizeTopicKey, quoteAppearsIn, scoreCandidate, scriptGates,
 } from '../lib/shorts/gates'
 import { DEFAULT_CONFIG, type Candidate, type Script } from '../lib/shorts/types'
-import { pcmSeconds, pcmToWav, trimSilence } from '../lib/shorts/wav'
+import { detectPauses, pcmSeconds, pcmToWav, trimSilence } from '../lib/shorts/wav'
 
 const cfg = DEFAULT_CONFIG
 const interest = (views: number[], niche: number, trend: 'rising' | 'flat' | 'falling' | null = 'flat') => ({ similarViews: views, nicheMedian: niche, trend })
@@ -137,5 +137,29 @@ describe('audio WAV', () => {
     expect(String.fromCharCode(...wav.slice(0, 4))).toBe('RIFF')
     expect(String.fromCharCode(...wav.slice(8, 12))).toBe('WAVE')
     expect(wav.length).toBe(44 + trimmed.length)
+  })
+})
+
+describe('alineación con la voz real', () => {
+  const rate = 24000
+  const speech = (from: number, to: number, view: Int16Array) => { for (let i = Math.floor(from * rate); i < Math.floor(to * rate); i++) view[i] = (i % 40 < 20 ? 6000 : -6000) }
+  it('detecta pausas de fin de frase y no los silencios cortos', () => {
+    const pcm = new Uint8Array(rate * 2 * 10)
+    const v = new Int16Array(pcm.buffer)
+    speech(0, 3, v); speech(3.4, 6, v); speech(6.05, 10, v) // pausa de 0,4 s en 3,2 s y de 0,05 s (se ignora)
+    const p = detectPauses(pcm, rate)
+    expect(p).toHaveLength(1)
+    expect(p[0]).toBeGreaterThan(3.1)
+    expect(p[0]).toBeLessThan(3.3)
+  })
+  it('ancla cortes a la pausa cercana y deja el corte inferido si no hay ninguna', () => {
+    expect(snapToPauses([8.9, 14.3], [8.4, 13.9, 20])).toEqual([8.4, 13.9])
+    expect(snapToPauses([8.9, 14.3], [])).toEqual([8.9, 14.3])
+    expect(snapToPauses([8.9], [3, 20])).toEqual([8.9]) // demasiado lejos
+  })
+  it('mantiene el orden y la separación mínima entre cortes', () => {
+    const out = snapToPauses([5, 5.5, 9], [5.2])
+    expect(out[1] - out[0]).toBeGreaterThanOrEqual(1.2)
+    expect(out[2]).toBeGreaterThan(out[1])
   })
 })

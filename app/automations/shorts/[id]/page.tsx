@@ -89,10 +89,12 @@ export default function ShortApprovalPage() {
   async function uploadPrivate() {
     if (!video) return
     setBusy('upload'); setMessage(''); setUploadPct(0)
+    let opened = false
     try {
       const s = await fetch(`/api/shorts/${id}/upload-session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ size: video.blob.size, type: video.mime }) })
       const sj = await s.json()
       if (!s.ok) throw new Error(sj.error ?? 'No se pudo abrir la subida')
+      opened = true
       const videoId = await new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
         xhr.open('PUT', sj.uploadUrl)
@@ -111,7 +113,8 @@ export default function ShortApprovalPage() {
     } catch (e) {
       const text = e instanceof Error ? e.message : 'Error de subida'
       setMessage(text)
-      await fetch(`/api/shorts/${id}/uploaded`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ failed: text }) }).catch(() => undefined)
+      // Si la sesión no llegó a abrirse, el servidor ya dejó el Short en «subida fallida».
+      if (opened) await fetch(`/api/shorts/${id}/uploaded`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ failed: text }) }).catch(() => undefined)
     }
     setUploadPct(null); await load(); setBusy('')
   }
@@ -136,8 +139,8 @@ export default function ShortApprovalPage() {
             {renderError || (progress != null ? `Renderizando en tu navegador… ${Math.round(progress * 100)}%` : 'Preparando render…')}</p>}
         </div>
         {progress != null && <><div className={css.progress}><div style={{ width: `${progress * 100}%` }} /></div>
-          <p className={css.muted}>Se graba en tiempo real (~{Math.round((short.manifest as Manifest).duration)} s). Mantén esta pestaña visible hasta que termine.</p></>}
-        {video && <p className={css.muted}>Render listo: {video.ext.toUpperCase()} · {(video.blob.size / 1e6).toFixed(1)} MB{video.ext === 'webm' ? ' — este navegador no graba MP4; YouTube acepta WebM, pero usa Chrome/Edge/Safari recientes para MP4.' : ''}</p>}
+          <p className={css.muted}>Render en tu navegador. Si no admite el modo rápido (WebCodecs), se graba en tiempo real (~{Math.round((short.manifest as Manifest).duration)} s) y la pestaña debe seguir visible.</p></>}
+        {video && <p className={css.muted}>Render listo: {video.ext.toUpperCase()} · {(video.blob.size / 1e6).toFixed(1)} MB · {video.method === 'webcodecs' ? 'modo rápido' : 'tiempo real'} · {video.codecs}{video.ext === 'webm' ? ' — este navegador no graba MP4; YouTube acepta WebM, pero usa Chrome/Edge/Safari recientes para MP4.' : ''}</p>}
         {renderError && <button onClick={() => { setRenderError(''); rendering.current = false; setShort({ ...short }) }}>Reintentar render</button>}
         {!pickMime() && <p className="error">Este navegador no puede grabar vídeo.</p>}
       </div>
@@ -146,7 +149,7 @@ export default function ShortApprovalPage() {
         <div className={css.panel}><h2>Hook y dato principal (primeros 2 s)</h2>
           <div className={css.hook}><Hook hook={short.script.hook ?? ''} datum={short.script.key_datum ?? ''} /></div>
           <div style={{ marginTop: 12 }}>{gates.map(g => <div key={g.name} className={css.gate}><span>{g.pass ? '✅' : '❌'}</span><span><b>{g.name}</b> — {g.detail}</span></div>)}</div>
-          <p className={css.muted}>La duración del hook se mide con la voz real generada; el reparto de tiempos por escena y subtítulos es proporcional a los caracteres (inferido, no medido palabra a palabra).</p>
+          <p className={css.muted}>La duración del hook se mide con la voz real generada. Los cortes de escena se anclan a las pausas reales de la voz cuando las hay; dentro de cada escena los subtítulos se reparten por caracteres (inferido, no medido palabra a palabra).</p>
         </div>
 
         <div className={css.panel}><h2>Fuentes ({short.facts.sources?.length ?? 0})</h2>

@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
+    "mp4-muxer": "^5.2.2",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"
