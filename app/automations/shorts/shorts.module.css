@@ -1,0 +1,30 @@
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:14px 0}
+.list{display:grid;gap:10px;margin-top:16px}
+.item{display:flex;justify-content:space-between;gap:16px;align-items:center;background:#101526;border:1px solid #242b43;border-radius:12px;padding:14px 16px}
+.item h3{margin:0 0 4px;font-size:15px}
+.item p{margin:0;color:#939cb8;font-size:13px}
+.badge{font-size:11px;font-weight:700;letter-spacing:.06em;padding:4px 9px;border-radius:99px;background:#1a2036;color:#aeb5ce;white-space:nowrap}
+.ok{background:#12301f;color:#6fe3a0}.warn{background:#3a2d10;color:#ffd166}.bad{background:#3a1620;color:#ff8da1}
+.missing{background:#241a10;border:1px solid #5a4020;border-radius:12px;padding:14px 16px;margin:14px 0}
+.missing code{color:#ffd166}
+.layout{display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:24px;align-items:start}
+.phone{background:#000;border:1px solid #303854;border-radius:18px;overflow:hidden;aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;position:relative}
+.phone video{width:100%;height:100%;object-fit:contain}
+.progress{height:6px;background:#1a2036;border-radius:99px;overflow:hidden;margin-top:10px}
+.progress>div{height:100%;background:#7657ff;transition:width .2s}
+.panel{background:#101526;border:1px solid #242b43;border-radius:13px;padding:18px;margin-bottom:16px}
+.panel h2{margin:0 0 10px;font-size:16px}
+.gate{display:flex;gap:8px;font-size:14px;margin:6px 0;color:#c7cde2}
+.source{border-top:1px solid #242b43;padding:12px 0;font-size:14px}
+.source:first-of-type{border-top:0}
+.source a{color:#9c89ff;word-break:break-all}
+.source blockquote{margin:6px 0 0;padding-left:10px;border-left:3px solid #7657ff;color:#aeb5ce;font-size:13px}
+.hook{font-size:22px;font-weight:800;line-height:1.3}
+.hook mark{background:#ffd84a;color:#111;padding:0 5px;border-radius:5px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cols h3{margin:0 0 6px;font-size:12px;letter-spacing:.1em;color:#7f88a8}
+.check{display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-size:14px;line-height:1.4}
+.check input{margin-top:3px}
+.danger{background:#3a1620;color:#ff8da1}
+.muted{color:#939cb8;font-size:13px;line-height:1.5}
+@media(max-width:850px){.layout{grid-template-columns:1fr}.cols{grid-template-columns:1fr}}

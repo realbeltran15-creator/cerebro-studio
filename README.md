@@ -22,3 +22,7 @@ Market intelligence → opportunity → approval → production → storyboard �
 - OAuth tokens handled server-side only
 - Audit trail and explicit publication approvals
 - Asset provenance/licensing metadata
+
+## Fábrica de Shorts
+
+Automatización diaria de Shorts de curiosidades con aprobación manual: ver [docs/shorts-factory.md](docs/shorts-factory.md).

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 
 export const studioModules = [
-  ['Dashboard','/'],['Market Intelligence','/market-intelligence'],['Radar','/radar'],['Oportunidades','/opportunities'],['Proyectos','/projects'],['Crear vídeo','/create'],['Guiones','/scripts'],['Imágenes','/images'],['Vídeos','/videos'],['Voces','/voices'],['Música / SFX','/audio'],['Editor','/editor'],['Shorts / Reels / TikTok','/repurpose'],['Miniaturas','/thumbnails'],['YouTube','/youtube'],['Analytics','/analytics'],['Biblioteca','/library'],['Automatizaciones','/automations'],['Conectores','/connectors']
+  ['Dashboard','/'],['Market Intelligence','/market-intelligence'],['Radar','/radar'],['Oportunidades','/opportunities'],['Proyectos','/projects'],['Crear vídeo','/create'],['Guiones','/scripts'],['Imágenes','/images'],['Vídeos','/videos'],['Voces','/voices'],['Música / SFX','/audio'],['Editor','/editor'],['Shorts / Reels / TikTok','/repurpose'],['Miniaturas','/thumbnails'],['YouTube','/youtube'],['Analytics','/analytics'],['Biblioteca','/library'],['Automatizaciones','/automations'],['Fábrica de Shorts','/automations/shorts'],['Conectores','/connectors']
 ] as const
 
 export function StudioShell({title,children}:{title:string;children:React.ReactNode}) {
