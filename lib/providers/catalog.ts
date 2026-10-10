@@ -11,9 +11,30 @@
 import type { CostTier } from './directory'
 
 export type Modality = 'image' | 'video' | 'voice' | 'music' | 'sfx' | 'ambient'
-export type ProviderId = 'openai' | 'fal' | 'elevenlabs' | 'cloudflare' | 'gemini' | 'higgsfield'
+export type ProviderId = 'openai' | 'fal' | 'elevenlabs' | 'cloudflare' | 'gemini' | 'higgsfield' | 'alibaba' | 'topmediai'
 export type Format = '16:9' | '9:16' | '1:1'
-export type Capability = 'text_in_image' | 'native_audio' | 'loop' | 'instrumental' | 'vocals' | 'voice_direction' | 'account_voices' | 'spanish' | 'negative_prompt' | 'variants'
+export type Capability = 'text_in_image' | 'native_audio' | 'loop' | 'instrumental' | 'vocals' | 'voice_direction' | 'account_voices' | 'spanish' | 'negative_prompt' | 'variants' | 'reference_images' | 'photoreal'
+
+/**
+ * How much we actually know about a model. Nothing is presented as working unless it was exercised:
+ *  - tested: a real request to the provider confirmed the behaviour stated (see evidenceNote and date).
+ *  - documented: the provider's own documentation says so; we did not call it with a real key.
+ *  - secondary: only third-party sources (blogs, resellers) say so; treat as a lead, not a fact.
+ *  - unverified: implemented from documentation fragments; the exact response shape is not confirmed.
+ * Automatic strategies never pick `unverified` models; they must be chosen by hand.
+ */
+export type Evidence = 'tested' | 'documented' | 'secondary' | 'unverified'
+
+/** Commercial-use position of the OUTPUT, as published by the provider. Always re-check the plan and terms. */
+export type Rights = 'commercial' | 'plan_dependent' | 'non_commercial' | 'check_terms'
+
+/**
+ * Free allowance of a pool shared by every model of a provider account.
+ * daily/monthly renew by themselves; promo is a one-off grant that expires (validDays after activation).
+ */
+export type AllowanceKind = 'daily' | 'monthly' | 'promo'
+export type AllowanceUnit = 'neurons' | 'seconds' | 'characters' | 'usd'
+export type Allowance = { pool: string; kind: AllowanceKind; amount: number; unit: AllowanceUnit; validDays?: number; note: string }
 
 export type CatalogModel = {
   id: string
@@ -45,6 +66,21 @@ export type CatalogModel = {
   negative?: boolean
   /** Spends account credits with an unpublished per-model price: always needs an explicit confirmation. */
   confirm?: boolean
+  /** What we know about this model and how (default: documented). */
+  evidence?: Evidence
+  evidenceNote?: string
+  /** Free allowance this model draws from (pool shared across the provider's models). */
+  allowance?: Allowance
+  /** Units of that allowance one generation uses (e.g. neurons); 0/undefined when it does not apply. */
+  allowanceUnits?: (o: GenerationOptions) => number
+  rights?: Rights
+  rightsNote?: string
+  /** Largest output, e.g. "1920×1920", "720p", "1080p". */
+  maxResolution?: string
+  /** Shortest side in pixels of the largest output; used to filter by resolution. */
+  maxShortSidePx?: number
+  /** Reference images accepted by the model (identity / style references). */
+  references?: { max: number; note?: string }
 }
 
 export type GenerationOptions = {
@@ -55,9 +91,26 @@ export type GenerationOptions = {
   audio?: boolean
   instrumental?: boolean
   loop?: boolean
+  /** Number of reference images attached (changes the cost of some models). */
+  references?: number
 }
 
 const n = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
+
+/** Output size used for each format by models that take explicit width/height (multiples of 16, within 256–1920). */
+export const imageDimensions: Record<Format, { width: number; height: number }> = {
+  '16:9': { width: 1344, height: 768 }, '9:16': { width: 768, height: 1344 }, '1:1': { width: 1024, height: 1024 },
+}
+const dims = (o: GenerationOptions) => imageDimensions[o.format ?? '16:9']
+/** Workers AI bills images per 512×512 tile; an area-based count is an ESTIMATE of that. */
+const tiles = (o: GenerationOptions) => Math.ceil((dims(o).width * dims(o).height) / (512 * 512))
+const megapixels = (o: GenerationOptions) => Math.ceil((dims(o).width * dims(o).height) / 1e6)
+
+export const POOLS = {
+  cloudflare: { pool: 'cloudflare-neurons', kind: 'daily', amount: 10_000, unit: 'neurons', note: '10.000 neuronas gratis al día; se renuevan a las 00:00 UTC.' } satisfies Allowance,
+  alibabaWan: { pool: 'alibaba-wan-promo', kind: 'promo', amount: 50, unit: 'seconds', validDays: 90, note: 'Cuota de bienvenida de Alibaba Cloud Model Studio (Singapur): 30–50 s de vídeo Wan durante 90 días desde la activación. No se renueva y, con una cuenta verificada, pasa a cobrar por uso al agotarse.' } satisfies Allowance,
+  topmediaiTts: { pool: 'topmediai-tts-chars', kind: 'promo', amount: 5_000, unit: 'characters', note: 'La API de voz de TopMediai indica 5.000 caracteres gratuitos; no está documentado si se renuevan.' } satisfies Allowance,
+} as const
 
 export const catalog: CatalogModel[] = [
   // ---------- Images ----------
@@ -67,13 +120,17 @@ export const catalog: CatalogModel[] = [
     tier: 'free', price: 'Gratis con 10.000 neuronas/día (≈ 4,8 neuronas por tesela 512² + 9,6 por paso)', priceConfirmed: true,
     estimateUsd: () => 0, quality: 2, speed: 'fast', limits: 'Máx. 8 pasos; salida cuadrada 1024².', capabilities: [],
     env: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'], sync: true, formats: ['1:1'],
+    evidence: 'documented', evidenceNote: 'Adaptador existente según la documentación de Cloudflare; no probado con credenciales en esta sesión.',
+    allowance: POOLS.cloudflare, allowanceUnits: () => Math.round((4 * 4.8 + 8 * 9.6) * 100) / 100,
+    rights: 'check_terms', rightsNote: 'FLUX.1 [schnell] se publica bajo Apache 2.0 según Black Forest Labs; confírmalo en su ficha.', maxResolution: '1024×1024', maxShortSidePx: 1024,
   },
   {
     id: 'openai:gpt-image-1', modality: 'image', provider: 'openai', label: 'OpenAI GPT Image',
-    strength: 'Realismo documental con los estilos del canal; sigue bien instrucciones largas.',
+    strength: 'Realismo documental con los estilos del canal. Según terceros se retira el 23-oct-2026: usa GPT Image 2 / 1.5.',
     tier: 'paid', price: '≈ $0.06 (media) · $0.25 (alta) por imagen horizontal', priceConfirmed: true,
-    estimateUsd: o => (o.quality === 'high' ? 0.25 : 0.06), quality: 4, speed: 'medium', capabilities: ['text_in_image'],
+    estimateUsd: o => (o.quality === 'high' ? 0.25 : 0.06), quality: 4, speed: 'medium', capabilities: ['text_in_image', 'reference_images'],
     env: ['OPENAI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'], maxVariants: 1,
+    evidence: 'documented', rights: 'commercial', maxResolution: '1536×1024', maxShortSidePx: 1024, references: { max: 10, note: 'images/edits' },
   },
   {
     id: 'fal:fal-ai/flux-2-pro', modality: 'image', provider: 'fal', label: 'FLUX.2 Pro',
@@ -96,6 +153,89 @@ export const catalog: CatalogModel[] = [
     estimateUsd: o => 0.06 * n(o.variants, 1), quality: 4, speed: 'fast', capabilities: ['text_in_image', 'negative_prompt', 'variants'],
     env: ['FAL_KEY'], sync: false, formats: ['16:9', '9:16', '1:1'], maxVariants: 4, negative: true,
   },
+  // --- Gratis (Cloudflare Workers AI, dentro de las 10.000 neuronas diarias) ---
+  {
+    id: 'cloudflare:@cf/black-forest-labs/flux-2-klein-4b', modality: 'image', provider: 'cloudflare', label: 'FLUX.2 klein 4B (Cloudflare) · modo gratis',
+    strength: 'La mejor imagen sin coste: FLUX.2 en 4 pasos, más realista que FLUX.1 schnell, con hasta 4 imágenes de referencia para mantener un personaje.',
+    tier: 'free', price: 'Gratis dentro de 10.000 neuronas/día: ≈ 26 neuronas por tesela 512² de salida y ≈ 5 por referencia (≈ 100 imágenes/día a 1344×768).', priceConfirmed: true,
+    estimateUsd: () => 0, quality: 3, speed: 'fast', capabilities: ['reference_images', 'photoreal'],
+    limits: 'Lado entre 256 y 1920 px; 4 pasos fijos; referencias de hasta 512×512 (Cerebro las reduce). Sin prompt negativo.',
+    env: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'], sync: true, formats: ['16:9', '9:16', '1:1'],
+    evidence: 'documented', evidenceNote: 'Ficha y precios en developers.cloudflare.com (consultados 2026-10-10). No se pudo llamar sin credenciales de Cloudflare.',
+    allowance: POOLS.cloudflare, allowanceUnits: o => Math.round((tiles(o) * 26.05 + n(o.references, 0) * 5.37) * 100) / 100,
+    rights: 'check_terms', rightsNote: 'Licencia del modelo FLUX.2 [klein] de Black Forest Labs; revisa si tu uso comercial la cumple.',
+    maxResolution: '1920×1920', maxShortSidePx: 1920, references: { max: 4, note: 'input_image_0…3, ≤ 512×512' },
+  },
+  {
+    id: 'cloudflare:@cf/black-forest-labs/flux-2-klein-9b', modality: 'image', provider: 'cloudflare', label: 'FLUX.2 klein 9B (Cloudflare) · gratis, más calidad',
+    strength: 'Más detalle y fidelidad que la 4B, a cambio de gastar el cupo diario más rápido (unas 7 imágenes al día).',
+    tier: 'free', price: '≈ $0,015 por megapíxel en la tarifa de Cloudflare (≈ 1.360 neuronas): unas 7 imágenes/día dentro del cupo gratuito.', priceConfirmed: false,
+    estimateUsd: () => 0, quality: 4, speed: 'medium', capabilities: ['reference_images', 'photoreal'],
+    limits: 'Puede requerir el plan Workers Paid: Cloudflare limita en Free algunos modelos pesados (error 403/5035).',
+    env: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'], sync: true, formats: ['16:9', '9:16', '1:1'],
+    evidence: 'unverified', evidenceNote: 'El precio por megapíxel sale de la tabla de Cloudflare; la conversión a neuronas y el esquema de entrada se deducen de la ficha de la 4B. Sin llamada real: solo se usa si la eliges a mano.',
+    allowance: POOLS.cloudflare, allowanceUnits: o => Math.round(megapixels(o) * 1363.64),
+    rights: 'check_terms', rightsNote: 'Licencia de FLUX.2 [klein] 9B de Black Forest Labs; revisa los términos.',
+    maxResolution: '1920×1920', maxShortSidePx: 1920, references: { max: 4, note: 'mismo esquema que la 4B (sin confirmar)' },
+  },
+  // --- Máxima calidad (de pago): Gemini / Nano Banana ---
+  {
+    id: 'gemini:gemini-3-pro-image', modality: 'image', provider: 'gemini', label: 'Nano Banana Pro (Gemini API) · máxima calidad',
+    strength: 'Escenas complejas, texto legible y hasta 14 imágenes de referencia para personajes y objetos coherentes.',
+    tier: 'paid', price: 'De pago: sin nivel gratuito en la API (comprobado: 429 con clave gratuita, 2026-10-10). Referencia ≈ $0,13–0,15 por imagen.', priceConfirmed: false,
+    estimateUsd: () => 0.15, quality: 5, speed: 'medium', capabilities: ['text_in_image', 'reference_images', 'photoreal'],
+    limits: 'Exige facturación activa en Google AI Studio / Cloud. Marca SynthID.',
+    env: ['GEMINI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'],
+    evidence: 'documented', evidenceNote: 'Modelo listado en tu clave y rechazado sin facturación (429) el 2026-10-10; el formato de respuesta es el de la documentación de generateContent y no se pudo ejecutar con éxito.',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini: el contenido generado es tuyo; revisa SynthID y políticas de uso.',
+    maxResolution: '4K', maxShortSidePx: 2160, references: { max: 14, note: 'según la documentación de Google' },
+  },
+  {
+    id: 'gemini:gemini-3.1-flash-image', modality: 'image', provider: 'gemini', label: 'Nano Banana 2 (Gemini API)',
+    strength: 'Casi la calidad de Pro más rápido y más barato; buenas referencias de personaje.',
+    tier: 'paid', price: 'De pago: sin nivel gratuito en la API (comprobado 2026-10-10). Precio exacto no confirmado; referencia ≈ $0,07.', priceConfirmed: false,
+    estimateUsd: () => 0.07, quality: 4, speed: 'fast', capabilities: ['text_in_image', 'reference_images', 'photoreal'],
+    env: ['GEMINI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'],
+    evidence: 'documented', evidenceNote: 'Igual que Pro: existe en tu clave, exige facturación (429 sin ella).',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini.', maxResolution: '2K', maxShortSidePx: 2048, references: { max: 3, note: 'cifra prudente; Google admite más según el modelo' },
+  },
+  {
+    id: 'gemini:gemini-3.1-flash-lite-image', modality: 'image', provider: 'gemini', label: 'Nano Banana 2 Lite (Gemini API)',
+    strength: 'La opción de Google más barata para borradores y variaciones.',
+    tier: 'paid', price: 'De pago: sin nivel gratuito en la API (comprobado 2026-10-10). Precio exacto no confirmado; referencia ≈ $0,04.', priceConfirmed: false,
+    estimateUsd: () => 0.04, quality: 3, speed: 'fast', capabilities: ['reference_images', 'photoreal'],
+    env: ['GEMINI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'],
+    evidence: 'documented', evidenceNote: 'Igual que Pro: existe en tu clave, exige facturación (429 sin ella).',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini.', maxResolution: '1K', maxShortSidePx: 1024, references: { max: 3, note: 'cifra prudente' },
+  },
+  // --- Máxima calidad (de pago): OpenAI ---
+  {
+    id: 'openai:gpt-image-2', modality: 'image', provider: 'openai', label: 'OpenAI GPT Image 2 · máxima calidad',
+    strength: 'El generador de imágenes de ChatGPT por API: líder en realismo y en seguir instrucciones largas; edición con varias referencias.',
+    tier: 'paid', price: 'De pago. Precio no confirmado en la documentación oficial; referencia ≈ $0,05 (media) · $0,20 (alta) por imagen.', priceConfirmed: false,
+    estimateUsd: o => (o.quality === 'high' ? 0.2 : 0.05), quality: 5, speed: 'medium', capabilities: ['text_in_image', 'reference_images', 'photoreal'],
+    env: ['OPENAI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'], maxVariants: 1,
+    evidence: 'secondary', evidenceNote: 'El identificador gpt-image-2 y su precio aparecen solo en fuentes de terceros (2026-10-10). Si OpenAI lo rechaza, la llamada falla sin coste.',
+    rights: 'commercial', rightsNote: 'OpenAI: el contenido generado pertenece al usuario según sus condiciones.', maxResolution: '1536×1024', maxShortSidePx: 1024,
+    references: { max: 10, note: 'images/edits con varias imágenes' },
+  },
+  {
+    id: 'openai:gpt-image-1.5', modality: 'image', provider: 'openai', label: 'OpenAI GPT Image 1.5',
+    strength: 'Generación anterior de ChatGPT Images: muy buena, más barata que la 2.',
+    tier: 'paid', price: 'De pago: ≈ $0,05 (media) · $0,20 (alta) por imagen horizontal/vertical según guías de terceros.', priceConfirmed: false,
+    estimateUsd: o => (o.quality === 'high' ? 0.2 : 0.05), quality: 4, speed: 'medium', capabilities: ['text_in_image', 'reference_images', 'photoreal'],
+    env: ['OPENAI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'], maxVariants: 1,
+    evidence: 'secondary', evidenceNote: 'Precios y existencia confirmados solo por terceros.', rights: 'commercial', maxResolution: '1536×1024', maxShortSidePx: 1024,
+    references: { max: 10, note: 'images/edits con varias imágenes' },
+  },
+  {
+    id: 'openai:gpt-image-1-mini', modality: 'image', provider: 'openai', label: 'OpenAI GPT Image 1 mini · barato',
+    strength: 'Imagen de pago al menor coste de OpenAI; para borradores y volumen.',
+    tier: 'paid', price: 'De pago: desde ≈ $0,005 hasta ≈ $0,05 por imagen según calidad y tamaño (terceros).', priceConfirmed: false,
+    estimateUsd: o => (o.quality === 'high' ? 0.05 : 0.015), quality: 3, speed: 'fast', capabilities: ['text_in_image', 'reference_images'],
+    env: ['OPENAI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'], maxVariants: 1,
+    evidence: 'secondary', evidenceNote: 'Precios de terceros.', rights: 'commercial', maxResolution: '1536×1024', maxShortSidePx: 1024, references: { max: 10 },
+  },
   // ---------- Video ----------
   {
     id: 'gemini:veo-3.1-fast-generate-preview', modality: 'video', provider: 'gemini', label: 'Google Veo 3.1 Fast (API oficial)',
@@ -104,6 +244,28 @@ export const catalog: CatalogModel[] = [
     estimateUsd: o => n(o.durationSeconds, 8) * 0.15, quality: 5, speed: 'slow',
     limits: '4, 6 u 8 s; 720p por defecto. El resultado se borra de Google a los 2 días (Cerebro lo copia antes).', capabilities: ['native_audio'],
     env: ['GEMINI_API_KEY'], sync: false, formats: ['16:9', '9:16'], durations: [4, 6, 8],
+    evidence: 'documented', evidenceNote: 'Sin nivel gratuito: la API respondió 429 con la clave gratuita el 2026-10-10 (Veo 3.1 Lite). El tipo de durationSeconds debe ser numérico (corregido).',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini; vídeo con marca SynthID.', maxResolution: '720p', maxShortSidePx: 720,
+  },
+  {
+    id: 'gemini:veo-3.1-lite-generate-preview', modality: 'video', provider: 'gemini', label: 'Google Veo 3.1 Lite (API oficial) · el Veo más barato',
+    strength: 'El Veo más económico por la API oficial; vídeo con sonido nativo para pruebas y volumen.',
+    tier: 'paid', price: 'De pago. Terceros indican ≈ $0,05/s a 720p; Google no lo confirma en la fuente consultada.', priceConfirmed: false,
+    estimateUsd: o => n(o.durationSeconds, 8) * 0.05, quality: 4, speed: 'slow',
+    limits: '4, 6 u 8 s. El resultado se borra de Google a los 2 días (Cerebro lo copia antes).', capabilities: ['native_audio'],
+    env: ['GEMINI_API_KEY'], sync: false, formats: ['16:9', '9:16'], durations: [4, 6, 8],
+    evidence: 'documented', evidenceNote: 'Listado en tu clave (predictLongRunning). Sin nivel gratuito: 429 el 2026-10-10.',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini; SynthID.', maxResolution: '1080p', maxShortSidePx: 720,
+  },
+  {
+    id: 'gemini:veo-3.1-generate-preview', modality: 'video', provider: 'gemini', label: 'Google Veo 3.1 (API oficial) · máxima calidad',
+    strength: 'Veo 3.1 estándar: la mayor calidad y fidelidad de Google, con sonido nativo.',
+    tier: 'paid', price: 'De pago. Terceros indican ≈ $0,40/s (720p y 1080p); sin confirmar en la fuente oficial consultada.', priceConfirmed: false,
+    estimateUsd: o => n(o.durationSeconds, 8) * 0.4, quality: 5, speed: 'slow',
+    limits: '4, 6 u 8 s. El resultado se borra de Google a los 2 días (Cerebro lo copia antes).', capabilities: ['native_audio'],
+    env: ['GEMINI_API_KEY'], sync: false, formats: ['16:9', '9:16'], durations: [4, 6, 8],
+    evidence: 'documented', evidenceNote: 'Listado en tu clave (predictLongRunning). Sin nivel gratuito: 429 el 2026-10-10 con el modelo Lite.',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini; SynthID.', maxResolution: '4K', maxShortSidePx: 1080,
   },
   {
     id: 'higgsfield:higgsfield-ai/soul/standard', modality: 'image', provider: 'higgsfield', label: 'Higgsfield Soul',
@@ -147,6 +309,17 @@ export const catalog: CatalogModel[] = [
     estimateUsd: o => n(o.durationSeconds, 8) * (o.audio === false ? 0.1 : 0.15), quality: 5, speed: 'slow', capabilities: ['native_audio', 'negative_prompt'],
     env: ['FAL_KEY'], sync: false, formats: ['16:9', '9:16'], durations: [4, 6, 8], negative: true,
   },
+  {
+    id: 'alibaba:wan2.2-t2v-plus', modality: 'video', provider: 'alibaba', label: 'Wan 2.2 Plus (Alibaba Model Studio) · cuota de bienvenida',
+    strength: 'Wan 2.2 oficial de Alibaba por su API. Sirve para aprovechar la cuota gratuita de bienvenida (≈ 50 s durante 90 días); no se renueva.',
+    tier: 'credits', price: 'Gratis dentro de la cuota de bienvenida (solo nuevos usuarios, 90 días). Al agotarla, una cuenta verificada cobra por segundo (tabla de Model Studio, no consultada).', priceConfirmed: false,
+    estimateUsd: () => 0, quality: 4, speed: 'slow', limits: 'Clips de 5 s. Cerebro se niega a enviar cuando su contador local indica que la cuota se agotó, para no generar cargos.',
+    capabilities: ['negative_prompt'],
+    env: ['DASHSCOPE_API_KEY'], sync: false, formats: ['16:9', '9:16', '1:1'], durations: [5], negative: true, confirm: true,
+    evidence: 'unverified', evidenceNote: 'Cuota y facturación según la documentación oficial de Model Studio (consultada vía buscador). El endpoint, los parámetros y el nombre exacto del modelo vienen de la documentación DashScope y no se pudieron probar: no hay clave ni acceso a ese dominio desde aquí.',
+    allowance: POOLS.alibabaWan, allowanceUnits: o => n(o.durationSeconds, 5),
+    rights: 'check_terms', rightsNote: 'Revisa las condiciones de uso comercial de Alibaba Cloud Model Studio para tu cuenta.', maxResolution: '1080p', maxShortSidePx: 720,
+  },
   // ---------- Voice ----------
   {
     id: 'cloudflare:@cf/myshell-ai/melotts', modality: 'voice', provider: 'cloudflare', label: 'MeloTTS (Cloudflare)',
@@ -161,6 +334,8 @@ export const catalog: CatalogModel[] = [
     tier: 'freemium', price: 'Nivel gratuito; de pago: $0.50/1M tokens de texto + $9/1M tokens de audio', priceConfirmed: true,
     estimateUsd: () => 0, quality: 4, speed: 'fast', capabilities: ['spanish', 'voice_direction'],
     env: ['GEMINI_API_KEY'], sync: true,
+    evidence: 'tested', evidenceNote: 'generateContent con gemini-3.8-flash-tts devolvió audio/wav con la clave gratuita el 2026-10-10 (HTTP 200).',
+    rights: 'commercial', rightsNote: 'Condiciones de la API de Gemini; audio con marca SynthID.',
   },
   {
     id: 'elevenlabs:eleven_multilingual_v2', modality: 'voice', provider: 'elevenlabs', label: 'ElevenLabs Multilingual v2',
@@ -175,6 +350,16 @@ export const catalog: CatalogModel[] = [
     tier: 'paid', price: '≈ $0.015 por minuto de audio', priceConfirmed: true,
     estimateUsd: () => 0.015, quality: 4, speed: 'fast', capabilities: ['spanish', 'voice_direction'],
     env: ['OPENAI_VOICE_API_KEY'], sync: true,
+  },
+  {
+    id: 'topmediai:text2speech', modality: 'voice', provider: 'topmediai', label: 'TopMediai Voz (API oficial)',
+    strength: 'Voces de TopMediai por su API oficial (más de 3.200 voces y 190 idiomas según su web). La API se contrata aparte de tus suscripciones.',
+    tier: 'freemium', price: 'API aparte de tus planes: 5.000 caracteres gratuitos; después, plan de API de pago (precio en su web, sin confirmar).', priceConfirmed: false,
+    estimateUsd: () => 0, quality: 3, speed: 'fast', capabilities: ['spanish'],
+    limits: 'Máx. 500 caracteres por petición. Necesita el ID del speaker (TOPMEDIAI_SPEAKER o el campo de voz).',
+    env: ['TOPMEDIAI_API_KEY'], sync: true, confirm: true,
+    evidence: 'unverified', evidenceNote: 'Endpoint, cabecera x-api-key y campos text/speaker/emotion según docs.topmediai.com (vía buscador). La forma exacta de la respuesta no está confirmada: el adaptador acepta audio directo o JSON con una URL, y falla de forma explícita si no reconoce la respuesta.',
+    allowance: POOLS.topmediaiTts, rights: 'plan_dependent', rightsNote: 'TopMediai: el uso comercial depende del plan de pago; los planes gratuitos son de uso personal.',
   },
   // ---------- Music ----------
   {
@@ -214,6 +399,9 @@ export const modalityLabels: Record<Modality, string> = {
 
 /** Voices of OpenAI's speech API (documented set). */
 export const openAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'] as const
+
+export const evidenceOf = (m: CatalogModel): Evidence => m.evidence ?? 'documented'
+export const rightsOf = (m: CatalogModel): Rights => m.rights ?? 'check_terms'
 
 export function modelById(id: string) {
   return catalog.find(m => m.id === id)

@@ -2,13 +2,16 @@
  * One entry point per provider. The Creation Studio routes only call `startGeneration` and
  * `pollGeneration`; adding a provider means adding a case here plus its catalogue entries.
  */
-import { falEndpoint, falInput, falOutputs, type CatalogModel, type GenerationOptions } from '../catalog'
+import { falEndpoint, falInput, falOutputs, imageDimensions, type CatalogModel, type GenerationOptions } from '../catalog'
 import { falResult, falStatus, falSubmit, type FalJob } from '../fal-queue'
 import { OpenAIImageProvider } from '../openai-image'
 import { composeMusic, generateSoundEffect, synthesizeWithSettings, type VoiceSettings } from '../elevenlabs'
 import { synthesizeSteerable } from '../openai-voice'
-import { cloudflareImage, cloudflareSpeech } from '../cloudflare'
-import { geminiSpeech, veoDownload, veoStatus, veoSubmit, type VeoJob } from '../gemini'
+import { cloudflareFlux2Image, cloudflareImage, cloudflareSpeech } from '../cloudflare'
+import { geminiImage, geminiSpeech, veoDownload, veoStatus, veoSubmit, type VeoJob } from '../gemini'
+import { wanModelName, wanStatus, wanSubmit, type WanJob } from '../dashscope'
+import { topmediaiSpeech } from '../topmediai'
+import { shrinkReference, type ReferenceImage } from '../references'
 import { sizeForFormat } from '../image-presets'
 import { higgsfieldInput, higgsfieldStatus, higgsfieldSubmit, type HiggsfieldJob } from '../higgsfield'
 import type { GeneratedAsset, ProviderContext } from '../types'
@@ -23,11 +26,13 @@ export type GenerationInput = {
   voiceSettings?: VoiceSettings
   instructions?: string
   language?: string
+  /** Reference images already loaded and ownership-checked (character consistency). */
+  references?: ReferenceImage[]
   context: ProviderContext
 }
 
 /** A queued job; serialised (encrypted) into the token the page polls with. */
-export type JobRef = { provider: 'fal'; fal: FalJob } | { provider: 'gemini'; veo: VeoJob } | { provider: 'higgsfield'; hf: HiggsfieldJob }
+export type JobRef = { provider: 'fal'; fal: FalJob } | { provider: 'gemini'; veo: VeoJob } | { provider: 'higgsfield'; hf: HiggsfieldJob } | { provider: 'alibaba'; wan: WanJob }
 
 export type StartResult = { kind: 'assets'; assets: GeneratedAsset[] } | { kind: 'job'; job: JobRef; externalId: string }
 
@@ -47,7 +52,20 @@ export async function startGeneration(input: GenerationInput): Promise<StartResu
       const hf = await higgsfieldSubmit(path, higgsfieldInput(path, finalPrompt, { format, durationSeconds: options.durationSeconds, variants: options.variants, negative: input.negative }), context.requestId)
       return { kind: 'job', job: { provider: 'higgsfield', hf }, externalId: hf.requestId }
     }
+    case 'alibaba': {
+      if (model.modality !== 'video') break
+      const fmt = (['16:9', '9:16', '1:1'] as const).find(f => f === format) ?? '16:9'
+      const wan = await wanSubmit(wanModelName(model.id), finalPrompt, { format: fmt, durationSeconds: 5, negativePrompt: input.negative })
+      return { kind: 'job', job: { provider: 'alibaba', wan }, externalId: wan.taskId }
+    }
+    case 'topmediai':
+      if (model.modality === 'voice') return { kind: 'assets', assets: [await topmediaiSpeech(context, prompt, input.voice ?? '', input.instructions)] }
+      break
     case 'gemini': {
+      if (model.modality === 'image') {
+        const aspectRatio = (['16:9', '9:16', '1:1'] as const).find(f => f === format) ?? '16:9'
+        return { kind: 'assets', assets: [await geminiImage(context, model.id.slice('gemini:'.length), finalPrompt, { aspectRatio, references: input.references })] }
+      }
       if (model.modality === 'voice') return { kind: 'assets', assets: [await geminiSpeech(context, prompt, input.voice ?? 'Charon', input.instructions)] }
       if (model.modality === 'video') {
         const id = model.id.slice('gemini:'.length)
@@ -58,11 +76,20 @@ export async function startGeneration(input: GenerationInput): Promise<StartResu
       break
     }
     case 'cloudflare':
-      if (model.modality === 'image') return { kind: 'assets', assets: [await cloudflareImage(context, finalPrompt)] }
+      if (model.modality === 'image') {
+        const name = model.id.slice('cloudflare:'.length)
+        if (name === '@cf/black-forest-labs/flux-2-klein-4b' || name === '@cf/black-forest-labs/flux-2-klein-9b') {
+          // Workers AI takes references of at most 512×512: shrink them here so the browser never has to.
+          const refs = await Promise.all((input.references ?? []).slice(0, 4).map(r => shrinkReference(r, 512)))
+          const d = imageDimensions[format]
+          return { kind: 'assets', assets: [await cloudflareFlux2Image(context, name, finalPrompt, { width: d.width, height: d.height, references: refs })] }
+        }
+        return { kind: 'assets', assets: [await cloudflareImage(context, finalPrompt)] }
+      }
       if (model.modality === 'voice') return { kind: 'assets', assets: [await cloudflareSpeech(context, prompt, input.language ?? 'es')] }
       break
     case 'openai':
-      if (model.modality === 'image') return { kind: 'assets', assets: [await new OpenAIImageProvider().generateImage(context, finalPrompt, { size: sizeForFormat(format), quality: options.quality === 'high' ? 'high' : 'medium' })] }
+      if (model.modality === 'image') return { kind: 'assets', assets: [await new OpenAIImageProvider().generateImage(context, finalPrompt, { model: model.id.slice('openai:'.length), size: sizeForFormat(format), quality: options.quality === 'high' ? 'high' : 'medium', references: input.references })] }
       if (model.modality === 'voice') return { kind: 'assets', assets: [await synthesizeSteerable(context, prompt, input.voice ?? 'onyx', input.instructions)] }
       break
     case 'elevenlabs':
@@ -91,6 +118,12 @@ export async function pollGeneration(model: CatalogModel, job: JobRef): Promise<
       return { state: 'failed', error: 'fal.ai terminó sin devolver archivos (posible filtro de seguridad). No se ha guardado nada.' }
     }
     return { state: 'done', media: outputs.map((o, i) => ({ uri: o.url, mimeType: o.contentType, externalId: `${job.fal.requestId}#${i}` })) }
+  }
+  if (job.provider === 'alibaba') {
+    const s = await wanStatus(job.wan)
+    if (s.state === 'done') return { state: 'done', media: [{ uri: s.videoUrl, mimeType: 'video/mp4', externalId: `${job.wan.taskId}#0` }] }
+    if (s.state === 'failed') return s
+    return { state: s.state }
   }
   if (job.provider === 'higgsfield') {
     const s = await higgsfieldStatus(job.hf)

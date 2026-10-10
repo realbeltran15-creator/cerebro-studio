@@ -1,4 +1,5 @@
 import type { GeneratedAsset, ProviderContext } from './types'
+import type { ReferenceImage } from './references'
 
 /**
  * Google Gemini API (server-only, GEMINI_API_KEY) — the official way to use Google's generation
@@ -35,7 +36,8 @@ export type VeoJob = { operation: string; model: string }
 export async function veoSubmit(model: string, prompt: string, o: { aspectRatio: '16:9' | '9:16'; durationSeconds: 4 | 6 | 8; negativePrompt?: string }): Promise<VeoJob> {
   if (!geminiConfigured()) throw new Error('Gemini API is not configured.')
   if (!/^veo-[a-z0-9.-]+$/.test(model)) throw new Error('Invalid Veo model.')
-  const parameters: Record<string, unknown> = { aspectRatio: o.aspectRatio, durationSeconds: String(o.durationSeconds), resolution: '720p', personGeneration: 'allow_adult' }
+  // durationSeconds must be a JSON number: a string is rejected with INVALID_ARGUMENT (checked live 2026-10-10).
+  const parameters: Record<string, unknown> = { aspectRatio: o.aspectRatio, durationSeconds: o.durationSeconds, resolution: '720p', personGeneration: 'allow_adult' }
   if (o.negativePrompt?.trim()) parameters.negativePrompt = o.negativePrompt.trim().slice(0, 1000)
   const r = await fetch(`${API}/models/${model}:predictLongRunning`, {
     method: 'POST', headers: headers(), cache: 'no-store', signal: AbortSignal.timeout(30000),
@@ -77,4 +79,34 @@ export async function veoDownload(videoUri: string): Promise<string> {
   const bytes = Buffer.from(await r.arrayBuffer())
   if (!bytes.length || bytes.byteLength > 200 * 1024 * 1024) throw new Error('Tamaño de vídeo no válido.')
   return `data:video/mp4;base64,${bytes.toString('base64')}`
+}
+
+export type GeminiImageOptions = { aspectRatio: '16:9' | '9:16' | '1:1'; references?: ReferenceImage[]; imageSize?: '1K' | '2K' | '4K' }
+
+/**
+ * Nano Banana models through generateContent. Paid only: with a free-tier key every image model
+ * answers 429 (checked 2026-10-10), which the route reports as "cupo gratuito agotado / sin saldo".
+ * Reference images travel as inline_data parts after the text.
+ */
+export async function geminiImage(context: ProviderContext, model: string, prompt: string, o: GeminiImageOptions): Promise<GeneratedAsset> {
+  if (!geminiConfigured()) throw new Error('Gemini API is not configured.')
+  if (!/^[a-z0-9.-]+$/.test(model)) throw new Error('Invalid Gemini image model.')
+  const parts: Array<Record<string, unknown>> = [{ text: prompt.slice(0, 8000) }]
+  for (const r of (o.references ?? []).slice(0, 14)) parts.push({ inlineData: { mimeType: r.mime, data: r.bytes.toString('base64') } })
+  const imageConfig: Record<string, unknown> = { aspectRatio: o.aspectRatio }
+  if (o.imageSize) imageConfig.imageSize = o.imageSize
+  const r = await fetch(`${API}/models/${model}:generateContent`, {
+    method: 'POST', headers: headers(), cache: 'no-store', signal: AbortSignal.timeout(150000),
+    body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseModalities: ['IMAGE'], imageConfig } }),
+  })
+  if (!r.ok) throw new Error(`Gemini image failed (${r.status}).`)
+  const j = await r.json() as { candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string }; thought?: boolean }> } }>; promptFeedback?: { blockReason?: string }; usageMetadata?: Record<string, unknown> }
+  const candidate = j.candidates?.[0]
+  const image = (candidate?.content?.parts ?? []).filter(p => p.inlineData?.data && !p.thought).pop()?.inlineData
+  if (!image?.data) {
+    const why = j.promptFeedback?.blockReason ?? candidate?.finishReason ?? 'sin imagen'
+    throw new Error(`Gemini no devolvió imagen (${String(why).slice(0, 60)}): puede ser un filtro de seguridad. No se ha guardado nada.`)
+  }
+  const mime = image.mimeType && /^image\/(png|jpeg|webp)$/.test(image.mimeType) ? image.mimeType : 'image/png'
+  return { provider: 'gemini', mimeType: mime, uri: `data:${mime};base64,${image.data}`, metadata: { model, aspectRatio: o.aspectRatio, references: (o.references ?? []).map(x => x.assetId), usage: j.usageMetadata ?? null } }
 }

@@ -15,7 +15,8 @@
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@ffmpeg/core": "^0.12.10",

@@ -65,7 +65,9 @@ describe('selection strategies never require spending', () => {
   it('respects a manual provider and format', () => {
     const r = pickModel(catalog, { modality: 'image', strategy: 'best_quality', providers: ['openai'], format: '9:16' }, all(true))!
     expect(r.model.provider).toBe('openai')
-    expect(pickModel(catalog, { modality: 'image', strategy: 'free_only', format: '16:9' }, all(true))).toBeNull()
+    // Free images now exist (Cloudflare FLUX.2 klein 4B), but never for video, and never when a paid provider was chosen by hand.
+    expect(pickModel(catalog, { modality: 'image', strategy: 'free_only', format: '16:9' }, all(true))!.model.id).toBe('cloudflare:@cf/black-forest-labs/flux-2-klein-4b')
+    expect(pickModel(catalog, { modality: 'image', strategy: 'free_only', providers: ['openai'] }, all(true))).toBeNull()
   })
 })
 
@@ -140,7 +142,8 @@ describe('adapters', () => {
     const calls: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url); calls.push(u)
-      if (u.endsWith(':predictLongRunning')) { expect(JSON.parse(String(init?.body)).parameters).toMatchObject({ aspectRatio: '9:16', durationSeconds: '6', personGeneration: 'allow_adult' }); return Response.json({ name: 'models/veo-3.1-fast-generate-preview/operations/op123' }) }
+      // Live check 2026-10-10: Gemini rejects a string durationSeconds with INVALID_ARGUMENT, so it must be a JSON number.
+      if (u.endsWith(':predictLongRunning')) { expect(typeof JSON.parse(String(init?.body)).parameters.durationSeconds).toBe('number'); expect(JSON.parse(String(init?.body)).parameters).toMatchObject({ aspectRatio: '9:16', durationSeconds: 6, personGeneration: 'allow_adult' }); return Response.json({ name: 'models/veo-3.1-fast-generate-preview/operations/op123' }) }
       if (u.endsWith('/operations/op123')) return Response.json({ done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri: 'https://generativelanguage.googleapis.com/v1beta/files/v:download' } }] } } })
       return new Response(new Uint8Array([1, 2, 3]))
     }))

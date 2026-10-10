@@ -6,7 +6,9 @@ import { toManual } from '@/lib/editor/timeline'
 
 describe('image prompt pipeline', () => {
   it('offers the documentary presets requested for YouTube stories', () => {
-    expect(Object.values(imagePresets).map(p => p.label)).toEqual(['Fotorealista', 'Cinematográfico', 'Documental', 'Archivo / histórico', 'Ilustración'])
+    // The original five keep their ids and order (saved projects reference them); new looks are appended.
+    expect(Object.values(imagePresets).slice(0, 5).map(p => p.label)).toEqual(['Fotorealista', 'Cinematográfico', 'Documental', 'Archivo / histórico', 'Ilustración'])
+    expect(Object.keys(imagePresets).slice(0, 5)).toEqual(['photorealistic', 'cinematic', 'documentary', 'archival', 'illustration'])
   })
   it('matches the image size to the montage format instead of a square crop', () => {
     expect(sizeForFormat('16:9')).toBe('1536x1024')
