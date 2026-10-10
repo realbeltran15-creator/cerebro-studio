@@ -10,6 +10,7 @@ import { addAudioClip, addClip, commit, fromClip, deleteAudioClip, deleteClip, d
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { LearnPanel } from '../../components/learn-panel'
+import { ManualPicker } from '../../components/manual-picker'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
 type Selection = { kind: 'clip' | 'audio'; id: string } | null
@@ -38,6 +39,7 @@ export default function ManualEditorPage() {
   const [splitAt, setSplitAt] = useState('')
   const [previewFromSelected, setPreviewFromSelected] = useState(false)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
+  const [picking, setPicking] = useState(false)
 
   const comp = history?.present ?? null
   const apply = useCallback((next: (c: Composition) => Composition) => {
@@ -46,7 +48,7 @@ export default function ManualEditorPage() {
 
   const load = useCallback(async () => {
     const id = new URLSearchParams(window.location.search).get('job')
-    if (!id) { setError('Falta el montaje (?job=).'); return }
+    if (!id) { setPicking(true); return }
     const { data, error: e } = await supabase.from('render_jobs').select('id,project_id,status,updated_at,composition').eq('id', id).maybeSingle()
     if (e || !data) { setError(e?.message ?? 'Montaje no encontrado.'); return }
     const row = data as Job
@@ -151,6 +153,8 @@ export default function ManualEditorPage() {
     // A click without movement leaves an identical snapshot on the undo stack: drop it.
     if (d) setHistory(h => (h && h.past.length && h.past[h.past.length - 1] === h.present ? { ...h, past: h.past.slice(0, -1) } : h))
   }
+
+  if (picking) return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<Link className="buttonLink ghost" href="/editor">Editor automático</Link>}><ManualPicker /></StudioShell>
 
   if (!comp || !job) return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN">
     {error ? <p className="error" role="alert">{error} <Link className="open" href="/editor">Volver al editor</Link></p> : <p className="muted">{busy === 'convert' ? 'Preparando el montaje (midiendo voces)…' : 'Cargando…'}</p>}

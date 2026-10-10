@@ -261,7 +261,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/shorts', 'app/shorts/page', '/shorts'],
+    ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
   for (const [name, mod, url, params] of pages) {
@@ -551,6 +551,29 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('shorts: observed 7-day retention is shown as observed data', (await page.getByText(/71\.4%/).count()) >= 1 && (await page.getByText(/Observado \(YouTube Analytics, 2026-09-21 → 2026-09-27\)/).count()) === 1)
   check('shorts: the learning panel waits for enough measured Shorts', (await page.getByText(/Hacen falta 5 Shorts publicados/).count()) === 1)
   check('shorts: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 8. Manual editor reachable from the main menu: pick a saved edit or start an empty one, with separate tracks.
+{
+  const server = serve(8798, { 'setup.js': readFileSync(path.join(dir, 'manual-picker.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': 'undefined' }) })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8798/editor/manual')
+  await page.getByRole('heading', { name: 'Montaje nuevo' }).waitFor({ timeout: 20000 })
+  check('manual picker: without a job id it offers new and saved edits instead of an error', (await page.getByText(/Falta el montaje/).count()) === 0 && (await page.getByText('Montaje de prueba').count()) === 1)
+  check('manual picker: a saved edit links to the editor', (await page.getByRole('link', { name: 'Abrir' }).getAttribute('href')) === '/editor/manual?job=job9')
+  await page.getByLabel('Título').fill('Mi corto')
+  await page.getByLabel('Formato').selectOption('9:16')
+  await page.getByRole('button', { name: 'Crear montaje vacío' }).click()
+  await page.waitForURL(/job=new-/, { timeout: 15000 })
+  await page.getByRole('button', { name: 'Guardar montaje' }).waitFor({ timeout: 20000 })
+  const created = (await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))).render_jobs.find(j => j.composition.title === 'Mi corto')
+  check('manual picker: the empty edit is stored as a manual draft in the chosen format', created?.status === 'draft' && created.output_format === '9:16' && created.composition.editedManually === true && created.composition.clips.length === 0, created)
+  const tracks = await page.locator('[aria-label^="Pista de"]').evaluateAll(els => els.map(e => e.getAttribute('aria-label')))
+  check('manual picker: separate tracks for video/images, voice, music and effects', ['Pista de vídeo', 'Pista de Voz', 'Pista de Música', 'Pista de Efectos'].every(t => tracks.includes(t)), tracks)
+  check('manual picker: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
