@@ -366,6 +366,7 @@ export default function StudioPage() {
         {projects.length === 0 && <option value="">Sin proyectos</option>}
         {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
+      <Link className="buttonLink ghost" href="/studio/recreate">Short desde referencia</Link>
       {projectId && <Link className="buttonLink ghost" href={`/editor?project=${projectId}`}><Icon name="scissors" size={16} />Editor</Link>}
     </>}>
       {error && <p className="error" role="alert">{error} <button type="button" className="linkish" onClick={() => setError('')}>Cerrar</button></p>}

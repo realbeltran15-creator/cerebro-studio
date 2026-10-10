@@ -207,6 +207,35 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 3b. Short desde referencia: analysis → plan → storyboard → free-only batch that stops at the first refusal.
+{
+  const server = serve(8795, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'recreate.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8795/studio/recreate?project=p1')
+  const analyse = page.getByRole('button', { name: 'Analizar y crear plan' })
+  check('recreate: analysis needs a link or transcript', await analyse.isDisabled())
+  await page.getByLabel('Enlace de YouTube').fill('https://www.youtube.com/shorts/jNQXAC9IVRw')
+  await analyse.click()
+  await page.getByText(/La noche en que el faro/).waitFor()
+  check('recreate: request carries url, project and the consistent-characters option', await page.evaluate(() => window.__ANALYZE.url.includes('jNQXAC9IVRw') && window.__ANALYZE.projectId === 'p1' && window.__ANALYZE.consistent === true))
+  check('recreate: plan shows 6 scenes, 18 s, 9:16 and the originality figure', (await page.getByText(/6 escenas · 18\.0 s · 9:16/).count()) === 1 && (await page.getByText(/repite 0 %/).count()) === 1)
+  await page.getByRole('button', { name: 'Guardar como storyboard' }).click()
+  await page.getByText(/Guardado como storyboard vertical 9:16/).waitFor()
+  check('recreate: saved plan is the one shown', await page.evaluate(() => window.__SAVED.length === 1 && window.__SAVED[0].plan.scenes.length === 6))
+  await page.getByRole('button', { name: 'Generar material gratis' }).click()
+  await page.getByText(/Se detuvo el lote/).waitFor()
+  const gen = await page.evaluate(() => window.__GEN)
+  check('recreate: batch sends character, scene image and scene voice with free models only', gen.length === 4 && gen.slice(0, 3).map(g => g.modelId).join() === 'cloudflare:@cf/black-forest-labs/flux-2-klein-4b,cloudflare:@cf/black-forest-labs/flux-2-klein-4b,gemini:gemini-3.8-flash-tts', gen.map(g => g.modelId))
+  check('recreate: scene image uses the character as reference and is tied to its scene', gen[1].referenceAssetIds?.[0] === 'g1' && gen[1].sceneId === 'sc1' && gen[1].options.format === '9:16', gen[1])
+  check('recreate: nothing is ever sent with a cost confirmation', gen.every(g => g.confirmedEstimateUsd === undefined))
+  check('recreate: after the refusal nothing else is requested and the user is told no paid model was used', gen.length === 4 && (await page.getByText(/no se cambió a ningún modelo de pago/).count()) === 1)
+  check('recreate: animation step explains it is manual and lists clip upload', (await page.getByText(/no automatiza Meta AI, Flow ni Canva/).count()) === 1 && (await page.getByLabel(/Clips animados/).count()) === 1)
+  check('recreate: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 // 4. Mobile: the Studio fits a 390 px phone without horizontal scrolling and keeps the main action reachable.
 {
   const server = serve(8794, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'studio.entry.tsx')) })

@@ -110,3 +110,22 @@ export async function geminiImage(context: ProviderContext, model: string, promp
   const mime = image.mimeType && /^image\/(png|jpeg|webp)$/.test(image.mimeType) ? image.mimeType : 'image/png'
   return { provider: 'gemini', mimeType: mime, uri: `data:${mime};base64,${image.data}`, metadata: { model, aspectRatio: o.aspectRatio, references: (o.references ?? []).map(x => x.assetId), usage: j.usageMetadata ?? null } }
 }
+
+/**
+ * Video understanding of a PUBLIC YouTube URL through the official Gemini API (the API fetches the video itself;
+ * Cerebro never downloads it). Checked live 2026-10-10 on the free key. Returns the model's JSON text.
+ */
+export async function geminiAnalyzeYouTube(youtubeUrl: string, prompt: string, model = 'gemini-3.8-flash'): Promise<{ text: string; inputTokens: number | null; outputTokens: number | null }> {
+  if (!geminiConfigured()) throw Object.assign(new Error('Gemini API is not configured.'), { status: 0 })
+  if (!/^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/.test(youtubeUrl)) throw new Error('Invalid YouTube URL.')
+  if (!/^gemini-[a-z0-9.-]+$/.test(model)) throw new Error('Invalid Gemini model.')
+  const r = await fetch(`${API}/models/${model}:generateContent`, {
+    method: 'POST', headers: headers(), cache: 'no-store', signal: AbortSignal.timeout(120000),
+    body: JSON.stringify({ contents: [{ parts: [{ fileData: { fileUri: youtubeUrl } }, { text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } }),
+  })
+  if (!r.ok) throw Object.assign(new Error(`Gemini ${r.status}`), { status: r.status })
+  const j = await r.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }
+  const text = (j.candidates?.[0]?.content?.parts ?? []).map(p => p.text ?? '').join('')
+  if (!text) throw new Error('Gemini no devolvió texto.')
+  return { text, inputTokens: j.usageMetadata?.promptTokenCount ?? null, outputTokens: j.usageMetadata?.candidatesTokenCount ?? null }
+}

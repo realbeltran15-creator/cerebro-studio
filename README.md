@@ -241,6 +241,20 @@ Los dominios de descarga están restringidos en el código por servicio (`allowe
 - **Conectores**: botones de comprobación **sin coste** para fal, Cloudflare (verificación de token), Gemini (listar modelos) y TopMediai (cuota de la clave).
 - **Errores encontrados** al probar en vivo: Veo exigía `durationSeconds` numérico (el código lo enviaba como texto); `gpt-image-1` se retira el 23-oct-2026 según terceros.
 
+## Short desde referencia (`/studio/recreate`, 2026-10-10)
+
+Automatiza el flujo del tutorial «Shorts con IA gratis» con herramientas oficiales y gratuitas:
+
+| Paso del tutorial | En Cerebro Studio |
+|---|---|
+| Gemini analiza el vídeo y escribe el guion | `POST /api/recreate/analyze`: Gemini ve la URL pública de YouTube (comprobado en vivo con clave gratuita el 2026-10-10) o, si no puede, usa la transcripción que pegues. Devuelve análisis + plan: 6-10 escenas de 2-5 s, 15-40 s, 9:16, gancho en la primera escena, título de 8-12 palabras, prompts EN de imagen y animación, y (opcional) personajes consistentes con su ficha y prompt de referencia. |
+| Flow + extensión Flow Automator | Lote de imágenes con FLUX.2 klein (cupo diario gratuito de Cloudflare) usando el personaje como referencia. **No se integra la extensión**: Flow no tiene API oficial gratuita y automatizarlo por extensión puede infringir sus condiciones. |
+| Meta AI + extensión Auto Meta | **Manual**: se copian los prompts de animación y se suben los clips (`escena-N.mp4`). No hay API gratuita de vídeo verificada (Veo → 429 en la clave gratuita). |
+| ElevenLabs | Gemini TTS gratuito por escena (ElevenLabs sigue disponible desde el Estudio si tienes cuenta). |
+| Canva | El editor propio de Cerebro (`/editor`); las escenas, imágenes, voces y clips ya vienen asignados por `sceneId`. |
+
+Garantías: nunca se descarga el vídeo de referencia; su transcripción se usa solo en el servidor para medir el parecido y no llega al navegador ni al redactor del guion; si más del 20 % de las frases de 4 palabras coinciden se reescribe una vez y, si sigue igual, se rechaza. El lote usa solo dos modelos con cupo gratuito, nunca envía confirmación de coste y se detiene en el primer rechazo (cupo agotado) sin pasar a uno de pago. Nada se publica. Límite: el cupo gratuito de Gemini texto es de ~20 solicitudes/día (cada análisis usa 2). «Ilimitado» no es cierto: cada servicio tiene su cupo.
+
 ## Gemini texto: cupo gratuito (2026-10-07)
 
 Al repetir la prueba, la API respondió 429 con el mensaje «Rate limit exceeded for model gemini-3.8-flash (limit: 20 requests per day on Free Tier)»: **el nivel gratuito de ese modelo admite solo unas 20 solicitudes al día** (dato de la propia respuesta; puede cambiar). Las agoté yo con los reintentos durante la saturación de ese día. Consecuencias: (1) la integración trata el 429 como cupo agotado, no lo reintenta y muestra «límite de uso o cupo gratuito» (ya probado con simulaciones); (2) el catálogo lo indica en la nota de precio; (3) con ese cupo, Gemini sirve como apoyo gratuito, no como único proveedor de texto: conviene configurar también Groq u otro, y el enrutador pasa al siguiente modelo elegible cuando uno falla; (4) la validación en vivo del texto queda pendiente de que se renueve el cupo y no se vuelve a gastar en pruebas repetidas.
