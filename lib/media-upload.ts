@@ -4,7 +4,7 @@ import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
 /** Client-side upload of user-provided media into the private generated-assets bucket plus an assets row. */
 
 export type UploadKind = 'music' | 'sfx' | 'image' | 'video' | 'voice'
-export type LicenseStatus = 'owned' | 'licensed' | 'public_domain'
+export type LicenseStatus = 'owned' | 'licensed' | 'public_domain' | 'restricted'
 
 const limits: Record<UploadKind, { mime: RegExp; maxBytes: number }> = {
   music: { mime: /^audio\/(mpeg|mp3|wav|x-wav|wave|ogg|aac|mp4|x-m4a|flac|webm)$/, maxBytes: 50 * 1024 * 1024 },
@@ -47,6 +47,8 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
   license: LicenseStatus
   sourceUrl?: string | null
   licenseNotes?: string | null
+  /** Where the file comes from (default 'upload'); imports from a web app use their provider id. */
+  provider?: string
   extra?: Record<string, unknown>
   onProgress?: (fraction: number) => void
 }) {
@@ -62,7 +64,7 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
     project_id: input.projectId,
     asset_type: input.kind,
     storage_path: storagePath,
-    source_provider: 'upload',
+    source_provider: input.provider ?? 'upload',
     // Only http(s) links are stored: the value is rendered as a link later.
     source_url: /^https?:\/\//i.test(input.sourceUrl?.trim() ?? '') ? input.sourceUrl!.trim() : null,
     license_status: input.license,

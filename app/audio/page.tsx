@@ -8,13 +8,14 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { deleteAsset, uploadProjectMedia, type LicenseStatus } from '@/lib/media-upload'
 import { QuickGenerate } from '../components/quick-generate'
 import { StockBrowser } from '../components/stock-browser'
+import { TopMediaiImport } from '../components/topmediai-import'
 import type { ProjectRow } from '@/lib/types/database'
 
-type AudioAsset = { id: string; asset_type: 'music' | 'sfx'; storage_path: string | null; source_url: string | null; license_status: string; provenance: Record<string, unknown> | null; created_at: string; url?: string }
+type AudioAsset = { id: string; asset_type: 'music' | 'sfx' | 'voice'; storage_path: string | null; source_url: string | null; license_status: string; provenance: Record<string, unknown> | null; created_at: string; url?: string }
 
 const licenseLabels: Record<string, string> = { owned: 'Propio', licensed: 'Con licencia', public_domain: 'Dominio público', generated: 'Generado', unknown: 'Sin verificar', restricted: 'Restringido (no comercial)' }
 type Scene = { id: string; position: number; ambient_prompt: string | null; metadata: Record<string, unknown> | null; storyboard_id: string }
-type Tab = 'generate' | 'free' | 'upload'
+type Tab = 'generate' | 'free' | 'topmediai' | 'upload'
 const fmtDuration = (s: unknown) => (typeof s === 'number' ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}` : '—')
 
 export default function AudioPage() {
@@ -22,7 +23,7 @@ export default function AudioPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [projectId, setProjectId] = useState('')
   const [items, setItems] = useState<AudioAsset[]>([])
-  const [filter, setFilter] = useState<'all' | 'music' | 'sfx'>('all')
+  const [filter, setFilter] = useState<'all' | 'music' | 'sfx' | 'voice'>('all')
   const [kind, setKind] = useState<'music' | 'sfx'>('music')
   const [file, setFile] = useState<File | null>(null)
   const [fileKey, setFileKey] = useState(0)
@@ -48,7 +49,7 @@ export default function AudioPage() {
 
   const load = useCallback(async (pid: string) => {
     const { data, error: e } = await supabase.from('assets').select('id,asset_type,storage_path,source_url,license_status,provenance,created_at')
-      .eq('project_id', pid).in('asset_type', ['music', 'sfx']).order('created_at', { ascending: false }).limit(100)
+      .eq('project_id', pid).in('asset_type', ['music', 'sfx', 'voice']).order('created_at', { ascending: false }).limit(100)
     if (e) { setError(e.message); return }
     const rows = (data ?? []) as AudioAsset[]
     setItems(rows)
@@ -125,7 +126,7 @@ export default function AudioPage() {
         </label>
       </div>
       <nav className="segTabs" aria-label="Cómo conseguir audio" style={{ marginBottom: 0 }}>
-        {([['generate', 'Generar con IA', 'bolt'], ['free', 'Bancos gratuitos', 'search'], ['upload', 'Subir con licencia', 'upload']] as const).map(([k, l, i]) =>
+        {([['generate', 'Generar con IA', 'bolt'], ['free', 'Bancos gratuitos', 'search'], ['topmediai', 'Importar de TopMediai', 'music'], ['upload', 'Subir con licencia', 'upload']] as const).map(([k, l, i]) =>
           <button key={k} type="button" className={tab === k ? 'seg active' : 'seg'} aria-pressed={tab === k} onClick={() => setTab(k)}><Icon name={i} size={16} />{l}</button>)}
       </nav>
       {tab === 'generate' && <QuickGenerate modalities={['music', 'sfx', 'ambient']} projectId={projectId} sceneId={sceneId || null} defaultPrompt={scenePrompt} onGenerated={afterNew} />}
@@ -137,6 +138,7 @@ export default function AudioPage() {
         </div>
         <StockBrowser kind="audio" projectId={projectId} sceneId={sceneId || null} defaultQuery="" importAs={kind} onImported={afterNew} />
       </>}
+      {tab === 'topmediai' && <TopMediaiImport projectId={projectId} sceneId={sceneId || null} onImported={afterNew} />}
       {tab === 'upload' && <form onSubmit={upload} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div className="field-row">
           <label htmlFor="audio-project">Proyecto
@@ -181,6 +183,7 @@ export default function AudioPage() {
         <option value="all">Todo</option>
         <option value="music">Música</option>
         <option value="sfx">Efectos</option>
+        <option value="voice">Voces</option>
       </select>
     </div>
     {visible.length === 0 ? <p className="emptyState">Todavía no hay música ni efectos en este proyecto.</p> : <div className="list">
@@ -188,7 +191,7 @@ export default function AudioPage() {
         <div style={{ minWidth: 220, flex: 1 }}>
           <b>{trackTitle(a)}</b>
           <span className="muted small" style={{ display: 'block' }}>
-            {a.asset_type === 'music' ? 'Música' : 'Efecto'} · {fmtDuration(a.provenance?.durationSeconds)}{a.provenance?.mood ? ` · ${String(a.provenance.mood)}` : ''} · {licenseLabels[a.license_status] ?? a.license_status}
+            {a.asset_type === 'music' ? 'Música' : a.asset_type === 'voice' ? 'Voz' : 'Efecto'} · {fmtDuration(a.provenance?.durationSeconds)}{a.provenance?.mood ? ` · ${String(a.provenance.mood)}` : ''} · {licenseLabels[a.license_status] ?? a.license_status}
             {a.source_url && /^https?:\/\//i.test(a.source_url) && <> · <a href={a.source_url} target="_blank" rel="noopener noreferrer">origen</a></>}
           </span>
           {Boolean(a.provenance?.licenseNotes) && <span className="muted small" style={{ display: 'block' }}>{String(a.provenance?.licenseNotes)}</span>}

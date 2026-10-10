@@ -34,7 +34,7 @@ describe('catalogue invariants (nothing is presented as better known than it is)
   it('every researched provider states whether a free API exists and when it was checked', () => {
     for (const p of providers.filter(x => x.integrated !== undefined)) expect(p.freeApi, p.id).toBeDefined()
     expect(providers.find(p => p.id === 'gemini')!.allowance).toMatch(/NO tienen nivel gratuito/)
-    expect(providers.find(p => p.id === 'kling')!.allowance).toMatch(/web.*NO dan acceso a la API/s)
+    expect(providers.find(p => p.id === 'kling')!.allowance).toMatch(/web[\s\S]*NO dan acceso a la API/)
     expect(providers.find(p => p.id === 'topmediai')!.allowance).toMatch(/aparte|APARTE/)
   })
 })

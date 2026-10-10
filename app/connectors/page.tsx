@@ -29,8 +29,8 @@ export default function ConnectorsPage() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [falCheck, setFalCheck] = useState('')
-  const [checking, setChecking] = useState(false)
+  const [checks, setChecks] = useState<Record<string, string>>({})
+  const [checking, setChecking] = useState('')
 
   const load = useCallback(async () => {
     // A failed or non-JSON status response (network error, proxy error page) must show a message, not crash the page.
@@ -57,14 +57,16 @@ export default function ConnectorsPage() {
     void load()
   }, [load])
 
-  async function checkFal() {
-    setChecking(true); setFalCheck('')
+  const checkable = [['fal', 'fal.ai'], ['cloudflare', 'Cloudflare'], ['gemini', 'Gemini'], ['topmediai', 'TopMediai']] as const
+  async function check(provider: string, label: string) {
+    setChecking(provider); setChecks(c => ({ ...c, [provider]: '' }))
     try {
-      const res = await fetch('/api/providers/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'fal' }) })
-      const data = await res.json().catch(() => null) as { message?: string; error?: string } | null
-      setFalCheck(data?.message ?? data?.error ?? 'No se pudo comprobar fal.ai.')
-    } catch { setFalCheck('No se pudo comprobar fal.ai.') }
-    finally { setChecking(false) }
+      const res = await fetch('/api/providers/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) })
+      const data = await res.json().catch(() => null) as { message?: string; error?: string; details?: Record<string, unknown> } | null
+      const extra = data?.details ? ` (${Object.entries(data.details).map(([k, v]) => `${k}: ${String(v)}`).join(', ')})` : ''
+      setChecks(c => ({ ...c, [provider]: `${label}: ${data?.message ?? data?.error ?? 'no se pudo comprobar.'}${extra}` }))
+    } catch { setChecks(c => ({ ...c, [provider]: `${label}: no se pudo comprobar.` })) }
+    finally { setChecking('') }
   }
 
   async function disconnect() {
@@ -99,10 +101,10 @@ export default function ConnectorsPage() {
     </section>
 
     <h3>Runtime</h3>
-    <div className="pageActions" style={{ marginBottom: 10 }}>
-      <button type="button" className="ghost" onClick={checkFal} disabled={checking}>{checking ? 'Comprobando…' : 'Comprobar conexión con fal.ai (sin coste)'}</button>
-      {falCheck && <span role="status">{falCheck}</span>}
+    <div className="pageActions" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
+      {checkable.map(([id, label]) => <button key={id} type="button" className="ghost" onClick={() => void check(id, label)} disabled={Boolean(checking)}>{checking === id ? 'Comprobando…' : `Comprobar ${label} (sin coste)`}</button>)}
     </div>
+    {Object.values(checks).filter(Boolean).map(m => <p key={m} role="status" className="muted small">{m}</p>)}
     <div className="grid">{runtime.map(c => <article key={c.id}><small>{capabilityLabels[c.capability] ?? c.capability}</small><h3>{c.id}</h3><p>Estado: {c.enabled ? c.health : 'sin configurar'}</p></article>)}</div>
     {rows.length > 0 && <><h3>Configuración registrada</h3><div className="grid">{rows.map(c => <article key={c.id}><small>{c.capability}</small><h3>{c.provider}</h3><p>Estado: {c.enabled ? 'Habilitado' : 'Deshabilitado'}</p></article>)}</div></>}
     <ProviderDirectory />

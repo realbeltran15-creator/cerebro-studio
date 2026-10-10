@@ -190,7 +190,7 @@ describe('TopMediai API (unverified response shape)', () => {
   })
   it('fails loudly on an unrecognised response, listing field names but never values', async () => {
     mockFetch(() => Response.json({ weird: 'secret-value-123', code: 7 }))
-    const err = await topmediaiSpeech(ctx, 'x', 's').catch(e => e as Error)
+    const err = await topmediaiSpeech(ctx, 'x', 's').then(() => new Error('debía fallar'), (e: unknown) => e as Error)
     expect(err.message).toMatch(/weird, code/)
     expect(err.message).not.toMatch(/secret-value/)
   })
