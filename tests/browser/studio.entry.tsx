@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import Page from '@/app/studio/page'
-import { catalog } from '@/lib/providers/catalog'
+import { catalog, evidenceOf, rightsOf } from '@/lib/providers/catalog'
 
 // Server routes replaced in the page: FAL and ElevenLabs "configured", OpenAI not.
 const w = window as any
@@ -10,6 +10,9 @@ const models = catalog.map(m => ({
   tier: m.tier, quality: m.quality, speed: m.speed, limits: m.limits ?? null, capabilities: m.capabilities,
   formats: m.formats ?? null, durations: m.durations ?? null, maxVariants: m.maxVariants ?? 1, negative: Boolean(m.negative),
   ready: m.env.every(e => configured.has(e)), creditsExhausted: false, missing: m.env.filter(e => !configured.has(e)),
+  evidence: evidenceOf(m), evidenceNote: m.evidenceNote ?? null, rights: rightsOf(m), rightsNote: m.rightsNote ?? null,
+  maxResolution: m.maxResolution ?? null, maxShortSidePx: m.maxShortSidePx ?? null, references: m.references ?? null, confirm: Boolean(m.confirm),
+  allowance: m.allowance ? { pool: m.allowance.pool, kind: m.allowance.kind, unit: m.allowance.unit, note: m.allowance.note, remaining: m.allowance.amount, amount: m.allowance.amount, endsAt: null, label: `${m.allowance.amount} ${m.allowance.unit}`, unitsPerGeneration: m.allowanceUnits?.({}) ?? null } : null,
 }))
 w.__GEN = []
 let polls = 0
@@ -22,7 +25,17 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.startsWith('/api/stock/search')) return json({ sources: [{ id: 'freesound', configured: true, kinds: ['audio'] }, { id: 'pexels', configured: false, kinds: ['image', 'video'] }] })
   if (url.startsWith('/api/stock/import')) { w.__IMPORTS = [...(w.__IMPORTS ?? []), JSON.parse(String(init?.body))]; return json({ asset: { id: 'imp1' }, duplicate: false }, 201) }
   if (url.startsWith('/api/providers/voices')) return json({ voices: [{ voice_id: 'abcdefghijklmnopqrst', name: 'Narrador grave', labels: { accent: 'latino' } }] })
-  if (url.startsWith('/api/studio/generate')) { w.__GEN.push(JSON.parse(String(init?.body))); return json({ job: { token: 'tok-1', requestId: 'r1' } }, 202) }
+  if (url.startsWith('/api/studio/generate')) {
+    w.__GEN.push(JSON.parse(String(init?.body)))
+    // Simulates the server refusing because the free allowance is gone: it only SUGGESTS alternatives.
+    if (w.__FORCE_EXHAUSTED) return json({
+      error: 'Cupo gratuito agotado en FLUX.2 klein 4B. No se ha enviado nada.', exhausted: true,
+      recommendation: { message: 'FLUX.2 klein 4B (Cloudflare) no está disponible. Alternativa gratuita compatible: FLUX.1 schnell (Cloudflare). No se cambia nada sin que lo elijas.',
+        free: [{ id: 'cloudflare:@cf/black-forest-labs/flux-1-schnell', label: 'FLUX.1 schnell (Cloudflare)', quality: 2, evidence: 'documented', warnings: [] }],
+        paid: [{ id: 'openai:gpt-image-2', label: 'OpenAI GPT Image 2 · máxima calidad', estimateUsd: 0.05 }] },
+    }, 409)
+    return json({ job: { token: 'tok-1', requestId: 'r1' } }, 202)
+  }
   if (url.startsWith('/api/studio/job')) {
     polls++
     if (polls < 2) return json({ state: 'running', position: null })

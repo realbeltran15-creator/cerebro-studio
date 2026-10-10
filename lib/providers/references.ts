@@ -9,6 +9,8 @@ import { downloadObject } from '@/lib/storage/server'
 export type ReferenceImage = { assetId: string; bytes: Buffer; mime: string }
 
 export const MAX_REFERENCE_BYTES = 12 * 1024 * 1024
+/** All references of one request together (they are held in memory and re-sent to the provider). */
+export const MAX_TOTAL_REFERENCE_BYTES = 40 * 1024 * 1024
 const IMAGE_MIME = /^image\/(png|jpeg|webp)$/
 
 export async function loadReferenceImages(db: SupabaseClient, ownerId: string, projectId: string, assetIds: string[], max: number): Promise<ReferenceImage[]> {
@@ -20,11 +22,14 @@ export async function loadReferenceImages(db: SupabaseClient, ownerId: string, p
   if (error) throw new Error('No se pudieron leer las referencias.')
   const byId = new Map((data ?? []).map(a => [a.id as string, a]))
   const out: ReferenceImage[] = []
+  let total = 0
   for (const id of ids) {
     const a = byId.get(id)
     if (!a?.storage_path) throw new Error('Una de las referencias no existe en este proyecto.')
     const blob = await downloadObject(db, ownerId, a.storage_path as string)
     if (blob.size > MAX_REFERENCE_BYTES) throw new Error('Una referencia supera 12 MB.')
+    total += blob.size
+    if (total > MAX_TOTAL_REFERENCE_BYTES) throw new Error('Las referencias juntas superan 40 MB: usa menos o más ligeras.')
     const mime = blob.type || String((a.provenance as Record<string, unknown> | null)?.mimeType ?? '')
     if (!IMAGE_MIME.test(mime)) throw new Error('Solo se admiten referencias PNG, JPEG o WebP.')
     out.push({ assetId: id, bytes: Buffer.from(await blob.arrayBuffer()), mime })

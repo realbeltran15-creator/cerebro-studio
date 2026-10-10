@@ -69,7 +69,9 @@ Tres piezas desacopladas; añadir un proveedor no cambia el flujo de creación:
 
 1. **Directorio** (`lib/providers/directory.ts`): quién es cada proveedor, nivel de coste (Gratis · Créditos incluidos · Freemium · De pago · Local), autenticación, cupo gratuito, condiciones, enlaces a documentación y fecha de comprobación.
 2. **Catálogo** (`lib/providers/catalog.ts`): modelos por tipo (imagen, vídeo, voz, música, efectos, ambientes) con calidad, velocidad, límites, capacidades, formatos y coste estimado (`priceConfirmed: false` = precio de referencia).
-3. **Adaptadores** (`lib/providers/adapters`): `startGeneration` / `pollGeneration` por proveedor (OpenAI, fal.ai, ElevenLabs, Cloudflare Workers AI, Gemini API).
+3. **Adaptadores** (`lib/providers/adapters`): `startGeneration` / `pollGeneration` por proveedor (OpenAI, fal.ai, ElevenLabs, Cloudflare Workers AI, Gemini API, Higgsfield, Alibaba Wan y TopMediai).
+
+**Selección inteligente y créditos gratuitos (2026-10-10).** Cada modelo declara su **nivel de evidencia** (probado · documentado · fuente secundaria · sin verificar), su **bolsa de créditos gratuitos** (diaria, mensual o promocional), derechos comerciales, resolución máxima y soporte de imágenes de referencia. El router (`lib/providers/router.ts`) elige por calidad, créditos restantes, coste, velocidad, resolución y derechos; cuando un proveedor gratuito se agota **recomienda otra opción gratuita pero nunca cambia solo a una de pago** (las de pago aparecen aparte y exigen tu autorización y la confirmación del coste). Detalle, fuentes y lo que no se pudo verificar: [docs/providers-research-2026-10.md](docs/providers-research-2026-10.md).
 
 **Regla global: calidad primero + optimización de costes** (`lib/providers/router.ts`, `lib/providers/text.ts`): primero se fija la calidad necesaria (Borrador 2 · Estándar 3 · Alta 4 · Máxima 5), después las capacidades (formato, duración, audio…) y solo entre los modelos que las cumplen se elige el más barato: gratis → créditos incluidos → freemium → de pago, y menor precio. Un modelo barato nunca sustituye a uno que la tarea necesita. Modos: *Mejor relación calidad-coste* (por defecto), *Gratis solamente*, *Máxima calidad*, *Más rápido* y *Proveedor específico* (manual). La estrategia solo elige: generar siempre exige confirmar, y el servidor rechaza una generación de pago sin el coste confirmado.
 
@@ -91,7 +93,7 @@ Tres piezas desacopladas; añadir un proveedor no cambia el flujo de creación:
 |---|---|---|
 | Flow (producto) | Interfaz web; créditos de Flow en Google AI Pro (1.000/mes) y Ultra (10.000/mes) | Sin API pública. No se automatiza con métodos no oficiales |
 | Modelos | Veo 3.1, Imagen, Nano Banana, Lyria, Gemini TTS | — |
-| API oficial | Gemini API (`GEMINI_API_KEY`) / Vertex AI | Integrado: Veo 3.1 Fast (vídeo) y Gemini TTS (voz, nivel gratuito) |
+| API oficial | Gemini API (`GEMINI_API_KEY`) / Vertex AI | Integrado: Veo 3.1 (Lite, Fast, estándar), Nano Banana (imagen) y Gemini TTS. **Comprobado el 2026-10-10 con una clave gratuita: solo texto y voz funcionan; Veo, imagen y Lyria devuelven 429** |
 
 Google AI Pro incluye además $10/mes (Ultra $40/mes) en créditos de Google Cloud vía Google Developer Program; hay que confirmar en la consola de facturación que se aplican al proyecto de la API.
 
@@ -219,6 +221,8 @@ Para probar un servicio desde el sandbox hay que (1) permitir sus dominios en *N
 | YouTube Data | `YOUTUBE_API_KEY` | `www.googleapis.com` | `x-goog-api-key`, sin prefijo | ✔ solo lectura |
 | fal.ai | `FAL_KEY` | `queue.fal.run`, `*.fal.media` | `Authorization`: `Key <clave>` | ⏳ |
 | Groq | `GROQ_API_KEY` | `api.groq.com` | `Authorization`: `Bearer <clave>` | ⏳ |
+| Alibaba Model Studio (Wan) | `DASHSCOPE_API_KEY` | `dashscope-intl.aliyuncs.com` y el almacenamiento de resultados `*.aliyuncs.com` | `Authorization`: `Bearer <clave>` | ⏳ sin verificar |
+| TopMediai | `TOPMEDIAI_API_KEY` (API contratada aparte) | `api.topmediai.com` | `x-api-key`, sin prefijo | ⏳ sin verificar |
 | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | `api.cloudflare.com` | `Authorization`: `Bearer <token>`; el ID de cuenta no es secreto y va en la URL, así que debe ser una variable de entorno normal | ⏳ |
 | OpenAI | `OPENAI_API_KEY` (y variantes) | `api.openai.com` | `Authorization`: `Bearer <clave>` | ⏳ |
 | ElevenLabs | `ELEVENLABS_API_KEY` | `api.elevenlabs.io` | `xi-api-key`, sin prefijo | ⏳ |
@@ -227,6 +231,15 @@ Para probar un servicio desde el sandbox hay que (1) permitir sus dominios en *N
 | Pixabay | `PIXABAY_API_KEY` | `pixabay.com`, `cdn.pixabay.com` | **No admite cabecera**: la API exige la clave en la URL (`key=`); no se puede inyectar como Network Secret, va como variable de entorno | ⏳ |
 
 Los dominios de descarga están restringidos en el código por servicio (`allowedDownload`, `isFalMediaUrl`): un resultado nunca puede apuntar al servidor hacia otro host.
+
+## Imágenes realistas, referencias y TopMediai (2026-10-10)
+
+- **Dos modos de imagen** en el Estudio: *Modo gratis* (Cloudflare FLUX.2 klein 4B, ≈ 100 imágenes/día dentro de las 10.000 neuronas; nunca gasta dinero) y *Máxima calidad* (el mejor modelo configurado: GPT Image / Nano Banana Pro / FLUX.2 Pro; de pago, con coste mostrado y confirmación).
+- **15 estilos en tres familias** (`lib/providers/image-presets.ts`): fotográficos (fotorrealista, documental, retrato, producto, macro, calle, paisaje, archivo), cinematográficos (cinematográfico, película 35 mm, cine negro) y artísticos (ilustración, óleo, acuarela, concept art). Los prompts se adaptan al modelo: con campo de prompt negativo se envía aparte; sin él, como instrucciones.
+- **Personajes consistentes**: «Guardar como personaje» en la vista previa marca una imagen como referencia; en cualquier escena eliges hasta N referencias según el modelo (Cloudflare 4, OpenAI 10, Nano Banana Pro 14) y una descripción fija del personaje que se repite en cada prompt. Las referencias solo pueden ser imágenes tuyas del mismo proyecto; Cerebro las reduce en el servidor cuando el modelo lo exige.
+- **TopMediai**: su API se vende aparte de tus suscripciones, así que no hay conexión a tu cuenta. *Música y sonidos → Importar de TopMediai* admite varios archivos, detecta el tipo y registra la licencia según el plan que confirmes (solo «Con licencia» con plan de pago confirmado; si no, «Restringido»). La API de voz de TopMediai está preparada pero **sin verificar** (hace falta una clave real para ver su respuesta).
+- **Conectores**: botones de comprobación **sin coste** para fal, Cloudflare (verificación de token), Gemini (listar modelos) y TopMediai (cuota de la clave).
+- **Errores encontrados** al probar en vivo: Veo exigía `durationSeconds` numérico (el código lo enviaba como texto); `gpt-image-1` se retira el 23-oct-2026 según terceros.
 
 ## Gemini texto: cupo gratuito (2026-10-07)
 
