@@ -6,21 +6,31 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:browser": "node scripts/browser-tests.mjs",
+    "test:e2e-lofi": "node scripts/lofi-e2e.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "axe-core": "^4.14.0",
+    "esbuild": "^0.28.2",
     "eslint": "latest",
     "eslint-config-next": "latest",
-    "typescript": "latest"
+    "playwright-core": "^1.56.1",
+    "typescript": "latest",
+    "vitest": "latest"
   }
 }

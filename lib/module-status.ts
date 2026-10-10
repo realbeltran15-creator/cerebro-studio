@@ -1,0 +1,53 @@
+/**
+ * Single source of truth for how finished each module really is.
+ * Update this file whenever a module changes state — the UI reads it
+ * so a page that merely loads is never presented as a finished feature.
+ */
+export type ModuleState = 'functional' | 'partial' | 'integration_ready' | 'not_implemented'
+
+export const moduleStateLabels: Record<ModuleState, string> = {
+  functional: 'Funcional',
+  partial: 'Parcial',
+  integration_ready: 'Preparado para integración',
+  not_implemented: 'No implementado',
+}
+
+export type StudioModule = {
+  label: string
+  short: string
+  href: string
+  icon: string
+  state: ModuleState
+  note: string
+  /** Shown as a tool tile on the dashboard. */
+  tile?: boolean
+}
+
+export const studioModules: StudioModule[] = [
+  { label: 'Inicio', short: 'Inicio', href: '/', icon: 'home', state: 'functional', note: 'Centro de operaciones con datos reales del workspace.' },
+  { label: 'Investigación', short: 'Investigación', href: '/market-intelligence', icon: 'search', state: 'functional', note: 'Búsqueda de vídeos y análisis de canales con YouTube Data API (mediana, frecuencia, vídeos destacados), métricas observadas y calculadas por separado, y registro manual con fuente. Requiere YOUTUBE_API_KEY.' },
+  { label: 'Radar', short: 'Radar', href: '/radar', icon: 'radar', state: 'functional', note: 'Tendencias oficiales de YouTube por país y categoría con histórico: nuevos, subidas, bajadas y vistas ganadas entre lecturas, más términos recurrentes. Requiere YOUTUBE_API_KEY.' },
+  { label: 'Oportunidades', short: 'Oportunidades', href: '/opportunities', icon: 'target', state: 'functional', note: 'Búsqueda, filtros, estados y conversión a proyecto; métricas observadas y calculadas por separado, orden por rendimiento, historial y actualización desde YouTube.' },
+  { label: 'Proyectos', short: 'Proyectos', href: '/projects', icon: 'folder', state: 'functional', note: 'Cada proyecto conecta investigación, guion, storyboard, assets y publicación.' },
+  { label: 'Guiones', short: 'Guion', href: '/scripts', icon: 'script', state: 'functional', note: 'Versiones, secciones con base factual, testimonios y conversión a storyboard. Asistencia IA revisable con el proveedor de texto que alcance la calidad necesaria (Groq, Gemini u OpenAI).', tile: true },
+  { label: 'Estudio de creación', short: 'Estudio IA', href: '/studio', icon: 'layers', state: 'functional', note: 'Imagen, vídeo, voz, música, efectos y ambientes con varios proveedores (gratis, con créditos y de pago), elección manual o automática con regla «calidad primero»: mejor relación calidad-coste, gratis solamente, máxima calidad o más rápido, con calidad mínima configurable, vista previa, bancos gratuitos con licencia, vínculo a escenas y confirmación antes de cada generación. Cada proveedor se activa con su clave. Modos de imagen gratis (Cloudflare FLUX.2 klein) y de máxima calidad, 15 estilos, personajes con imágenes de referencia, evidencia y derechos por modelo, y recomendación de alternativas gratuitas cuando se agota un cupo (nunca cambia solo a una de pago). Integraciones sin clave real: marcadas como documentadas o sin verificar. Importación de vídeos de Google Flow (pestaña Vídeo): Flow no tiene API pública para listarlos, así que eliges tú los archivos desde Google Drive (selector oficial, permiso solo por archivo; requiere los 3 identificadores públicos) o subes los descargados; se guardan con procedencia y códecs reales y quedan en el Editor y el montaje automático. El selector de Drive no se ha probado con una cuenta real.', tile: true },
+  { label: 'Storyboard y escenas', short: 'Storyboard', href: '/create', icon: 'board', state: 'functional', note: 'Escenas con prompts, cámara, sonido y continuidad entre escenas.', tile: true },
+  { label: 'Música y sonidos', short: 'Música / SFX', href: '/audio', icon: 'music', state: 'functional', note: 'Generar música, efectos y ambientes en bucle con IA, buscar en Freesound con licencia CC, subir audio propio o licenciado; todo con proveedor, modelo, coste, licencia y escena registrados. Importación desde TopMediai (su API se contrata aparte) con la licencia según el plan confirmado.', tile: true },
+  { label: 'Editor de vídeo', short: 'Editor', href: '/editor', icon: 'scissors', state: 'functional', note: 'Modo automático por escenas (imagen o vídeo subido, de la Biblioteca o generado; voz; música con ducking; subtítulos) y Editor manual con timeline: reordenar, recortar, dividir, duplicar, duración, zoom/posición, textos, transiciones, pistas de voz/música/efectos, volumen y deshacer/rehacer. Render MP4 en el navegador (WebM en Firefox) guardado en la nube; si el archivo no sirve para Instagram (WebM o MP4 con VP9) avisa y, si el propietario activa el convertidor, lo recodifica a H.264 + AAC con ffmpeg.wasm y guarda la copia derivada. «Aprende de mí»: graba cómo editas y repite tu estilo en otros montajes.', tile: true },
+  { label: 'Editor manual', short: 'Editor manual', href: '/editor/manual', icon: 'scissors', state: 'functional', note: 'Línea de tiempo con pistas separadas de vídeo e imágenes, voz, música y efectos: dividir, cortar el inicio, duplicar, mover, eliminar y reordenar clips, texto en pantalla, transiciones, deshacer/rehacer y guardado con control de conflictos. Se abre desde el menú con un montaje vacío o uno guardado, o desde el Editor de vídeo. Render en el navegador.', tile: true },
+  { label: 'Montaje automático', short: 'Auto-edición', href: '/editor/auto', icon: 'scissors', state: 'functional', note: 'Edita solo un vídeo en bruto en el navegador, sin coste: quita silencios, corta en los cambios de plano, divide tomas largas, pone transiciones, música y subtítulos de la transcripción, y puede aplicar un estilo aprendido de ti («Aprende de mí» en el editor manual). Exporta MP4.', tile: true },
+  { label: 'Shorts / Reels / TikTok', short: 'Convertir a Shorts', href: '/repurpose', icon: 'phone', state: 'functional', note: 'Recorta un montaje a 9:16: sugerencia calculada (no IA) del mejor tramo de escenas para Shorts, Reels o TikTok (gancho al inicio, frase completa al final, recursos visuales, duración), selección manual, reencuadre por escena, hook en pantalla, límites por plataforma y render. No publica. Propone también el hook en pantalla y un borrador de título y descripción (calculados, para revisar). Aún no analiza el audio ni la transcripción para elegir fragmentos.', tile: true },
+  { label: 'Miniaturas', short: 'Miniaturas', href: '/thumbnails', icon: 'thumb', state: 'functional', note: 'Variantes 16:9 por proyecto con cualquier proveedor de imagen configurado: automático elige la calidad alta (y texto legible si hay texto) al menor coste, o eliges el modelo. Confirmación de coste, trabajos en cola y selección de la definitiva para YouTube.', tile: true },
+  { label: 'YouTube', short: 'Publicar', href: '/youtube', icon: 'youtube', state: 'partial', note: 'Borradores con vídeo, miniatura, descripción y privacidad; aprobación explícita con resumen de riesgos y licencias; subida privada por defecto e idempotente. Requiere el cliente OAuth y el permiso de subida.', tile: true },
+  { label: 'Instagram y TikTok', short: 'Redes', href: '/social', icon: 'phone', state: 'integration_ready', note: 'OAuth oficial (Instagram Business Login y TikTok Login Kit), borradores, aprobación explícita y publicación por API oficial: Reels (solo MP4) y TikTok privado por defecto. Se activa con las credenciales de cada app; TikTok solo publica en público tras la auditoría de la app.', tile: true },
+  { label: 'Analytics', short: 'Analytics', href: '/analytics', icon: 'chart', state: 'partial', note: 'Importa YouTube Analytics de tu canal (7/28/90 días): serie diaria y vídeos principales, observado y calculado por separado, y un panel «Qué ha funcionado» (vídeos sobre 2× la mediana, mayor porcentaje visto, vistas por duración) calculado y descriptivo, no causal, con mínimo de 5 vídeos. El panel de Guiones muestra esa referencia (calculada, sin IA) junto al borrador; aún no ajusta oportunidades ni guiones por sí solo. Requiere el cliente OAuth de Google.' },
+  { label: 'Biblioteca', short: 'Biblioteca', href: '/library', icon: 'library', state: 'functional', note: 'Ficha de procedencia de cada archivo: proveedor, modelo, prompt, parámetros, coste/créditos, licencia, atribución, escena, fuente original y versiones derivadas. Transcripción a subtítulos (SRT/VTT) con Whisper (Groq o Cloudflare, gratis con límites).' },
+  { label: 'Costes y créditos', short: 'Costes', href: '/usage', icon: 'chart', state: 'functional', note: 'Generaciones por proveedor y modelo, coste estimado y real, créditos gastados, saldo en vivo de ElevenLabs y estrategia por defecto (p. ej. gratis primero).' },
+  { label: 'Conectores (APIs)', short: 'Conectores', href: '/connectors', icon: 'link', state: 'functional', note: 'Estado real de proveedores, directorio con nivel de coste, autenticación y límites comprobados, y explicación de Google Flow frente a sus APIs oficiales.' },
+  { label: 'Fábrica de Shorts', short: 'Shorts', href: '/shorts', icon: 'phone', state: 'integration_ready', note: 'Un Short de curiosidades al día para el canal Umbral del Hito, solo con recursos gratuitos: tema con interés comprobado en el Radar, dato con al menos 2 fuentes fiables verificadas (se abren y se comprueban), guion con gancho y dato en los primeros 2 s, voz de Gemini e imágenes de Cloudflare, render en tu navegador y aprobación tuya (subida privada con contenido sintético declarado). Guarda la retención media a 7 días como dato observado. Código y pruebas listos; migración aplicada; necesita GEMINI_API_KEY y las claves de Cloudflare; sin probar con claves reales.' },
+  { label: 'Automatizaciones', short: 'Automatizaciones', href: '/automations', icon: 'bolt', state: 'partial', note: 'Vigilancia de tendencias con palabras clave y actualización de métricas de oportunidades, con historial. Ejecución manual y diaria programada (07:00 UTC, Vercel Cron en producción) con historial de cada ejecución. Nunca publican ni gastan.' },
+]
+
+export function moduleFor(href: string) {
+  return studioModules.find(m => m.href === href)
+}

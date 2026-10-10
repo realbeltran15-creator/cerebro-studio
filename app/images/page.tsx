@@ -1,2 +1,4 @@
-import { ModulePage } from '../components/studio-shell'
-export default function Page(){return <ModulePage title="Imágenes" description="Generación y gestión visual con proveedores intercambiables." steps={['Prompt','Proveedor','Variantes','Seleccionar']}/>}
+import { redirect } from 'next/navigation'
+
+/** Generation moved to the Creation Studio (multi-provider, cost confirmation). */
+export default function Page() { redirect('/studio?tab=image') }
