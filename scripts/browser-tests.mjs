@@ -448,6 +448,39 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 6. Google Flow import: no public Flow API, so the user picks files; nothing is stored until «Importar», and the follow-up is automatic.
+{
+  const server = serve(8795, { 'setup.js': readFileSync(path.join(dir, 'flow.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'flow.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined' }) })
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8795/')
+  await page.getByText('Importar vídeos creados en Google Flow').waitFor({ timeout: 20000 })
+  check('flow import: explains there is no public Flow API and that nothing happens until Importar', (await page.getByText(/Flow no ofrece una API pública/).count()) === 1 && (await page.getByText(/Hasta que pulses «Importar» no se lee ni se guarda nada/).count()) === 1)
+  check('flow import: Drive picker is disabled without its public identifiers, with the reason shown', await page.getByRole('button', { name: /Elegir de Google Drive/ }).isDisabled() && (await page.getByText(/NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID/).count()) === 1)
+  check('flow import: defaults to restricted until the user confirms the origin', (await page.getByText(/«Restringido»: la publicación queda bloqueada/).count()) === 1)
+  // A fake MP4 whose sample description says H.264 (stsd box + avc1), and one that says VP9.
+  const mp4 = fourcc => { const b = Buffer.alloc(400); b.write('ftyp', 4); b.write('stsd', 100); b.write(fourcc, 116); return b }
+  await page.setInputFiles('#flow-files', [{ name: 'flow-clip-h264.mp4', mimeType: 'video/mp4', buffer: mp4('avc1') }, { name: 'flow-clip-vp9.mp4', mimeType: 'video/mp4', buffer: mp4('vp09') }])
+  await page.getByText('flow-clip-h264').waitFor({ timeout: 5000 })
+  check('flow import: selecting files stores nothing yet', (await page.evaluate(() => window.__DB.assets.length)) === 0 && (await page.evaluate(() => window.__UPLOADS.length)) === 0)
+  await page.setInputFiles('#flow-files', [{ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('x') }])
+  check('flow import: a non-video file is refused', (await page.getByText(/Formato no admitido/).count()) === 1)
+  await page.getByLabel('Prompt usado en Flow (opcional)').fill('A fox running through snow')
+  await page.getByLabel(/Confirmo que creé estos vídeos/).check()
+  await page.getByRole('button', { name: /Importar 2 seleccionado/ }).click()
+  await page.getByText(/2 vídeo\(s\) importados/).waitFor({ timeout: 20000 })
+  const assets = await page.evaluate(() => window.__DB.assets)
+  const byName = n => assets.find(a => a.provenance.originalFilename === n)
+  check('flow import: both videos saved as video assets with the Flow provider', assets.length === 2 && assets.every(a => a.asset_type === 'video' && a.source_provider === 'google-flow-import'), assets)
+  check('flow import: declared origin, prompt and AI flag kept as provenance, licence follows the confirmation', byName('flow-clip-h264.mp4').provenance.declaredOrigin === 'google-flow' && byName('flow-clip-h264.mp4').provenance.prompt === 'A fox running through snow' && byName('flow-clip-h264.mp4').provenance.aiGenerated === true && byName('flow-clip-h264.mp4').license_status === 'owned')
+  check('flow import: real codecs read from the files, Instagram readiness recorded', byName('flow-clip-h264.mp4').provenance.instagramReady === true && byName('flow-clip-vp9.mp4').provenance.instagramReady === false, assets.map(a => a.provenance.codecs))
+  check('flow import: the follow-up steps appear and link to the Editor and the automatic editor', (await page.getByText(/Disponible en el Editor y en el Editor automático/).count()) === 2 && (await page.getByRole('link', { name: 'Abrir en el Editor' }).getAttribute('href')) === '/editor?project=p1' && (await page.getByRole('link', { name: 'Montaje automático' }).getAttribute('href')) === '/editor/auto?project=p1')
+  check('flow import: the VP9 file warns that Instagram needs a conversion', (await page.getByText(/convertirlo a MP4 H\.264 \+ AAC/).count()) === 1)
+  check('flow import: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

@@ -241,6 +241,21 @@ Los dominios de descarga están restringidos en el código por servicio (`allowe
 - **Conectores**: botones de comprobación **sin coste** para fal, Cloudflare (verificación de token), Gemini (listar modelos) y TopMediai (cuota de la clave).
 - **Errores encontrados** al probar en vivo: Veo exigía `durationSeconds` numérico (el código lo enviaba como texto); `gpt-image-1` se retira el 23-oct-2026 según terceros.
 
+## Importar vídeos de Google Flow (2026-10-10)
+
+**Qué se investigó.** No hay API pública de Google Flow para listar ni descargar los vídeos de un usuario, y no se encontró documentación oficial de exportación de Flow a Google Drive (búsqueda del 2026-10-10; si Google la publica, el selector de Drive ya cubriría ese caso). Veo sí está disponible por la API de Gemini / Vertex AI, pero eso es generación de pago, otra vía. Las extensiones de terceros que automatizan la web de Flow no se usan: dependen de la interfaz y pueden incumplir sus condiciones.
+
+**Qué se implementó** (`lib/flow-import.ts`, `app/components/flow-import.tsx`, en Estudio → Vídeo → «Importar vídeos creados en Google Flow»):
+- Selección **manual**: selector oficial de Google Drive (permiso `drive.file`: la app solo puede leer los archivos que el usuario marca; nada se lista) o archivos MP4/WebM/MOV descargados de Flow. No se lee ni guarda nada hasta pulsar «Importar».
+- Importación **automática** de lo elegido: descarga desde Drive en el navegador con el token del usuario (nunca en la URL ni en el servidor), validación (tipo y 50 MB), lectura de los códecs reales del MP4, subida a la nube del proyecto (Supabase o R2) y registro en la Biblioteca con procedencia (origen declarado «google-flow», archivo de Drive, prompt opcional, marca de IA, códecs, preparación para Instagram).
+- Licencia: **Restringido** hasta que el usuario confirme que creó los vídeos con su cuenta; la declaración no se puede verificar y la nota lo dice. Los vídeos de Veo pueden llevar marca SynthID: no debe eliminarse.
+- Después, aparecen en el Editor y en el Montaje automático del proyecto; si el códec no sirve para Instagram se indica la conversión a MP4 H.264 + AAC que ya existe en el panel de render.
+- No consume créditos, no publica y no sale a ningún servicio de pago.
+
+**Configuración del selector de Drive** (opcional): `NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID`, `NEXT_PUBLIC_GOOGLE_PICKER_API_KEY` y `NEXT_PUBLIC_GOOGLE_PICKER_APP_ID` (identificadores públicos; ver `.env.example`). Sin ellos el botón de Drive aparece desactivado con el motivo, y la subida de archivos descargados funciona igual.
+
+**Estado:** probado con tests unitarios (`tests/flow-import.test.ts`) y de navegador (importación local con códecs H.264/VP9, licencia, procedencia y enlaces al editor). **No** probado: el selector de Drive con una cuenta real (requiere tus identificadores y el consentimiento de Google).
+
 ## Gemini texto: cupo gratuito (2026-10-07)
 
 Al repetir la prueba, la API respondió 429 con el mensaje «Rate limit exceeded for model gemini-3.8-flash (limit: 20 requests per day on Free Tier)»: **el nivel gratuito de ese modelo admite solo unas 20 solicitudes al día** (dato de la propia respuesta; puede cambiar). Las agoté yo con los reintentos durante la saturación de ese día. Consecuencias: (1) la integración trata el 429 como cupo agotado, no lo reintenta y muestra «límite de uso o cupo gratuito» (ya probado con simulaciones); (2) el catálogo lo indica en la nota de precio; (3) con ese cupo, Gemini sirve como apoyo gratuito, no como único proveedor de texto: conviene configurar también Groq u otro, y el enrutador pasa al siguiente modelo elegible cuando uno falla; (4) la validación en vivo del texto queda pendiente de que se renueve el cupo y no se vuelve a gastar en pruebas repetidas.
