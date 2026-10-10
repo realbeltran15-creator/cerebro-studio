@@ -6,6 +6,7 @@ import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { StockBrowser } from '../components/stock-browser'
 import { FlowImport } from '../components/flow-import'
+import { manualEditorHref } from '@/lib/editor/from-assets'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { imageModes, imagePresets, presetGroupLabels, type ImageMode, type PresetGroup } from '@/lib/providers/image-presets'
 import { modalityLabels, modelById, type Evidence, type Format, type Modality, type Rights } from '@/lib/providers/catalog'
@@ -608,7 +609,8 @@ export default function StudioPage() {
               <div className="pageActions">
                 {selectedUrl && <a className="buttonLink ghost small" href={selectedUrl} target="_blank" rel="noopener noreferrer"><Icon name="upload" size={14} />Abrir</a>}
                 {promptOf(selectedAsset) && <button type="button" className="ghost small" onClick={() => { setPrompt(promptOf(selectedAsset)); setNotice('Prompt copiado al formulario.') }}><Icon name="copy" size={14} />Reusar prompt</button>}
-                <Link className="buttonLink ghost small" href={`/editor?project=${projectId}`}><Icon name="scissors" size={14} />Usar en el editor</Link>
+                {['video', 'image', 'voice', 'music', 'sfx'].includes(kindOf(selectedAsset)) && <Link className="buttonLink small" href={manualEditorHref(projectId, [selectedAsset.id])}><Icon name="scissors" size={14} />Editar en el Editor manual</Link>}
+                <Link className="buttonLink ghost small" href={`/editor?project=${projectId}`} title="Monta un vídeo entero a partir de las escenas del storyboard">Montaje automático por escenas</Link>
               </div>
               {kindOf(selectedAsset) === 'image' && (
                 <div className="pageActions" style={{ marginTop: 8 }}>

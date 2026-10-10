@@ -51,7 +51,7 @@ describe('licence and provenance', () => {
   })
   it('describes what happens next, adding the conversion only when needed', () => {
     const mk = (video: string | null) => followUps(flowProvenance({ originalFilename: 'x.mp4', mime: 'video/mp4', source: { kind: 'local' }, codec: { video, audio: null } }))
-    expect(mk('h264').join(' ')).toMatch(/Editor automático/)
+    expect(mk('h264').join(' ')).toMatch(/Editor manual/)
     expect(mk('h264').join(' ')).not.toMatch(/convertirlo/)
     expect(mk('vp9').join(' ')).toMatch(/convertirlo a MP4 H\.264/)
     expect(mk(null).join(' ')).toMatch(/No se pudo leer el códec/)

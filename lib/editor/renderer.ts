@@ -19,6 +19,8 @@ export type RenderOptions = {
   signal?: AbortSignal
 }
 
+import { ensureWebmDuration } from './webm-duration'
+
 export type RenderResult = { blob: Blob | null; mimeType: string | null; durationMs: number }
 
 type LoadedVisual = { kind: 'image'; bitmap: ImageBitmap } | { kind: 'video'; el: HTMLVideoElement; url: string }
@@ -292,7 +294,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const stopped = new Promise<void>(r => { recorder!.onstop = () => r() })
     recorder.stop()
     await stopped
-    blob = signal?.aborted ? null : new Blob(chunks, { type: (recorder?.mimeType || mimeType || 'video/webm').split(';')[0] })
+    blob = signal?.aborted ? null : await ensureWebmDuration(new Blob(chunks, { type: (recorder?.mimeType || mimeType || 'video/webm').split(';')[0] }), total)
   }
   onProgress?.(total, total)
   await audio.close()

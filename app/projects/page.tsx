@@ -17,6 +17,7 @@ export default function ProjectsPage() {
   const [filter, setFilter] = useState('')
   const [message, setMessage] = useState('Cargando…')
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
   const [authenticated, setAuthenticated] = useState<boolean | null>(null)
   const nameInput = useRef<HTMLInputElement>(null)
 
@@ -35,6 +36,7 @@ export default function ProjectsPage() {
   }
 
   useEffect(() => {
+    try { const n = sessionStorage.getItem('cerebro.notice'); if (n) { sessionStorage.removeItem('cerebro.notice'); setNotice(n) } } catch { /* sin almacenamiento */ }
     const params = new URLSearchParams(window.location.search)
     const legacy = params.get('project')
     if (legacy) { router.replace(`/projects/${encodeURIComponent(legacy)}`); return }
@@ -69,6 +71,7 @@ export default function ProjectsPage() {
 
   return (
     <StudioShell title="Proyectos" actions={authenticated ? <button type="button" className="ghost" onClick={signOut}>Cerrar sesión</button> : null}>
+      {notice && <p className="notice" role="status">{notice}</p>}
       {message && <p className="connectionStatus">{message}</p>}
       {authenticated === false && <Link className="buttonLink" href="/login?next=/projects">Iniciar sesión</Link>}
       {authenticated && <>
@@ -80,10 +83,13 @@ export default function ProjectsPage() {
         {visible.length === 0 ? <p className="emptyState">{projects.length ? 'Ningún proyecto coincide con el filtro.' : 'Todavía no hay proyectos. Crea el primero arriba o conviértelo desde una oportunidad.'}</p> : (
           <div className="list">
             {visible.map(p => (
-              <Link className="listItem" key={p.id} href={`/projects/${p.id}`}>
-                <div><b>{p.name}</b><span>{p.description ? p.description.slice(0, 120) : 'Sin descripción'} · actualizado {new Date(p.updated_at).toLocaleDateString()}</span></div>
+              <div className="listItem" key={p.id} style={{ alignItems: 'center' }}>
+                <Link href={`/projects/${p.id}`} style={{ flex: 1, minWidth: 0, textDecoration: 'none', color: 'inherit' }}>
+                  <div><b>{p.name}</b><span>{p.description ? p.description.slice(0, 120) : 'Sin descripción'} · actualizado {new Date(p.updated_at).toLocaleDateString()}</span></div>
+                </Link>
                 <span className="pill">{projectStatusLabel(p.status)}</span>
-              </Link>
+                <Link className="buttonLink ghost small" href={`/projects/${p.id}#eliminar`} aria-label={`Eliminar el proyecto ${p.name}`}>Eliminar…</Link>
+              </div>
             ))}
           </div>
         )}

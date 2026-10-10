@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { manualEditorHref } from '@/lib/editor/from-assets'
 import { useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
@@ -136,6 +137,7 @@ export default function LibraryPage() {
               {usedIn.length > 0 && <><dt>Versiones derivadas</dt><dd>{usedIn.map(a => <button key={a.id} type="button" className="linkish" onClick={() => setSelected(a)}>{describeAsset(a).title.slice(0, 30)}</button>)}</dd></>}
             </dl>
             <div className="pageActions">
+              {selected.project_id && ['video', 'image', 'voice', 'music', 'sfx'].includes(selected.asset_type) && <Link className="buttonLink small" href={manualEditorHref(selected.project_id, [selected.id])}><Icon name="scissors" size={14} />Editar en el Editor manual</Link>}
               {urls[selected.id] && <a className="buttonLink ghost small" href={urls[selected.id]} target="_blank" rel="noopener noreferrer"><Icon name="upload" size={14} />Abrir archivo</a>}
               {['voice', 'video', 'music', 'sfx'].includes(selected.asset_type) && (subtitleOf(selected.id)
                 ? <button type="button" className="ghost small" onClick={() => setSelected(subtitleOf(selected.id)!)}>Ver subtítulos</button>

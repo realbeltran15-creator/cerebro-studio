@@ -11,6 +11,7 @@ import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type 
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { LearnPanel } from '../../components/learn-panel'
 import { ManualPicker } from '../../components/manual-picker'
+import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
 type Selection = { kind: 'clip' | 'audio'; id: string } | null
@@ -40,6 +41,10 @@ export default function ManualEditorPage() {
   const [previewFromSelected, setPreviewFromSelected] = useState(false)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [picking, setPicking] = useState(false)
+  const [importAudioKind, setImportAudioKind] = useState<'music' | 'sfx' | 'voice'>('music')
+  const [importLicense, setImportLicense] = useState<LicenseStatus>('owned')
+  const [importNotes, setImportNotes] = useState('')
+  const [dropping, setDropping] = useState(false)
 
   const comp = history?.present ?? null
   const apply = useCallback((next: (c: Composition) => Composition) => {
@@ -122,6 +127,37 @@ export default function ManualEditorPage() {
     return () => { alive = false }
   }, [imageIds, thumbs])
 
+  /** Uploads files from the computer to the project's Library and puts them on the timeline (videos and images at the end, audio on its own track). */
+  async function importFiles(files: File[]) {
+    if (!job || files.length === 0 || busy) return
+    if (importLicense === 'licensed' && !importNotes.trim()) { setError('Indica la licencia o el enlace de origen de los archivos con licencia.'); return }
+    setBusy('import'); setError(''); setNotice('')
+    const added: Array<{ id: string; kind: UploadKind; ms: number | null }> = []
+    const problems: string[] = []
+    for (const file of files) {
+      const kind: UploadKind | null = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? importAudioKind : null
+      if (!kind) { problems.push(`${file.name}: solo se admiten vídeo, imagen y audio.`); continue }
+      const bad = validateUpload(kind, file)
+      if (bad) { problems.push(`${file.name}: ${bad}`); continue }
+      try {
+        const saved = await uploadProjectMedia(supabase, { projectId: job.project_id, kind, file, title: file.name.replace(/\.[^.]+$/, ''), license: importLicense, licenseNotes: importNotes || null })
+        added.push({ id: saved.id, kind, ms: kind === 'image' ? null : await mediaDuration(file).then(sec => (sec ? Math.round(sec * 1000) : null)) })
+      } catch (e) { problems.push(`${file.name}: ${e instanceof Error ? e.message : 'no se pudo subir.'}`) }
+    }
+    if (added.length) {
+      const { data: a } = await supabase.from('assets').select('id,asset_type,storage_path,license_status,source_provider,provenance,created_at').eq('project_id', job.project_id).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
+      setAssets((a ?? []) as EditorAsset[])
+      apply(c => added.reduce((acc, f) => {
+        if (f.kind === 'video' || f.kind === 'image') return addClip(acc, f.id, f.kind === 'video' ? f.ms ?? 5000 : 5000)
+        const ms = f.ms ?? 10_000
+        return addAudioClip(acc, { assetId: f.id, kind: f.kind === 'voice' ? 'voice' : f.kind === 'sfx' ? 'sfx' : 'music', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: f.kind === 'music' ? Math.min(ms, Math.max(totalDurationMs(acc), 1000)) : ms, volume: f.kind === 'music' ? 0.5 : 1, muted: false })
+      }, c))
+      setNotice(`${added.length} archivo(s) importados a la Biblioteca y añadidos a la línea de tiempo. Guarda el montaje para conservar los cambios.`)
+    }
+    if (problems.length) setError(problems.join(' '))
+    setBusy('')
+  }
+
   const visuals = useMemo(() => assets.filter(a => visualTypes.includes(a.asset_type)), [assets])
   const audios = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type) || musicTypes.includes(a.asset_type)), [assets])
   const typeOf = (id: string | null) => (id ? assets.find(a => a.id === id)?.asset_type ?? 'image' : 'none')
@@ -166,7 +202,7 @@ export default function ManualEditorPage() {
   const width = Math.max(total / 1000 * pxPerSec, 600)
   const rows: Array<{ key: AudioClip['kind']; label: string }> = [{ key: 'voice', label: 'Voz' }, { key: 'music', label: 'Música' }, { key: 'sfx', label: 'Efectos' }]
 
-  return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link>}>
+  return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
 
@@ -189,7 +225,9 @@ export default function ManualEditorPage() {
       </div>
     </div>
 
-    <section className="panel" style={{ marginBottom: 12, overflowX: 'auto' }} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
+    <section className="panel" style={{ marginBottom: 12, overflowX: 'auto', outline: dropping ? '2px dashed var(--accent, #7c4fe0)' : undefined }} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+      onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={() => setDropping(false)}
+      onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
       <div style={{ width, position: 'relative' }}>
         <div className="muted small" style={{ position: 'relative', height: 18 }}>
           {Array.from({ length: Math.ceil(total / 1000 / 5) + 1 }, (_, i) => <span key={i} style={{ position: 'absolute', left: i * 5 * pxPerSec }}>{i * 5}s</span>)}
@@ -224,6 +262,18 @@ export default function ManualEditorPage() {
     <div className="field-row" style={{ alignItems: 'start', marginBottom: 12 }}>
       <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <h3>Añadir</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <label htmlFor="mi-files"><b>Importar desde tu equipo</b>
+            <input id="mi-files" type="file" multiple accept="video/*,image/*,audio/*" disabled={busy === 'import'} onChange={e => { const f = Array.from(e.target.files ?? []); e.target.value = ''; void importFiles(f) }} />
+          </label>
+          <span className="muted small">Vídeos, imágenes y audio. También puedes arrastrarlos a la línea de tiempo. Se guardan en la Biblioteca del proyecto y se añaden al montaje.</span>
+          <div className="field-row">
+            <label htmlFor="mi-akind">Si es audio, usar como<select id="mi-akind" value={importAudioKind} onChange={e => setImportAudioKind(e.target.value as 'music' | 'sfx' | 'voice')}><option value="music">Música</option><option value="sfx">Efecto</option><option value="voice">Voz</option></select></label>
+            <label htmlFor="mi-license">Licencia<select id="mi-license" value={importLicense} onChange={e => setImportLicense(e.target.value as LicenseStatus)}><option value="owned">Propio</option><option value="public_domain">Dominio público</option><option value="licensed">Con licencia</option></select></label>
+          </div>
+          {importLicense === 'licensed' && <label htmlFor="mi-notes">Licencia o enlace de origen<input id="mi-notes" value={importNotes} onChange={e => setImportNotes(e.target.value)} maxLength={500} /></label>}
+          {busy === 'import' && <span className="muted small" role="status">Importando…</span>}
+        </div>
         <label>Clip de imagen o vídeo
           <select value={addAsset} onChange={e => setAddAsset(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
         </label>

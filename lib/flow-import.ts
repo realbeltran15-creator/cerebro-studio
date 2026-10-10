@@ -77,7 +77,7 @@ export function flowProvenance(input: { originalFilename: string; source: FlowSo
 
 /** What happens to a video after it is imported, for the on-screen summary. Pure, so it can be tested. */
 export function followUps(provenance: ReturnType<typeof flowProvenance>) {
-  const list = ['Guardado en la Biblioteca del proyecto con su procedencia.', 'Disponible en el Editor y en el Editor automático.']
+  const list = ['Guardado en la Biblioteca del proyecto con su procedencia.', 'Listo para editar en el Editor manual (botón de abajo) y disponible en el Montaje automático.']
   if (provenance.instagramReady === false) list.push('Para Instagram habrá que convertirlo a MP4 H.264 + AAC (botón en el panel de render del Editor).')
   if (provenance.instagramReady === null) list.push('No se pudo leer el códec; el panel de render lo comprobará.')
   return list

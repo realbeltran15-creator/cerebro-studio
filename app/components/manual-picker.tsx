@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { emptyComposition, parseComposition, totalDurationMs, type OutputFormat } from '@/lib/editor/composition'
+import { audioDurationMs } from '@/lib/editor/client'
+import { compositionFromAssets, parseAssetIds, parseFormat, type SourceAsset } from '@/lib/editor/from-assets'
 
 type Draft = { id: string; project_id: string; updated_at: string; composition: unknown }
 type Project = { id: string; name: string }
@@ -23,6 +25,7 @@ export function ManualPicker() {
   const [format, setFormat] = useState<OutputFormat>('16:9')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [starting, setStarting] = useState(false)
 
   const load = useCallback(async () => {
     const [d, p] = await Promise.all([
@@ -38,6 +41,38 @@ export function ManualPicker() {
 
   useEffect(() => { void load() }, [load])
 
+  // Opened with files chosen elsewhere (?project=…&assets=a,b): build the edit from them and open it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const ids = parseAssetIds(params.get('assets')), pid = params.get('project')
+    if (!ids.length || !pid) return
+    setStarting(true)
+    void (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) throw new Error('La sesión ha caducado.')
+        const { data, error: e } = await supabase.from('assets').select('id,asset_type,provenance').eq('project_id', pid).in('id', ids)
+        if (e) throw new Error(e.message)
+        const found = (data ?? []) as Array<{ id: string; asset_type: string; provenance: Record<string, unknown> | null }>
+        if (found.length === 0) throw new Error('No se encontraron esos archivos en el proyecto (¿se eliminaron?).')
+        const sources: SourceAsset[] = []
+        for (const id of ids) {
+          const a = found.find(x => x.id === id)
+          if (!a) continue
+          const seconds = typeof a.provenance?.durationSeconds === 'number' ? a.provenance.durationSeconds : null
+          const isAudio = ['voice', 'audio', 'music', 'sfx'].includes(a.asset_type)
+          const ms = seconds !== null ? Math.round(seconds * 1000) : isAudio ? await audioDurationMs(a.id).catch(() => 0) || null : null
+          sources.push({ id: a.id, asset_type: a.asset_type, durationMs: ms })
+        }
+        const format = parseFormat(params.get('format'))
+        const composition = compositionFromAssets({ title: params.get('title')?.slice(0, 120) || 'Montaje manual', format, assets: sources })
+        const { data: row, error: insertError } = await supabase.from('render_jobs').insert({ owner_id: user.id, project_id: pid, output_format: format, status: 'draft', composition }).select('id').single()
+        if (insertError || !row) throw new Error(insertError?.message ?? 'No se pudo crear el montaje.')
+        window.location.replace(`/editor/manual?job=${(row as { id: string }).id}`)
+      } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo abrir el editor con esos archivos.'); setStarting(false) }
+    })()
+  }, [supabase])
+
   async function create() {
     if (!projectId || busy) return
     setBusy(true); setError('')
@@ -52,6 +87,8 @@ export function ManualPicker() {
   }
 
   const nameOf = (id: string) => projects.find(p => p.id === id)?.name ?? 'Proyecto'
+
+  if (starting) return <p className="muted" role="status">Preparando el montaje con tus archivos…</p>
 
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <p className="muted">Edita por separado vídeo, imágenes, voz, música y efectos en una línea de tiempo: corta, divide, duplica, mueve, elimina y reordena clips, y guarda el montaje. Todo se monta con los recursos de la Biblioteca del proyecto.</p>
@@ -81,7 +118,8 @@ export function ManualPicker() {
           const c = parseComposition(d.composition)
           return <div key={d.id} className="listItem">
             <span><b>{c?.title || 'Montaje'}</b><span className="muted small" style={{ display: 'block' }}>{nameOf(d.project_id)} · {c ? `${c.clips.length} clips · ${fmt(totalDurationMs(c))} · ${c.format}` : 'montaje no válido'} · {new Date(d.updated_at).toLocaleDateString('es-ES')}</span></span>
-            {c && <Link className="buttonLink ghost" href={`/editor/manual?job=${d.id}`}>Abrir</Link>}
+            {/* Plain anchor on purpose: the editor reads ?job= once when it mounts, so a client-side navigation to the same route would not reload it. */}
+            {c && <a className="buttonLink ghost" href={`/editor/manual?job=${d.id}`}>Abrir</a>}
           </div>
         })}
       </div>}

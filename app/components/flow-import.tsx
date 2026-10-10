@@ -9,8 +9,9 @@ import {
   type FlowSource, type PickedFile,
 } from '@/lib/flow-import'
 import { Icon } from './studio-icon'
+import { manualEditorHref } from '@/lib/editor/from-assets'
 
-type Row = { key: string; title: string; source: FlowSource; picked?: PickedFile; file?: File; status: 'ready' | 'importing' | 'done' | 'error'; error?: string; notes?: string[] }
+type Row = { key: string; title: string; source: FlowSource; picked?: PickedFile; file?: File; status: 'ready' | 'importing' | 'done' | 'error'; error?: string; notes?: string[]; assetId?: string }
 
 // Minimal typings for the two Google scripts (loaded on demand, only when the user presses the Drive button).
 type PickerDoc = { id: string; name: string; mimeType: string; sizeBytes?: number }
@@ -116,11 +117,11 @@ export function FlowImport({ projectId, sceneId, onImported }: { projectId: stri
         // Real codecs from the MP4 itself, so the follow-up steps (Instagram, conversion) are known from the start.
         const codec = file.type === 'video/mp4' ? mp4Codecs(new Uint8Array(await file.arrayBuffer())) : null
         const provenance = flowProvenance({ originalFilename: file.name, source: row.source, prompt, codec, mime: file.type })
-        await uploadProjectMedia(supabase, {
+        const saved = await uploadProjectMedia(supabase, {
           projectId, kind: 'video', file, title: row.title || file.name, license: license.status, licenseNotes: license.notes,
           sourceUrl: FLOW_URL, provider: 'google-flow-import', extra: { ...provenance, sceneId: sceneId ?? null, durationSeconds: await mediaDuration(file) },
         })
-        update(row.key, { status: 'done', notes: followUps(provenance) }); done++
+        update(row.key, { status: 'done', notes: followUps(provenance), assetId: saved.id }); done++
       } catch (e) { update(row.key, { status: 'error', error: e instanceof Error ? e.message : 'No se pudo importar.' }) }
     }
     setBusy(false)
@@ -128,7 +129,8 @@ export function FlowImport({ projectId, sceneId, onImported }: { projectId: stri
   }
 
   const ready = rows.filter(r => r.status === 'ready').length
-  const imported = rows.some(r => r.status === 'done')
+  const importedIds = rows.filter(r => r.status === 'done' && r.assetId).map(r => r.assetId!)
+  const imported = importedIds.length > 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -180,8 +182,8 @@ export function FlowImport({ projectId, sceneId, onImported }: { projectId: stri
         <button type="button" onClick={() => void run()} disabled={busy || !projectId || ready === 0}>{busy ? 'Importando…' : `Importar ${ready || ''} seleccionado(s)`}</button>
         {rows.length > 0 && !busy && <button type="button" className="ghost" onClick={() => setRows([])}>Vaciar selección</button>}
         {imported && <>
-          <a className="buttonLink ghost" href={`/editor?project=${projectId}`}>Abrir en el Editor</a>
-          <a className="buttonLink ghost" href={`/editor/auto?project=${projectId}`}>Montaje automático</a>
+          <a className="buttonLink" href={manualEditorHref(projectId, importedIds)}>Editar en el Editor manual</a>
+          <a className="buttonLink ghost" href={`/editor/auto?project=${projectId}`} title="Quita silencios y corta por planos de un vídeo en bruto">Montaje automático de un vídeo</a>
         </>}
       </div>
       {error && <p className="error" role="alert">{error}</p>}

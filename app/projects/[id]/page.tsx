@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { StudioShell } from '../../components/studio-shell'
 import { Icon } from '../../components/studio-icon'
+import { DeleteProject } from '../../components/delete-project'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { projectProgress, projectStatuses, type ProgressInput } from '@/lib/progress'
 import { formatDuration, isMissingScriptsTable, scriptStatusLabels } from '@/lib/scripts'
@@ -92,6 +93,7 @@ export default function ProjectWorkspace() {
   return (
     <StudioShell title={project.name} eyebrow="PROYECTO" actions={<>
       <Link className="buttonLink ghost" href="/projects">Todos los proyectos</Link>
+      <a className="buttonLink ghost" href="#eliminar">Eliminar proyecto</a>
       {next && <Link className="buttonLink" href={next.href(project.id)}>Siguiente: {next.label} <Icon name="arrow" size={16} /></Link>}
     </>}>
       {error && <p className="error" role="alert">{error}</p>}
@@ -185,6 +187,7 @@ export default function ProjectWorkspace() {
           )}
         </section>
       </div>
+      <DeleteProject project={{ id: project.id, name: project.name }} />
     </StudioShell>
   )
 }

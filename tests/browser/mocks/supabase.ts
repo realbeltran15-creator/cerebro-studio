@@ -1,6 +1,8 @@
 type Row = Record<string, any>
 const db: Record<string, Row[]> = (window as any).__DB
 let seq = 0
+// Ids stay unique across full page loads (the counter alone restarts at 0 on every load), like real uuids.
+const uid = () => `new-${Date.now().toString(36)}${(++seq).toString(36)}`
 function q(table: string) {
   const filters: Array<(r: Row) => boolean> = []
   let op = 'select', payload: any = null, ret = false
@@ -26,11 +28,11 @@ function q(table: string) {
     if (op === 'update') { m.forEach(r => Object.assign(r, JSON.parse(JSON.stringify(payload)))); return { data: ret ? m : null, error: null } }
     if (op === 'upsert') {
       const hit = rows.find(r => r.owner_id === payload.owner_id && r.provider === payload.provider && r.capability === payload.capability)
-      if (hit) Object.assign(hit, JSON.parse(JSON.stringify(payload))); else rows.push({ id: `new-${++seq}`, ...JSON.parse(JSON.stringify(payload)) })
+      if (hit) Object.assign(hit, JSON.parse(JSON.stringify(payload))); else rows.push({ id: uid(), ...JSON.parse(JSON.stringify(payload)) })
       return { data: null, error: null }
     }
     if (op === 'delete') { db[table] = rows.filter(r => !m.includes(r)); return { data: null, error: null } }
-    const row = { id: `new-${++seq}`, updated_at: new Date().toISOString(), ...JSON.parse(JSON.stringify(payload)) }
+    const row = { id: uid(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...JSON.parse(JSON.stringify(payload)) }
     rows.push(row); return { data: [row], error: null }
   }
   return api
@@ -38,6 +40,6 @@ function q(table: string) {
 const client = {
   auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
   from: q,
-  storage: { from: () => ({ upload: async (path: string, blob: Blob) => { (window as any).__UPLOADS.push({ path, size: blob.size }); return { error: null } }, remove: async () => ({ error: null }) }) },
+  storage: { from: () => ({ upload: async (path: string, blob: Blob) => { (window as any).__UPLOADS.push({ path, size: blob.size }); await (window as any).__putBlob?.(path, blob); return { error: null } }, remove: async () => ({ error: null }) }) },
 }
 export const getSupabaseBrowserClient = () => client

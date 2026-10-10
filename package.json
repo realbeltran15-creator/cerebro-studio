@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:browser": "node scripts/browser-tests.mjs"
+    "test:browser": "node scripts/browser-tests.mjs",
+    "test:e2e-lofi": "node scripts/lofi-e2e.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "latest",
