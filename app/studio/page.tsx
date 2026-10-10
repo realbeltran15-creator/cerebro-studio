@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { StockBrowser } from '../components/stock-browser'
+import { FlowImport } from '../components/flow-import'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { imageModes, imagePresets, presetGroupLabels, type ImageMode, type PresetGroup } from '@/lib/providers/image-presets'
 import { modalityLabels, modelById, type Evidence, type Format, type Modality, type Rights } from '@/lib/providers/catalog'
@@ -641,6 +642,13 @@ export default function StudioPage() {
                 </button>
               ))}
             </div>
+          )}
+
+          {modality === 'video' && (
+            <details className="freeAlt">
+              <summary><Icon name="video" size={14} /> Importar vídeos creados en Google Flow</summary>
+              <FlowImport projectId={projectId} sceneId={sceneId || null} onImported={() => { void loadHistory(); setNotice('Vídeos importados en la Biblioteca del proyecto.') }} />
+            </details>
           )}
 
           {modality !== 'voice' && (

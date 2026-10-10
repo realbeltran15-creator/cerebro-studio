@@ -12,7 +12,7 @@ import { parseKeywords, trendWatchFormConfig } from '@/lib/automations/keywords'
 type Run = { id: string; automation_id: string; trigger: string; status: string; summary: Record<string, unknown>; error: string | null; started_at: string; finished_at: string | null }
 type Status = { providers?: Array<{ id: string; enabled: boolean }> }
 
-const kindLabels: Record<AutomationKind, string> = { trend_watch: 'Vigilar tendencias', opportunity_refresh: 'Actualizar métricas de oportunidades' }
+const kindLabels: Record<AutomationKind, string> = { trend_watch: 'Vigilar tendencias', opportunity_refresh: 'Actualizar métricas de oportunidades', shorts_factory: 'Fábrica de Shorts de curiosidades' }
 const regions = ['ES', 'MX', 'AR', 'CO', 'CL', 'PE', 'US', 'GB', 'DE', 'FR', 'IT', 'PT', 'BR']
 
 function describe(a: Automation) {
@@ -21,6 +21,7 @@ function describe(a: Automation) {
     const keywords = Array.isArray(c.keywords) ? (c.keywords as string[]).join(', ') : ''
     return `${String(c.region ?? 'ES')}${c.categoryId ? ` · categoría ${String(c.categoryId)}` : ''} · palabras: ${keywords || '—'} · ${c.autoSave ? 'guarda coincidencias en Oportunidades' : 'solo informa'}`
   }
+  if (a.kind === 'shorts_factory') return `Canal ${String(c.channelName ?? 'Umbral del Hito')} · 1 Short al día, solo recursos gratuitos · tú apruebas cada uno`
   return `Hasta ${Number(c.maxItems ?? 50)} oportunidades de YouTube por ejecución`
 }
 
@@ -29,6 +30,10 @@ function summaryText(r: Run) {
   if (r.status === 'failed') return r.error ?? 'Falló'
   if (r.status === 'running') return 'En curso…'
   if ('matched' in s) return `${String(s.checked)} en tendencia · ${String(s.matched)} coinciden · ${String(s.saved)} guardadas${Number(s.duplicates) ? ` · ${String(s.duplicates)} ya existían` : ''}${Array.isArray(s.keywords) ? ` · palabras usadas: ${(s.keywords as string[]).join(', ')}` : ''}`
+  if ('outcome' in s) {
+    const o = s.outcome as { status?: string; topic?: string; message?: string }
+    return o.status === 'prepared' ? `Short preparado: «${String(o.topic)}». Revísalo en Shorts.` : `Hoy no se crea Short: ${String(o.message ?? 'sin motivo')}`
+  }
   if ('updated' in s) return `${String(s.updated)} de ${String(s.checked)} actualizadas${Number(s.missing) ? ` · ${String(s.missing)} ya no disponibles` : ''}`
   return 'Completada'
 }
@@ -39,6 +44,7 @@ export default function AutomationsPage() {
   const [runs, setRuns] = useState<Run[]>([])
   const [status, setStatus] = useState<{ youtube: boolean; scheduler: boolean } | null>(null)
   const [kind, setKind] = useState<AutomationKind>('trend_watch')
+  const [channelName, setChannelName] = useState('Umbral del Hito')
   const [name, setName] = useState('')
   const [region, setRegion] = useState('ES')
   const [categoryId, setCategoryId] = useState('')
@@ -80,7 +86,7 @@ export default function AutomationsPage() {
   async function create(event: FormEvent) {
     event.preventDefault()
     setError(''); setNotice('')
-    const config = kind === 'trend_watch' ? trendWatchFormConfig({ region, categoryId, keywords, autoSave }) : { maxItems }
+    const config = kind === 'trend_watch' ? trendWatchFormConfig({ region, categoryId, keywords, autoSave }) : kind === 'shorts_factory' ? { channelName: channelName.trim() || 'Umbral del Hito' } : { maxItems }
     if ('keywords' in config && config.keywords.length === 0) { setError('Añade al menos una palabra clave para detectar vídeos relevantes.'); return }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setError('La sesión ha caducado.'); return }
@@ -136,6 +142,7 @@ export default function AutomationsPage() {
             <select id="au-kind" value={kind} onChange={e => setKind(e.target.value as AutomationKind)}>
               <option value="trend_watch">{kindLabels.trend_watch}</option>
               <option value="opportunity_refresh">{kindLabels.opportunity_refresh}</option>
+              <option value="shorts_factory">{kindLabels.shorts_factory}</option>
             </select>
           </label>
           <label htmlFor="au-name">Nombre<input id="au-name" value={name} onChange={e => setName(e.target.value)} maxLength={120} placeholder={kindLabels[kind]} /></label>
@@ -162,6 +169,9 @@ export default function AutomationsPage() {
           <p className="small" aria-live="polite">Se guardarán: {typedKeywords.length ? typedKeywords.map(k => <span key={k} className="pill" style={{ marginRight: 4 }}>{k}</span>) : <span className="muted">ninguna palabra todavía</span>}</p>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={autoSave} onChange={e => setAutoSave(e.target.checked)} /> Guardar coincidencias en Oportunidades (sin duplicados)</label>
           <p className="muted small">Cada ejecución consulta la lista oficial de tendencias (unas 2 unidades de cuota) y compara los títulos con tus palabras clave.</p>
+        </> : kind === 'shorts_factory' ? <>
+          <label htmlFor="au-channel" style={{ maxWidth: 320 }}>Canal<input id="au-channel" value={channelName} onChange={e => setChannelName(e.target.value)} maxLength={80} /></label>
+          <p className="muted small">Cada día prepara <b>un</b> Short: elige un tema con interés comprobado en el Radar, exige un dato con al menos 2 fuentes fiables, escribe el guion con el gancho y el dato en los primeros 2 s y genera voz e imágenes <b>solo con opciones gratuitas</b> (Gemini y Cloudflare). Si lo gratis no alcanza la calidad mínima, ese día no se crea. El MP4 se renderiza en tu navegador al abrir <a href="/shorts">Shorts</a>; nada se sube sin tu aprobación.</p>
         </> : <>
           <label htmlFor="au-max" style={{ maxWidth: 260 }}>Máximo de oportunidades por ejecución<input id="au-max" type="number" min={1} max={200} value={maxItems} onChange={e => setMaxItems(Math.min(Math.max(Number(e.target.value) || 1, 1), 200))} /></label>
           <p className="muted small">Vuelve a leer vistas, likes y comentarios de tus oportunidades de YouTube (1 unidad de cuota por cada 50) y calcula el crecimiento desde la última lectura. Conserva un historial de 30 lecturas.</p>

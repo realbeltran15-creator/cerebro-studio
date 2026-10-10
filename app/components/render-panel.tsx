@@ -16,7 +16,7 @@ const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms %
  * Preview and browser render for a composition. Before rendering it asks the parent to persist
  * the composition, then records a snapshot in its own render_jobs row.
  */
-export function RenderPanel({ projectId, composition, assets, beforeRender, onRendered, previewOnly }: {
+export function RenderPanel({ projectId, composition, assets, beforeRender, onRendered, previewOnly, autoStart }: {
   projectId: string
   composition: Composition
   assets: EditorAsset[]
@@ -24,6 +24,8 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   onRendered?: () => void
   /** Only preview (e.g. a partial composition); rendering is disabled. */
   previewOnly?: boolean
+  /** Start the recorded render by itself once when the panel opens (the Shorts approval screen). Needs a visible tab. */
+  autoStart?: boolean
 }) {
   const supabase = getSupabaseBrowserClient()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -51,10 +53,17 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   }, [mode])
   useEffect(() => () => { if (download) URL.revokeObjectURL(download.url) }, [download])
 
+  const autoStarted = useRef(false)
   const issues = compositionIssues(composition)
   const blocking = issues.some(i => i.blocking)
   const total = totalDurationMs(composition)
   const { width, height } = formatSize[composition.format]
+  useEffect(() => {
+    if (!autoStart || previewOnly || autoStarted.current || blocking || composition.clips.length === 0 || !recordingSupported()) return
+    autoStarted.current = true
+    void run(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart])
 
   async function run(record: boolean) {
     // Synchronous guard: state updates are async, so repeated clicks during the save would pass a mode check.

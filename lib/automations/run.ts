@@ -4,6 +4,10 @@ import { trendingYouTubeVideos, youtubeVideoId, youtubeVideosByIds, type YouTube
 import { recurringTerms } from '@/lib/radar'
 import { recordTrendSnapshot } from '@/lib/radar-history'
 import { parseKeywords } from '@/lib/automations/keywords'
+import { shortsConfig } from '@/lib/shorts/config'
+import { prepareDailyShort } from '@/lib/shorts/factory'
+import { liveDeps } from '@/lib/shorts/live'
+import { collectDueRetention } from '@/lib/shorts/retention-server'
 
 export { parseKeywords }
 
@@ -13,7 +17,7 @@ export { parseKeywords }
  * Automations only read external sources and write into the owner's workspace: they never publish.
  */
 
-export type AutomationKind = 'trend_watch' | 'opportunity_refresh'
+export type AutomationKind = 'trend_watch' | 'opportunity_refresh' | 'shorts_factory'
 
 export type Automation = {
   id: string
@@ -137,13 +141,26 @@ export async function refreshOpportunityMetrics(db: SupabaseClient, ownerId: str
   return { checked: rows.length, updated, missing, top: growth.sort((x, y) => y.viewsGained - x.viewsGained).slice(0, 5) }
 }
 
+/**
+ * "Fábrica de Shorts": first reads the 7-day retention of Shorts already published (observed, read-only), then prepares at most one new Short.
+ * It never publishes: the Short waits on the approval screen.
+ */
+async function runShortsFactory(db: SupabaseClient, a: Automation) {
+  const cfg = shortsConfig(a.config)
+  let retention: Awaited<ReturnType<typeof collectDueRetention>> | { error: string }
+  try { retention = await collectDueRetention(db, a.owner_id) } catch (e) { retention = { error: e instanceof Error ? e.message : 'No se pudo leer la retención.' } }
+  const deps = await liveDeps(db, a.owner_id, cfg, a.id)
+  const { outcome, log, textCalls } = await prepareDailyShort(cfg, deps)
+  return { channel: cfg.channelName, outcome, log, textCalls, spendUsd: 0, retention }
+}
+
 /** Runs one automation and records the run. Never throws: failures are stored on the run. */
 export async function executeAutomation(db: SupabaseClient, a: Automation, trigger: 'manual' | 'schedule') {
   const { data: run, error } = await db.from('automation_runs').insert({ owner_id: a.owner_id, automation_id: a.id, trigger, status: 'running' }).select('id').single()
   if (error) return { ok: false as const, error: error.message }
   const runId = (run as { id: string }).id
   try {
-    const summary = a.kind === 'trend_watch' ? await runTrendWatch(db, a) : await runOpportunityRefresh(db, a)
+    const summary = a.kind === 'trend_watch' ? await runTrendWatch(db, a) : a.kind === 'shorts_factory' ? await runShortsFactory(db, a) : await runOpportunityRefresh(db, a)
     const now = new Date().toISOString()
     await db.from('automation_runs').update({ status: 'succeeded', summary, finished_at: now }).eq('id', runId)
     await db.from('automations').update({ last_run_at: now, updated_at: now }).eq('id', a.id).eq('owner_id', a.owner_id)
