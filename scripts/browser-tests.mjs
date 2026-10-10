@@ -232,6 +232,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
+    ['/shorts', 'app/shorts/page', '/shorts'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
   for (const [name, mod, url, params] of pages) {
@@ -478,6 +479,49 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('flow import: the follow-up steps appear and link to the Editor and the automatic editor', (await page.getByText(/Disponible en el Editor y en el Editor automático/).count()) === 2 && (await page.getByRole('link', { name: 'Abrir en el Editor' }).getAttribute('href')) === '/editor?project=p1' && (await page.getByRole('link', { name: 'Montaje automático' }).getAttribute('href')) === '/editor/auto?project=p1')
   check('flow import: the VP9 file warns that Instagram needs a conversion', (await page.getByText(/convertirlo a MP4 H\.264 \+ AAC/).count()) === 1)
   check('flow import: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 7. Shorts factory approval screen: evidence, auto-render on open, approval → private upload with synthetic content declared.
+{
+  const server = serve(8797, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'seed.js': readFileSync(path.join(dir, 'shorts.seed.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'shorts.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': 'undefined' }) })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1100 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  const dialogs = []
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept() })
+  const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
+  await page.goto('http://127.0.0.1:8797/shorts')
+  await page.getByRole('heading', { name: 'La cucharadita más pesada del universo' }).waitFor({ timeout: 20000 })
+  check('shorts: the prepared Short is selected and shows zero spend', (await page.getByText(/Coste de generación: 0 USD/).count()) === 1)
+  check('shorts: verified sources are visible with their links and the rejected one is explained', (await page.getByRole('link', { name: 'nasa.gov' }).count()) === 1 && (await page.getByRole('link', { name: 'esa.int' }).count()) === 1 && (await page.getByText(/Dominio sin clasificar como fiable/).count()) === 1 && (await page.getByText('Fuentes del dato (2 verificadas)').count()) === 1)
+  check('shorts: hook/fact controls are shown', (await page.getByText(/Gancho y dato principal en los primeros 2 s/).count()) === 1 && (await page.getByText('Cumple').count()) >= 2)
+  check('shorts: interest evidence separates observed, calculated and inferred', (await page.getByText('Observado').count()) >= 1 && (await page.getByText('Calculado').count()) >= 1 && (await page.getByText('Inferido').count()) >= 1)
+  check('shorts: missing music is explained without blocking', (await page.getByText(/falta FREESOUND_API_KEY/).count()) === 1)
+  check('shorts: approval is disabled until the render exists', await page.getByRole('button', { name: /Aprobar \(subida privada\)/ }).isDisabled())
+  // The render starts by itself when the screen opens and is saved to the Library.
+  await page.waitForFunction(() => window.__DB.assets.some(a => a.source_provider === 'browser-render'), null, { timeout: 90000 })
+  await page.getByText('Vídeo renderizado y guardado en la Biblioteca.').waitFor({ timeout: 20000 })
+  check('shorts: render ran by itself on open and was saved', (await db()).assets.some(a => a.source_provider === 'browser-render'))
+  const approveBtn = page.getByRole('button', { name: /Aprobar \(subida privada\)/ })
+  check('shorts: approval enabled after the render', await approveBtn.isEnabled())
+  check('shorts: nothing was sent to YouTube yet', (await page.evaluate(() => window.__PUBLISH_CALLS.length)) === 0)
+  await approveBtn.click()
+  await page.getByRole('button', { name: /Subir a YouTube \(privado\)/ }).waitFor({ timeout: 10000 })
+  const afterApprove = await db()
+  const job = afterApprove.publication_jobs[0]
+  check('shorts: the publication job is private, synthetic-declared and tied to the render', job.payload.privacyStatus === 'private' && job.payload.containsSyntheticMedia === true && job.payload.madeForKids === false && afterApprove.assets.find(a => a.id === job.payload.videoAssetId)?.source_provider === 'browser-render', job)
+  check('shorts: the description lists the verified sources and not the rejected one', job.payload.description.includes('https://www.nasa.gov/neutron') && !job.payload.description.includes('blog-raro'))
+  check('shorts: approval needed an explicit confirmation dialog and recorded APROBAR', dialogs.length === 1 && /PRIVADO/.test(dialogs[0]) && (await page.evaluate(() => window.__PUBLISH_CALLS))[0].body.confirm === 'APROBAR')
+  check('shorts: still not uploaded after approving', (await page.evaluate(() => window.__PUBLISH_CALLS.filter(c => c.action === 'publish').length)) === 0 && afterApprove.shorts_factory_items.find(i => i.id === 'it1').status === 'approved')
+  await page.getByRole('button', { name: /Subir a YouTube \(privado\)/ }).click()
+  await page.getByText(/Subido como privado: https:\/\/www.youtube.com\/watch\?v=dQw4w9WgXcQ/).waitFor({ timeout: 10000 })
+  const published = (await db()).shorts_factory_items.find(i => i.id === 'it1')
+  check('shorts: upload happens only on the second explicit click and stores the video id', published.status === 'published' && published.video_id === 'dQw4w9WgXcQ' && Boolean(published.published_at), published)
+  await page.getByRole('button', { name: /Por qué el cielo es azul/ }).click()
+  check('shorts: observed 7-day retention is shown as observed data', (await page.getByText(/71\.4%/).count()) >= 1 && (await page.getByText(/Observado \(YouTube Analytics, 2026-09-21 → 2026-09-27\)/).count()) === 1)
+  check('shorts: the learning panel waits for enough measured Shorts', (await page.getByText(/Hacen falta 5 Shorts publicados/).count()) === 1)
+  check('shorts: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
