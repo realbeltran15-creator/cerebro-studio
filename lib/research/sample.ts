@@ -7,7 +7,7 @@ export class BudgetError extends Error { constructor(message: string, readonly u
 
 export type SearchFn = (input: YouTubeSearchInput) => Promise<{ videos: YouTubeVideoResult[]; approxTotal: number | null }>
 
-export type TopicRequest = { topic: string; region: string | null; language: string | null; refresh?: boolean; /** Return only what is already cached; never call YouTube. */ cacheOnly?: boolean }
+export type TopicRequest = { topic: string; region: string | null; language: string | null; /** Window of the "recent" sample (7–365 days, default 30). */ recentDays?: number; refresh?: boolean; /** Return only what is already cached; never call YouTube. */ cacheOnly?: boolean }
 export type TopicResult = { analysis: TopicAnalysis | null; cached: boolean; usage: { usedToday: number; cap: number; persistent: boolean } }
 
 export const dailyCap = (env: Record<string, string | undefined> = process.env) => { const n = Number(env.RESEARCH_DAILY_UNIT_CAP); return Number.isInteger(n) && n >= 200 && n <= 10000 ? n : DEFAULT_DAILY_CAP }
@@ -19,7 +19,8 @@ export const dailyCap = (env: Record<string, string | undefined> = process.env) 
 export async function getTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number }): Promise<TopicResult> {
   const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta, cap = deps.cap ?? dailyCap()
   const topic = req.topic.trim().replace(/\s+/g, ' ')
-  const key = cacheKey('topic', [topic, req.region, req.language])
+  const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
+  const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
   const used = () => deps.store.unitsSince(startOfUtcDay(now()))
 
   if (!req.refresh) {
@@ -32,8 +33,8 @@ export async function getTopicAnalysis(req: TopicRequest, deps: { store: CacheSt
 
   const common = { query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25 }
   const top = await search({ ...common, order: 'viewCount', publishedWithinDays: 365 })
-  const recent = await search({ ...common, order: 'date', publishedWithinDays: 30 })
-  const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
+  const recent = await search({ ...common, order: 'date', publishedWithinDays: recentDays })
+  const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, recentDays, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
   const analysis = analyzeTopic(samples, now())
   await deps.store.put(key, 'topic', analysis, UNITS.topic, DEFAULT_TTL_MS, now())
   return { analysis, cached: false, usage: { usedToday: before + UNITS.topic, cap, persistent: deps.store.persistent } }

@@ -305,3 +305,103 @@ describe('exhaustive metric filters', () => {
     expect(ids(filterVideos(all, f({ maxSubscribers: 5000, maxDurationMin: 20 }, { niches: ['educacion'] }), NOW))).toEqual([a.videoId])
   })
 })
+
+import { blockers, describeActive, durationParam, forTab, planSearchBatch, validateFilters, sameFilters, TAB_FILTERS, TAB_SCOPE } from '@/lib/research/filters'
+import { analysisKey, keyOf, recentDaysFrom } from '@/lib/research/markets'
+import { formatCovered } from '@/lib/research/topic-analysis'
+import { fmtNumber, fmtUsd } from '@/lib/research/format'
+
+describe('apply / reset / validation model', () => {
+  const f = (o: Partial<ResearchFilters> = {}): ResearchFilters => ({ ...EMPTY_FILTERS, ...o, logic: { ...EMPTY_FILTERS.logic, ...(o.logic ?? {}) }, metrics: { ...NO_METRICS, ...(o.metrics ?? {}) } })
+  it('flags impossible ranges in plain words and allows valid ones', () => {
+    expect(validateFilters(f({ rpm: { min: 10, max: 2, includeUnknown: false } }))).toEqual(['RPM: el mínimo (10) es mayor que el máximo (2).'])
+    expect(validateFilters(f({ metrics: { minViews: 500, maxViews: 100 } as never }))[0]).toMatch(/Visualizaciones: el mínimo \(500\) es mayor/)
+    expect(validateFilters(f({ metrics: { minDurationMin: 30, maxDurationMin: 5 } as never }))[0]).toMatch(/Duración/)
+    expect(validateFilters(f({ rpm: { min: 2, max: 10, includeUnknown: false } }))).toEqual([])
+    expect(validateFilters(f({ rpm: { min: 3, max: 3, includeUnknown: false } }))).toEqual([])
+    expect(validateFilters(f({ countries: Array.from({ length: 9 }, (_, i) => `C${i}`) }))[0]).toMatch(/máximo son 8/)
+  })
+  it('detects pending changes by comparing draft and applied, ignoring irrelevant noise', () => {
+    expect(sameFilters(f(), f())).toBe(true)
+    expect(sameFilters(f({ countries: ['US'] }), f())).toBe(false)
+    expect(sameFilters(f({ countries: ['US'] }), f({ countries: ['US'] }))).toBe(true)
+  })
+  const names = { country: (c: string) => c, niche: (n: string) => n, language: (l: string) => l, format: (x: string) => x, contentType: (x: string) => x, category: (x: string) => x }
+  it('describes every active filter as a chip that removes only itself', () => {
+    const base = f({ countries: ['US', 'DE'], niches: ['ia'], periodDays: 30, rpm: { min: 4, max: null, includeUnknown: false }, metrics: { minViews: 100, maxViews: 900, include: 'tutorial', categories: ['27'] } as never })
+    const chips = describeActive(base, names)
+    expect(chips.map(c => `${c.group}: ${c.label}`)).toEqual(['País: US', 'País: DE', 'Nicho: ia', 'Periodo: últimos 30 días', 'RPM estimado: 4–∞ USD', 'Categoría: 27', 'Visualizaciones: 100–900', 'Contiene: tutorial'])
+    const afterDe = chips[1].remove(base)
+    expect(afterDe.countries).toEqual(['US']); expect(afterDe.niches).toEqual(['ia']); expect(afterDe.periodDays).toBe(30)
+    expect(chips[3].remove(base).periodDays).toBeNull()
+    expect(chips[4].remove(base).rpm).toEqual({ min: null, max: null, includeUnknown: false })
+    expect(chips[6].remove(base).metrics.minViews).toBeNull()
+    expect(describeActive(f(), names)).toEqual([])
+  })
+  it('removing every chip one by one ends with no filters (nothing is left behind)', () => {
+    let cur = f({ countries: ['US'], languages: ['en'], niches: ['ia'], formats: ['long'], contentTypes: ['tutorial'], periodDays: 7, rpm: { min: 1, max: 2, includeUnknown: false }, metrics: { minLikes: 5, exclude: 'x', minEstRevenue: 1, maxEstRevenue: 2 } as never })
+    for (let guard = 0; guard < 20; guard++) { const c = describeActive(cur, names)[0]; if (!c) break; cur = c.remove(cur) }
+    expect(describeActive(cur, names)).toEqual([]); expect(activeCount(cur)).toBe(0)
+  })
+  it('explains an empty result: which filter, once removed, would bring videos back', () => {
+    const vids: SeenVideo[] = [{ ...vid({ title: 'Receta de pasta', dur: 600, lang: 'en' }), regions: ['US'] }, { ...vid({ title: 'Inteligencia artificial hoy', dur: 600, lang: 'en' }), regions: ['US'] }]
+    const strict = f({ countries: ['US'], niches: ['ia'], languages: ['de'] })
+    expect(filterVideos(vids, strict, NOW)).toHaveLength(0)
+    const b = blockers(vids, strict, NOW)
+    expect(b[0]).toEqual({ group: 'idiomas', wouldShow: 1 })
+    expect(b).toEqual([{ group: 'idiomas', wouldShow: 1 }])
+    expect(blockers(vids, f(), NOW)).toEqual([])
+  })
+  it('each section ignores filters it does not use, so an invisible filter can never hide results', () => {
+    const all = f({ countries: ['US'], niches: ['ia'], formats: ['long'], contentTypes: ['tutorial'], periodDays: 30, rpm: { min: 4, max: null, includeUnknown: false }, metrics: { minViews: 5 } as never })
+    const kw = forTab('keywords', all)
+    expect(kw.countries).toEqual(['US']); expect(kw.niches).toEqual(['ia']); expect(kw.periodDays).toBe(30)
+    expect(kw.formats).toEqual([]); expect(kw.contentTypes).toEqual([]); expect(kw.rpm.min).toBeNull(); expect(kw.metrics.minViews).toBeNull()
+    expect(forTab('saved', all)).toMatchObject({ countries: [], niches: [], periodDays: null })
+    expect(forTab('discover', all)).toEqual(all)
+    for (const t of Object.keys(TAB_FILTERS) as Array<keyof typeof TAB_FILTERS>) expect(TAB_SCOPE[t].length).toBeGreaterThan(10)
+  })
+  it('the search cost scales with markets and confirms above 400 units', () => {
+    expect(planSearchBatch({ markets: 1, remainingToday: 6000 })).toMatchObject({ units: 102, level: 'ok' })
+    expect(planSearchBatch({ markets: 3, remainingToday: 6000 })).toMatchObject({ units: 306, level: 'ok' })
+    expect(planSearchBatch({ markets: 5, remainingToday: 6000 })).toMatchObject({ units: 510, level: 'confirm' })
+    expect(planSearchBatch({ markets: 8, remainingToday: 500 }).level).toBe('blocked')
+    expect(planSearchBatch({ markets: 0, remainingToday: 6000 }).level).toBe('free')
+  })
+  it('chosen formats become YouTube duration buckets only when unambiguous', () => {
+    expect(durationParam(['long'])).toBe('long'); expect(durationParam(['medium'])).toBe('medium'); expect(durationParam(['short', 'brief'])).toBe('short')
+    expect(durationParam(['short', 'long'])).toBeUndefined(); expect(durationParam([])).toBeUndefined(); expect(durationParam(['live'])).toBeUndefined()
+  })
+})
+
+describe('period = recent window, and it is part of the identity of an analysis', () => {
+  it('maps the period filter to a 7–365 day window (default 30)', () => {
+    expect(recentDaysFrom(null)).toBe(30); expect(recentDaysFrom(7)).toBe(7); expect(recentDaysFrom(90)).toBe(90); expect(recentDaysFrom(1)).toBe(7); expect(recentDaysFrom(9999)).toBe(365)
+  })
+  it('the same topic with another window is a different analysis (regression: a new window was treated as cached)', () => {
+    expect(analysisKey('Historia  Medieval', 'ES', 'es', 30)).toBe('historia medieval|ES|es|30')
+    expect(analysisKey('historia medieval', 'ES', 'es', 90)).not.toBe(analysisKey('historia medieval', 'ES', 'es', 30))
+    expect(keyOf({ topic: 'x', region: null, language: null })).toBe('x|||30')
+  })
+  it('the server caches per window and spends again for a new one', async () => {
+    const calls: unknown[] = [], store = new MemoryCacheStore(`w${Math.random()}`)
+    const search = vi.fn(async (i: unknown) => { calls.push(i); return { videos: many(12, () => ({ views: 50000, days: 30 })), approxTotal: 1 } })
+    const req = { topic: 'tema', region: 'ES', language: 'es' }
+    const a = await getTopicAnalysis({ ...req, recentDays: 30 }, { store, search, now: () => NOW, cap: 6000 })
+    const b = await getTopicAnalysis({ ...req, recentDays: 30 }, { store, search, now: () => NOW, cap: 6000 })
+    const c = await getTopicAnalysis({ ...req, recentDays: 90 }, { store, search, now: () => NOW, cap: 6000 })
+    expect([a.cached, b.cached, c.cached]).toEqual([false, true, false]); expect(calls).toHaveLength(4)
+    expect(a.analysis!.recentDays).toBe(30); expect(c.analysis!.recentDays).toBe(90)
+    expect((calls[3] as { publishedWithinDays: number }).publishedWithinDays).toBe(90)
+  })
+  it('the chosen format needs a sample of it, and Shorts are told apart from long-form', () => {
+    const a = analyzeTopic(samples(many(20, () => ({ views: 90000, days: 90, dur: 700 })), many(6, () => ({ views: 3000, days: 5, dur: 700 }))), NOW)
+    expect(formatCovered(a, [])).toBe(true); expect(formatCovered(a, ['long'])).toBe(true); expect(formatCovered(a, ['short'])).toBe(false); expect(formatCovered(a, ['short', 'long'])).toBe(true)
+  })
+})
+
+describe('number format is consistent', () => {
+  it('always groups thousands, so 1.022 and 10.220 look alike', () => {
+    expect(fmtNumber(1022)).toBe('1.022'); expect(fmtNumber(10220)).toBe('10.220'); expect(fmtUsd(2000)).toBe('$2.000'); expect(fmtUsd(10.22)).toBe('$10,22')
+  })
+})

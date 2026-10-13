@@ -6,6 +6,7 @@ import { useResearch } from './research-context'
 import { marketLabel } from '@/lib/research/markets'
 import { formatOpportunity, type TopicAnalysis, type Verdict } from '@/lib/research/topic-analysis'
 import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization'
+import { fmtNumber } from '@/lib/research/format'
 import { nicheLabel } from '@/lib/research/taxonomy'
 import { saveAnalysis } from '@/lib/research/save'
 import { analysesCsv } from '@/lib/research/export'
@@ -39,20 +40,23 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'exists' | 'error'>('idle')
   const [msg, setMsg] = useState('')
   const v = VERDICT[a.verdict], fo = formatOpportunity(a)
+  const { filters } = useResearch()
+  const chosen = filters.formats.filter(x => x !== 'live')
   async function save() {
     setState('saving'); setMsg('')
     try { const r = await saveAnalysis(supabase as never, a); setState(r); onSaved?.() } catch (e) { setState('error'); setMsg(e instanceof Error ? e.message : 'No se pudo guardar.') }
   }
   return <article aria-label={`Análisis de ${a.topic}`}>
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-      <h3>{a.topic}</h3><span className={`pill ${v.cls}`}>{v.label}</span>
+      <h3>{a.topic}</h3><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><span className="pill">{marketLabel(a.region, a.language)}</span><span className={`pill ${v.cls}`}>{v.label}</span></span>
     </div>
-    <p className="muted small">{marketLabel(a.region, a.language)} · {a.sampleSizes.top} + {a.sampleSizes.recent} vídeos en la muestra · actualizado {dateEs(a.fetchedAt)}</p>
+    <p className="muted small">{a.sampleSizes.top} + {a.sampleSizes.recent} vídeos en la muestra (recientes = últimos {a.recentDays ?? 30} días) · actualizado {dateEs(a.fetchedAt)}</p>
     <p style={{ margin: '8px 0' }}><b>{a.headline}.</b></p>
     <div style={{ display: 'grid', gap: 8 }}>{(Object.keys(INDEX_LABEL) as Array<keyof typeof INDEX_LABEL>).map(k => <IndexBar key={k} name={k} value={a.indices[k]} />)}</div>
     <ul className="small" style={{ margin: '10px 0 0 16px' }}>{a.reasons.map(r => <li key={r}>{r}</li>)}</ul>
     <p className="small" style={{ marginTop: 8 }}><b>Formato:</b> {fo.recommended ? (fo.recommended === 'short' ? 'Shorts' : 'vídeo largo') : 'sin preferencia clara'} — {fo.reason}</p>
-    {a.niches.slice(0, 2).map(n => <RpmLine key={n} niche={n} />)}
+    {chosen.length > 0 && <p className="small" aria-label="Evidencia del formato elegido"><b>Formato elegido:</b> {chosen.map(f => f === 'short' ? `Shorts (inferidos): ${a.byFormat.short.count} en el top, ${a.byFormat.short.recentCount} recientes, mediana ${a.byFormat.short.medianViewsPerDay ?? '—'} vistas/día` : `vídeos de más de 1 min: ${a.byFormat.long.count} en el top, ${a.byFormat.long.recentCount} recientes, mediana ${a.byFormat.long.medianViewsPerDay ?? '—'} vistas/día`).filter((x, i, l) => l.indexOf(x) === i).join(' · ')}.</p>}
+    {a.niches.slice(0, 2).map(n => <RpmLine key={n} niche={n} format={chosen.length === 1 && chosen[0] === 'short' ? 'short' : 'long'} />)}
     <details style={{ marginTop: 8 }}><summary className="small">Evidencia y confianza ({a.confidence})</summary>
       <table className="dataTable"><tbody>{a.evidence.map(e => <tr key={e.label}><td>{e.label}</td><td><b>{e.value}</b></td><td><span className={`tag ${e.kind}`}>{e.kind}</span></td></tr>)}</tbody></table>
       <p className="muted small" style={{ marginTop: 6 }}>{a.confidenceNote}</p>
@@ -93,23 +97,28 @@ export function DownloadCsv({ list, name = 'investigacion' }: { list: TopicAnaly
   }}>Exportar CSV</button>
 }
 
-/** Cost, budget and confirmation for a batch of paid analyses. Nothing runs until the user presses the button. */
+/** Cost, budget and confirmation for a batch of paid analyses, plus what happened last time. Nothing runs until the user presses the button. */
 export function RunBar({ topics, markets, label = 'Analizar' }: { topics: string[]; markets?: Market[]; label?: string }) {
-  const { plan, run, progress, cancel, usage, error, markets: current } = useResearch()
+  const { plan, run, progress, cancel, usage, error, markets: current, lastRun, dirty, filters } = useResearch()
   const ms = markets ?? current
   const p = plan(topics, ms)
   const [ok, setOk] = useState(false)
   const needsOk = p.level === 'confirm'
   const disabled = !!progress || topics.length === 0 || p.level === 'blocked' || (needsOk && !ok)
+  const failedNow = lastRun && lastRun.failed.length > 0
   return <div className="panel" style={{ margin: '10px 0' }} aria-label="Coste de la consulta">
+    <p className="small"><b>Se analizará en:</b> {ms.map(m => m.label).join(' · ')} <span className="muted">(filtros {dirty ? 'con cambios SIN aplicar: se usan los aplicados' : 'aplicados'}; ventana de recientes: {filters.periodDays ?? 30} días)</span></p>
     <p className="small"><b>Coste previsto:</b> {p.message}</p>
-    {usage && <p className="muted small">Hoy has usado {usage.usedToday} de {usage.cap} unidades de Investigación{usage.persistent ? '' : ' (contador en memoria: aplica la migración research_cache para que sea exacto y compartido)'}. YouTube concede 10 000 al día a todo el proyecto.</p>}
-    {needsOk && <label className="msOpt"><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> Entiendo que esto gastará {p.units} unidades de cuota</label>}
+    {usage && <p className="muted small">Hoy has usado {fmtNumber(usage.usedToday)} de {fmtNumber(usage.cap)} unidades de Investigación{usage.persistent ? '' : ' (contador en memoria: aplica la migración research_cache para que sea exacto y compartido)'}. YouTube concede 10.000 al día a todo el proyecto.</p>}
+    {needsOk && <label className="msOpt"><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> Entiendo que esto gastará {fmtNumber(p.units)} unidades de cuota</label>}
     <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-      <button type="button" disabled={disabled} onClick={() => { setOk(false); void run(topics, ms) }}>{progress ? 'Analizando…' : p.level === 'free' && topics.length ? 'Mostrar (en caché)' : `${label}${p.units ? ` (${p.units} unidades)` : ''}`}</button>
+      <button type="button" disabled={disabled} onClick={() => { setOk(false); void run(topics, ms) }}>{progress ? 'Analizando…' : p.level === 'free' && topics.length ? 'Mostrar (en caché)' : `${label}${p.units ? ` (${fmtNumber(p.units)} unidades)` : ''}`}</button>
       {progress && <button type="button" className="ghost" onClick={cancel}>Cancelar</button>}
+      {!progress && failedNow && <button type="button" className="ghost" disabled={topics.length === 0 || p.level === 'blocked'} onClick={() => void run(topics, ms)}>Reintentar lo que falló</button>}
     </div>
-    {progress && <p className="muted small" role="status">{progress.done + 1} de {progress.total}: {progress.current}</p>}
-    {error && <p className="error" role="alert">{error}</p>}
+    {progress && <p className="muted small" role="status">En ejecución: {progress.done + 1} de {progress.total} — {progress.current}</p>}
+    {!progress && lastRun && !failedNow && lastRun.ok > 0 && <p className="notice" role="status">Resultados actualizados: {lastRun.ok} análisis nuevo{lastRun.ok === 1 ? '' : 's'}{lastRun.units ? ` (${fmtNumber(lastRun.units)} unidades)` : ''}. Están más abajo.</p>}
+    {!progress && lastRun && lastRun.total === 0 && <p className="muted small" role="status">No había nada nuevo que consultar: ya estaba todo en caché.</p>}
+    {error && <p className="error" role="alert">Consulta fallida: {error}</p>}
   </div>
 }

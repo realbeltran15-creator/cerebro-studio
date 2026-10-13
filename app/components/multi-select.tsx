@@ -29,10 +29,10 @@ export function MultiSelect({ label, options, value, onChange, logic, onLogic, a
   return <div ref={ref} className="msWrap">
     <label className="muted small" htmlFor={id}>{label}</label>
     <button id={id} type="button" className="msButton" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(o => !o)}>
-      <span>{value.length === 0 ? 'Cualquiera' : value.length <= 2 ? names.join(', ') : `${value.length} seleccionados`}</span><span aria-hidden>▾</span>
+      <span>{value.length === 0 ? 'Cualquiera' : value.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${value.length - 2}`}</span><span aria-hidden>▾</span>
     </button>
     {open && <div className="msPop" role="group" aria-label={`Opciones de ${label}`}>
-      <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder={`Buscar en ${label.toLowerCase()}…`} aria-label={`Buscar en ${label}`} autoFocus />
+      <input type="search" value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }} placeholder={`Buscar en ${label.toLowerCase()}…`} aria-label={`Buscar en ${label}`} autoFocus />
       <div className="msActions">
         <button type="button" className="ghost" onClick={() => onChange(max ? shown.slice(0, max).map(([v]) => v) : [...new Set([...value, ...shown.map(([v]) => v)])])}>Seleccionar todos{q ? ' (los visibles)' : ''}</button>
         <button type="button" className="ghost" onClick={() => onChange([])}>Limpiar</button>
@@ -41,13 +41,12 @@ export function MultiSelect({ label, options, value, onChange, logic, onLogic, a
       {shown.length === 0 && <p className="muted small">Sin coincidencias.</p>}
       {shown.map(([v, l]) => <label key={v} className="msOpt"><input type="checkbox" checked={value.includes(v)} onChange={() => toggle(v)} /> {l}</label>)}
     </div>}
-    {value.length > 0 && <div className="legend" style={{ marginTop: 6 }}>{value.slice(0, 6).map((v, i) => <button key={v} type="button" className="pill" aria-label={`Quitar ${names[i]}`} onClick={() => toggle(v)}>{names[i]} ✕</button>)}{value.length > 6 && <span className="pill">+{value.length - 6}</span>}</div>}
-    {logic && onLogic && <div style={{ marginTop: 4 }}>
+    {logic && onLogic && value.length >= 2 && <div style={{ marginTop: 4 }}>
       <div className="logicToggle" role="group" aria-label={`Lógica de ${label}`}>
         <button type="button" aria-pressed={logic === 'any'} onClick={() => onLogic('any')}>Cualquiera (OR)</button>
         <button type="button" aria-pressed={logic === 'all'} disabled={!allEnabled} onClick={() => onLogic('all')} title={allEnabled ? '' : 'No aplicable a vídeos sueltos: mira la nota'}>Todos (AND)</button>
       </div>
-      {explanation && <p className="muted small" style={{ marginTop: 4 }}>{explanation}</p>}
+      {explanation && <details><summary className="muted small">¿Qué significa?</summary><p className="muted small" style={{ marginTop: 4 }}>{explanation}</p></details>}
     </div>}
   </div>
 }

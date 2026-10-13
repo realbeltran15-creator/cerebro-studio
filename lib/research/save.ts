@@ -10,7 +10,7 @@ type Db = { auth: { getUser: () => Promise<{ data: { user: { id: string } | null
 export async function saveAnalysis(db: Db, a: TopicAnalysis): Promise<'saved' | 'exists'> {
   const { data: { user } } = await db.auth.getUser()
   if (!user) throw new Error('La sesión ha caducado.')
-  const sourceId = `research:${a.topic.toLowerCase()}|${a.region ?? ''}|${a.language ?? ''}`
+  const sourceId = `research:${a.topic.toLowerCase()}|${a.region ?? ''}|${a.language ?? ''}|${a.recentDays ?? 30}`
   const { data: existing, error: lookup } = await db.from('opportunities').select('id').eq('owner_id', user.id).eq('source_platform', 'research').eq('source_id', sourceId).limit(1)
   if (lookup) throw lookup
   if (existing?.length) return 'exists'

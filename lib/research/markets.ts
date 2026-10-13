@@ -23,5 +23,8 @@ export function marketsFromFilters(f: Pick<ResearchFilters, 'countries' | 'langu
   return [{ region: null, language: null, label: marketLabel(null, null) }]
 }
 
-export const analysisKey = (topic: string, region: string | null, language: string | null) => [topic.trim().toLowerCase().replace(/\s+/g, ' '), region ?? '', language ?? ''].join('|')
-export const keyOf = (a: Pick<TopicAnalysis, 'topic' | 'region' | 'language'>) => analysisKey(a.topic, a.region, a.language)
+/** Same topic, market and recent-window = same analysis (and the same cache entry). */
+export const analysisKey = (topic: string, region: string | null, language: string | null, recentDays = 30) => [topic.trim().toLowerCase().replace(/\s+/g, ' '), region ?? '', language ?? '', String(recentDays)].join('|')
+export const keyOf = (a: Pick<TopicAnalysis, 'topic' | 'region' | 'language'> & { recentDays?: number }) => analysisKey(a.topic, a.region, a.language, a.recentDays ?? 30)
+/** The "recent" window implied by the Period filter. */
+export const recentDaysFrom = (periodDays: number | null) => (periodDays === null ? 30 : Math.min(Math.max(periodDays, 7), 365))

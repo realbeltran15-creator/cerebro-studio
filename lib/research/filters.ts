@@ -209,3 +209,117 @@ export function addPreset(list: Preset[], name: string, filters: ResearchFilters
   const clean = name.trim().slice(0, 60); if (!clean) return list
   return [{ id, name: clean, filters: sanitizeFilters(filters), savedAt: now.toISOString() }, ...list.filter(p => p.name !== clean)].slice(0, 30)
 }
+
+// ---------- Which filters each section uses ----------
+export type FilterPart = 'countries' | 'languages' | 'niches' | 'formats' | 'contentTypes' | 'period' | 'rpm' | 'advanced'
+export type TabId = 'discover' | 'niches' | 'keywords' | 'international' | 'competition' | 'money' | 'compare' | 'saved'
+
+/** Filters that actually change the results of each section. Hiding the rest avoids controls that look useful but do nothing. */
+export const TAB_FILTERS: Record<TabId, FilterPart[]> = {
+  discover: ['countries', 'languages', 'niches', 'formats', 'contentTypes', 'period', 'rpm', 'advanced'],
+  niches: ['countries', 'languages', 'niches', 'formats', 'period', 'rpm'],
+  keywords: ['countries', 'languages', 'niches', 'period'],
+  international: ['countries', 'languages', 'niches', 'formats', 'contentTypes', 'period', 'rpm', 'advanced'],
+  competition: ['countries', 'languages', 'formats', 'period'],
+  money: ['countries', 'niches', 'formats', 'rpm'],
+  compare: ['countries', 'niches', 'formats', 'rpm'],
+  saved: [],
+}
+
+/** What each section does with the filters, in one sentence, shown above the results. */
+export const TAB_SCOPE: Record<TabId, string> = {
+  discover: 'Los filtros se aplican a las listas de vídeos populares de los países elegidos y a los análisis que ya hayas hecho.',
+  niches: 'Los países e idiomas definen en qué mercados se analiza cada tema (cada mercado cuesta una consulta). Nichos y RPM filtran los análisis ya hechos; el formato destaca la evidencia de ese formato y oculta los análisis sin muestra de él; el periodo fija la ventana de «recientes».',
+  keywords: 'Los países e idiomas definen los mercados; el periodo fija la ventana de «recientes». Las frases salen de los vídeos de la muestra.',
+  international: 'Compara las listas oficiales de populares de los países elegidos (2 unidades por país) y analiza un mismo tema en cada mercado.',
+  competition: 'La búsqueda se hace en cada mercado elegido (102 unidades por mercado); formato y periodo se aplican a la consulta.',
+  money: 'Filtra la tabla de referencia por nicho, formato y RPM estimado. Los países sirven para consultar el rango de referencia de cada uno.',
+  compare: 'Compara los análisis ya hechos que cumplen los filtros; no gasta cuota.',
+  saved: 'Aquí no se aplican filtros: son tus combinaciones y oportunidades guardadas.',
+}
+
+// ---------- Validation ----------
+const PAIRS: Array<[keyof MetricFilters, keyof MetricFilters, string]> = [
+  ['minViews', 'maxViews', 'visualizaciones'], ['minSubscribers', 'maxSubscribers', 'suscriptores'], ['minDurationMin', 'maxDurationMin', 'duración'], ['minEstRevenue', 'maxEstRevenue', 'ingreso estimado'],
+]
+
+/** Problems that make a combination impossible, in plain words. Apply is blocked while any exist. */
+export function validateFilters(f: ResearchFilters): string[] {
+  const out: string[] = []
+  if (f.rpm.min !== null && f.rpm.max !== null && f.rpm.min > f.rpm.max) out.push(`RPM: el mínimo (${f.rpm.min}) es mayor que el máximo (${f.rpm.max}).`)
+  for (const [a, b, name] of PAIRS) { const x = f.metrics[a], y = f.metrics[b]; if (typeof x === 'number' && typeof y === 'number' && x > y) out.push(`${name[0].toUpperCase()}${name.slice(1)}: el mínimo (${x}) es mayor que el máximo (${y}).`) }
+  if (f.countries.length > MAX_COUNTRIES) out.push(`Países: el máximo son ${MAX_COUNTRIES} a la vez.`)
+  return out
+}
+export const MAX_COUNTRIES = 8
+
+export const sameFilters = (a: ResearchFilters, b: ResearchFilters) => JSON.stringify(sanitizeFilters(a)) === JSON.stringify(sanitizeFilters(b))
+
+// ---------- Active filters as removable chips ----------
+export type ActiveChip = { id: string; group: string; label: string; remove: (f: ResearchFilters) => ResearchFilters }
+
+export function describeActive(f: ResearchFilters, names: { country: (c: string) => string; niche: (n: string) => string; language: (l: string) => string; format: (x: string) => string; contentType: (x: string) => string; category: (x: string) => string }): ActiveChip[] {
+  const chips: ActiveChip[] = []
+  const list = (key: 'countries' | 'languages' | 'niches' | 'formats' | 'contentTypes', group: string, name: (v: string) => string) => {
+    for (const v of f[key]) chips.push({ id: `${key}:${v}`, group, label: name(v), remove: g => ({ ...g, [key]: g[key].filter(x => x !== v) }) })
+  }
+  list('countries', 'País', names.country); list('languages', 'Idioma', names.language); list('niches', 'Nicho', names.niche); list('formats', 'Formato', names.format); list('contentTypes', 'Tipo', names.contentType)
+  if (f.periodDays !== null) chips.push({ id: 'period', group: 'Periodo', label: `últimos ${f.periodDays} días`, remove: g => ({ ...g, periodDays: null }) })
+  if (f.rpm.min !== null || f.rpm.max !== null) chips.push({ id: 'rpm', group: 'RPM estimado', label: `${f.rpm.min ?? '0'}–${f.rpm.max ?? '∞'} USD`, remove: g => ({ ...g, rpm: { ...g.rpm, min: null, max: null } }) })
+  for (const v of f.metrics.categories) chips.push({ id: `cat:${v}`, group: 'Categoría', label: names.category(v), remove: g => ({ ...g, metrics: { ...g.metrics, categories: g.metrics.categories.filter(x => x !== v) } }) })
+  const m = f.metrics
+  const num = (id: string, group: string, a: keyof MetricFilters, b: keyof MetricFilters | null, unit = '') => {
+    const x = m[a] as number | null, y = b ? m[b] as number | null : null
+    if (x === null && y === null) return
+    chips.push({ id, group, label: b ? `${x ?? '0'}–${y ?? '∞'}${unit}` : `≥ ${x}${unit}`, remove: g => ({ ...g, metrics: { ...g.metrics, [a]: null, ...(b ? { [b]: null } : {}) } }) })
+  }
+  num('views', 'Visualizaciones', 'minViews', 'maxViews'); num('vpd', 'Vistas/día', 'minViewsPerDay', null); num('likes', 'Me gusta', 'minLikes', null); num('comments', 'Comentarios', 'minComments', null); num('eng', 'Interacción', 'minEngagement', null, ' %')
+  num('subs', 'Suscriptores', 'minSubscribers', 'maxSubscribers'); num('ratio', 'Vistas ÷ suscriptores', 'minRatio', null); num('dur', 'Duración', 'minDurationMin', 'maxDurationMin', ' min'); num('rev', 'Ingreso estimado', 'minEstRevenue', 'maxEstRevenue', ' USD')
+  if (m.include.trim()) chips.push({ id: 'include', group: 'Contiene', label: m.include.trim(), remove: g => ({ ...g, metrics: { ...g.metrics, include: '' } }) })
+  if (m.exclude.trim()) chips.push({ id: 'exclude', group: 'Excluye', label: m.exclude.trim(), remove: g => ({ ...g, metrics: { ...g.metrics, exclude: '' } }) })
+  return chips
+}
+
+/**
+ * Why a list is empty: for every active filter group, how many videos would appear if only that group were removed.
+ * Only groups that would bring videos back are reported, best first. This makes "0 results" verifiable instead of mysterious.
+ */
+export function blockers(videos: SeenVideo[], f: ResearchFilters, now = Date.now()): Array<{ group: string; wouldShow: number }> {
+  const without: Array<[string, ResearchFilters]> = [
+    ['países', { ...f, countries: [] }], ['idiomas', { ...f, languages: [] }], ['nichos', { ...f, niches: [] }], ['formatos', { ...f, formats: [] }], ['tipos de contenido', { ...f, contentTypes: [] }],
+    ['periodo', { ...f, periodDays: null }], ['RPM estimado', { ...f, rpm: { ...f.rpm, min: null, max: null } }], ['filtros avanzados', { ...f, metrics: NO_METRICS }],
+  ]
+  const current = filterVideos(videos, f, now).length
+  return without.map(([group, g]) => ({ group, wouldShow: filterVideos(videos, g, now).length })).filter(x => x.wouldShow > current).sort((a, b) => b.wouldShow - a.wouldShow)
+}
+
+/** The filters as they apply in one section: parts the section does not use are cleared, so an invisible filter can never hide results. */
+export function forTab(tab: TabId, f: ResearchFilters): ResearchFilters {
+  const use = new Set<FilterPart>(TAB_FILTERS[tab])
+  return {
+    ...f,
+    countries: use.has('countries') ? f.countries : [], languages: use.has('languages') ? f.languages : [], niches: use.has('niches') ? f.niches : [], formats: use.has('formats') ? f.formats : [], contentTypes: use.has('contentTypes') ? f.contentTypes : [],
+    periodDays: use.has('period') ? f.periodDays : null, rpm: use.has('rpm') ? f.rpm : { ...f.rpm, min: null, max: null }, metrics: use.has('advanced') ? f.metrics : NO_METRICS,
+  }
+}
+
+/** Cost of searching the same text in several markets (search.list + videos.list + channels.list ≈ 102 units each). */
+export function planSearchBatch(opts: { markets: number; remainingToday: number }): Plan {
+  const units = Math.max(opts.markets, 0) * UNITS.search
+  if (opts.markets === 0) return { units: 0, fresh: 0, cached: 0, level: 'free', message: 'Elige un tema.' }
+  const base = `${opts.markets} mercado${opts.markets === 1 ? '' : 's'} × ${UNITS.search} = ${units} unidades.`
+  if (units > MAX_BATCH_UNITS) return { units, fresh: opts.markets, cached: 0, level: 'blocked', message: `${base} Es demasiado para una sola vez (máximo ${MAX_BATCH_UNITS}).` }
+  if (units > opts.remainingToday) return { units, fresh: opts.markets, cached: 0, level: 'blocked', message: `${base} Te quedan ${Math.max(opts.remainingToday, 0)} unidades del presupuesto de hoy.` }
+  if (units > CONFIRM_ABOVE) return { units, fresh: opts.markets, cached: 0, level: 'confirm', message: `${base} Es bastante cuota: confirma para continuar.` }
+  return { units, fresh: opts.markets, cached: 0, level: 'ok', message: base }
+}
+
+/** YouTube's own duration bucket implied by the chosen formats, or undefined when they span several. */
+export function durationParam(formats: string[]): 'short' | 'medium' | 'long' | undefined {
+  const f = formats.filter(x => x !== 'live')
+  if (f.length === 0) return undefined
+  if (f.every(x => x === 'short' || x === 'brief')) return 'short'
+  if (f.every(x => x === 'medium')) return 'medium'
+  if (f.every(x => x === 'long')) return 'long'
+  return undefined
+}

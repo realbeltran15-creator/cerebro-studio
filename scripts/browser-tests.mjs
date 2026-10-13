@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core'
 import { existsSync, readFileSync, readdirSync } from 'fs'
 import http from 'http'
 import path from 'path'
+import { installResearchRoutes } from '../tests/browser/research-fixtures.mjs'
 
 const root = path.resolve(new URL('..', import.meta.url).pathname)
 const dir = path.join(root, 'tests/browser')
@@ -577,93 +578,89 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
-// 9. Investigación avanzada: multi-select filters, niche analysis, keywords, monetisation, international comparison and error states.
-// The YouTube-backed API routes are MOCKED here (no real quota is spent): this proves the screen's behaviour, not the live integration.
+// 9. Investigación: filters are a DRAFT until "Aplicar", applied filters show as removable chips, nothing paid runs by itself, hidden results are explained.
+// The YouTube-backed API routes are MOCKED here (tests/browser/research-fixtures.mjs): no quota is spent; this proves the screen, not the live integration.
 {
-  const mk = (id, title, o) => ({ videoId: id, url: `https://www.youtube.com/watch?v=${id}`, title, channelId: `c${id}`, channelTitle: `Canal ${id}`, publishedAt: new Date(Date.now() - (o.days ?? 3) * 86400000).toISOString(), thumbnailUrl: null, declaredLanguage: o.lang ?? 'en', categoryId: o.cat ?? null, tags: [], live: null,
-    observed: { views: o.views, likes: 10, comments: 1, durationSeconds: o.dur, channelSubscribers: o.subs, fetchedAt: new Date().toISOString() }, calculated: { viewsPerDay: Math.round(o.views / (o.days ?? 3)), viewsToSubscribers: Math.round((o.views / o.subs) * 100) / 100, engagementRate: 1 } })
-  const shared = mk('shared1', 'Inteligencia artificial para programación explicada', { views: 900000, subs: 400000, dur: 600, lang: 'en' })
-  const charts = {
-    ES: [mk('es1', 'Corto viral de gatos', { views: 90000, subs: 800, dur: 40, lang: 'es' })],
-    US: [shared, mk('us1', 'Receta de pasta fácil', { views: 500000, subs: 90000, dur: 500 })],
-    DE: [shared, mk('de1', 'Aktien kaufen für Anfänger Tutorial', { views: 300000, subs: 50000, dur: 800, lang: 'de' })],
-    AU: [mk('au1', 'Best gadgets and tech review 2026', { views: 250000, subs: 70000, dur: 700 })],
-  }
-  const ana = (topic, region, language, verdict, i, extra = {}) => ({ topic, region, language, fetchedAt: new Date().toISOString(), units: 204, indices: { demand: i.d, supply: i.s, competition: i.c, growth: i.g, opportunity: i.o }, growthPct: 12, verdict,
-    headline: verdict === 'oportunidad' ? 'Demanda clara con oferta y competencia manejables' : verdict === 'sin_demanda' ? 'Poca oferta, pero también poca demanda observable: no es una oportunidad' : 'Hay demanda, pero la oferta o los canales dominantes lo hacen difícil',
-    reasons: [`Demanda ${i.d}/100: los vídeos más vistos ganan 4 mil vistas/día (mediana).`, `Oferta ${i.s}/100: 3 vídeos nuevos por semana.`, `Competencia ${i.c}/100: canal mediano con 9 mil suscriptores.`], confidence: 'media', confidenceNote: 'Muestra de 25 vídeos más vistos y 25 recientes (YouTube no permite contar todos los vídeos ni creadores).',
-    evidence: [{ label: 'Vistas por día (mediana)', value: '4 mil', kind: 'calculado' }, { label: 'Canales distintos entre los vídeos recientes', value: '4 de 25', kind: 'observado' }],
-    byFormat: { short: { count: 1, recentCount: 0, medianViewsPerDay: 100 }, long: { count: 20, recentCount: 5, medianViewsPerDay: 900 } }, niches: ['historia'],
-    terms: [{ term: 'historia medieval', videos: 6, views: 90000, share: 0.3 }], emerging: [{ term: 'castillos olvidados', videos: 3, views: 5000, share: 0.2 }], questions: [{ text: '¿Por qué cayó el imperio?', videoId: 'q1', views: 1000 }],
-    sampleSizes: { top: 25, recent: 25 }, approxTotals: { top: 120000, recent: 4000 }, topVideos: [], ...extra })
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/market-intelligence/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
   const server = serve(8799, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
   const page = await browser.newPage({ viewport: { width: 1400, height: 1100 } })
-  const errors = [], requests = []
-  let mode = 'ok'
+  const errors = []
+  const state = { mode: 'ok', requests: [] }, requests = state.requests
   page.on('pageerror', e => errors.push(e.message))
-  await page.route('**/api/research/**', route => {
-    const url = new URL(route.request().url()); requests.push(url.pathname + url.search)
-    const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-    if (url.pathname.endsWith('/usage')) return json({ usedToday: 0, cap: 6000, remaining: 6000, persistent: true })
-    if (url.pathname.endsWith('/trending')) return json({ configured: true, results: charts[url.searchParams.get('region')] ?? [] })
-    if (url.pathname.endsWith('/topic')) {
-      if (mode === 'budget') return json({ error: 'Presupuesto diario de Investigación agotado: 6000 de 6000 unidades usadas hoy.', budget: { used: 6000, cap: 6000 }, configured: true }, 429)
-      const q = url.searchParams.get('q'), region = url.searchParams.get('region'), lang = url.searchParams.get('lang')
-      const table = { 'historia medieval': { v: 'oportunidad', i: { d: 72, s: 25, c: 30, g: 61, o: 74 } }, 'música de moda': { v: 'saturado', i: { d: 90, s: 90, c: 88, g: 45, o: 22 } }, 'tema sin público': { v: 'sin_demanda', i: { d: 8, s: 5, c: 5, g: 30, o: 12 } } }
-      const t = table[q] ?? { v: 'mixto', i: { d: 50, s: 50, c: 50, g: 50, o: 50 } }
-      const a = ana(q, region, lang, t.v, t.i, region === 'AU' ? { sampleSizes: { top: 9, recent: 3 }, confidence: 'baja' } : {})
-      return json({ configured: true, analysis: a, cached: false, usage: { usedToday: 204, cap: 6000, persistent: true } })
-    }
-    return json({ configured: true, results: [] })
-  })
+  await installResearchRoutes(page, state)
   await page.goto('http://127.0.0.1:8799/market-intelligence')
   await page.addStyleTag({ content: css })
   const tab = name => page.getByRole('tab', { name })
   const pick = async (label, search, option) => { await page.getByRole('button', { name: label, exact: true }).click(); await page.getByLabel(`Buscar en ${label}`).fill(search); await page.getByRole('checkbox', { name: option }).check(); await page.keyboard.press('Escape') }
+  const applyBtn = () => page.getByRole('button', { name: /^Aplicar/ })
+  const apply = async () => { await applyBtn().click() }
+  const body = async () => (await page.locator('body').innerText()).replace(/\s+/g, ' ')
 
-  // Prueba 0: entering is cheap and automatic; nothing expensive runs by itself.
-  await page.getByText('Corto viral de gatos').waitFor({ timeout: 20000 })
+  // Entering: cheap and automatic; nothing expensive.
+  await page.getByText('Corto viral de gatos').first().waitFor({ timeout: 20000 })
   check('research: entering loads only the cheap official chart of one country', requests.filter(r => r.includes('/trending')).length === 1 && requests.every(r => !r.includes('/topic') && !r.includes('/youtube?')), requests)
-  check('research: all eight sections of Descubrir are present', (await page.getByRole('group', { name: /^(A|B|C|D|E|F|G|H)\./ }).count()) === 0 && (await page.locator('details[aria-label]').count()) >= 8)
-  check('research: the navigation has the eight sections', (await page.getByRole('tab').count()) === 8)
-  check('research: without analyses the discovery sections point to the paid step instead of inventing data', (await page.getByText('Todavía no hay análisis').count()) >= 4)
+  check('research: the eight sections are in the navigation, above the filters', (await page.getByRole('tab').count()) === 8 && /1 · Qué quieres investigar/.test(await body()))
+  check('research: a clear apply button exists and starts disabled with "Sin filtros"', await applyBtn().isDisabled() && (await page.getByText('Sin filtros', { exact: true }).count()) >= 1)
+  check('research: the discovery sections say what the home chart is and that analyses are missing (no invented data)', /Lista oficial de populares de España/.test(await body()) && (await page.getByText(/B, C, E, G y H necesitan analizar nichos/).count()) === 1)
 
-  // Prueba 1: multi-select — United States + Germany + Australia, technology + AI, plus extra filters.
+  // Prueba A: the draft/apply model.
   const before = requests.length
   await pick('Países', 'Estados', /Estados Unidos/); await pick('Países', 'Alemania', /Alemania/); await pick('Países', 'Australia', /Australia/)
-  await pick('Nichos', 'tecno', /Tecnología/); await pick('Nichos', 'inteligencia', /Inteligencia artificial/)
-  check('research: selecting countries and niches runs no query', requests.length === before, requests.slice(before))
-  check('research: selected values show as removable chips', (await page.getByRole('button', { name: 'Quitar Alemania' }).count()) === 1 && (await page.getByRole('button', { name: 'Quitar Australia' }).count()) === 1)
-  await tab('Tendencias internacionales').click()
-  await page.getByRole('button', { name: /^Cargar 3 países \(6 unidades\)/ }).click()
-  await page.getByText('Aktien kaufen', { exact: false }).first().waitFor({ timeout: 20000 }).catch(() => {})
-  check('research: three countries cost exactly 6 units and one request each', requests.filter(r => r.includes('/trending') && /region=(US|DE|AU)/.test(r)).length === 3, requests)
-  check('research: the table shows every selected country and discloses data coverage', (await page.getByRole('cell', { name: 'Estados Unidos', exact: true }).count()) >= 1 && (await page.getByText(/Cobertura de datos|suscriptores visibles/).count()) >= 1)
-  check('research: a term shared by several countries is shown', (await page.getByText(/inteligencia · 2 países|artificial · 2 países|programación · 2 países|explicada · 2 países/).count()) >= 1)
-  check('research: with niches technology AND/OR AI active only matching videos remain (no pasta recipe)', (await page.getByText('Receta de pasta fácil').count()) === 0 && (await page.getByText('Inteligencia artificial para programación explicada').count()) >= 1)
-  await page.getByRole('group', { name: 'Lógica de Países' }).getByRole('button', { name: /Todos/ }).click()
-  check('research: AND on countries keeps only the video seen in US and DE and AU... none are in all three, so the list empties with an explanation', (await page.getByText(/0 de \d+ vídeos cumplen los filtros/).count()) === 1)
-  await page.getByRole('group', { name: 'Lógica de Países' }).getByRole('button', { name: /Cualquiera/ }).click()
-  check('research: AND is disabled for languages and formats with the reason shown', await page.getByRole('group', { name: 'Lógica de Idiomas' }).getByRole('button', { name: /Todos/ }).isDisabled() && (await page.getByText(/Un vídeo tiene un solo idioma declarado/).count()) === 1)
+  check('research: picking countries runs no query and is marked as not applied', requests.length === before && (await page.getByText('Cambios sin aplicar').count()) >= 1 && (await page.getByText(/siguen con los filtros anteriores/).count()) === 1, requests.slice(before))
+  check('research: while pending, the results still show the previous (home) data, not the new countries', (await page.getByText('Corto viral de gatos').count()) >= 1)
+  check('research: the apply button states its cost before loading charts', (await applyBtn().innerText()).includes('Aplicar y cargar tendencias de 3 países (6 unidades)'))
+  await apply()
+  await page.getByText(/Aplicados · 3 activos/).waitFor({ timeout: 20000 })
+  await page.getByText('Best gadgets and tech review 2026').first().waitFor({ timeout: 20000 })
+  check('research: applying loads exactly the three charts (6 units) and shows the filters as active', requests.filter(r => /trending\?region=(US|DE|AU)/.test(r)).length === 3 && (await page.getByRole('button', { name: 'Quitar País: Alemania' }).count()) === 1, requests)
+  check('research: the pending badge is gone and the status says the results use 3 applied filters', (await page.getByText('Cambios sin aplicar').count()) === 0 && (await page.getByText(/Resultados con 3 filtros aplicados/).count()) === 1)
+  check('research: after applying, the home country data is no longer shown (regression: Spain data under US/DE/AU filters)', (await page.getByText('Corto viral de gatos').count()) === 0)
+  // Remove Germany with its own chip.
+  await page.getByRole('button', { name: 'Quitar País: Alemania' }).click()
+  check('research: removing one country with its chip updates results at once and keeps the other two', (await page.getByRole('button', { name: 'Quitar País: Alemania' }).count()) === 0 && (await page.getByRole('button', { name: 'Quitar País: Australia' }).count()) === 1 && (await page.getByText(/Aktien kaufen/).count()) === 0)
+  check('research: removing a chip does not spend quota', requests.filter(r => /trending/.test(r)).length === 4)
+  // Prueba B/C: niches combined, AND/OR explained only when it matters.
+  check('research: no AND/OR switch is shown for a single value, and appears with two', (await page.getByRole('group', { name: 'Lógica de Nichos' }).count()) === 0)
+  await pick('Nichos', 'tecno', /Tecnología/); await pick('Nichos', 'inteligencia', /Inteligencia artificial/); await pick('Nichos', 'finan', /Finanzas/)
+  check('research: with two or more niches the OR/AND switch appears with an on-demand explanation', (await page.getByRole('group', { name: 'Lógica de Nichos' }).count()) === 1 && (await page.getByText('¿Qué significa?').count()) >= 1)
+  await apply()
+  check('research: niches combined with countries narrow the list and the empty case is explained, not silent', (await page.getByText('Receta de pasta fácil').count()) === 0)
+  // invalid combination
+  await page.getByLabel('RPM estimado mínimo').fill('10'); await page.getByLabel('RPM estimado máximo').fill('2')
+  check('research: an impossible RPM range is explained and blocks Apply', (await page.getByRole('alert').getByText(/RPM: el mínimo \(10\) es mayor que el máximo \(2\)/).count()) === 1 && await applyBtn().isDisabled())
+  await page.getByLabel('RPM estimado máximo').fill('')
+  await page.getByLabel('RPM estimado mínimo').fill('4')
+  await apply()
+  check('research: the RPM range appears as an active chip', (await page.getByRole('button', { name: /Quitar RPM estimado/ }).count()) === 1)
   await tab('Monetización').click(); await tab('Tendencias internacionales').click()
-  check('research: filters survive changing section', (await page.getByRole('button', { name: 'Quitar Australia' }).count()) === 1 && (await page.getByRole('button', { name: 'Quitar Tecnología' }).count()) === 1)
+  check('research: applied filters survive changing section', (await page.getByRole('button', { name: 'Quitar País: Australia' }).count()) === 1 && (await page.getByRole('button', { name: 'Quitar Nicho: Tecnología' }).count()) === 1)
 
-  // Prueba 2: niche analysis — demand against supply, and the three scenarios are told apart.
-  await page.getByRole('button', { name: 'Limpiar todos' }).click()
+  // Prueba D/F: scoped filters per section and the niche analysis flow.
+  await page.getByRole('button', { name: 'Restablecer filtros' }).click()
+  check('research: reset clears everything at once', (await page.getByText('Sin filtros', { exact: true }).count()) >= 1 && (await page.getByRole('button', { name: /^Quitar/ }).count()) === 0)
   await tab('Nichos').click()
   await page.getByLabel(/Temas o subnichos/).fill('historia medieval, música de moda, tema sin público')
-  check('research: three topics in one market show a cost that asks for confirmation (612 units)', (await page.getByText(/3 consultas nuevas × 204 = 612 unidades/).count()) === 1 && (await page.getByRole('button', { name: /Analizar nichos/ }).isDisabled()))
+  check('research: three topics show their cost (612 units), the markets and ask for confirmation', (await page.getByText(/3 consultas nuevas × 204 = 612 unidades/).count()) === 1 && (await page.getByText(/Se analizará en:/).count()) === 1 && (await page.getByRole('button', { name: /Analizar nichos/ }).isDisabled()))
   await page.getByRole('checkbox', { name: /gastará 612 unidades/ }).check()
   await page.getByRole('button', { name: /Analizar nichos \(612 unidades\)/ }).click()
   await page.getByRole('article', { name: 'Análisis de historia medieval' }).waitFor({ timeout: 20000 })
   const opp = page.getByRole('article', { name: 'Análisis de historia medieval' }), sat = page.getByRole('article', { name: 'Análisis de música de moda' }), none = page.getByRole('article', { name: 'Análisis de tema sin público' })
-  check('research: a topic with demand and little supply is an opportunity with its reasons', (await opp.locator('.pill', { hasText: /^Oportunidad$/ }).count()) === 1 && (await opp.getByText(/Demanda 72\/100/).count()) === 1)
-  check('research: a topic with demand but dominant competition is saturated, not an opportunity', (await sat.getByText('Saturado', { exact: true }).count()) === 1)
+  await page.getByText(/Resultados actualizados: 3 análisis nuevos/).waitFor({ timeout: 20000 }).catch(() => {})
+  check('research: running shows "Resultados actualizados" with the units spent', (await page.getByText(/Resultados actualizados: 3 análisis nuevos \(612 unidades\)/).count()) === 1)
+  check('research: demand + little supply = opportunity with its reasons', (await opp.locator('.pill', { hasText: /^Oportunidad$/ }).count()) === 1 && (await opp.getByText(/Demanda 72\/100/).count()) === 1)
+  check('research: demand + dominant competition = saturated', (await sat.getByText('Saturado', { exact: true }).count()) === 1)
   check('research: little supply with no demand is NOT an opportunity and says so', (await none.getByText('Sin demanda', { exact: true }).count()) === 1 && (await none.getByText(/no es una oportunidad/).count()) === 1)
-  check('research: each card shows source, date, confidence and evidence kinds', (await opp.getByText(/actualizado/).count()) === 1 && (await opp.locator('summary', { hasText: /Evidencia y confianza \(media\)/ }).count()) === 1)
-  check('research: analysing spent no extra requests beyond one per topic', requests.filter(r => r.includes('/topic')).length === 3, requests)
+  check('research: each card shows window, source, date, confidence and evidence kinds', (await opp.getByText(/recientes = últimos 30 días/).count()) === 1 && (await opp.locator('summary', { hasText: /Evidencia y confianza \(media\)/ }).count()) === 1)
+  check('research: one request per topic and no more', requests.filter(r => r.includes('/topic')).length === 3, requests)
+  // Regression: analyses hidden by a filter were dropped silently after a paid run.
+  await page.getByRole('button', { name: 'Nichos', exact: true }).click(); await page.getByLabel('Buscar en Nichos').fill('tecno'); await page.getByRole('checkbox', { name: /Tecnología/ }).check(); await page.keyboard.press('Escape')
+  await apply()
+  const hid = page.getByRole('status', { name: 'Resultados ocultos por filtros' })
+  check('research: analyses excluded by a filter are counted and explained, never dropped silently (regression)', (await hid.getByText(/3 de 3 análisis ocultos por tus filtros/).count()) === 1 && (await hid.getByText(/nichos: 3/).count()) === 1)
+  await hid.getByRole('button', { name: /Mostrar todos de todas formas/ }).click()
+  check('research: "show all anyway" brings them back', (await page.getByRole('article', { name: 'Análisis de historia medieval' }).count()) === 1)
+  await page.getByRole('button', { name: 'Restablecer filtros' }).click()
   await page.getByRole('button', { name: 'Tabla' }).click()
   check('research: table view lists all three topics', (await page.getByRole('cell', { name: 'música de moda' }).count()) === 1)
   await page.getByRole('button', { name: 'Gráfico' }).click()
@@ -671,43 +668,56 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByRole('button', { name: 'Tarjetas' }).click()
   const again = requests.length
   await page.getByLabel(/Temas o subnichos/).fill('historia medieval')
-  check('research: repeating an analysed topic is free (cache)', (await page.getByText(/Todo está en caché: no gasta cuota/).count()) === 1)
+  check('research: repeating an analysed topic is free', (await page.getByText(/Todo está en caché: no gasta cuota/).count()) === 1)
   await page.getByRole('button', { name: /Mostrar \(en caché\)/ }).click()
-  check('research: showing cached results makes no request', requests.length === again)
+  check('research: showing cached results makes no request and says nothing new was fetched', requests.length === again && (await page.getByText(/ya estaba todo en caché/).count()) === 1)
+  // The Period filter sets the recent window and is part of the cache key.
+  await page.getByLabel('Periodo').selectOption('90'); await apply()
+  check('research: changing the period makes the same topic a new (paid) analysis with that window', (await page.getByText(/1 consulta nueva × 204 = 204 unidades/).count()) === 1)
+  await page.getByRole('button', { name: /Analizar nichos \(204 unidades\)/ }).click()
+  await page.getByText(/recientes = últimos 90 días/).first().waitFor({ timeout: 20000 })
+  check('research: the 90-day window is sent to the server', requests.some(r => r.includes('/topic') && r.includes('days=90')), requests)
+  await page.getByRole('button', { name: 'Restablecer filtros' }).click()
 
-  // Descubrir now has analyses to draw on.
+  // The format filter: shown in the analysis, scoped to this section.
   await tab('Descubrir oportunidades').click()
-  check('research: discovery B lists the opportunity and C/E/G/H use the analyses', (await page.getByText(/historia medieval.*oportunidad 74\/100/).count()) >= 1 && (await page.getByText('castillos olvidados', { exact: false }).count()) >= 1)
+  check('research: discovery B/C/E/G/H use the analyses', (await page.getByText(/historia medieval.*oportunidad 74\/100/).count()) >= 1)
+  await tab('Monetización').click()
+  check('research: the Monetización section only offers the filters that act on it', (await page.getByRole('button', { name: 'Idiomas', exact: true }).count()) === 0 && (await page.getByRole('button', { name: 'Países', exact: true }).count()) === 1 && (await page.getByLabel('RPM estimado mínimo').count()) === 1)
+  await tab('Guardadas').click()
+  check('research: Guardadas shows no filters, only a note', (await page.getByRole('form', { name: 'Filtros de investigación' }).count()) === 0)
 
-  // Prueba 3: keywords with their sources.
+  // Keywords with sources.
   await tab('Palabras clave').click()
   check('research: keywords state plainly that there are no search volumes and which sources are missing', (await page.getByText(/no hay volúmenes de búsqueda/).count()) === 1 && (await page.getByText(/Google Trends/).count()) >= 1)
   await page.getByLabel('Palabra clave (hasta 3)').fill('historia medieval')
-  await page.getByRole('button', { name: /Mostrar \(en caché\)/ }).click()
-  check('research: related phrases, questions and emerging terms come with source and date', (await page.getByRole('cell', { name: 'historia medieval' }).count()) >= 1 && (await page.getByText('¿Por qué cayó el imperio?').count()) === 1 && (await page.getByText(/Fuente: YouTube Data API/).count()) === 1)
-  await page.getByLabel('Ver resultados de').selectOption('historia medieval||')
+  await page.getByRole('button', { name: /Mostrar \(en caché\)|Investigar palabra clave/ }).click()
+  await page.getByLabel('Ver resultados de').selectOption({ index: 0 })
+  check('research: related phrases, questions and emerging terms come with source and date', (await page.getByRole('cell', { name: 'historia medieval' }).count()) >= 1 && (await page.getByText('¿Por qué cayó el imperio?').count()) >= 1 && (await page.getByText(/Fuente: YouTube Data API/).count()) >= 1)
   const dl = page.waitForEvent('download')
   await page.getByRole('button', { name: /Exportar palabras clave/ }).click()
-  const file = await dl
-  check('research: keywords export to CSV', /palabras-clave-historia-medieval\.csv$/.test(file.suggestedFilename()))
+  check('research: keywords export to CSV', /palabras-clave-historia-medieval\.csv$/.test((await dl).suggestedFilename()))
 
-  // Prueba 4: monetisation — never presented as real.
+  // Monetisation: never presented as real.
   await tab('Monetización').click()
   check('research: the three RPM states are explained, and VERIFICADO is declared unavailable', (await page.getByText(/No disponible aún/).count()) === 1 && (await page.locator('.tag.estimado').count()) >= 1 && (await page.locator('.tag.desconocido').count()) >= 1)
-  check('research: education scenario = 100k views × $10.22 per 1000 = $1022', (await page.getByRole('table', { name: 'Escenarios de ingresos' }).getByText('$1022').count()) >= 1)
+  check('research: education scenario = 100k views × $10.22 per 1000 = $1.022 (consistent thousands separator)', (await page.getByRole('table', { name: 'Escenarios de ingresos' }).getByText('$1.022').count()) >= 1 && (await page.getByRole('table', { name: 'Escenarios de ingresos' }).getByText('$10.220').count()) >= 1)
   await page.getByLabel('Nicho para el escenario').selectOption('motor')
-  check('research: an unknown niche shows DESCONOCIDO and asks for your own RPM instead of a number', (await page.getByText(/Este nicho es DESCONOCIDO/).count()) === 1 && (await page.getByRole('table', { name: 'Escenarios de ingresos' }).count()) === 0)
+  check('research: an unknown niche shows DESCONOCIDO and asks for your own RPM', (await page.getByText(/Este nicho es DESCONOCIDO/).count()) === 1 && (await page.getByRole('table', { name: 'Escenarios de ingresos' }).count()) === 0)
   await page.getByLabel('Tu RPM').fill('4')
-  check('research: your own RPM gives exact scenarios (500k × $4 = $2,000)', (await page.getByRole('table', { name: 'Escenarios de ingresos' }).getByText('$2000').count()) >= 1)
+  check('research: your own RPM gives exact scenarios (500k × $4 = $2.000)', (await page.getByRole('table', { name: 'Escenarios de ingresos' }).getByText('$2.000').count()) >= 1)
   await page.getByLabel('Tu RPM').fill('')
-  await page.getByLabel('Nicho para el escenario').selectOption('gaming')
-  await page.getByLabel('Formato del escenario').selectOption('short')
-  check('research: Shorts apply the disclosed 3–14 % adjustment with very low confidence', (await page.getByText(/Ajuste de Shorts: 3–14 %/).count()) >= 1)
-  await page.getByRole('button', { name: 'Limpiar todos' }).click().catch(() => {})
+  await page.getByLabel('Nicho para el escenario').selectOption('gaming'); await page.getByLabel('Formato del escenario').selectOption('short')
+  check('research: Shorts apply the disclosed 3–14 % adjustment', (await page.getByText(/Ajuste de Shorts: 3–14 %/).count()) >= 1)
+  await page.getByRole('button', { name: 'Rangos de RPM incompatibles' }).count()
+  await page.getByLabel('RPM estimado mínimo').fill('50'); await apply()
+  check('research: an RPM range that matches no niche says so instead of an empty table', (await page.getByText(/Ningún nicho cumple el RPM estimado/).count()) === 1)
+  await page.getByRole('button', { name: 'Restablecer filtros' }).click()
 
-  // Prueba 5: same niche in three countries, with differing coverage flagged.
-  await pick('Países', 'Estados', /Estados Unidos/); await pick('Países', 'Alemania', /Alemania/); await pick('Países', 'Australia', /Australia/)
+  // Prueba E: same niche in three countries, with differing coverage flagged.
   await tab('Tendencias internacionales').click()
+  await pick('Países', 'Estados', /Estados Unidos/); await pick('Países', 'Alemania', /Alemania/); await pick('Países', 'Australia', /Australia/)
+  await apply()
   await page.getByLabel('Tema a comparar').fill('historia medieval')
   await page.getByRole('checkbox', { name: /gastará 612 unidades/ }).check()
   await page.getByRole('button', { name: /Comparar mercados \(612 unidades\)/ }).click()
@@ -716,20 +726,42 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await tab('Comparador').click()
   check('research: the comparator warns that coverage is uneven (Australia has a small sample)', (await page.getByText(/Cobertura desigual/).count()) === 1)
 
-  // Prueba 6: error states.
-  mode = 'budget'
+  // Competition tab: the shared filters, one explicit Buscar, cost shown, states.
+  await tab('Competencia y canales').click()
+  check('research: the video search has no duplicate country/language boxes and says where it will search', (await page.getByLabel('Código de país').count()) === 0 && (await page.getByText(/Se busca en/).count()) === 1)
+  await page.getByLabel('Búsqueda en YouTube').fill('herramientas de inteligencia artificial')
+  check('research: the search shows its cost for the three markets (306 units, no confirmation needed)', (await page.getByText(/3 mercados × 102 = 306 unidades/).count()) === 1)
+  const sReq = requests.length
+  await page.getByRole('button', { name: /^Buscar \(306 unidades\)/ }).click()
+  await page.getByText(/Resultados actualizados:/).waitFor({ timeout: 20000 })
+  const sr = requests.slice(sReq).filter(r => r.includes('/youtube?'))
+  check('research: one search request per applied market', sr.length === 3 && sr.every(r => r.includes('max=25')) && ['US', 'DE', 'AU'].every(c => sr.some(r => r.includes(`region=${c}`))), sr)
+  state.mode = 'down'
+  await page.getByRole('button', { name: /^Buscar \(306 unidades\)/ }).click()
+  await page.getByRole('alert').getByText(/Consulta fallida: falló en/).waitFor({ timeout: 10000 }).catch(() => {})
+  check('research: a failed search is reported as failed with the reason', (await page.getByRole('alert').getByText(/Consulta fallida: falló en .*YOUTUBE_API_KEY/).count()) >= 1)
+  state.mode = 'ok'
+
+  // Budget error.
+  state.mode = 'budget'
   await tab('Nichos').click()
   await page.getByLabel(/Temas o subnichos/).fill('tema nuevo')
   await page.getByRole('checkbox', { name: /gastará 612 unidades/ }).check()
   await page.getByRole('button', { name: /Analizar nichos/ }).click()
-  check('research: when the daily budget is exhausted the screen says so and stays usable', (await page.getByRole('alert').getByText(/Presupuesto diario de Investigación agotado/).count()) >= 1)
+  await page.getByRole('alert').getByText(/Consulta fallida/).first().waitFor({ timeout: 10000 }).catch(() => {})
+  check('research: when the daily budget is exhausted the screen says the query failed and why', (await page.getByRole('alert').getByText(/Consulta fallida: .*Presupuesto diario de Investigación agotado/).count()) >= 1)
+  check('research: a failed query offers a retry', (await page.getByRole('button', { name: 'Reintentar lo que falló' }).count()) === 1)
+  state.mode = 'ok'
 
-  // Saved combinations.
-  mode = 'ok'
+  // Persistence across reload and favourites.
+  await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css })
+  check('research: applied filters and the active section survive a reload', (await page.getByRole('button', { name: 'Quitar País: Australia' }).count()) === 1 && (await page.getByRole('tab', { selected: true }).innerText()) === 'Nichos')
+  await page.getByText('Favoritos (0)').click()
   await page.getByLabel('Nombre de la combinación').fill('Mis tres mercados')
   await page.getByRole('button', { name: 'Guardar combinación' }).click()
-  await tab('Guardadas').click()
-  check('research: the filter combination is saved as a favourite', (await page.getByText('Mis tres mercados').count()) >= 1)
+  await page.getByRole('button', { name: 'Restablecer filtros' }).click()
+  await page.getByLabel('Aplicar combinación guardada').selectOption({ label: 'Mis tres mercados' })
+  check('research: a saved favourite restores the three countries as applied filters', (await page.getByRole('button', { name: 'Quitar País: Alemania' }).count()) === 1)
   check('research: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }

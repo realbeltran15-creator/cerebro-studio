@@ -11,7 +11,7 @@ import { inferFormat, nichesOf, type Confidence } from './taxonomy'
  */
 
 export type Sample = { videos: YouTubeVideoResult[]; approxTotal: number | null }
-export type TopicSamples = { topic: string; region: string | null; language: string | null; top: Sample; recent: Sample; fetchedAt: string; units: number }
+export type TopicSamples = { topic: string; region: string | null; language: string | null; top: Sample; recent: Sample; /** Window of the "recent" sample, in days. */ recentDays?: number; fetchedAt: string; units: number }
 
 export type Verdict = 'oportunidad' | 'saturado' | 'sin_demanda' | 'mixto'
 export type Evidence = { label: string; value: string; kind: 'observado' | 'calculado' | 'inferido' }
@@ -19,7 +19,7 @@ export type Evidence = { label: string; value: string; kind: 'observado' | 'calc
 export type FormatStats = { count: number; recentCount: number; medianViewsPerDay: number | null }
 
 export type TopicAnalysis = {
-  topic: string; region: string | null; language: string | null; fetchedAt: string; units: number
+  topic: string; region: string | null; language: string | null; fetchedAt: string; units: number; recentDays: number
   indices: { demand: number; supply: number; competition: number; growth: number; opportunity: number }
   /** Percentage change of recent views/day against the year's top videos (a rough direction, not a forecast). */
   growthPct: number | null
@@ -107,7 +107,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const demand = Math.round(0.6 * logScore(topVpd, 20000) + 0.4 * logScore(recentVpd ?? (topVpd ?? 0) * 0.5, 20000))
 
   // Supply: how much is being published and by how many different channels.
-  const WINDOW = 30
+  const WINDOW = s.recentDays ?? 30
   const ages = recent.map(v => ageDays(v, now)).filter(num)
   const oldest = ages.length ? Math.max(...ages) : null
   const full = recent.length >= 25
@@ -148,8 +148,8 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
 
   const evidence: Evidence[] = [
     { label: 'Vistas por día (mediana, vídeos más vistos del último año)', value: topVpd === null ? 'sin datos' : k(Math.round(topVpd)), kind: 'calculado' },
-    { label: 'Vistas por día (mediana, vídeos recientes de ≥ 3 días)', value: recentVpd === null ? 'sin datos' : k(Math.round(recentVpd)), kind: 'calculado' },
-    { label: 'Subidas por semana en el último mes (muestra)', value: String(uploadsPerWeek), kind: 'calculado' },
+    { label: `Vistas por día (mediana, vídeos de los últimos ${WINDOW} días con ≥ 3 días)`, value: recentVpd === null ? 'sin datos' : k(Math.round(recentVpd)), kind: 'calculado' },
+    { label: `Subidas por semana en los últimos ${WINDOW} días (muestra)`, value: String(uploadsPerWeek), kind: 'calculado' },
     { label: 'Canales distintos entre los vídeos recientes', value: `${recentChannels} de ${recent.length}`, kind: 'observado' },
     { label: 'Suscriptores del canal mediano de los más vistos', value: medianSubs === null ? 'sin datos' : k(Math.round(medianSubs)), kind: 'observado' },
     { label: 'Canales de ≥ 100 000 suscriptores en el top 10', value: `${big} de ${top10.length}`, kind: 'observado' },
@@ -172,7 +172,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
 
   const niches = [...new Set([...top, ...recent].flatMap(v => nichesOf(v).map(n => n.niche)))]
   return {
-    topic: s.topic, region: s.region, language: s.language, fetchedAt: s.fetchedAt, units: s.units,
+    topic: s.topic, region: s.region, language: s.language, fetchedAt: s.fetchedAt, units: s.units, recentDays: WINDOW,
     indices: { demand, supply, competition, growth, opportunity }, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence,
     byFormat: { short: stats(top, recent, isShort), long: stats(top, recent, isLong) },
     niches, terms: extractTerms([...top, ...recent]), emerging: emergingTerms(top, recent), questions: extractQuestions([...top, ...recent]),
@@ -191,4 +191,11 @@ export function formatOpportunity(a: TopicAnalysis): { recommended: 'short' | 'l
   if (lv !== null && lv >= 200 && shortShare < 0.2) return { recommended: 'short', reason: `Los vídeos largos ganan ${k(lv)} vistas/día pero solo el ${Math.round(shortShare * 100)} % de la muestra son Shorts (inferidos): hueco para Shorts.` }
   if (sv !== null && sv >= 500 && total(long) > 0 && total(long) / Math.max(total(short) + total(long), 1) < 0.2) return { recommended: 'long', reason: `Los Shorts ganan ${k(sv)} vistas/día y casi no hay vídeos largos en la muestra: hueco para vídeos largos.` }
   return { recommended: null, reason: 'Ambos formatos están cubiertos en la muestra.' }
+}
+
+/** Does the analysis have any sample of the chosen formats? ("brief", "medium" and "long" all live in the long-form bucket.) */
+export function formatCovered(a: TopicAnalysis, formats: string[]): boolean {
+  if (formats.length === 0) return true
+  const has = (x: FormatStats) => x.count + x.recentCount > 0
+  return formats.some(f => f === 'short' ? has(a.byFormat.short) : f === 'live' ? true : has(a.byFormat.long))
 }

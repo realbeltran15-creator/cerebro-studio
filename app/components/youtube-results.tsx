@@ -6,6 +6,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { estimateRevenue } from '@/lib/research/filters'
 import { inferFormat } from '@/lib/research/taxonomy'
+import { fmtNumber } from '@/lib/research/format'
 
 const fmt = (n: number | null) => (n === null ? '—' : new Intl.NumberFormat('es-ES', { notation: n >= 10000 ? 'compact' : 'standard' }).format(n))
 const fmtDuration = (s: number | null) => (s === null ? '—' : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`)
@@ -87,6 +88,6 @@ const FORMAT_NAME = { short: 'Short probable', brief: 'Corto', medium: 'Medio', 
 function EstimateLine({ v }: { v: YouTubeVideoResult }) {
   const f = inferFormat(v), e = estimateRevenue(v)
   return <p className="small muted" style={{ marginTop: 4 }}>
-    <span className="tag inferido">inferido</span> {FORMAT_NAME[f.format]} ({f.reason}) · {e.status === 'estimado' ? <><span className="tag estimado">ESTIMADO</span> ingreso del vídeo ${e.low.toLocaleString('es-ES')}–${e.high.toLocaleString('es-ES')} (no es lo que ganó el canal)</> : <><span className="tag desconocido">DESCONOCIDO</span> sin RPM de referencia</>}
+    <span className="tag inferido">inferido</span> {FORMAT_NAME[f.format]} ({f.reason}) · {e.status === 'estimado' ? <><span className="tag estimado">ESTIMADO</span> ingreso del vídeo ${fmtNumber(e.low)}–${fmtNumber(e.high)} (no es lo que ganó el canal)</> : <><span className="tag desconocido">DESCONOCIDO</span> sin RPM de referencia</>}
   </p>
 }
