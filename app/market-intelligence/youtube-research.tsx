@@ -1,7 +1,9 @@
 'use client'
 
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { YouTubeResults, type YouTubeSaveContext } from '../components/youtube-results'
+import { ResultFilterBar } from '../components/result-filters'
+import { NO_FILTERS, applyFilters, type ResultFilters } from '@/lib/research/discovery'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 
 export function YouTubeResearch({ onSaved }: { onSaved: () => void }) {
@@ -12,6 +14,8 @@ export function YouTubeResearch({ onSaved }: { onSaved: () => void }) {
   const [days, setDays] = useState('')
   const [results, setResults] = useState<YouTubeVideoResult[]>([])
   const [context, setContext] = useState<YouTubeSaveContext>({ query: null, region: null, language: null, origin: 'search' })
+  const [filters, setFilters] = useState<ResultFilters>(NO_FILTERS)
+  const shown = useMemo(() => applyFilters(results, filters), [results, filters])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -28,7 +32,7 @@ export function YouTubeResearch({ onSaved }: { onSaved: () => void }) {
     if (!q || busy) return
     setBusy(true); setError(''); setNotice('')
     try {
-      const params = new URLSearchParams({ q, order })
+      const params = new URLSearchParams({ q, order, max: '25' })
       if (region.trim()) params.set('region', region.trim())
       if (language.trim()) params.set('lang', language.trim())
       if (days) params.set('days', days)
@@ -68,6 +72,7 @@ export function YouTubeResearch({ onSaved }: { onSaved: () => void }) {
     </form>
     {error && <p className="error" role="alert" style={{ marginTop: 12 }}>{error}</p>}
     {notice && <p className="notice" role="status" style={{ marginTop: 12 }}>{notice}</p>}
-    <YouTubeResults results={results} context={context} onSaved={onSaved} />
+    {results.length > 0 && <ResultFilterBar value={filters} onChange={setFilters} shown={shown.length} total={results.length} />}
+    <YouTubeResults results={shown} context={context} onSaved={onSaved} />
   </section>
 }

@@ -24,7 +24,7 @@ async function bundle(entry, stdinContents, extraDefine = {}) {
     define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), ...extraDefine }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
-      b.onResolve({ filter: /^@\/lib\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
+      b.onResolve({ filter: /(^@\/lib|\.\.\/lib|\.\/lib)\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
     } }],
   })
   return out.outputFiles[0].text
@@ -574,6 +574,61 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const tracks = await page.locator('[aria-label^="Pista de"]').evaluateAll(els => els.map(e => e.getAttribute('aria-label')))
   check('manual picker: separate tracks for video/images, voice, music and effects', ['Pista de vídeo', 'Pista de Voz', 'Pista de Música', 'Pista de Efectos'].every(t => tracks.includes(t)), tracks)
   check('manual picker: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 9. Investigación: recommendations load on entering, and the filters narrow them without new requests.
+{
+  const mk = (id, title, o) => ({ videoId: id, url: `https://www.youtube.com/watch?v=${id}`, title, channelId: `c${id}`, channelTitle: `Canal ${id}`, publishedAt: new Date(Date.now() - (o.days ?? 3) * 86400000).toISOString(), thumbnailUrl: null, declaredLanguage: o.lang ?? 'es',
+    observed: { views: o.views, likes: 10, comments: 1, durationSeconds: o.dur, channelSubscribers: o.subs, fetchedAt: new Date().toISOString() }, calculated: { viewsPerDay: Math.round(o.views / (o.days ?? 3)), viewsToSubscribers: Math.round((o.views / o.subs) * 100) / 100, engagementRate: 1 } })
+  const home = [mk('s1', 'Corto viral de gatos', { views: 90000, subs: 800, dur: 40 }), mk('l1', 'Documental largo del mar', { views: 2000000, subs: 3000000, dur: 1500 }), mk('e1', 'English clip', { views: 50000, subs: 900000, dur: 200, lang: 'en' })]
+  const abroad = { MX: [mk('m1', 'Mundial resumen del partido', { views: 500000, subs: 100000, dur: 300 })], PE: [mk('p1', 'Mundial goles de hoy', { views: 400000, subs: 90000, dur: 280 })] }
+  const niche = [mk('n1', 'Historia medieval olvidada', { views: 40000, subs: 2500, dur: 600 }), mk('n2', 'Historia medieval famosa', { views: 3000000, subs: 5000000, dur: 900 })]
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/market-intelligence/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const server = serve(8799, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
+  const errors = [], requests = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.route('**/api/research/**', route => {
+    const url = new URL(route.request().url()); requests.push(url.pathname + url.search)
+    const json = body => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    if (url.pathname.endsWith('/categories')) return json({ configured: true, categories: [{ id: '10', title: 'Música' }] })
+    if (url.pathname.endsWith('/trending')) return json({ configured: true, results: url.searchParams.get('region') === 'ES' ? home : abroad[url.searchParams.get('region')] ?? [] })
+    return json({ configured: true, results: niche })
+  })
+  await page.goto('http://127.0.0.1:8799/market-intelligence')
+  await page.addStyleTag({ content: css })
+  await page.getByRole('heading', { name: 'Recomendaciones para ti' }).waitFor({ timeout: 20000 })
+  await page.getByText('Corto viral de gatos').waitFor({ timeout: 20000 })
+  check('research: recommendations appear on entering without pressing anything', await page.getByText('Documental largo del mar').count() === 1)
+  check('research: entering costs one cheap trending call and does not write the Radar history', requests.filter(r => r.includes('/trending')).length === 1 && requests.every(r => !r.includes('/youtube?')) && requests.find(r => r.includes('/trending')).includes('snapshot=0'), requests)
+  const before = requests.length
+  await page.getByLabel('Formato', { exact: true }).first().selectOption('short')
+  check('research: the Shorts filter keeps only videos up to 60 s', await page.getByText('Corto viral de gatos').count() === 1 && await page.getByText('Documental largo del mar').count() === 0)
+  await page.getByLabel('Formato', { exact: true }).first().selectOption('')
+  await page.getByLabel('Idioma del vídeo').first().selectOption('en')
+  check('research: the language filter keeps only the declared language', await page.getByText('English clip').count() === 1 && await page.getByText('Corto viral de gatos').count() === 0)
+  await page.getByRole('button', { name: /Quitar filtros/ }).first().click()
+  await page.getByLabel('Suscriptores máximos del canal').first().fill('1000')
+  check('research: the subscriber ceiling keeps only small channels', await page.getByText('Corto viral de gatos').count() === 1 && await page.getByText('English clip').count() === 0)
+  check('research: filtering spends no extra API calls', requests.length === before, requests.slice(before))
+  await page.getByRole('button', { name: /Quitar filtros/ }).first().click()
+
+  await page.getByRole('tab', { name: 'Tendencias en otros países' }).click()
+  await page.getByRole('combobox', { name: 'Continente' }).selectOption('america-s')
+  await page.getByRole('button', { name: /^Comparar \d+ países/ }).click()
+  await page.getByText('Mundial resumen del partido').waitFor({ timeout: 20000 })
+  check('research: other countries are compared and a shared term across countries is shown', await page.getByText(/mundial · 2 países/).count() === 1)
+  check('research: abroad requests skip the history snapshot too', requests.filter(r => r.includes('/trending') && !r.includes('region=ES')).every(r => r.includes('snapshot=0')))
+
+  await page.getByRole('tab', { name: 'Nichos descuidados' }).click()
+  await page.getByLabel('Tema para buscar nichos').fill('historia medieval')
+  await page.getByRole('button', { name: 'Buscar nichos' }).click()
+  await page.getByText('Historia medieval olvidada').waitFor({ timeout: 20000 })
+  check('research: only the small channel that outperformed shows as a neglected niche', await page.getByText('Historia medieval famosa').count() === 0)
+  check('research: the niche search asks for 25 videos of the last 90 days', requests.some(r => r.includes('/youtube?') && r.includes('max=25') && r.includes('days=90')), requests)
+  check('research: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 

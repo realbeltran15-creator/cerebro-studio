@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { StudioShell } from '../components/studio-shell'
+import { Recommendations } from './recommendations'
 import { YouTubeResearch } from './youtube-research'
 import { ChannelResearch } from './channel-analysis'
 import { createClient } from '../../lib/supabase/client'
@@ -79,6 +80,7 @@ export default function MarketIntelligencePage() {
   return <StudioShell title="Investigación" eyebrow="INTELIGENCIA DE MERCADO" actions={<Link className="buttonLink ghost" href="/youtube">Explorar YouTube</Link>}>
     <p className="connectionStatus">{message}</p>
     {authenticated === false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated === true ? <>
+      <Recommendations onSaved={() => void load()} />
       <YouTubeResearch onSaved={() => void load()} />
       <ChannelResearch onSaved={() => void load()} />
       <h3 className="sectionTitle">Registro manual</h3>

@@ -19,7 +19,9 @@ export async function GET(request: Request) {
   if (category && !/^\d{1,4}$/.test(category)) return NextResponse.json({ error: 'Categoría no válida.' }, { status: 400 })
   try {
     const results = await trendingYouTubeVideos({ regionCode: region, categoryId: category || undefined })
-    const comparison = await recordTrendSnapshot(supabase, { ownerId: user.id, region, categoryId: category || null, source: 'radar', videos: results })
+    // Recommendations compare many countries at once; they must not fill the Radar history with extra readings.
+    const record = params.get('snapshot') !== '0'
+    const comparison = record ? await recordTrendSnapshot(supabase, { ownerId: user.id, region, categoryId: category || null, source: 'radar', videos: results }) : null
     return NextResponse.json({ configured: true, results, comparison }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('YouTube trending failure', { status: error instanceof YouTubeApiError ? error.status : null, details: error instanceof Error ? error.message : 'unknown' })

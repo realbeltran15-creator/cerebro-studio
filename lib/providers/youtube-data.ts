@@ -17,6 +17,9 @@ export type YouTubeSearchInput = {
   language?: string
   publishedWithinDays?: number
   maxResults?: number
+  /** YouTube's own duration buckets: short < 4 min, medium 4–20 min, long > 20 min. */
+  videoDuration?: 'short' | 'medium' | 'long'
+  categoryId?: string
 }
 
 export type YouTubeVideoResult = {
@@ -27,6 +30,8 @@ export type YouTubeVideoResult = {
   channelTitle: string
   publishedAt: string
   thumbnailUrl: string | null
+  /** Language declared by the uploader (defaultAudioLanguage or defaultLanguage); often missing. */
+  declaredLanguage?: string | null
   observed: {
     views: number | null
     likes: number | null
@@ -85,7 +90,7 @@ async function call<T>(path: string, params: Record<string, string>, key: string
 type SearchResponse = { items?: Array<{ id?: { videoId?: string } }> }
 type VideosResponse = { items?: Array<{
   id: string
-  snippet?: { title?: string; channelId?: string; channelTitle?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> }
+  snippet?: { title?: string; channelId?: string; channelTitle?: string; publishedAt?: string; defaultLanguage?: string; defaultAudioLanguage?: string; thumbnails?: Record<string, { url?: string }> }
   statistics?: { viewCount?: string; likeCount?: string; commentCount?: string }
   contentDetails?: { duration?: string }
 }> }
@@ -99,6 +104,8 @@ export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<Yo
   }
   if (input.regionCode) params.regionCode = input.regionCode
   if (input.language) params.relevanceLanguage = input.language
+  if (input.videoDuration) params.videoDuration = input.videoDuration
+  if (input.categoryId) params.videoCategoryId = input.categoryId
   if (input.publishedWithinDays) params.publishedAfter = new Date(Date.now() - input.publishedWithinDays * 86400000).toISOString()
 
   const search = await call<SearchResponse>('search', params, key)
@@ -167,6 +174,7 @@ async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResu
       channelTitle: v.snippet?.channelTitle ?? '',
       publishedAt,
       thumbnailUrl: thumbs.medium?.url ?? thumbs.default?.url ?? null,
+      declaredLanguage: (v.snippet?.defaultAudioLanguage ?? v.snippet?.defaultLanguage ?? '').slice(0, 2).toLowerCase() || null,
       observed: { views, likes, comments, durationSeconds: parseIsoDuration(v.contentDetails?.duration), channelSubscribers: subs, fetchedAt },
       calculated: {
         viewsPerDay: views !== null && ageDays ? Math.round(views / ageDays) : null,

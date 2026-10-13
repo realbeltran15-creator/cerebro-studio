@@ -43,3 +43,5 @@ const client = {
   storage: { from: () => ({ upload: async (path: string, blob: Blob) => { (window as any).__UPLOADS.push({ path, size: blob.size }); await (window as any).__putBlob?.(path, blob); return { error: null } }, remove: async () => ({ error: null }) }) },
 }
 export const getSupabaseBrowserClient = () => client
+/** Some pages import the client by relative path and call it createClient. */
+export const createClient = getSupabaseBrowserClient

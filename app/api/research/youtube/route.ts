@@ -21,6 +21,9 @@ export async function GET(request: Request) {
   const region = params.get('region')?.trim().toUpperCase()
   const language = params.get('lang')?.trim().toLowerCase()
   const days = Number(params.get('days'))
+  const duration = params.get('duration')
+  const category = params.get('category')?.trim() ?? ''
+  const max = Number(params.get('max'))
 
   try {
     const results = await searchYouTubeVideos({
@@ -28,6 +31,9 @@ export async function GET(request: Request) {
       order: order && orders.has(order) ? order : 'relevance',
       regionCode: region && /^[A-Z]{2}$/.test(region) ? region : undefined,
       language: language && /^[a-z]{2}$/.test(language) ? language : undefined,
+      videoDuration: duration === 'short' || duration === 'medium' || duration === 'long' ? duration : undefined,
+      categoryId: /^\d{1,4}$/.test(category) ? category : undefined,
+      maxResults: Number.isInteger(max) && max >= 1 && max <= 25 ? max : undefined,
       publishedWithinDays: Number.isInteger(days) && days > 0 && days <= 3650 ? days : undefined,
     })
     return NextResponse.json({ configured: true, results }, { headers: { 'Cache-Control': 'no-store' } })
