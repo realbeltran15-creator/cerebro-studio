@@ -344,3 +344,29 @@ article p{color:var(--muted);font-size:14px;margin-top:6px}
   .scene dl{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ---------- Investigación avanzada ---------- */
+.researchTabs{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.researchTabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:7px 12px;border-radius:9px;font-weight:600;cursor:pointer}
+.researchTabs button[aria-selected="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--text)}
+.msWrap{position:relative;min-width:200px;flex:1 1 200px}
+.msButton{width:100%;text-align:left;display:flex;justify-content:space-between;gap:8px;background:var(--bg-2);border:1px solid var(--line-2);color:var(--text);padding:9px 12px;border-radius:10px;cursor:pointer}
+.msPop{position:absolute;z-index:20;top:calc(100% + 4px);left:0;right:0;min-width:240px;max-height:340px;overflow:auto;background:var(--panel-2);border:1px solid var(--line-2);border-radius:12px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,.45)}
+.msOpt{display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:6px;cursor:pointer}
+.msOpt:hover{background:var(--accent-soft)}
+.msActions{display:flex;gap:8px;margin:8px 0}
+.logicToggle{display:inline-flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;margin-top:4px}
+.logicToggle button{border:0;border-radius:0;background:transparent;color:var(--muted);padding:3px 9px;font-size:12px;cursor:pointer}
+.logicToggle button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.logicToggle button:disabled{opacity:.45;cursor:not-allowed}
+.filterGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-items:start}
+.indexBar{height:8px;border-radius:99px;background:var(--line);overflow:hidden}
+.indexBar>span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.dataTable{width:100%;border-collapse:collapse;font-size:13px}
+.dataTable th,.dataTable td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.dataTable th{color:var(--muted);font-weight:600;font-size:12px}
+.tableScroll{overflow-x:auto}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;padding:2px 7px;border-radius:6px;border:1px solid var(--line-2)}
+.tag.verificado{color:var(--ok);border-color:var(--ok)} .tag.estimado{color:var(--warn);border-color:var(--warn)} .tag.desconocido{color:var(--bad);border-color:var(--bad)}
+.tag.observado{color:var(--info);border-color:var(--info)} .tag.calculado{color:var(--accent-2);border-color:var(--accent-2)} .tag.inferido{color:var(--warn);border-color:var(--warn)}
+.viewToggle{display:inline-flex;gap:6px}

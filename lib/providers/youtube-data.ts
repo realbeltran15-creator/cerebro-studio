@@ -32,6 +32,12 @@ export type YouTubeVideoResult = {
   thumbnailUrl: string | null
   /** Language declared by the uploader (defaultAudioLanguage or defaultLanguage); often missing. */
   declaredLanguage?: string | null
+  /** YouTube's own category id (videos.list snippet.categoryId). */
+  categoryId?: string | null
+  /** Tags set by the uploader (first 15). Optional on videos. */
+  tags?: string[]
+  /** 'live' / 'upcoming' come from snippet.liveBroadcastContent; 'was_live' when liveStreamingDetails exists on an ended stream. */
+  live?: 'live' | 'upcoming' | 'was_live' | null
   observed: {
     views: number | null
     likes: number | null
@@ -87,16 +93,25 @@ async function call<T>(path: string, params: Record<string, string>, key: string
   return response.json() as Promise<T>
 }
 
-type SearchResponse = { items?: Array<{ id?: { videoId?: string } }> }
+type SearchResponse = { pageInfo?: { totalResults?: number }; items?: Array<{ id?: { videoId?: string } }> }
 type VideosResponse = { items?: Array<{
   id: string
-  snippet?: { title?: string; channelId?: string; channelTitle?: string; publishedAt?: string; defaultLanguage?: string; defaultAudioLanguage?: string; thumbnails?: Record<string, { url?: string }> }
+  snippet?: { title?: string; channelId?: string; channelTitle?: string; publishedAt?: string; defaultLanguage?: string; defaultAudioLanguage?: string; categoryId?: string; tags?: string[]; liveBroadcastContent?: string; thumbnails?: Record<string, { url?: string }> }
   statistics?: { viewCount?: string; likeCount?: string; commentCount?: string }
   contentDetails?: { duration?: string }
+  liveStreamingDetails?: { actualStartTime?: string; actualEndTime?: string }
 }> }
 type ChannelsResponse = { items?: Array<{ id: string; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean } }> }
 
 export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<YouTubeVideoResult[]> {
+  return (await searchYouTubeVideosMeta(input)).videos
+}
+
+/**
+ * Same search plus pageInfo.totalResults. YouTube documents that number as an approximation (it is capped and unstable),
+ * so it is only ever shown as an order of magnitude, never used as a census of videos.
+ */
+export async function searchYouTubeVideosMeta(input: YouTubeSearchInput): Promise<{ videos: YouTubeVideoResult[]; approxTotal: number | null }> {
   const key = requireKey()
   const params: Record<string, string> = {
     part: 'id', type: 'video', q: input.query, order: input.order ?? 'relevance',
@@ -110,11 +125,12 @@ export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<Yo
 
   const search = await call<SearchResponse>('search', params, key)
   const ids = (search.items ?? []).map(i => i.id?.videoId).filter((id): id is string => Boolean(id))
-  if (ids.length === 0) return []
-  const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails', id: ids.join(',') }, key)
+  const approxTotal = typeof search.pageInfo?.totalResults === 'number' ? search.pageInfo.totalResults : null
+  if (ids.length === 0) return { videos: [], approxTotal }
+  const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails,liveStreamingDetails', id: ids.join(',') }, key)
   const byId = new Map((videos.items ?? []).map(v => [v.id, v]))
   // Keep the order returned by search.list.
-  return enrich(ids.flatMap(id => byId.get(id) ?? []), key)
+  return { videos: await enrich(ids.flatMap(id => byId.get(id) ?? []), key), approxTotal }
 }
 
 export type TrendingInput = { regionCode: string; categoryId?: string; maxResults?: number }
@@ -123,7 +139,7 @@ export type TrendingInput = { regionCode: string; categoryId?: string; maxResult
 export async function trendingYouTubeVideos(input: TrendingInput): Promise<YouTubeVideoResult[]> {
   const key = requireKey()
   const params: Record<string, string> = {
-    part: 'snippet,statistics,contentDetails', chart: 'mostPopular', regionCode: input.regionCode,
+    part: 'snippet,statistics,contentDetails,liveStreamingDetails', chart: 'mostPopular', regionCode: input.regionCode,
     maxResults: String(Math.min(Math.max(input.maxResults ?? 25, 1), 50)),
   }
   if (input.categoryId) params.videoCategoryId = input.categoryId
@@ -174,6 +190,9 @@ async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResu
       channelTitle: v.snippet?.channelTitle ?? '',
       publishedAt,
       thumbnailUrl: thumbs.medium?.url ?? thumbs.default?.url ?? null,
+      categoryId: v.snippet?.categoryId ?? null,
+      tags: (v.snippet?.tags ?? []).slice(0, 15),
+      live: v.snippet?.liveBroadcastContent === 'live' ? 'live' : v.snippet?.liveBroadcastContent === 'upcoming' ? 'upcoming' : v.liveStreamingDetails ? 'was_live' : null,
       declaredLanguage: (v.snippet?.defaultAudioLanguage ?? v.snippet?.defaultLanguage ?? '').slice(0, 2).toLowerCase() || null,
       observed: { views, likes, comments, durationSeconds: parseIsoDuration(v.contentDetails?.duration), channelSubscribers: subs, fetchedAt },
       calculated: {
@@ -191,7 +210,7 @@ export async function youtubeVideosByIds(ids: string[]): Promise<YouTubeVideoRes
   const unique = [...new Set(ids.filter(id => /^[\w-]{6,20}$/.test(id)))]
   const results: YouTubeVideoResult[] = []
   for (let i = 0; i < unique.length; i += 50) {
-    const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails', id: unique.slice(i, i + 50).join(',') }, key)
+    const videos = await call<VideosResponse>('videos', { part: 'snippet,statistics,contentDetails,liveStreamingDetails', id: unique.slice(i, i + 50).join(',') }, key)
     results.push(...await enrich(videos.items ?? [], key))
   }
   return results
@@ -252,7 +271,7 @@ export async function analyzeChannel(input: string, sample = 25): Promise<Channe
   const selector = channelSelector(input)
   if (!selector) throw new YouTubeApiError('Indica la URL del canal, su @handle o su id (UC…).', 400)
   type ChannelFull = { items?: Array<{ id: string; snippet?: { title?: string; customUrl?: string; country?: string; thumbnails?: Record<string, { url?: string }> }; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean; viewCount?: string; videoCount?: string }; contentDetails?: { relatedPlaylists?: { uploads?: string } } }> }
-  const ch = (await call<ChannelFull>('channels', { part: 'snippet,statistics,contentDetails', ...selector }, key)).items?.[0]
+  const ch = (await call<ChannelFull>('channels', { part: 'snippet,statistics,contentDetails,liveStreamingDetails', ...selector }, key)).items?.[0]
   if (!ch) throw new YouTubeApiError('No se encontró ese canal.', 404)
   const uploads = ch.contentDetails?.relatedPlaylists?.uploads
   const playlist = uploads

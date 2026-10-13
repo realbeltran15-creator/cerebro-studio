@@ -4,6 +4,8 @@ import { isUniqueViolation } from '@/lib/opportunities'
 import { useEffect, useState, type ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
+import { estimateRevenue } from '@/lib/research/filters'
+import { inferFormat } from '@/lib/research/taxonomy'
 
 const fmt = (n: number | null) => (n === null ? '—' : new Intl.NumberFormat('es-ES', { notation: n >= 10000 ? 'compact' : 'standard' }).format(n))
 const fmtDuration = (s: number | null) => (s === null ? '—' : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`)
@@ -71,9 +73,20 @@ export function YouTubeResults({ results, context, onSaved, extra }: { results: 
       <p className="muted small">{v.channelTitle} · {v.publishedAt ? new Date(v.publishedAt).toLocaleDateString() : 'sin fecha'} · {fmtDuration(v.observed.durationSeconds)}</p>
       <p className="small"><b>Observado:</b> {fmt(v.observed.views)} vistas · {fmt(v.observed.likes)} likes · {fmt(v.observed.comments)} comentarios · {fmt(v.observed.channelSubscribers)} suscriptores</p>
       <p className="small muted"><b>Calculado:</b> {fmt(v.calculated.viewsPerDay)} vistas/día · ratio vistas/suscriptores {v.calculated.viewsToSubscribers ?? '—'} · interacción {v.calculated.engagementRate ?? '—'}%</p>
+      <EstimateLine v={v} />
       <button type="button" className={saved.has(v.url) ? 'ghost' : undefined} disabled={saved.has(v.url) || Boolean(savingId)} onClick={() => void save(v)} style={{ marginTop: 8 }}>
         {saved.has(v.url) ? 'Ya en Oportunidades' : savingId === v.videoId ? 'Guardando…' : 'Guardar como oportunidad'}
       </button>
     </article>)}</div>
   </>
+}
+
+const FORMAT_NAME = { short: 'Short probable', brief: 'Corto', medium: 'Medio', long: 'Largo', live: 'Directo', unknown: 'Formato desconocido' } as const
+
+/** Inferred format and ESTIMATED income of one video, each labelled with how it was obtained. */
+function EstimateLine({ v }: { v: YouTubeVideoResult }) {
+  const f = inferFormat(v), e = estimateRevenue(v)
+  return <p className="small muted" style={{ marginTop: 4 }}>
+    <span className="tag inferido">inferido</span> {FORMAT_NAME[f.format]} ({f.reason}) · {e.status === 'estimado' ? <><span className="tag estimado">ESTIMADO</span> ingreso del vídeo ${e.low.toLocaleString('es-ES')}–${e.high.toLocaleString('es-ES')} (no es lo que ganó el canal)</> : <><span className="tag desconocido">DESCONOCIDO</span> sin RPM de referencia</>}
+  </p>
 }

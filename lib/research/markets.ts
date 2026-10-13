@@ -1,0 +1,27 @@
+import { COUNTRIES } from './discovery'
+import type { ResearchFilters } from './filters'
+import type { TopicAnalysis } from './topic-analysis'
+
+/** A market is where a topic is looked at: a country (YouTube regionCode) and/or a language (relevanceLanguage). */
+export type Market = { region: string | null; language: string | null; label: string }
+
+export const countryName = (code: string) => COUNTRIES.find(c => c.code === code)?.name ?? code
+export const marketLabel = (region: string | null, language: string | null) => region ? `${countryName(region)}${language ? ` · ${language}` : ''}` : language ? `Idioma ${language}` : 'Mundial'
+
+/**
+ * Markets implied by the filters. Countries win (each with the single chosen language, or its main language); with no country the chosen
+ * languages are the markets; with neither it is the worldwide default. Choosing markets never runs a query by itself.
+ */
+export function marketsFromFilters(f: Pick<ResearchFilters, 'countries' | 'languages'>): Market[] {
+  if (f.countries.length) {
+    return f.countries.map(code => {
+      const language = f.languages.length === 1 ? f.languages[0] : COUNTRIES.find(c => c.code === code)?.language ?? null
+      return { region: code, language, label: marketLabel(code, language) }
+    })
+  }
+  if (f.languages.length) return f.languages.map(l => ({ region: null, language: l, label: marketLabel(null, l) }))
+  return [{ region: null, language: null, label: marketLabel(null, null) }]
+}
+
+export const analysisKey = (topic: string, region: string | null, language: string | null) => [topic.trim().toLowerCase().replace(/\s+/g, ' '), region ?? '', language ?? ''].join('|')
+export const keyOf = (a: Pick<TopicAnalysis, 'topic' | 'region' | 'language'>) => analysisKey(a.topic, a.region, a.language)

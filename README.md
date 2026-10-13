@@ -270,6 +270,24 @@ Garantías: nunca se descarga el vídeo de referencia; su transcripción se usa 
 
 **Estado:** probado con tests unitarios (`tests/flow-import.test.ts`) y de navegador (importación local con códecs H.264/VP9, licencia, procedencia y enlaces al editor). **No** probado: el selector de Drive con una cuenta real (requiere tus identificadores y el consentimiento de Google).
 
+## Investigación avanzada
+
+Pantalla `/market-intelligence`, organizada en ocho secciones que comparten un único panel de filtros (se conservan al cambiar de sección): **Descubrir oportunidades** (A nichos con más vistas, B descuidados, C emergentes, D internacionales, E monetización, F canales pequeños, G palabras clave, H formatos), **Nichos**, **Palabras clave**, **Tendencias internacionales**, **Competencia y canales**, **Monetización**, **Comparador** y **Guardadas**.
+
+**Filtros combinables.** Selección múltiple con búsqueda, «Seleccionar todos» y «Limpiar» en países (hasta 8), idiomas, nichos, formatos y tipos de contenido; periodo; RPM estimado; y filtros avanzados (visualizaciones, vistas por día, me gusta, comentarios, interacción, suscriptores, vistas ÷ suscriptores, duración, categoría de YouTube, texto a incluir o excluir e ingreso estimado por vídeo). Cada grupo admite Cualquiera (OR) o Todos (AND) cuando tiene sentido: los nichos y tipos de contenido son multietiqueta (un vídeo puede ser «tecnología» e «IA»); en países, «Todos» exige el mismo vídeo en la lista de cada país; idioma y formato son de un solo valor por vídeo, así que ahí solo hay OR y la pantalla lo explica. Las combinaciones se guardan como favoritas (localStorage). Elegir valores **nunca** lanza consultas.
+
+**Demanda frente a oferta.** Para un tema y un mercado se toman dos muestras de la API oficial (25 vídeos más vistos del último año + 25 más recientes, ~204 unidades) y se calculan, con la evidencia a la vista: demanda, oferta, competencia, crecimiento, oportunidad y confianza. Poca oferta sin demanda **no** es una oportunidad (la demanda limita la puntuación). `search.list` no cuenta vídeos ni creadores: el total que devuelve se muestra solo como orden de magnitud y la confianza nunca pasa de «media» con una sola fuente.
+
+**Etiquetas.** Observado = dato de la API. Calculado = derivado por Cerebro Studio. Inferido = clasificación nuestra (nicho por palabras/etiquetas/categoría; formato por duración y #shorts: la API no marca los Shorts; tipo de contenido por palabras).
+
+**RPM y dinero.** YouTube no publica el RPM de canales ajenos ni la retención, el CTR o el país real de sus espectadores. `lib/research/monetization.ts` guarda rangos ESTIMADOS por nicho, país y formato con fuente, fecha de consulta, método y confianza (AIR Media-Tech 2026 y guías de terceros que se contradicen entre sí: finanzas va de 2 a 26 USD). Los nichos sin datos son DESCONOCIDOS y la calculadora pide tu propio RPM. VERIFICADO (tu propio canal con YouTube Analytics y permiso monetario) **aún no está conectado**.
+
+**Coste y control de cuota.** Al entrar solo se pide la lista oficial de populares de un país (2 unidades). Listas por país: 2 unidades. Análisis de tema: ~204 unidades por mercado; la pantalla muestra el coste antes, pide confirmación por encima de 400 unidades y bloquea más de 3000 por lote. Los resultados se guardan una semana por usuario (`research_cache`, migración `20261013120000_research_cache.sql`) y hay un presupuesto diario de Investigación (`RESEARCH_DAILY_UNIT_CAP`, 6000 por defecto). Sin la migración aplicada funciona con caché en memoria (por instancia, sin presupuesto compartido).
+
+**No incluido a propósito.** Google Trends (la API es alfa con acceso por solicitud; no se hace scraping), Planificador de palabras clave de Google Ads (requiere cuenta de Ads), autocompletado de YouTube (sin API oficial) y herramientas de pago (vidIQ, TubeBuddy, Social Blade, Viewstats, 1of10). No hay volúmenes de búsqueda inventados.
+
+**Pruebas.** `tests/research-engine.test.ts` y `tests/research-discovery.test.ts` (índices, filtros, coste, caché, RPM) y el bloque 9 de `scripts/browser-tests.mjs` (Chromium real con las rutas `/api/research/*` simuladas: no gasta cuota y no prueba la integración en vivo).
+
 ## Fábrica de Shorts de curiosidades — canal Umbral del Hito (2026-10-12)
 
 Automatización `shorts_factory` (Automatizaciones → «Fábrica de Shorts de curiosidades»; pantalla de revisión en `/shorts`). Reglas aprobadas por Jesús, y cómo se cumplen en el código (`lib/shorts/*`):
