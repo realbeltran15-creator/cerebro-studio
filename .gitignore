@@ -12,3 +12,7 @@ out
 next-env.d.ts
 *.tsbuildinfo
 package-lock.json
+
+# Local research runs (progress and reports)
+.research/
+research-output/

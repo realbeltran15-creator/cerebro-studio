@@ -405,3 +405,139 @@ describe('number format is consistent', () => {
     expect(fmtNumber(1022)).toBe('1.022'); expect(fmtNumber(10220)).toBe('10.220'); expect(fmtUsd(2000)).toBe('$2.000'); expect(fmtUsd(10.22)).toBe('$10,22')
   })
 })
+
+import { SEEDS, SEED_LANGS, suggestSeeds, seedFallback } from '@/lib/research/seeds'
+import { budgetPlan, jobKey, pendingJobs, planGuided, reportCsv, reportMarkdown, reportRow, VIABILITY } from '@/lib/research/guided'
+import { parseTopics, planLabel, searchPlanFor, type Queries } from '@/lib/research/search-plan'
+import { marketLabel, marketsFromFilters } from '@/lib/research/markets'
+import { COUNTRIES } from '@/lib/research/discovery'
+import { NICHES } from '@/lib/research/taxonomy'
+import { countryRpm } from '@/lib/research/monetization'
+
+describe('seed catalogue', () => {
+  it('has 8 seeds in Spanish, English and German for every niche, and every taxonomy niche is covered', () => {
+    for (const n of NICHES) { expect(SEEDS[n.id], n.id).toBeDefined(); for (const l of SEED_LANGS) expect(SEEDS[n.id][l].length, `${n.id}/${l}`).toBe(8) }
+    expect(Object.keys(SEEDS).sort()).toEqual(NICHES.map(n => n.id).sort())
+    expect(Object.keys(VIABILITY).sort()).toEqual(NICHES.map(n => n.id).sort())
+  })
+  it('interleaves the chosen niches so each is represented, in the market language, and pages through more ideas', () => {
+    const de = suggestSeeds(['ia', 'finanzas'], 'de', 4)
+    expect(de).toEqual([SEEDS.ia.de[0], SEEDS.finanzas.de[0], SEEDS.ia.de[1], SEEDS.finanzas.de[1]])
+    expect(suggestSeeds(['ia'], 'es', 2)[0]).toBe(SEEDS.ia.es[0])
+    expect(suggestSeeds(['ia'], 'ja', 1)[0]).toBe(SEEDS.ia.en[0])
+    expect(suggestSeeds(['ia'], 'en', 2, 2)).toEqual(SEEDS.ia.en.slice(2, 4))
+    expect(suggestSeeds([], 'en', 20)).toHaveLength(20)
+    for (const l of SEED_LANGS) expect(new Set(suggestSeeds([], l, 160)).size, `duplicate seeds in ${l}`).toBe(160)
+    expect(seedFallback('ja')).toBe(true); expect(seedFallback('de')).toBe(false)
+  })
+})
+
+describe('guided research (N per market) and its budget', () => {
+  const six = marketsFromFilters({ countries: ['US', 'DE', 'AU', 'GB', 'CA', 'CH'], languages: [] })
+  it('Switzerland is a market (German) and has no per-country RPM table, so it is unknown rather than invented', () => {
+    expect(COUNTRIES.find(c => c.code === 'CH')).toMatchObject({ name: 'Suiza', language: 'de', continent: 'europe' })
+    expect(countryRpm('CH')).toBeNull(); expect(marketLabel('CH', 'de')).toBe('Suiza (alemán)')
+  })
+  it('plans 20 per market in six markets, each in its own language, with no duplicates inside a market', () => {
+    const p = planGuided({ markets: six, nicheIds: [], perMarket: 20 })
+    expect(p.jobs).toHaveLength(120); expect(p.shortfall).toEqual([])
+    for (const m of six) { const topics = p.jobs.filter(j => j.market.region === m.region).map(j => j.topic); expect(topics).toHaveLength(20); expect(new Set(topics).size).toBe(20) }
+    expect(p.jobs.find(j => j.market.region === 'CH')!.topic).toMatch(/[a-zäöüß]/i)
+    expect(SEEDS.tecnologia.de).toContain(p.jobs.find(j => j.market.region === 'CH')!.topic)
+  })
+  it('reports a shortfall when the chosen niches cannot supply enough ideas, instead of padding', () => {
+    const p = planGuided({ markets: six.slice(0, 1), nicheIds: ['ia'], perMarket: 20 })
+    expect(p.jobs).toHaveLength(8); expect(p.shortfall).toEqual([{ market: 'Estados Unidos (inglés)', wanted: 20, got: 8 }])
+  })
+  it('120 analyses cost 24,480 units: more than two full days of the whole YouTube quota, so the queue spans days', () => {
+    const p = planGuided({ markets: six, nicheIds: [], perMarket: 20 })
+    const bp = budgetPlan({ jobs: p.jobs, done: {}, recentDays: 30, remainingToday: 6000, dailyCap: 6000 })
+    expect(bp).toMatchObject({ totalUnits: 24480, pending: 120, todayJobs: 29, todayUnits: 5916, daysNeeded: 5 })
+    expect(budgetPlan({ jobs: p.jobs, done: {}, recentDays: 30, remainingToday: 10000, dailyCap: 10000 }).daysNeeded).toBe(3)
+    expect(budgetPlan({ jobs: p.jobs, done: {}, recentDays: 30, remainingToday: 100, dailyCap: 6000 }).todayJobs).toBe(0)
+  })
+  it('skips what is already analysed and counts only the rest', () => {
+    const p = planGuided({ markets: six.slice(0, 2), nicheIds: [], perMarket: 3 })
+    const done = Object.fromEntries(p.jobs.slice(0, 2).map(j => [jobKey(j, 30), {}]))
+    expect(pendingJobs(p.jobs, done, 30)).toHaveLength(4)
+    expect(pendingJobs(p.jobs, done, 90)).toHaveLength(6)
+    expect(budgetPlan({ jobs: p.jobs, done, recentDays: 30, remainingToday: 6000, dailyCap: 6000 })).toMatchObject({ pending: 4, doneCount: 2 })
+    expect(budgetPlan({ jobs: p.jobs, done: Object.fromEntries(p.jobs.map(j => [jobKey(j, 30), {}])), recentDays: 30, remainingToday: 6000, dailyCap: 6000 })).toMatchObject({ pending: 0, daysNeeded: 0 })
+  })
+})
+
+describe('the single search button: what it will do and what it costs', () => {
+  const q = (o: Partial<Queries> = {}): Queries => ({ niches: '', keywords: '', competition: '', international: '', perMarket: 3, order: 'relevance', ...o })
+  const base = { analyses: {}, charts: {}, remainingToday: 6000 }
+  const f = (o: Partial<ResearchFilters> = {}): ResearchFilters => ({ ...EMPTY_FILTERS, ...o, logic: { ...EMPTY_FILTERS.logic }, metrics: { ...NO_METRICS } })
+  it('parses typed topics: trims, de-duplicates, caps', () => {
+    expect(parseTopics(' a b , a b;\n\nx ,  ,historia medieval')).toEqual(['historia medieval'].length ? ['a b', 'historia medieval'] : [])
+    expect(parseTopics('a,bb,cc,dd,ee,ff,gg,hh', 3)).toEqual(['bb', 'cc', 'dd'])
+  })
+  it('Nichos with typed topics = topics × markets; cached ones are free; the label carries the cost', () => {
+    const p = searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), base)
+    expect(p).toMatchObject({ kind: 'analysis', fresh: 4, units: 816, level: 'confirm', auto: false })
+    expect(planLabel(p)).toBe('Aplicar y buscar (816 unidades)')
+    const cached = { [jobKey(p.jobs[0], 30)]: {} as never }
+    expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: cached })).toMatchObject({ fresh: 3, cached: 1, units: 612 })
+    const free = searchPlanFor('niches', f(), q({ niches: 'tema' }), { ...base, analyses: { [jobKey({ topic: 'tema', market: marketsFromFilters({ countries: [], languages: [] })[0] }, 30)]: {} as never } })
+    expect(free).toMatchObject({ units: 0, level: 'free' }); expect(planLabel(free)).toBe('Aplicar y mostrar (en caché)')
+  })
+  it('Nichos with nothing typed proposes ideas per market in each language (and says they are proposals)', () => {
+    const p = searchPlanFor('niches', f({ countries: ['US', 'DE'], niches: ['ia'] }), q({ perMarket: 2 }), base)
+    expect(p.auto).toBe(true); expect(p.jobs).toHaveLength(4)
+    expect(p.jobs.filter(j => j.market.region === 'DE').map(j => j.topic)).toEqual(SEEDS.ia.de.slice(0, 2))
+    expect(p.jobs.filter(j => j.market.region === 'US').map(j => j.topic)).toEqual(SEEDS.ia.en.slice(0, 2))
+  })
+  it('Palabras clave needs a typed keyword; without one the button only applies filters', () => {
+    expect(searchPlanFor('keywords', f(), q(), base).kind).toBe('none'); expect(planLabel(searchPlanFor('keywords', f(), q(), base))).toBe('Aplicar filtros')
+    expect(searchPlanFor('keywords', f({ countries: ['US'] }), q({ keywords: 'a1, b2, c3, d4' }), base).jobs).toHaveLength(3)
+  })
+  it('Competencia searches the typed text in every market at 102 units each', () => {
+    const p = searchPlanFor('competition', f({ countries: ['US', 'DE', 'AU'] }), q({ competition: 'ia' }), base)
+    expect(p).toMatchObject({ kind: 'search', units: 306, level: 'ok', query: 'ia' })
+    expect(searchPlanFor('competition', f(), q(), base).kind).toBe('none')
+  })
+  it('Descubrir and Tendencias load only the charts that are missing, at 2 units per country', () => {
+    const p = searchPlanFor('discover', f({ countries: ['US', 'DE', 'AU'] }), q(), { ...base, charts: { DE: [] } })
+    expect(p).toMatchObject({ kind: 'charts', units: 4, chartRegions: ['US', 'AU'] }); expect(planLabel(p)).toBe('Aplicar y cargar tendencias de 2 países (4 unidades)')
+    expect(searchPlanFor('discover', f({ countries: ['DE'] }), q(), { ...base, charts: { DE: [] } }).kind).toBe('none')
+  })
+  it('Tendencias internacionales combines charts and a topic analysis in one cost', () => {
+    const p = searchPlanFor('international', f({ countries: ['US', 'DE'] }), q({ international: 'ia para negocios' }), base)
+    expect(p).toMatchObject({ kind: 'multi', units: 2 * 204 + 2 * 2 }); expect(p.message).toMatch(/Total 412 unidades/)
+  })
+  it('blocks a plan that passes the daily budget or the batch limit, and asks to confirm above 400', () => {
+    expect(searchPlanFor('niches', f({ countries: ['US', 'DE', 'AU'] }), q({ niches: 'a1, b2, c3' }), { ...base, remainingToday: 500 }).level).toBe('blocked')
+    expect(searchPlanFor('niches', f({ countries: ['US'] }), q({ niches: 'a1, b2' }), base).level).toBe('confirm')
+    expect(searchPlanFor('niches', f({ countries: ['US'] }), q({ niches: 'a1' }), base).level).toBe('ok')
+  })
+})
+
+describe('the report: complete, honest about what it does not know', () => {
+  const a = (o: O & { verdict?: 'oportunidad' | 'saturado' | 'sin_demanda' | 'mixto'; region?: string | null; lang?: string | null; niches?: string[] } = {}) => ({
+    ...analyzeTopic({ ...samples(many(25, () => ({ views: 90000, days: 90, dur: 700, title: o.title ?? 'Inteligencia artificial para negocios' })), many(10, () => ({ views: 4000, days: 5, dur: 700, title: o.title ?? 'Inteligencia artificial para negocios' }))), region: o.region === undefined ? 'DE' : o.region, language: o.lang === undefined ? 'de' : o.lang, topic: o.title ?? 'KI Tools', recentDays: 30 }, NOW),
+  })
+  it('keeps every promised field per analysis and marks unknown ones as unknown', () => {
+    const md = reportMarkdown([a({ title: 'KI Tools' }), a({ region: 'CH', title: 'Mecánica de coches' })], { generatedAt: '2026-10-13T00:00:00Z' })
+    for (const must of ['# Informe de investigación de nichos', '## Método y límites', 'Parámetros', 'Fecha de consulta', 'Evidencia', 'Confianza', 'Formato recomendado', 'Escenarios', 'Viabilidad (criterio editorial, no medido)', 'RPM ESTIMADO', 'No disponible con esta fuente', 'Google Trends no está conectado']) expect(md, must).toContain(must)
+    expect(md).toMatch(/Suiza \(alemán\)/); expect(md).toMatch(/Referencia de RPM del país:\*\* desconocida/)
+    expect(md).not.toMatch(/RPM verificado:/); expect(md).toMatch(/nada de lo de aquí es RPM verificado/)
+  })
+  it('an analysis whose niche has no RPM reference is DESCONOCIDO with no scenarios, never zero', () => {
+    const row = reportRow({ ...a({ title: 'Mecánica de coches' }), niches: ['motor'] })
+    expect(row.rpm.status).toBe('desconocido'); expect(row.scenario100k).toBeNull(); expect(row.scenario1m).toBeNull()
+    expect(reportCsv([{ ...a(), niches: ['motor'] }]).split('\n')[1]).toMatch(/DESCONOCIDO,desconocido,desconocido,desconocido,desconocido,desconocido/)
+  })
+  it('RPM scenarios scale exactly with views and Shorts use the disclosed discount', () => {
+    const long = reportRow({ ...a(), niches: ['educacion'], byFormat: { short: { count: 8, recentCount: 4, medianViewsPerDay: 300 }, long: { count: 20, recentCount: 5, medianViewsPerDay: 900 } } })
+    expect(long.format).toBe('long'); expect(long.scenario100k).toMatchObject({ low: 1022, high: 1022 }); expect(long.scenario1m).toMatchObject({ low: 10220, high: 10220 })
+    const short = reportRow({ ...a(), niches: ['educacion'], byFormat: { short: { count: 20, recentCount: 5, medianViewsPerDay: 900 }, long: { count: 0, recentCount: 0, medianViewsPerDay: null } } })
+    expect(short.format).toBe('short'); expect(short.scenario1m!.high).toBe(1430)
+  })
+  it('CSV neutralises formulas and has a stable column set', () => {
+    const csv = reportCsv([{ ...a({ title: '=HYPERLINK("x")' }) }])
+    const [head, row] = csv.split('\n')
+    expect(head.split(',').length).toBeGreaterThanOrEqual(30); expect(row).toContain(`'=HYPERLINK`)
+  })
+})

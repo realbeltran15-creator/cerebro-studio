@@ -33,6 +33,7 @@ export const COUNTRIES: Array<{ code: string; name: string; continent: Continent
   { code: 'DE', name: 'Alemania', continent: 'europe', language: 'de' }, { code: 'FR', name: 'Francia', continent: 'europe', language: 'fr' },
   { code: 'IT', name: 'Italia', continent: 'europe', language: 'it' }, { code: 'PT', name: 'Portugal', continent: 'europe', language: 'pt' },
   { code: 'NL', name: 'Países Bajos', continent: 'europe', language: 'nl' }, { code: 'PL', name: 'Polonia', continent: 'europe', language: 'pl' },
+  { code: 'CH', name: 'Suiza', continent: 'europe', language: 'de' },
   { code: 'US', name: 'Estados Unidos', continent: 'america-n', language: 'en' }, { code: 'CA', name: 'Canadá', continent: 'america-n', language: 'en' },
   { code: 'MX', name: 'México', continent: 'america-s', language: 'es' }, { code: 'AR', name: 'Argentina', continent: 'america-s', language: 'es' },
   { code: 'CO', name: 'Colombia', continent: 'america-s', language: 'es' }, { code: 'CL', name: 'Chile', continent: 'america-s', language: 'es' },

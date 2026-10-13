@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { YouTubeResults } from '../components/youtube-results'
-import { RpmLine, RunBar } from './analysis-views'
+import { RpmLine, RunStatus } from './analysis-views'
 import { Results, useFiltered } from './tabs-analysis'
 import { useResearch } from './research-context'
 import { COUNTRIES, CONTINENTS, neglectedNiches, NEGLECTED } from '@/lib/research/discovery'
@@ -56,23 +56,20 @@ const continentsNote = (regions: string[]) => { const cs = [...new Set(regions.m
 
 /** Same topic in several markets, from the paid sample analysis. */
 export function InternationalTab({ onSaved }: { onSaved: () => void }) {
-  const { markets, list } = useResearch()
-  const [topic, setTopic] = useState('')
-  const t = topic.trim().replace(/\s+/g, ' ')
+  const { list, queries } = useResearch()
+  const t = queries.international.trim().replace(/\s+/g, ' ')
   const fa = useFiltered(list, 'international')
   const same = fa.rows.filter(a => t && a.topic.toLowerCase() === t.toLowerCase())
   const best = [...same].sort((a, b) => b.indices.opportunity - a.indices.opportunity)[0]
   return <>
+    <RunStatus />
     <TrendingCompare onSaved={onSaved} />
     <section className="panel" style={{ marginTop: 14 }} aria-label="Mismo nicho en varios mercados">
       <h3>Un mismo nicho en varios mercados</h3>
-      <p className="muted small" style={{ margin: '6px 0 10px' }}>Analiza el mismo tema en cada mercado de los filtros y descubre dónde hay más hueco. Cada mercado cuesta una consulta de {UNITS.topic} unidades; las ya hechas salen de la caché.</p>
-      <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="inteligencia artificial para negocios" maxLength={120} aria-label="Tema a comparar" style={{ width: '100%' }} />
-      <p className="muted small" style={{ marginTop: 6 }}>Mercados: {markets.map(m => m.label).join(' · ')}</p>
-      <RunBar topics={t.length >= 2 ? [t] : []} label="Comparar mercados" />
+      <p className="muted small" style={{ margin: '6px 0 10px' }}>Escribe un tema arriba («Tema a comparar») y pulsa «Aplicar y buscar»: se analiza en cada mercado de los filtros (cada uno cuesta una consulta de {UNITS.topic} unidades; las ya hechas salen de la caché) y se cargan las listas de tendencias que falten.</p>
       {best && same.length > 1 && <p className="notice" role="status">Mayor oportunidad calculada para «{best.topic}»: <b>{marketLabel(best.region, best.language)}</b> ({best.indices.opportunity}/100, confianza {best.confidence}). {best.headline}.</p>}
       {fa.notice}
-      <Results list={same} onSaved={onSaved} empty={t ? 'Aún no hay análisis de este tema en los mercados elegidos: pulsa el botón de arriba.' : 'Escribe un tema y analiza los mercados elegidos.'} />
+      <Results list={same} onSaved={onSaved} empty={t ? 'Aún no hay análisis de este tema en los mercados elegidos: pulsa «Aplicar y buscar» arriba.' : 'Escribe un tema arriba y analiza los mercados elegidos.'} />
     </section>
   </>
 }

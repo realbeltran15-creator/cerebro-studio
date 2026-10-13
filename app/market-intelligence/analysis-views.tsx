@@ -10,7 +10,6 @@ import { fmtNumber } from '@/lib/research/format'
 import { nicheLabel } from '@/lib/research/taxonomy'
 import { saveAnalysis } from '@/lib/research/save'
 import { analysesCsv } from '@/lib/research/export'
-import type { Market } from '@/lib/research/markets'
 
 export const VERDICT: Record<Verdict, { label: string; cls: string }> = {
   oportunidad: { label: 'Oportunidad', cls: 'ok' }, saturado: { label: 'Saturado', cls: 'bad' }, sin_demanda: { label: 'Sin demanda', cls: 'warn' }, mixto: { label: 'Señales mixtas', cls: 'info' },
@@ -97,28 +96,20 @@ export function DownloadCsv({ list, name = 'investigacion' }: { list: TopicAnaly
   }}>Exportar CSV</button>
 }
 
-/** Cost, budget and confirmation for a batch of paid analyses, plus what happened last time. Nothing runs until the user presses the button. */
-export function RunBar({ topics, markets, label = 'Analizar' }: { topics: string[]; markets?: Market[]; label?: string }) {
-  const { plan, run, progress, cancel, usage, error, markets: current, lastRun, dirty, filters } = useResearch()
-  const ms = markets ?? current
-  const p = plan(topics, ms)
-  const [ok, setOk] = useState(false)
-  const needsOk = p.level === 'confirm'
-  const disabled = !!progress || topics.length === 0 || p.level === 'blocked' || (needsOk && !ok)
+/**
+ * What is happening with the last query: running, updated, failed (with retry) or nothing new. The cost and the confirmation live next to the
+ * Apply button in the filter panel, so this only reports.
+ */
+export function RunStatus() {
+  const { progress, error, lastRun, lastPlan, runPlan, search, chartsBusy, chartsError } = useResearch()
   const failedNow = lastRun && lastRun.failed.length > 0
-  return <div className="panel" style={{ margin: '10px 0' }} aria-label="Coste de la consulta">
-    <p className="small"><b>Se analizará en:</b> {ms.map(m => m.label).join(' · ')} <span className="muted">(filtros {dirty ? 'con cambios SIN aplicar: se usan los aplicados' : 'aplicados'}; ventana de recientes: {filters.periodDays ?? 30} días)</span></p>
-    <p className="small"><b>Coste previsto:</b> {p.message}</p>
-    {usage && <p className="muted small">Hoy has usado {fmtNumber(usage.usedToday)} de {fmtNumber(usage.cap)} unidades de Investigación{usage.persistent ? '' : ' (contador en memoria: aplica la migración research_cache para que sea exacto y compartido)'}. YouTube concede 10.000 al día a todo el proyecto.</p>}
-    {needsOk && <label className="msOpt"><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> Entiendo que esto gastará {fmtNumber(p.units)} unidades de cuota</label>}
-    <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-      <button type="button" disabled={disabled} onClick={() => { setOk(false); void run(topics, ms) }}>{progress ? 'Analizando…' : p.level === 'free' && topics.length ? 'Mostrar (en caché)' : `${label}${p.units ? ` (${fmtNumber(p.units)} unidades)` : ''}`}</button>
-      {progress && <button type="button" className="ghost" onClick={cancel}>Cancelar</button>}
-      {!progress && failedNow && <button type="button" className="ghost" disabled={topics.length === 0 || p.level === 'blocked'} onClick={() => void run(topics, ms)}>Reintentar lo que falló</button>}
-    </div>
-    {progress && <p className="muted small" role="status">En ejecución: {progress.done + 1} de {progress.total} — {progress.current}</p>}
+  const anyError = error || search.error || chartsError
+  return <div aria-label="Estado de la consulta">
+    {(progress || chartsBusy || search.busy) && <p className="notice" role="status">En ejecución{progress ? `: ${progress.done + 1} de ${progress.total} — ${progress.current}` : search.busy ? ': buscando vídeos…' : ': cargando tendencias…'}</p>}
     {!progress && lastRun && !failedNow && lastRun.ok > 0 && <p className="notice" role="status">Resultados actualizados: {lastRun.ok} análisis nuevo{lastRun.ok === 1 ? '' : 's'}{lastRun.units ? ` (${fmtNumber(lastRun.units)} unidades)` : ''}. Están más abajo.</p>}
     {!progress && lastRun && lastRun.total === 0 && <p className="muted small" role="status">No había nada nuevo que consultar: ya estaba todo en caché.</p>}
-    {error && <p className="error" role="alert">Consulta fallida: {error}</p>}
+    {search.done && <p className="notice" role="status">{search.done}</p>}
+    {anyError && <p className="error" role="alert">Consulta fallida: {anyError}</p>}
+    {!progress && !search.busy && (failedNow || anyError) && lastPlan && <button type="button" className="ghost" onClick={() => void runPlan(lastPlan)}>Reintentar lo que falló</button>}
   </div>
 }

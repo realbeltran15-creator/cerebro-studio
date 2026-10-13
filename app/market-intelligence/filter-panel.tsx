@@ -5,8 +5,11 @@ import { MultiSelect } from '../components/multi-select'
 import { useResearch } from './research-context'
 import { COUNTRIES, CONTINENTS, LANGUAGES } from '@/lib/research/discovery'
 import { CONTENT_TYPE_OPTIONS, FORMAT_OPTIONS, NICHES, nicheLabel } from '@/lib/research/taxonomy'
-import { GROUP_SEMANTICS, MAX_COUNTRIES, TAB_FILTERS, forTab, TAB_SCOPE, UNITS, YT_CATEGORIES, activeCount, describeActive, type FilterPart, type MetricFilters, type TabId } from '@/lib/research/filters'
+import { GROUP_SEMANTICS, MAX_COUNTRIES, TAB_FILTERS, forTab, TAB_SCOPE, YT_CATEGORIES, activeCount, describeActive, type FilterPart, type MetricFilters, type TabId } from '@/lib/research/filters'
 import { countryName } from '@/lib/research/markets'
+import { parseTopics, planLabel, searchPlanFor } from '@/lib/research/search-plan'
+import { suggestSeeds } from '@/lib/research/seeds'
+import { fmtNumber } from '@/lib/research/format'
 
 const countryOptions = COUNTRIES.map(c => [c.code, c.name] as [string, string])
 const lookup = (list: Array<[string, string]>) => (v: string) => list.find(([k]) => k === v)?.[1] ?? v
@@ -18,10 +21,11 @@ const NAMES = { country: countryName, niche: nicheLabel, language: lookup(LANGUA
  * Everything on screen was computed with the APPLIED filters shown in the chip bar, and each chip can be removed on its own.
  */
 export function FilterPanel({ tab }: { tab: TabId }) {
-  const { filters: applied, draft: f, setDraft, apply, reset, dirty, errors, removeChip, presets, savePreset, applyPreset, deletePreset, markets, charts, loadCharts, chartsBusy } = useResearch()
+  const { filters: applied, draft: f, setDraft, apply, reset, dirty, errors, removeChip, presets, savePreset, applyPreset, deletePreset, markets, charts, analyses, usage, queries, setQueries, runPlan, progress, chartsBusy, search, cancel } = useResearch()
   const [name, setName] = useState('')
   const [open, setOpen] = useState(true)
   const [notice, setNotice] = useState('')
+  const [confirmed, setConfirmed] = useState(false)
   useEffect(() => { try { const v = window.sessionStorage.getItem('cerebro.research.panel'); if (v === '0') setOpen(false) } catch { /* ignore */ } }, [])
   const toggle = () => { setOpen(o => { try { window.sessionStorage.setItem('cerebro.research.panel', o ? '0' : '1') } catch { /* ignore */ } return !o }) }
 
@@ -32,8 +36,9 @@ export function FilterPanel({ tab }: { tab: TabId }) {
   const logic = (g: keyof typeof f.logic) => (l: 'any' | 'all') => setDraft({ ...f, logic: { ...f.logic, [g]: l } })
   const chips = useMemo(() => describeActive(forTab(tab, applied), NAMES), [applied, tab])
   const keptElsewhere = useMemo(() => describeActive(applied, NAMES).length - chips.length, [applied, chips])
-  const pendingCharts = (tab === 'discover' || tab === 'international') ? f.countries.filter(c => !charts[c]) : []
-  const cost = pendingCharts.length * UNITS.trending
+  const plan = useMemo(() => searchPlanFor(tab, f, queries, { analyses, charts, remainingToday: usage?.remaining ?? 6000 }), [tab, f, queries, analyses, charts, usage])
+  const typed = tab === 'keywords' ? parseTopics(queries.keywords, 3) : tab === 'niches' ? parseTopics(queries.niches) : []
+  const busy = Boolean(progress) || chartsBusy || search.busy
   const rpm = (k: 'min' | 'max') => (e: React.ChangeEvent<HTMLInputElement>) => { const v = e.target.value.trim(); set({ rpm: { ...f.rpm, [k]: v === '' || !Number.isFinite(Number(v)) || Number(v) < 0 ? null : Number(v) } }) }
   const addContinent = (id: string) => {
     const wanted = COUNTRIES.filter(c => c.continent === id).map(c => c.code)
@@ -42,14 +47,20 @@ export function FilterPanel({ tab }: { tab: TabId }) {
     if (merged.length > MAX_COUNTRIES) setNotice(`Máximo ${MAX_COUNTRIES} países a la vez: se han añadido los primeros.`); else setNotice('')
   }
 
+  const needsConfirm = plan.level === 'confirm'
+  const canRun = plan.kind !== 'none' && plan.level !== 'blocked' && (!needsConfirm || confirmed)
+  const hasWork = plan.kind !== 'none'
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (errors.length || (!dirty && pendingCharts.length === 0)) return
-    apply(); setNotice('')
-    if (pendingCharts.length) void loadCharts(pendingCharts)
+    if (errors.length || busy) return
+    if (hasWork && !canRun) return
+    if (!dirty && !hasWork) return
+    apply(); setNotice(''); setConfirmed(false)
+    if (hasWork) void runPlan(plan)
   }
   const activeN = activeCount(applied)
-  const label = pendingCharts.length ? `Aplicar y cargar tendencias de ${pendingCharts.length} país${pendingCharts.length === 1 ? '' : 'es'} (${cost} unidades)` : 'Aplicar filtros'
+  const label = busy ? 'Buscando…' : planLabel(plan)
+  const ideas = tab === 'niches' && typed.length === 0 ? suggestSeeds(f.niches, markets[0]?.language ?? null, 6) : []
 
   if (parts.length === 0) return <p className="muted small" style={{ margin: '0 0 12px' }}>{TAB_SCOPE[tab]}</p>
   return <form className="panel filterPanel" aria-label="Filtros de investigación" onSubmit={submit} style={{ margin: '0 0 14px' }}>
@@ -73,13 +84,26 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         {has('languages') && <MultiSelect label="Idiomas" options={LANGUAGES} value={f.languages} onChange={languages => set({ languages })} logic={f.logic.languages} onLogic={logic('languages')} allEnabled={false} explanation={GROUP_SEMANTICS.languages.explanation} />}
       </div><p className="muted small">País = donde YouTube muestra el vídeo, no donde viven los espectadores. Idioma = el que declaró quien subió el vídeo (a veces falta).</p></fieldset>}
 
-      {(has('niches') || has('formats') || has('contentTypes')) && <fieldset className="filterStep"><legend>2 · Qué buscas</legend><div className="filterGrid">
+      {(tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international') && <fieldset className="filterStep"><legend>2 · Qué quieres buscar</legend>
+        {tab === 'niches' && <div>
+          <label className="muted small" htmlFor="topics">Temas o subnichos (opcional: uno por línea o separados por comas, hasta 6)</label>
+          <textarea id="topics" rows={2} value={queries.niches} onChange={e => setQueries({ niches: e.target.value })} placeholder="Déjalo vacío y se probarán ideas de los nichos elegidos, en el idioma de cada mercado" style={{ width: '100%' }} />
+          {typed.length === 0 && <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0', flexWrap: 'wrap' }}><label className="muted small" htmlFor="per-market" style={{ flexDirection: 'row', alignItems: 'center' }}>Ideas por mercado</label><input id="per-market" type="number" min={1} max={20} value={queries.perMarket} onChange={e => setQueries({ perMarket: Math.min(Math.max(Number(e.target.value) || 1, 1), 20) })} style={{ width: 80 }} /></div>}
+          {ideas.length > 0 && <div className="legend" aria-label="Ideas de temas"><span className="muted small">Ideas para {markets[0]?.label}:</span>{ideas.map(x => <button key={x} type="button" className="pill" onClick={() => setQueries({ niches: parseTopics(`${queries.niches}, ${x}`).join(', ') })}>+ {x}</button>)}</div>}
+        </div>}
+        {tab === 'keywords' && <div><label className="muted small" htmlFor="kw">Palabra clave (hasta 3)</label><input id="kw" value={queries.keywords} onChange={e => setQueries({ keywords: e.target.value })} placeholder="invertir en bolsa" maxLength={200} /></div>}
+        {tab === 'competition' && <div className="marketForm"><div style={{ flex: 1 }}><label className="muted small" htmlFor="yq">Búsqueda en YouTube</label><input id="yq" aria-label="Búsqueda en YouTube" value={queries.competition} onChange={e => setQueries({ competition: e.target.value })} placeholder="Tema, historia o formato" maxLength={200} /></div>
+          <div><label className="muted small" htmlFor="yo">Orden</label><select id="yo" value={queries.order} onChange={e => setQueries({ order: e.target.value })}><option value="relevance">Relevancia</option><option value="viewCount">Más vistas</option><option value="date">Más recientes</option><option value="rating">Mejor valorados</option></select></div></div>}
+        {tab === 'international' && <div><label className="muted small" htmlFor="tc">Tema a comparar en cada mercado (opcional)</label><input id="tc" aria-label="Tema a comparar" value={queries.international} onChange={e => setQueries({ international: e.target.value })} placeholder="inteligencia artificial para negocios" maxLength={120} /></div>}
+      </fieldset>}
+
+      {(has('niches') || has('formats') || has('contentTypes')) && <fieldset className="filterStep"><legend>3 · Qué filtros aplicar</legend><div className="filterGrid">
         {has('niches') && <MultiSelect label="Nichos" options={NICHES.map(x => [x.id, x.label])} value={f.niches} onChange={niches => set({ niches })} logic={f.logic.niches} onLogic={logic('niches')} explanation={GROUP_SEMANTICS.niches.explanation} />}
         {has('formats') && <MultiSelect label="Formatos" options={FORMAT_OPTIONS as Array<[string, string]>} value={f.formats} onChange={formats => set({ formats })} logic={f.logic.formats} onLogic={logic('formats')} allEnabled={false} explanation={GROUP_SEMANTICS.formats.explanation} />}
         {has('contentTypes') && <MultiSelect label="Tipos de contenido" options={CONTENT_TYPE_OPTIONS} value={f.contentTypes} onChange={contentTypes => set({ contentTypes })} logic={f.logic.contentTypes} onLogic={logic('contentTypes')} explanation={GROUP_SEMANTICS.contentTypes.explanation} />}
       </div><p className="muted small">Nicho y formato son <b>inferidos</b> (palabras, etiquetas, categoría y duración): YouTube no los confirma.</p></fieldset>}
 
-      {(has('period') || has('rpm')) && <fieldset className="filterStep"><legend>3 · Qué características</legend><div className="filterGrid">
+      {(has('period') || has('rpm')) && <fieldset className="filterStep"><legend>4 · Qué características</legend><div className="filterGrid">
         {has('period') && <div>
           <label className="muted small" htmlFor="rf-period">Periodo</label>
           <select id="rf-period" value={f.periodDays === null ? '' : String(f.periodDays)} onChange={e => set({ periodDays: e.target.value ? Number(e.target.value) : null })}>
@@ -120,10 +144,20 @@ export function FilterPanel({ tab }: { tab: TabId }) {
 
     {errors.length > 0 && <ul className="error" role="alert" style={{ margin: '8px 0 0 16px' }}>{errors.map(e => <li key={e}>{e}</li>)}</ul>}
     <div className="applyBar">
-      <button type="submit" disabled={errors.length > 0 || chartsBusy || (!dirty && pendingCharts.length === 0)}>{chartsBusy ? 'Cargando tendencias…' : label}</button>
+      <button type="submit" disabled={errors.length > 0 || busy || (hasWork ? !canRun : !dirty)}>{label}</button>
+      {hasWork && <button type="button" className="ghost" disabled={errors.length > 0 || busy || !dirty} onClick={() => { apply(); setNotice(''); setConfirmed(false) }}>Solo aplicar filtros (sin buscar)</button>}
       <button type="button" className="ghost" disabled={activeN === 0 && !dirty} onClick={reset}>Restablecer filtros</button>
-      <span className="muted small" aria-live="polite">{dirty ? 'Tienes cambios sin aplicar: los resultados siguen con los filtros anteriores.' : activeN ? `Resultados con ${activeN} filtro${activeN === 1 ? '' : 's'} aplicado${activeN === 1 ? '' : 's'}.` : 'Sin filtros aplicados.'} Mercados: {markets.map(m => m.label).join(' · ')}.</span>
+      {busy && progress && <button type="button" className="ghost" onClick={cancel}>Cancelar</button>}
+      <span className="muted small" aria-live="polite">{dirty ? 'Tienes cambios sin aplicar: los resultados siguen con los filtros anteriores.' : activeN ? `Resultados con ${activeN} filtro${activeN === 1 ? '' : 's'} aplicado${activeN === 1 ? '' : 's'}.` : 'Sin filtros aplicados.'}</span>
     </div>
+    {hasWork && <div className="searchPlan" aria-label="Qué hará el botón">
+      <p className="small"><b>Se buscará:</b> {plan.summary}{plan.auto ? ' — ideas propuestas por Cerebro Studio a partir de tus nichos (cámbialas escribiendo tus temas)' : ''}.</p>
+      <p className="small"><b>Coste previsto:</b> {plan.message}</p>
+      {usage && <p className="muted small">Hoy has usado {fmtNumber(usage.usedToday)} de {fmtNumber(usage.cap)} unidades de Investigación{usage.persistent ? '' : ' (contador en memoria: aplica la migración research_cache para que sea exacto y compartido)'}.</p>}
+      {needsConfirm && <label className="msOpt"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> Entiendo que esto gastará {fmtNumber(plan.units)} unidades de cuota</label>}
+    </div>}
+    {!hasWork && (tab === 'niches' || tab === 'keywords' || tab === 'competition') && <p className="muted small" style={{ marginTop: 8 }}>{tab === 'keywords' ? 'Escribe una palabra clave para poder buscar.' : tab === 'competition' ? 'Escribe qué quieres buscar para poder lanzar la búsqueda.' : 'Elige mercados y nichos y escribe temas (o déjalo vacío para recibir ideas).'}</p>}
+    <p className="muted small">Mercados: {markets.map(m => m.label).join(' · ')}.</p>
     <details style={{ marginTop: 8 }}>
       <summary className="muted small">Favoritos ({presets.length})</summary>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>

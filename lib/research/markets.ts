@@ -1,4 +1,4 @@
-import { COUNTRIES } from './discovery'
+import { COUNTRIES, LANGUAGES } from './discovery'
 import type { ResearchFilters } from './filters'
 import type { TopicAnalysis } from './topic-analysis'
 
@@ -6,7 +6,8 @@ import type { TopicAnalysis } from './topic-analysis'
 export type Market = { region: string | null; language: string | null; label: string }
 
 export const countryName = (code: string) => COUNTRIES.find(c => c.code === code)?.name ?? code
-export const marketLabel = (region: string | null, language: string | null) => region ? `${countryName(region)}${language ? ` · ${language}` : ''}` : language ? `Idioma ${language}` : 'Mundial'
+const languageName = (l: string) => (LANGUAGES.find(([c]) => c === l)?.[1] ?? l).toLowerCase()
+export const marketLabel = (region: string | null, language: string | null) => region ? `${countryName(region)}${language ? ` (${languageName(language)})` : ''}` : language ? `Idioma ${languageName(language)}` : 'Mundial'
 
 /**
  * Markets implied by the filters. Countries win (each with the single chosen language, or its main language); with no country the chosen

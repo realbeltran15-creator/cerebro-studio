@@ -1,9 +1,9 @@
 'use client'
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { AnalysisCard, AnalysisChart, AnalysisTable, DownloadCsv, INDEX_LABEL, RunBar, ViewToggle } from './analysis-views'
+import { AnalysisCard, AnalysisChart, AnalysisTable, DownloadCsv, INDEX_LABEL, RunStatus, ViewToggle } from './analysis-views'
+import { GuidedPanel } from './guided-panel'
 import { useResearch } from './research-context'
-import { NICHES, nicheLabel } from '@/lib/research/taxonomy'
 import { keyOf, marketLabel } from '@/lib/research/markets'
 import { keywordsCsv } from '@/lib/research/export'
 import { passesRpmFilter } from '@/lib/research/monetization'
@@ -11,8 +11,6 @@ import { fmtNumber } from '@/lib/research/format'
 import { forTab, type TabId } from '@/lib/research/filters'
 import { formatCovered } from '@/lib/research/topic-analysis'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
-
-const parseTopics = (text: string) => [...new Set(text.split(/[\n,;]+/).map(t => t.trim().replace(/\s+/g, ' ')).filter(t => t.length >= 2 && t.length <= 120))].slice(0, 6)
 
 export type FilteredAnalyses = { rows: TopicAnalysis[]; hidden: TopicAnalysis[]; reasons: Array<{ group: string; count: number }>; showAll: boolean; setShowAll: (v: boolean) => void; notice: ReactNode }
 
@@ -62,29 +60,23 @@ export function Results({ list, onSaved, empty }: { list: TopicAnalysis[]; onSav
 
 /** Niche analysis: demand against supply for topics the user chooses. Replaces the old "neglected niches" shortcut. */
 export function NichesTab({ onSaved }: { onSaved: () => void }) {
-  const { filters, list, markets } = useResearch()
-  const [text, setText] = useState('')
-  const typed = parseTopics(text)
-  const suggestions = (filters.niches.length ? NICHES.filter(n => filters.niches.includes(n.id)) : NICHES.slice(0, 6)).flatMap(n => n.seeds.slice(0, 2).map(s => ({ s, niche: n.id })))
+  const { list } = useResearch()
   const fa = useFiltered(list, 'niches')
-  return <section className="panel" aria-label="Nichos descuidados y oportunidades">
-    <h3>Nichos: demanda frente a oferta</h3>
-    <p className="muted small" style={{ margin: '6px 0 10px' }}>Un nicho descuidado tiene demanda real y poca oferta o competencia débil. Poca oferta sin demanda <b>no</b> cuenta. Para cada tema se mide una muestra (25 más vistos del año + 25 más recientes): no es un censo de vídeos ni de creadores.</p>
-    <label className="muted small" htmlFor="topics">Temas o subnichos (uno por línea o separados por comas, hasta 6)</label>
-    <textarea id="topics" rows={3} value={text} onChange={e => setText(e.target.value)} placeholder="historia medieval, huerto en casa, ia para negocios" style={{ width: '100%' }} />
-    <div className="legend" style={{ margin: '8px 0' }}>{suggestions.map(x => <button key={x.s} type="button" className="pill" onClick={() => setText(t => parseTopics(`${t}, ${x.s}`).join(', '))} title={nicheLabel(x.niche)}>+ {x.s}</button>)}</div>
-    <p className="muted small">Mercados: {markets.map(m => m.label).join(' · ')} (cámbialos en los filtros).</p>
-    <RunBar topics={typed} label="Analizar nichos" />
-    {fa.notice}
-    <Results list={fa.rows} onSaved={onSaved} empty={list.length ? 'Todos los análisis quedan fuera con estos filtros: mira el aviso de arriba.' : 'Aún no hay análisis. Elige temas y pulsa Analizar: verás demanda, oferta, competencia, crecimiento y por qué es o no una oportunidad.'} />
-  </section>
+  return <>
+    <section className="panel" aria-label="Nichos descuidados y oportunidades">
+      <h3>Nichos: demanda frente a oferta</h3>
+      <p className="muted small" style={{ margin: '6px 0 10px' }}>Un nicho descuidado tiene demanda real y poca oferta o competencia débil. Poca oferta sin demanda <b>no</b> cuenta. Para cada tema se mide una muestra (25 más vistos del año + 25 más recientes): no es un censo de vídeos ni de creadores. Elige mercados y nichos arriba, escribe temas (o déjalo vacío para recibir ideas) y pulsa el botón de buscar: ese botón aplica los filtros y lanza la consulta.</p>
+      <RunStatus />
+      {fa.notice}
+      <Results list={fa.rows} onSaved={onSaved} empty={list.length ? 'Todos los análisis quedan fuera con estos filtros: mira el aviso de arriba.' : 'Aún no hay análisis. Pulsa «Aplicar y buscar» arriba: verás demanda, oferta, competencia, crecimiento y por qué es o no una oportunidad.'} />
+    </section>
+    <GuidedPanel />
+  </>
 }
 
 /** Keyword research from titles and tags of the sample. Relative signals only: the API gives no search volumes. */
 export function KeywordsTab() {
-  const { list, markets } = useResearch()
-  const [text, setText] = useState('')
-  const typed = parseTopics(text).slice(0, 3)
+  const { list } = useResearch()
   const fa = useFiltered(list, 'keywords')
   const mine = fa.rows
   const [pick, setPick] = useState('')
@@ -92,10 +84,8 @@ export function KeywordsTab() {
   return <section className="panel" aria-label="Palabras clave">
     <h3>Palabras clave en YouTube</h3>
     <p className="warnBox" style={{ margin: '8px 0' }}>Aquí <b>no hay volúmenes de búsqueda</b>. Las frases salen de los títulos y etiquetas de vídeos reales de la muestra (señal relativa de lo que se publica y se ve), y las preguntas son títulos de vídeo formulados como pregunta. Google Trends (interés relativo) y el Planificador de Google Ads no están conectados: la API de Trends es alfa con acceso por solicitud y el Planificador exige una cuenta de Ads. Las sugerencias de autocompletado de YouTube no se consultan porque no tienen API oficial.</p>
-    <label className="muted small" htmlFor="kw">Palabra clave (hasta 3)</label>
-    <input id="kw" value={text} onChange={e => setText(e.target.value)} placeholder="invertir en bolsa" maxLength={200} style={{ width: '100%' }} />
-    <p className="muted small" style={{ marginTop: 6 }}>Se consulta en: {markets.map(m => m.label).join(' · ')}. Para comparar países o idiomas, elígelos en los filtros.</p>
-    <RunBar topics={typed} label="Investigar palabra clave" />
+    <p className="muted small" style={{ margin: '8px 0' }}>Escribe la palabra clave arriba, elige países, idiomas y periodo, y pulsa «Aplicar y buscar»: ese botón aplica los filtros y consulta cada mercado.</p>
+    <RunStatus />
     {fa.notice}
     {mine.length === 0 ? <p className="emptyState">{list.length ? 'Todos los análisis quedan fuera con estos filtros: mira el aviso de arriba.' : 'Sin resultados todavía.'}</p> : <>
       <label className="muted small" htmlFor="kwpick">Ver resultados de</label>

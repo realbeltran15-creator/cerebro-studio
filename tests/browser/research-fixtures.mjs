@@ -28,12 +28,12 @@ const TOPICS = {
 
 /** Installs mocked /api/research/* routes. `state.mode`: 'ok' | 'budget' | 'down'. `state.requests` collects every call. */
 export async function installResearchRoutes(page, state = { mode: 'ok', requests: [] }) {
-  state.requests ??= []; state.mode ??= 'ok'
+  state.requests ??= []; state.mode ??= 'ok'; state.used ??= 0
   await page.route('**/api/research/**', route => {
     const url = new URL(route.request().url()); state.requests.push(url.pathname + url.search)
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
     if (state.mode === 'down') return json({ error: 'YouTube Data API no está configurada. Añade YOUTUBE_API_KEY en las variables del servidor.', configured: false }, 503)
-    if (url.pathname.endsWith('/usage')) return json({ usedToday: 0, cap: 6000, remaining: 6000, persistent: true })
+    if (url.pathname.endsWith('/usage')) return json({ usedToday: state.used, cap: 6000, remaining: Math.max(6000 - state.used, 0), persistent: true })
     if (url.pathname.endsWith('/trending')) return json({ configured: true, results: charts[url.searchParams.get('region')] ?? [] })
     if (url.pathname.endsWith('/topic')) {
       if (state.mode === 'budget') return json({ error: 'Presupuesto diario de Investigación agotado: 6000 de 6000 unidades usadas hoy.', budget: { used: 6000, cap: 6000 }, configured: true }, 429)
@@ -41,7 +41,8 @@ export async function installResearchRoutes(page, state = { mode: 'ok', requests
       const base = TOPICS[q] ?? { v: 'mixto', i: { d: 50, s: 50, c: 50, g: 50, o: 50 } }
       const t = base.byRegion?.[region] ?? base
       const extra = { recentDays: Number(url.searchParams.get('days')) || 30, ...(region === 'AU' ? { sampleSizes: { top: 9, recent: 3 }, confidence: 'baja' } : {}), ...(base.niches ? { niches: base.niches } : {}) }
-      return json({ configured: true, analysis: ana(q, region, lang, t.v, t.i, extra), cached: false, usage: { usedToday: 204, cap: 6000, persistent: true } })
+      state.used += 204
+      return json({ configured: true, analysis: ana(q, region, lang, t.v, t.i, extra), cached: false, usage: { usedToday: state.used, cap: 6000, persistent: true } })
     }
     return json({ configured: true, results: [] })
   })
