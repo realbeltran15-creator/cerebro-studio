@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   if (lang && !/^[a-z]{2}$/.test(lang)) return NextResponse.json({ error: 'Idioma no válido.' }, { status: 400 })
   try {
     const store = await openStore(supabase as never, user.id)
-    const result = await getTopicAnalysis({ topic, region, language: lang, recentDays: Number.isFinite(days) && days > 0 ? days : undefined, refresh: p.get('refresh') === '1', cacheOnly: p.get('cacheOnly') === '1' }, { store })
+    const result = await getTopicAnalysis({ topic, region, language: lang, recentDays: Number.isFinite(days) && days > 0 ? days : undefined, refresh: p.get('refresh') === '1', cacheOnly: p.get('cacheOnly') === '1' }, { store, owner: user.id })
     return NextResponse.json({ configured: true, ...result }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof BudgetError) return NextResponse.json({ error: error.message, budget: { used: error.used, cap: error.cap }, configured: true }, { status: 429 })

@@ -478,9 +478,11 @@ describe('the single search button: what it will do and what it costs', () => {
     const p = searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), base)
     expect(p).toMatchObject({ kind: 'analysis', fresh: 4, units: 816, level: 'confirm', auto: false })
     expect(planLabel(p)).toBe('Aplicar y buscar (816 unidades)')
-    const cached = { [jobKey(p.jobs[0], 30)]: {} as never }
+    const cached = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date().toISOString() } as never }
     expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: cached })).toMatchObject({ fresh: 3, cached: 1, units: 612 })
-    const free = searchPlanFor('niches', f(), q({ niches: 'tema' }), { ...base, analyses: { [jobKey({ topic: 'tema', market: marketsFromFilters({ countries: [], languages: [] })[0] }, 30)]: {} as never } })
+    const stale = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date(Date.now() - 9 * 86400000).toISOString() } as never }
+    expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: stale })).toMatchObject({ fresh: 4, cached: 0 })
+    const free = searchPlanFor('niches', f(), q({ niches: 'tema' }), { ...base, analyses: { [jobKey({ topic: 'tema', market: marketsFromFilters({ countries: [], languages: [] })[0] }, 30)]: { fetchedAt: new Date().toISOString() } as never } })
     expect(free).toMatchObject({ units: 0, level: 'free' }); expect(planLabel(free)).toBe('Aplicar y mostrar (en caché)')
   })
   it('Nichos with nothing typed proposes ideas per market in each language (and says they are proposals)', () => {
@@ -678,5 +680,47 @@ describe('audit fixes: live streams, label channels, strict formats, niche words
     expect(effectiveUsage({ usedToday: 5000, cap: 6000, persistent: true }, l).remaining).toBe(1000)
     expect(parseLedger(JSON.stringify(l), NOW + 86400000).units).toBe(0)
     expect(parseLedger('{bad', NOW).units).toBe(0)
+  })
+})
+
+describe('structural fixes: clean samples, one fetch per topic, honest counters, stale data', () => {
+  it('a video present in both samples counts once, and on-air streams never enter the indices', () => {
+    const shared = vid({ views: 90000, days: 5, subs: 8000, ch: 'same' })
+    const live = vid({ views: 0, days: 0, subs: 8000, live: 'live' })
+    const top = [shared, live, ...many(24, i => ({ views: 80000, days: 100, subs: 9000, ch: `t${i}` }))]
+    const recent = [shared, ...many(11, i => ({ views: 5000, days: 6 + i, subs: 9000, ch: `r${i}` }))]
+    const a = analyzeTopic(samples(top, recent), NOW)
+    expect(a.sampleSizes).toEqual({ top: 24 + 1, recent: 12 })
+    expect(a.evidence.find(e => /Directos/.test(e.label))?.value).toBe('1')
+    expect(a.confidenceNote).toMatch(/1 directos? en emisión/)
+    expect(a.topVideos.some(v => v.live === 'live')).toBe(false)
+    expect(a.terms.every(t => t.videos <= 36)).toBe(true)
+  })
+  it('two simultaneous identical requests make ONE paid fetch, and parallel different ones cannot jointly pass the budget', async () => {
+    const store = new MemoryCacheStore(`dedupe-${Math.random()}`)
+    const search = vi.fn(async () => { await new Promise(r => setTimeout(r, 15)); return { videos: many(5, () => ({})), approxTotal: 10 } })
+    const [x, y] = await Promise.all([getTopicAnalysis({ topic: 'mismo tema', region: 'ES', language: 'es' }, { store, search, owner: 'u1', now: () => NOW }), getTopicAnalysis({ topic: 'Mismo  tema', region: 'ES', language: 'es' }, { store, search, owner: 'u1', now: () => NOW })])
+    expect(search).toHaveBeenCalledTimes(2); expect(x.analysis).toEqual(y.analysis)
+    // cap for exactly one analysis: the second DIFFERENT topic must be refused even when both start together
+    const store2 = new MemoryCacheStore(`budget-${Math.random()}`)
+    const results = await Promise.allSettled([getTopicAnalysis({ topic: 'tema a', region: null, language: null }, { store: store2, search, owner: 'u2', now: () => NOW, cap: 300 }), getTopicAnalysis({ topic: 'tema b', region: null, language: null }, { store: store2, search, owner: 'u2', now: () => NOW, cap: 300 })])
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1); expect(results.filter(r => r.status === 'rejected')).toHaveLength(1)
+  })
+  it('a failed cache write does not throw away an analysis that was already paid for', async () => {
+    const store = new MemoryCacheStore(`failput-${Math.random()}`); store.put = async () => { throw new Error('db down') }
+    const r = await getTopicAnalysis({ topic: 'tema c', region: null, language: null }, { store, search: async () => ({ videos: many(5, () => ({})), approxTotal: 1 }), owner: 'u3', now: () => NOW })
+    expect(r.analysis?.topic).toBe('tema c')
+  })
+  it('searches and charts are recorded in the same daily counter', async () => {
+    const { recordUsage } = await import('@/lib/research/cache')
+    const store = new MemoryCacheStore(`usage-${Math.random()}`)
+    await recordUsage(store, 'search', 102, NOW); await recordUsage(store, 'chart', 2, NOW)
+    expect(await store.unitsSince(NOW - 1000)).toBe(104)
+  })
+  it('analyses older than the cache lifetime are not treated as free', async () => {
+    const { isFresh } = await import('@/lib/research/markets')
+    expect(isFresh({ fetchedAt: new Date(NOW - 6 * 86400000).toISOString() }, NOW)).toBe(true)
+    expect(isFresh({ fetchedAt: new Date(NOW - 8 * 86400000).toISOString() }, NOW)).toBe(false)
+    expect(isFresh({ fetchedAt: 'garbage' }, NOW)).toBe(false)
   })
 })

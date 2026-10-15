@@ -16,7 +16,28 @@ export const dailyCap = (env: Record<string, string | undefined> = process.env) 
  * One topic in one market = two samples (most viewed of the last year, newest of the last month), about 204 quota units.
  * Cached per user for a week; a fresh fetch is refused when it would pass the daily research budget.
  */
-export async function getTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number }): Promise<TopicResult> {
+// Requests for the same owner run one at a time through the paid part, and identical requests share one fetch: two tabs or a double
+// click can neither pay twice for the same topic nor both pass the budget check before either one has been recorded.
+const inflight = new Map<string, Promise<TopicResult>>()
+const chains = new Map<string, Promise<unknown>>()
+const serial = <T>(owner: string, job: () => Promise<T>): Promise<T> => {
+  const run = (chains.get(owner) ?? Promise.resolve()).then(job, job)
+  const tail = run.catch(() => undefined)
+  chains.set(owner, tail); void tail.then(() => { if (chains.get(owner) === tail) chains.delete(owner) })
+  return run
+}
+
+export function getTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number; /** Who is asking; scopes the queue and de-duplication. */ owner?: string }): Promise<TopicResult> {
+  if (req.cacheOnly) return fetchTopicAnalysis(req, deps)
+  const owner = deps.owner ?? 'anonymous'
+  const key = `${owner}|${[req.topic.trim().toLowerCase().replace(/\s+/g, ' '), req.region ?? '', req.language ?? '', String(req.recentDays ?? 30), req.refresh ? 'r' : ''].join('|')}`
+  const running = inflight.get(key); if (running) return running
+  const p = serial(owner, () => fetchTopicAnalysis(req, deps)).finally(() => { if (inflight.get(key) === p) inflight.delete(key) })
+  inflight.set(key, p)
+  return p
+}
+
+async function fetchTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number }): Promise<TopicResult> {
   const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta, cap = deps.cap ?? dailyCap()
   const topic = req.topic.trim().replace(/\s+/g, ' ')
   const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
@@ -36,6 +57,7 @@ export async function getTopicAnalysis(req: TopicRequest, deps: { store: CacheSt
   const recent = await search({ ...common, order: 'date', publishedWithinDays: recentDays })
   const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, recentDays, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
   const analysis = analyzeTopic(samples, now())
-  await deps.store.put(key, 'topic', analysis, UNITS.topic, DEFAULT_TTL_MS, now())
+  // The quota is already spent: if the cache write fails, still return the analysis instead of throwing it away.
+  try { await deps.store.put(key, 'topic', analysis, UNITS.topic, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
   return { analysis, cached: false, usage: { usedToday: before + UNITS.topic, cap, persistent: deps.store.persistent } }
 }

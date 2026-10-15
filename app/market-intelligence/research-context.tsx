@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { EMPTY_FILTERS, durationParam, loadPresets, planTopicBatch, savePresets, addPreset, sanitizeFilters, sameFilters, validateFilters, type ActiveChip, type Plan, type Preset, type ResearchFilters } from '@/lib/research/filters'
-import { analysisKey, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
+import { analysisKey, isFresh, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
 import { jobKey, type Job } from '@/lib/research/guided'
 import { addUnits, effectiveUsage, emptyLedger, parseLedger, type Ledger } from '@/lib/research/ledger'
 import { UNITS } from '@/lib/research/filters'
@@ -104,8 +104,9 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     if (!hydrated) return
     const write = (a: Record<string, TopicAnalysis>) => store()?.setItem(DATA, JSON.stringify({ analyses: a, charts, guided }))
     try { write(analyses) } catch {
-      // Quota: keep the analyses but drop their sample videos, which are the bulk of the size.
-      try { write(Object.fromEntries(Object.entries(analyses).map(([k, v]) => [k, { ...v, topVideos: [] }]))) } catch { /* keep in memory only */ }
+      // Storage full: first keep only 3 example videos per analysis (their thumbnails still work), then none; the numbers always stay.
+      const shrink = (n: number) => write(Object.fromEntries(Object.entries(analyses).map(([k, v]) => [k, { ...v, topVideos: v.topVideos.slice(0, n) }])))
+      try { shrink(3) } catch { try { shrink(0) } catch { /* keep in memory only */ } }
     }
   }, [analyses, charts, guided, hydrated])
 
@@ -117,13 +118,13 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const markets = useMemo(() => marketsFromFilters(filters), [filters])
   const recentDays = recentDaysFrom(filters.periodDays)
   const plan = useCallback((topics: string[], ms: Market[] = markets) => {
-    const cached = topics.flatMap(t => ms.map(m => analysisKey(t, m.region, m.language, recentDays))).filter(k => analyses[k]).length
+    const cached = topics.flatMap(t => ms.map(m => analysisKey(t, m.region, m.language, recentDays))).filter(k => analyses[k] && isFresh(analyses[k])).length
     return planTopicBatch({ topics: topics.length, regions: ms.length, cachedCombos: cached, remainingToday: usage?.remaining ?? effectiveUsage(null, ledger).remaining })
   }, [analyses, markets, usage, ledger, recentDays])
 
   const runJobs = useCallback(async (all: Job[], opts: { recentDays: number; maxJobs?: number; refresh?: boolean }) => {
     stop.current = false; setError('')
-    const todo = all.filter(j => opts.refresh || !analyses[jobKey(j, opts.recentDays)])
+    const todo = all.filter(j => { const a = analyses[jobKey(j, opts.recentDays)]; return opts.refresh || !a || !isFresh(a) })
     const jobs = opts.maxJobs === undefined ? todo : todo.slice(0, Math.max(opts.maxJobs, 0))
     const failed: string[] = []; let ok = 0, units = 0
     for (let i = 0; i < jobs.length; i++) {

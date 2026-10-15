@@ -29,3 +29,7 @@ export const analysisKey = (topic: string, region: string | null, language: stri
 export const keyOf = (a: Pick<TopicAnalysis, 'topic' | 'region' | 'language'> & { recentDays?: number }) => analysisKey(a.topic, a.region, a.language, a.recentDays ?? 30)
 /** The "recent" window implied by the Period filter. */
 export const recentDaysFrom = (periodDays: number | null) => (periodDays === null ? 30 : Math.min(Math.max(periodDays, 7), 365))
+
+/** An analysis younger than the cache lifetime (7 days) is still free to reuse; an older one is shown with its date but a new query would spend quota. */
+export const ANALYSIS_TTL_MS = 7 * 86400000
+export const isFresh = (a: Pick<TopicAnalysis, 'fetchedAt'>, now = Date.now()) => { const t = Date.parse(a.fetchedAt); return Number.isFinite(t) && now - t < ANALYSIS_TTL_MS }

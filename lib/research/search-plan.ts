@@ -1,6 +1,6 @@
 import { planTopicBatch, planSearchBatch, UNITS, type Plan, type ResearchFilters, type TabId } from './filters'
 import { jobKey, planGuided, type Job } from './guided'
-import { marketsFromFilters, recentDaysFrom, type Market } from './markets'
+import { isFresh, marketsFromFilters, recentDaysFrom, type Market } from './markets'
 import type { TopicAnalysis } from './topic-analysis'
 
 export type Queries = { niches: string; keywords: string; competition: string; international: string; perMarket: number; order: string }
@@ -28,7 +28,7 @@ type Ctx = { analyses: Record<string, TopicAnalysis>; charts: Record<string, unk
 const none = (markets: Market[], recentDays: number, filters: ResearchFilters): SearchPlan => ({ kind: 'none', jobs: [], query: null, chartRegions: [], markets, recentDays, filters, fresh: 0, cached: 0, units: 0, level: 'free', message: '', auto: false, summary: '' })
 
 function analysisPart(jobs: Job[], c: Ctx, recentDays: number) {
-  const cached = jobs.filter(j => c.analyses[jobKey(j, recentDays)]).length
+  const cached = jobs.filter(j => { const a = c.analyses[jobKey(j, recentDays)]; return !!a && isFresh(a) }).length
   return { cached, fresh: jobs.length - cached, units: (jobs.length - cached) * UNITS.topic }
 }
 

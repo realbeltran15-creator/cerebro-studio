@@ -62,3 +62,11 @@ export async function openStore(db: Db, owner: string): Promise<CacheStore> {
   if (probe.error) return new MemoryCacheStore(owner)
   return new SupabaseCacheStore(db, owner)
 }
+
+/**
+ * Records quota spent by calls that are not cached analyses (free-text searches, official charts) so that the server-side daily counter
+ * and the budget check see ALL of the project's research spending. Never throws: a failed log must not hide data already paid for.
+ */
+export async function recordUsage(store: CacheStore, kind: string, units: number, now = Date.now()) {
+  try { await store.put(`v1|usage|${kind}|${now}|${Math.random().toString(36).slice(2, 8)}`, 'usage', {}, units, 2 * 86400000, now) } catch (e) { console.error('Could not record research usage', e instanceof Error ? e.message : e) }
+}

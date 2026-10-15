@@ -98,7 +98,14 @@ const isLong = (v: YouTubeVideoResult) => ['brief', 'medium', 'long'].includes(i
 const k = (n: number) => new Intl.NumberFormat('es-ES', { notation: n >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n)
 
 export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
-  const top = s.top.videos, recent = s.recent.videos
+  // Clean samples: a video can appear in both searches (a recent hit that is also a top hit) and must count once; streams that are on air
+  // or scheduled have audience figures (concurrent viewers, zero views) that say nothing about demand, so they stay out of every index.
+  const onAir = (v: YouTubeVideoResult) => v.live === 'live' || v.live === 'upcoming'
+  const unique = (vs: YouTubeVideoResult[]) => { const seen = new Set<string>(); return vs.filter(v => !seen.has(v.videoId) && !!seen.add(v.videoId)) }
+  const rawTop = unique(s.top.videos), rawRecent = unique(s.recent.videos)
+  const excludedLive = rawTop.filter(onAir).length + rawRecent.filter(onAir).length
+  const top = rawTop.filter(v => !onAir(v)), recent = rawRecent.filter(v => !onAir(v))
+  const both = unique([...top, ...recent])
 
   // Demand: how many views per day the topic's videos earn, over the year and over the newest ones.
   const topVpd = median(top.map(v => v.calculated.viewsPerDay).filter(num))
@@ -144,7 +151,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
 
   const enough = top.length >= 20 && recent.length >= 10 && subsKnown.length / Math.max(top.length, 1) >= 0.7
   const confidence: Confidence = top.length < 10 || recent.length < 5 ? 'baja' : enough ? 'media' : 'baja'
-  const confidenceNote = `Muestra de ${top.length} vídeos más vistos y ${recent.length} recientes (YouTube no permite contar todos los vídeos ni creadores). ${subsKnown.length}/${top.length} canales con suscriptores visibles. Con una sola fuente la confianza nunca pasa de «media».`
+  const confidenceNote = `Muestra de ${top.length} vídeos más vistos y ${recent.length} recientes${excludedLive ? ` (${excludedLive} directos en emisión o programados excluidos)` : ''} (YouTube no permite contar todos los vídeos ni creadores). ${subsKnown.length}/${top.length} canales con suscriptores visibles. Con una sola fuente la confianza nunca pasa de «media».`
 
   const evidence: Evidence[] = [
     { label: 'Vistas por día (mediana, vídeos más vistos del último año)', value: topVpd === null ? 'sin datos' : k(Math.round(topVpd)), kind: 'calculado' },
@@ -155,6 +162,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     { label: 'Canales de ≥ 100 000 suscriptores en el top 10', value: `${big} de ${top10.length}`, kind: 'observado' },
     { label: 'Cuota de vistas del canal dominante (muestra)', value: `${Math.round(topShare * 100)} %`, kind: 'calculado' },
     { label: 'Cambio de ritmo reciente frente al top del año', value: growthPct === null ? 'sin datos' : `${growthPct > 0 ? '+' : ''}${growthPct} %`, kind: 'calculado' },
+    ...(excludedLive ? [{ label: 'Directos en emisión o programados excluidos del cálculo', value: String(excludedLive), kind: 'observado' as const }] : []),
     { label: 'Resultados que YouTube dice tener (aprox., no es un censo)', value: s.top.approxTotal === null ? 'sin dato' : k(s.top.approxTotal), kind: 'observado' },
   ]
 
@@ -170,12 +178,12 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     : verdict === 'sin_demanda' ? 'Poca oferta, pero también poca demanda observable: no es una oportunidad'
     : 'Señales mixtas: investígalo con otro ángulo antes de apostar'
 
-  const niches = [...new Set([...top, ...recent].flatMap(v => nichesOf(v).map(n => n.niche)))]
+  const niches = [...new Set(both.flatMap(v => nichesOf(v).map(n => n.niche)))]
   return {
     topic: s.topic, region: s.region, language: s.language, fetchedAt: s.fetchedAt, units: s.units, recentDays: WINDOW,
     indices: { demand, supply, competition, growth, opportunity }, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence,
     byFormat: { short: stats(top, recent, isShort), long: stats(top, recent, isLong) },
-    niches, terms: extractTerms([...top, ...recent]), emerging: emergingTerms(top, recent), questions: extractQuestions([...top, ...recent]),
+    niches, terms: extractTerms(both), emerging: emergingTerms(top, recent), questions: extractQuestions(both),
     sampleSizes: { top: top.length, recent: recent.length }, approxTotals: { top: s.top.approxTotal, recent: s.recent.approxTotal },
     topVideos: top.slice(0, 9),
   }
