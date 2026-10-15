@@ -345,3 +345,30 @@ describe('meaning disambiguation: ISA, HSA, ETF, Super and queries with several 
     })
   })
 })
+
+describe('local semantic evidence (TF-IDF similarity) resolves only what the word rules could not', () => {
+  const ctx = (i: number) => ({ desc: `wrapper platform fees comparison provider flexible lifetime wrapper platform fees ${i}`, lang: 'en', views: 20000 })
+  const good = (k: number) => many(k, i => ({ title: `Stocks and Shares ISA explained part ${i}: invest tax free`, ...ctx(i), ch: `g${i}` }))
+  const recent = () => many(8, i => ({ title: `ISA explained: new savings allowance ${i}`, lang: 'en', days: 5 + i, ch: `n${i}` }))
+  const run = (extra: YouTubeVideoResult[]) => analyzeTopic(samples('ISA explained', 'GB', 'en', [...good(12), ...extra], recent()), NOW)
+
+  it('a doubtful video whose surrounding text matches the confirmed ones is accepted, and the decision quotes its similarity', () => {
+    const a = run([vid({ title: 'ISA explained properly', ...ctx(99), ch: 'x1' })])
+    const v = a.sample.find(x => x.title === 'ISA explained properly')!
+    expect(v.status).toBe('aceptado'); expect(v.detail).toMatch(/por contexto: se parece \(\d+ %\)/)
+  })
+  it('a doubtful video with almost no text stays doubtful: no information, no verdict', () => {
+    const a = run([vid({ title: 'ISA explained', lang: 'en' })])
+    expect(a.sample.find(x => x.title === 'ISA explained' && x.inTop)!.status).toBe('dudoso')
+  })
+  it('without enough confirmed videos nothing is decided by similarity', () => {
+    const a = analyzeTopic(samples('ISA explained', 'GB', 'en', [...good(2), vid({ title: 'ISA explained properly', ...ctx(99) })], []), NOW)
+    expect(a.sample.find(x => x.title === 'ISA explained properly')!.status).toBe('dudoso')
+  })
+  it('a doubtful video that reads like the other-meaning videos is rejected as that meaning, with the similarity quoted', () => {
+    const quran = (i: number) => ({ title: `Isa in the Quran Jesus explained part ${i}`, desc: `parable lessons narrated devotion parable lessons narrated devotion ${i}`, lang: 'en', ch: `q${i}` })
+    const a = analyzeTopic(samples('ISA explained', 'GB', 'en', [...good(12), ...many(4, quran), vid({ title: 'ISA explained slowly', desc: 'parable lessons narrated devotion', lang: 'en', ch: 'y1' })], recent()), NOW)
+    const v = a.sample.find(x => x.title === 'ISA explained slowly')!
+    expect(v.status).toBe('descartado'); expect(v.reason).toBe('sentido'); expect(v.detail).toMatch(/por contexto/)
+  })
+})

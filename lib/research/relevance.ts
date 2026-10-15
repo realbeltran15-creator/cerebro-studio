@@ -9,7 +9,7 @@ import { nichesOf, wordHit } from './taxonomy'
  * is judged here BEFORE it can influence an index, and every exclusion keeps its reason so the screen can show it.
  */
 
-const fold = (s: string) => ` ${s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}#+]+/gu, ' ').replace(/\s+/g, ' ').trim()} `
+export const fold = (s: string) => ` ${s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}#+]+/gu, ' ').replace(/\s+/g, ' ').trim()} `
 const words = (s: string) => fold(s).trim().split(' ').filter(Boolean)
 
 // ---------- Query understanding ----------

@@ -1,5 +1,6 @@
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { stopwords } from '@/lib/radar'
+import { resolveDoubtful } from './semantic'
 import { concentration, demandProfile, entryDifficulty, medianInterval, opportunityOf, sensitivity, smallChannelWins, verdictOf, type Concentration, type DemandProfile, type Entry, type SmallWins, type Sensitivity, type Verdict } from './statistics'
 import { inferFormat, nichesOf, type Confidence } from './taxonomy'
 import { assessVideo, expectedLanguages, queryProfile, viralOutliers, type Assessment, type ExclusionReason, type SampleQuality, type VideoStatus } from './relevance'
@@ -148,7 +149,9 @@ function clean(s: TopicSamples): { top: YouTubeVideoResult[]; recent: YouTubeVid
   const wrongMeaning = onTopic.filter(v => ['nicho', 'sentido'].includes(first.get(v.videoId)!.reason ?? '')).length
   const ambiguousSample = !!q.niches.length && onTopic.length >= 8 && wrongMeaning / onTopic.length >= 0.2
   // Pass 2: when ambiguous, every video must positively confirm the intended meaning.
-  const verdicts = ambiguousSample ? new Map(all.map(v => [v.videoId, assessVideo(v, q, expected, { strict: true })])) : first
+  const judged = ambiguousSample ? new Map(all.map(v => [v.videoId, assessVideo(v, q, expected, { strict: true })])) : first
+  // Videos the word rules could not decide are compared, locally and for free, with the ones whose meaning was confirmed.
+  const verdicts = resolveDoubtful(all, judged, q.terms)
   const excluded: Record<ExclusionReason, number> = { tema: 0, nicho: 0, idioma: 0, directo: 0, sentido: 0, contexto: 0 }
   let uncertain = 0, promo = 0, unverified = 0, inMarket = 0, known = 0
   for (const v of all) {
