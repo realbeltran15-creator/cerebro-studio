@@ -7,7 +7,7 @@ import { marketsFromFilters } from '@/lib/research/markets'
 import { budgetPlan, jobKey, pendingJobs, planGuided, reportCsv, reportMarkdown } from '@/lib/research/guided'
 import { BudgetError, dailyCap, getTopicAnalysis } from '@/lib/research/sample'
 import { searchYouTubeVideosMeta, YouTubeApiError } from '@/lib/providers/youtube-data'
-import { startOfUtcDay, type CacheHit, type CacheStore } from '@/lib/research/cache'
+import { cacheKey, quotaDayStart, type CacheHit, type CacheStore } from '@/lib/research/cache'
 import { UNITS } from '@/lib/research/filters'
 import { recentDaysFrom } from '@/lib/research/markets'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
@@ -33,12 +33,24 @@ const store: CacheStore = {
   async get<T>(key: string, now = Date.now()): Promise<CacheHit<T> | null> { const r = state.rows[key]; return r && now - Date.parse(r.fetchedAt) < 7 * 86400000 ? { payload: r.payload as unknown as T, fetchedAt: r.fetchedAt, units: r.units } : null },
   async put(key, _kind, payload, units, _ttl, now = Date.now()) { state.rows[key] = { key, payload: payload as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units }; save() },
   async unitsSince(since: number) { return Object.values(state.rows).filter(r => Date.parse(r.fetchedAt) >= since).reduce((t, r) => t + r.units, 0) },
+  // One process, one file: nothing runs concurrently here, so a plain check-then-write is already atomic.
+  atomic: true,
+  async delete(key) { delete state.rows[key]; save() },
+  async reserve(key, units, cap, _ttl, now = Date.now()) {
+    const used = Object.values(state.rows).filter(r => Date.parse(r.fetchedAt) >= quotaDayStart(now)).reduce((t, r) => t + r.units, 0)
+    if (used + units > cap) return { ok: false as const, reason: 'budget' as const, used }
+    state.rows[key] = { key, payload: {} as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units }; save(); return { ok: true as const, used: used + units }
+  },
+  async settle(key, actual, now = Date.now()) { state.rows[key] = { key, payload: {} as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units: Math.round(actual) }; save() },
+  async release(key) { delete state.rows[key]; save() },
+  async lock() { return true },
+  async unlock() { /* nothing to release */ },
 }
 
 const { jobs, shortfall, fallbackMarkets } = planGuided({ markets, nicheIds: niches, perMarket: per })
 const done: Record<string, unknown> = {}
-for (const j of jobs) { const hit = await store.get(`v1|topic|${j.topic.trim().toLowerCase().replace(/\s+/g, ' ')}|${(j.market.region ?? '').toLowerCase()}|${(j.market.language ?? '').toLowerCase()}|${recentDays}`); if (hit) done[jobKey(j, recentDays)] = hit.payload }
-const cap = dailyCap(), used = await store.unitsSince(startOfUtcDay())
+for (const j of jobs) { const hit = await store.get(cacheKey('topic', [j.topic, j.market.region, j.market.language, String(recentDays)])); if (hit) done[jobKey(j, recentDays)] = hit.payload }
+const cap = dailyCap(), used = await store.unitsSince(quotaDayStart())
 const bp = budgetPlan({ jobs, done, recentDays, remainingToday: Math.max(cap - used, 0), dailyCap: cap })
 console.log(`Mercados: ${markets.map(m => m.label).join(', ')} · ${per} por mercado · ${jobs.length} análisis planificados`)
 if (shortfall.length) console.log(`Faltan ideas: ${shortfall.map(s => `${s.market} (${s.got}/${s.wanted})`).join(', ')} → elige más nichos con --niches`)

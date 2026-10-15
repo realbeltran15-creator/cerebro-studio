@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { openStore, recordUsage, startOfUtcDay } from '@/lib/research/cache'
+import { openStore, recordUsage, quotaDayStart } from '@/lib/research/cache'
 import { dailyCap } from '@/lib/research/sample'
 import { UNITS } from '@/lib/research/filters'
 import { searchYouTubeVideos, youtubeConfigured, YouTubeApiError, type YouTubeSearchOrder } from '@/lib/providers/youtube-data'
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   try {
     // Same daily budget as the analyses: a free-text search costs about 102 units and is counted with them.
     const store = await openStore(supabase as never, user.id)
-    const used = await store.unitsSince(startOfUtcDay()), cap = dailyCap()
+    const used = await store.unitsSince(quotaDayStart()), cap = dailyCap()
     if (used + UNITS.search > cap) return NextResponse.json({ error: `Presupuesto diario de Investigación agotado: ${used} de ${cap} unidades usadas hoy. Vuelve mañana.`, budget: { used, cap }, configured: true }, { status: 429 })
     const results = await searchYouTubeVideos({
       query,

@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { EMPTY_FILTERS, durationParam, loadPresets, planTopicBatch, savePresets, addPreset, sanitizeFilters, sameFilters, validateFilters, type ActiveChip, type Plan, type Preset, type ResearchFilters } from '@/lib/research/filters'
 import { analysisKey, isFresh, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
 import { jobKey, type Job } from '@/lib/research/guided'
-import { startOfUtcDay } from '@/lib/research/cache'
+import { quotaDayStart } from '@/lib/research/cache'
 import { addUnits, effectiveUsage, emptyLedger, parseLedger, type Ledger } from '@/lib/research/ledger'
 import { UNITS } from '@/lib/research/filters'
 import type { Queries, SearchPlan } from '@/lib/research/search-plan'
@@ -116,7 +116,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   }, [analyses, charts, guided, hydrated])
 
   const refreshUsage = useCallback(async () => {
-    try { const r = await fetch('/api/research/usage', { cache: 'no-store' }); if (r.ok) { const u = await r.json() as Usage; if (u) serverRef.current = { usedToday: u.usedToday, cap: u.cap, persistent: u.persistent, day: startOfUtcDay() }; setUsage(u) } } catch { /* offline */ }
+    try { const r = await fetch('/api/research/usage', { cache: 'no-store' }); if (r.ok) { const u = await r.json() as Usage; if (u) serverRef.current = { usedToday: u.usedToday, cap: u.cap, persistent: u.persistent, day: quotaDayStart() }; setUsage(u) } } catch { /* offline */ }
   }, [])
   useEffect(() => { void refreshUsage() }, [refreshUsage])
 
@@ -142,9 +142,9 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
         const r = await fetch(`/api/research/topic?${p}`, { cache: 'no-store' })
         const j = await r.json() as { analysis?: TopicAnalysis; cached?: boolean; error?: string; usage?: { usedToday: number; cap: number; persistent: boolean } }
         if (broke && r.ok && !j.analysis) { setError(`Presupuesto de hoy agotado en este navegador (${effectiveUsage(serverRef.current, ledgerRef.current).usedToday} de ${effectiveUsage(serverRef.current, ledgerRef.current).cap} unidades). Quedan ${jobs.length - i} consulta${jobs.length - i === 1 ? '' : 's'} para mañana.`); break }
-        if (!r.ok || !j.analysis) { failed.push(`${topic} · ${m.label}: ${j.error ?? 'error'}`); if (r.status === 429 || r.status === 503) { setError(j.error ?? 'No se pudo consultar YouTube.'); break } continue }
+        if (!r.ok || !j.analysis) { failed.push(`${topic} · ${m.label}: ${r.status === 409 ? 'otra ventana o dispositivo la está consultando ahora mismo (no se ha gastado cuota); pulsa «Reanudar» en unos segundos' : j.error ?? 'error'}`); if (r.status === 429 || r.status === 503) { setError(j.error ?? 'No se pudo consultar YouTube.'); break } continue }
         setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: j.analysis! })); ok++; if (!j.cached) { units += j.analysis!.units; spend(j.analysis!.units) }
-        if (j.usage) serverRef.current = { ...j.usage, day: startOfUtcDay() }
+        if (j.usage) serverRef.current = { ...j.usage, day: quotaDayStart() }
         if (j.usage) setUsage({ usedToday: j.usage.usedToday, cap: j.usage.cap, remaining: Math.max(j.usage.cap - j.usage.usedToday, 0), persistent: j.usage.persistent })
       } catch (e) { failed.push(`${topic} · ${m.label}: ${e instanceof Error ? e.message : 'error'}`) }
     }
@@ -164,7 +164,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       if (!r.ok || !j.analysis) { setError(j.error ?? 'No se pudo medir el crecimiento.'); return }
       spend(UNITS.search)
       setAnalyses(all => ({ ...all, [analysisKey(a.topic, a.region, a.language, a.recentDays)]: j.analysis! }))
-      if (j.usage) { serverRef.current = { ...j.usage, day: startOfUtcDay() }; setUsage({ usedToday: j.usage.usedToday, cap: j.usage.cap, remaining: Math.max(j.usage.cap - j.usage.usedToday, 0), persistent: j.usage.persistent }) }
+      if (j.usage) { serverRef.current = { ...j.usage, day: quotaDayStart() }; setUsage({ usedToday: j.usage.usedToday, cap: j.usage.cap, remaining: Math.max(j.usage.cap - j.usage.usedToday, 0), persistent: j.usage.persistent }) }
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo medir el crecimiento.') } finally { setGrowthBusy(false) }
   }, [spend, remainingNow])
 

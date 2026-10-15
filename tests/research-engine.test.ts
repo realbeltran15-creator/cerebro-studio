@@ -4,7 +4,7 @@ import { analyzeTopic, emergingTerms, extractQuestions, extractTerms, formatOppo
 import { contentTypesOf, inferFormat, nichesOf } from '@/lib/research/taxonomy'
 import { COUNTRY_RPM, SHORTS_FACTOR, formatAdjusted, nicheRpm, passesRpmFilter, revenueScenarios } from '@/lib/research/monetization'
 import { EMPTY_FILTERS, NO_METRICS, activeCount, estimateRevenue, effectiveLogic, filterVideos, mergeRegions, planTopicBatch, addPreset, loadPresets, savePresets, sanitizeFilters, type ResearchFilters, type SeenVideo } from '@/lib/research/filters'
-import { MemoryCacheStore } from '@/lib/research/cache'
+import { MemoryCacheStore, quotaDayStart } from '@/lib/research/cache'
 import { BudgetError, dailyCap, getTopicAnalysis } from '@/lib/research/sample'
 
 const NOW = Date.parse('2026-10-13T12:00:00Z')
@@ -754,10 +754,10 @@ describe('review fixes: every paid call is counted, midnight rollover, cache hit
     expect(await store.unitsSince(NOW - 1000)).toBe(102)
   })
   it('a ledger or server figure from yesterday does not block today', async () => {
-    const { effectiveUsage } = await import('@/lib/research/ledger')
-    const yesterday = { day: Date.UTC(2026, 9, 12), units: 5900 }
-    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: Date.UTC(2026, 9, 12) }, yesterday, 6000, NOW).remaining).toBe(6000)
-    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: Date.UTC(2026, 9, 13) }, { day: Date.UTC(2026, 9, 13), units: 100 }, 6000, NOW).remaining).toBe(100)
+    const { effectiveUsage } = await import('@/lib/research/ledger'), { quotaDayStart } = await import('@/lib/research/cache')
+    const today = quotaDayStart(NOW), yesterday = today - 86400000
+    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: yesterday }, { day: yesterday, units: 5900 }, 6000, NOW).remaining).toBe(6000)
+    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: today }, { day: today, units: 100 }, 6000, NOW).remaining).toBe(100)
   })
   it('generic label words only exclude channels inside the Music category', async () => {
     const { isNeglectedNiche } = await import('@/lib/research/discovery')
@@ -773,19 +773,48 @@ describe('review fixes: every paid call is counted, midnight rollover, cache hit
 describe('research_cache persistence: what survives a redeploy, how duplicates and quota are controlled (SupabaseCacheStore against a faithful fake table)', () => {
   /** A fake of the table with the same constraints as the migration: unique (owner_id, cache_key), RLS-style owner scoping. */
   const table = () => {
-    const rows: Array<{ owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; fetched_at: string; expires_at: string }> = []
+    const clockState = { t: NOW }, clock = () => clockState.t
+    type Row = { owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; fetched_at: string; expires_at: string }
+    const rows: Row[] = []
     const from = () => {
-      let filters: Array<(r: (typeof rows)[number]) => boolean> = []
+      let filters: Array<(r: Row) => boolean> = [], op: 'select' | 'delete' | 'update' = 'select', patch: Partial<Row> = {}
+      const run = () => {
+        const hit = rows.filter(r => filters.every(f => f(r)))
+        if (op === 'delete') { for (const r of hit) rows.splice(rows.indexOf(r), 1); return { data: null, error: null } }
+        if (op === 'update') { for (const r of hit) Object.assign(r, patch); return { data: null, error: null } }
+        return { data: hit, error: null }
+      }
       const api = {
-        select: () => api, eq: (k: keyof (typeof rows)[number], v: unknown) => { filters = [...filters, r => r[k] === v]; return api },
+        select: () => api, eq: (k: keyof Row, v: unknown) => { filters = [...filters, r => r[k] === v]; return api },
         gte: (k: 'fetched_at', v: string) => { filters = [...filters, r => r[k] >= v]; return api },
-        limit: async () => ({ data: rows.filter(r => filters.every(f => f(r))), error: null }),
-        then: (res: (x: { data: unknown; error: null }) => void) => res({ data: rows.filter(r => filters.every(f => f(r))), error: null }),
-        upsert: async (row: (typeof rows)[number]) => { const i = rows.findIndex(r => r.owner_id === row.owner_id && r.cache_key === row.cache_key); if (i >= 0) rows[i] = row; else rows.push(row); return { error: null } },
+        lt: (k: 'expires_at', v: string) => { filters = [...filters, r => r[k] < v]; return api },
+        delete: () => { op = 'delete'; return api }, update: (p: Partial<Row>) => { op = 'update'; patch = p; return api },
+        limit: async () => run(),
+        then: (res: (x: unknown) => void, rej?: (e: unknown) => void) => Promise.resolve(run()).then(res, rej),
+        upsert: async (row: Row) => { const i = rows.findIndex(r => r.owner_id === row.owner_id && r.cache_key === row.cache_key); if (i >= 0) rows[i] = row; else rows.push(row); return { error: null } },
       }
       return api
     }
-    return { rows, db: { from } }
+    /** Fakes of the database functions: single-threaded JS makes each one atomic, like the advisory lock does in PostgreSQL. */
+    const rpc = async (fn: string, a: Record<string, unknown>) => {
+      const uid = 'u1', nowMs = clock()
+      if (fn === 'research_reserve') {
+        const day = new Date(quotaDayStart(nowMs)).toISOString(), used = rows.filter(r => r.owner_id === uid && r.fetched_at >= day).reduce((t, r) => t + r.units, 0)
+        if (used + (a.p_units as number) > (a.p_cap as number)) return { data: { ok: false, reason: 'budget', used }, error: null }
+        const i = rows.findIndex(r => r.cache_key === a.p_key); const row = { owner_id: uid, cache_key: a.p_key as string, kind: 'reserve', payload: {}, units: a.p_units as number, fetched_at: new Date(nowMs).toISOString(), expires_at: new Date(nowMs + (a.p_ttl_seconds as number) * 1000).toISOString() }
+        if (i >= 0) rows[i] = row; else rows.push(row)
+        return { data: { ok: true, used: used + (a.p_units as number) }, error: null }
+      }
+      if (fn === 'research_lock') {
+        const i = rows.findIndex(r => r.cache_key === a.p_key)
+        if (i >= 0 && Date.parse(rows[i].expires_at) > nowMs) return { data: false, error: null }
+        const row = { owner_id: uid, cache_key: a.p_key as string, kind: 'lock', payload: {}, units: 0, fetched_at: new Date(nowMs).toISOString(), expires_at: new Date(nowMs + (a.p_ttl_seconds as number) * 1000).toISOString() }
+        if (i >= 0) rows[i] = row; else rows.push(row)
+        return { data: true, error: null }
+      }
+      return { data: null, error: { code: '42883', message: `function ${fn} does not exist` } }
+    }
+    return { rows, clock: clockState, db: { from, rpc }, dbWithoutFunctions: { from } }
   }
   const ok = async () => ({ videos: many(6, i => ({ title: `tema video ${i}` })), approxTotal: 5 })
   it('a result survives a new deployment: a fresh store instance over the same table answers from cache with ZERO YouTube calls', async () => {
@@ -811,7 +840,7 @@ describe('research_cache persistence: what survives a redeploy, how duplicates a
     const t = table()
     await getTopicAnalysis({ topic: 'tema', region: null, language: null }, { store: new SupabaseCacheStore(t.db, 'u1'), search: ok, owner: 'u1', now: () => NOW })
     await recordUsage(new SupabaseCacheStore(t.db, 'u1'), 'search', 102, NOW)
-    expect(new Set(t.rows.map(r => r.kind))).toEqual(new Set(['topic', 'usage']))
+    expect(new Set(t.rows.map(r => r.kind))).toEqual(new Set(['topic', 'usage']))   // locks, partials and reservations never linger
     expect(new Set(t.rows.map(r => r.owner_id))).toEqual(new Set(['u1']))
     const topic = t.rows.find(r => r.kind === 'topic')!
     expect(Object.keys(topic.payload as object)).toEqual(expect.arrayContaining(['indices', 'quality', 'sample', 'growth', 'topVideos'])); expect(JSON.stringify(topic.payload)).not.toMatch(/api[_-]?key|authorization/i)
@@ -832,14 +861,113 @@ describe('research_cache persistence: what survives a redeploy, how duplicates a
     expect(await store.unitsSince(NOW - 1000)).toBe(408)                              // …and both paid fetches are counted
   })
   it('quota control: the daily cap counts every kind of spend, refuses before spending and resets at UTC midnight', async () => {
-    const { SupabaseCacheStore, recordUsage, startOfUtcDay } = await import('@/lib/research/cache')
+    const { SupabaseCacheStore, recordUsage, quotaDayStart } = await import('@/lib/research/cache')
     const t = table(), store = new SupabaseCacheStore(t.db, 'u1')
     await recordUsage(store, 'search', 102, NOW); await recordUsage(store, 'chart', 2, NOW)
     const search = vi.fn(ok)
     await expect(getTopicAnalysis({ topic: 'nuevo', region: null, language: null }, { store, search, owner: 'u1', now: () => NOW, cap: 300 })).rejects.toBeInstanceOf(BudgetError)
     expect(search).not.toHaveBeenCalled()
-    const tomorrow = startOfUtcDay(NOW) + 86400000 + 1000
-    expect(await store.unitsSince(startOfUtcDay(tomorrow))).toBe(0)
+    const tomorrow = quotaDayStart(NOW) + 86400000 + 1000
+    expect(await store.unitsSince(quotaDayStart(tomorrow))).toBe(0)
+    t.clock.t = tomorrow   // the database functions use the database's own clock
     await getTopicAnalysis({ topic: 'nuevo', region: null, language: null }, { store, search, owner: 'u1', now: () => tomorrow, cap: 300 }); expect(search).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('quota day = Pacific midnight (how YouTube resets its quota), not UTC midnight', () => {
+  it('matches the Pacific day for summer, winter and both daylight-saving changes', async () => {
+    const { quotaDayStart } = await import('@/lib/research/cache')
+    const iso = (s: string) => new Date(quotaDayStart(Date.parse(s))).toISOString()
+    expect(iso('2026-10-15T12:00:00Z')).toBe('2026-10-15T07:00:00.000Z')   // PDT
+    expect(iso('2026-12-15T12:00:00Z')).toBe('2026-12-15T08:00:00.000Z')   // PST
+    expect(iso('2026-10-15T03:00:00Z')).toBe('2026-10-14T07:00:00.000Z')   // still «yesterday» in California after UTC midnight
+    expect(iso('2026-10-15T06:59:59Z')).toBe('2026-10-14T07:00:00.000Z'); expect(iso('2026-10-15T07:00:00Z')).toBe('2026-10-15T07:00:00.000Z')
+    expect(iso('2026-11-01T20:00:00Z')).toBe('2026-11-01T07:00:00.000Z')   // fall-back day: midnight was still PDT
+    expect(iso('2026-03-08T20:00:00Z')).toBe('2026-03-08T08:00:00.000Z')   // spring-forward day: midnight was PST
+  })
+  it('spending recorded before Pacific midnight does not count for the next quota day, even when UTC says it is the same day', async () => {
+    const { MemoryCacheStore, quotaDayStart, recordUsage } = await import('@/lib/research/cache')
+    const store = new MemoryCacheStore(`pt-${Math.random()}`)
+    const beforeMidnightPT = Date.parse('2026-10-15T06:30:00Z'), afterMidnightPT = Date.parse('2026-10-15T07:30:00Z')
+    await recordUsage(store, 'search', 102, beforeMidnightPT)
+    expect(await store.unitsSince(quotaDayStart(afterMidnightPT))).toBe(0); expect(await store.unitsSince(quotaDayStart(beforeMidnightPT))).toBe(102)
+  })
+})
+
+
+describe('coordination across server instances (two stores over one table, database functions available)', () => {
+  type Row = { owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; fetched_at: string; expires_at: string }
+  // Re-uses the table fake defined above through a small local copy of its contract.
+  const setup = async () => {
+    const { SupabaseCacheStore } = await import('@/lib/research/cache')
+    const rows: Row[] = []
+    const clock = { t: NOW }
+    const mkDb = (withFns: boolean) => ({
+      from: () => {
+        let filters: Array<(r: Row) => boolean> = [], op: 'select' | 'delete' | 'update' = 'select', patch: Partial<Row> = {}
+        const run = () => { const hit = rows.filter(r => filters.every(f => f(r))); if (op === 'delete') { for (const r of hit) rows.splice(rows.indexOf(r), 1); return { data: null, error: null } } if (op === 'update') { for (const r of hit) Object.assign(r, patch); return { data: null, error: null } } return { data: hit, error: null } }
+        const api = { select: () => api, eq: (k: keyof Row, v: unknown) => { filters = [...filters, r => r[k] === v]; return api }, gte: (k: 'fetched_at', v: string) => { filters = [...filters, r => r[k] >= v]; return api }, lt: (k: 'expires_at', v: string) => { filters = [...filters, r => r[k] < v]; return api }, delete: () => { op = 'delete'; return api }, update: (p: Partial<Row>) => { op = 'update'; patch = p; return api }, limit: async () => run(), then: (res: (x: unknown) => void, rej?: (e: unknown) => void) => Promise.resolve(run()).then(res, rej),
+          upsert: async (row: Row) => { const i = rows.findIndex(r => r.owner_id === row.owner_id && r.cache_key === row.cache_key); if (i >= 0) rows[i] = row; else rows.push(row); return { error: null } } }
+        return api
+      },
+      ...(withFns ? { rpc: async (fn: string, a: Record<string, unknown>) => {
+        const day = new Date(quotaDayStart(NOW)).toISOString()
+        if (fn === 'research_reserve') { const used = rows.filter(r => r.fetched_at >= day).reduce((t, r) => t + r.units, 0); if (used + (a.p_units as number) > (a.p_cap as number)) return { data: { ok: false, reason: 'budget', used }, error: null }; rows.push({ owner_id: 'u1', cache_key: a.p_key as string, kind: 'reserve', payload: {}, units: a.p_units as number, fetched_at: new Date(clock.t).toISOString(), expires_at: new Date(clock.t + 600000).toISOString() }); return { data: { ok: true, used: used + (a.p_units as number) }, error: null } }
+        if (fn === 'research_lock') { const i = rows.findIndex(r => r.cache_key === a.p_key); if (i >= 0 && Date.parse(rows[i].expires_at) > clock.t) return { data: false, error: null }; const row = { owner_id: 'u1', cache_key: a.p_key as string, kind: 'lock', payload: {}, units: 0, fetched_at: new Date(NOW).toISOString(), expires_at: new Date(clock.t + (a.p_ttl_seconds as number) * 1000).toISOString() }; if (i >= 0) rows[i] = row; else rows.push(row); return { data: true, error: null } }
+        return { data: null, error: { code: '42883', message: 'missing' } }
+      } } : {}),
+    })
+    return { rows, clock, instance: (withFns = true) => new SupabaseCacheStore(mkDb(withFns) as never, 'u1'), SupabaseCacheStore }
+  }
+  const slowOk = vi.fn(async () => { await new Promise(r => setTimeout(r, 15)); return { videos: many(6, i => ({ title: `tema video ${i}` })), approxTotal: 5 } })
+
+  it('two instances asking for the same research at the same time: ONE pays, the other receives the result', async () => {
+    const { rows, instance } = await setup(); slowOk.mockClear()
+    const a = { store: instance(), search: slowOk, owner: 'inst-A', now: () => NOW, pollMs: 5, waitMs: 2000 }, b = { store: instance(), search: slowOk, owner: 'inst-B', now: () => NOW, pollMs: 5, waitMs: 2000 }
+    const [x, y] = await Promise.all([getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, a), getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, b)])
+    expect(slowOk).toHaveBeenCalledTimes(2)                                   // one analysis = two searches, not four
+    expect([x.cached, y.cached].sort()).toEqual([false, true]); expect(x.analysis?.topic).toBe(y.analysis?.topic)
+    expect(rows.reduce((t, r) => t + r.units, 0)).toBe(204)
+    expect(rows.filter(r => r.kind === 'lock' || r.kind === 'reserve')).toHaveLength(0)
+  })
+  it('two instances with different topics cannot both pass the cap: the reservation is atomic', async () => {
+    const { rows, instance } = await setup(); slowOk.mockClear()
+    const dep = (o: string) => ({ store: instance(), search: slowOk, owner: o, now: () => NOW, cap: 300 })
+    const res = await Promise.allSettled([getTopicAnalysis({ topic: 'tema a', region: null, language: null }, dep('A')), getTopicAnalysis({ topic: 'tema b', region: null, language: null }, dep('B')), getTopicAnalysis({ topic: 'tema c', region: null, language: null }, dep('C'))])
+    expect(res.filter(r => r.status === 'fulfilled')).toHaveLength(1); expect(res.filter(r => r.status === 'rejected' && r.reason instanceof BudgetError)).toHaveLength(2)
+    expect(rows.reduce((t, r) => t + r.units, 0)).toBe(204)
+  })
+  it('an instance that cannot get the lease and sees no result gives up without spending anything', async () => {
+    const { rows, instance } = await setup(); const { InProgressError } = await import('@/lib/research/sample')
+    const holder = instance(); await holder.lock('topic:v2|topic|tema|us|en|30', 120000, NOW)
+    slowOk.mockClear()
+    await expect(getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, { store: instance(), search: slowOk, owner: 'B', now: () => NOW, pollMs: 5, waitMs: 40 })).rejects.toBeInstanceOf(InProgressError)
+    expect(slowOk).not.toHaveBeenCalled(); expect(rows.reduce((t, r) => t + r.units, 0)).toBe(0)
+  })
+  it('a crashed instance leaves a reservation that keeps counting (conservative), and an expired lease can be taken over', async () => {
+    const { instance, clock } = await setup()
+    const crashed = instance(); await crashed.reserve('v2|reserve|x', 204, 6000, 600000, NOW); await crashed.lock('topic:z', 1000, NOW)
+    expect(await instance().unitsSince(NOW - 1000)).toBe(204)
+    clock.t = NOW + 500; expect(await instance().lock('topic:z', 1000, clock.t)).toBe(false)
+    clock.t = NOW + 5000; expect(await instance().lock('topic:z', 1000, clock.t)).toBe(true)
+  })
+  it('a first search that succeeded before a failure is reused: the retry pays ONE search (102), not two', async () => {
+    const { rows, instance } = await setup()
+    let calls = 0
+    const flaky = vi.fn(async () => { calls++; if (calls === 2) throw new Error('503'); return { videos: many(6, i => ({ title: `tema video ${i}` })), approxTotal: 5 } })
+    const dep = { store: instance(), search: flaky, owner: 'A', now: () => NOW }
+    await expect(getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, dep)).rejects.toThrow('503')
+    expect(rows.reduce((t, r) => t + r.units, 0)).toBe(102); expect(rows.some(r => r.kind === 'partial')).toBe(true)
+    const done = await getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, dep)
+    expect(flaky).toHaveBeenCalledTimes(3); expect(done.analysis?.topic).toBe('tema'); expect(rows.reduce((t, r) => t + r.units, 0)).toBe(204)   // 102 + 102, not 102 + 204
+    expect(rows.some(r => r.kind === 'partial')).toBe(false)
+  })
+  it('without the database functions (migration not yet applied) the store still works, and says its guarantee is weaker', async () => {
+    const { instance } = await setup(); slowOk.mockClear()
+    const store = instance(false)
+    const r = await getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, { store, search: slowOk, owner: 'A', now: () => NOW })
+    expect(r.cached).toBe(false); expect(store.atomic).toBe(false)
+    expect(instance(true).atomic).toBe(false)   // atomic only becomes true after a function actually answered
+    const withFns = instance(true); await withFns.lock('probe', 1000, NOW); expect(withFns.atomic).toBe(true)
   })
 })

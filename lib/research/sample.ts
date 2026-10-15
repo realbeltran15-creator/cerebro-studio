@@ -1,6 +1,6 @@
 import { searchYouTubeVideosMeta, type YouTubeSearchInput, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { analyzeTopic, applyGrowth, type TopicAnalysis, type TopicSamples } from './topic-analysis'
-import { cacheKey, DEFAULT_TTL_MS, recordUsage, startOfUtcDay, type CacheStore } from './cache'
+import { analyzeTopic, applyGrowth, type Sample, type TopicAnalysis, type TopicSamples } from './topic-analysis'
+import { cacheKey, DEFAULT_TTL_MS, quotaDayStart, type CacheStore } from './cache'
 import { DEFAULT_DAILY_CAP, UNITS } from './filters'
 
 export class BudgetError extends Error { constructor(message: string, readonly used: number, readonly cap: number) { super(message) } }
@@ -27,7 +27,7 @@ const serial = <T>(owner: string, job: () => Promise<T>): Promise<T> => {
   return run
 }
 
-export function getTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number; /** Who is asking; scopes the queue and de-duplication. */ owner?: string }): Promise<TopicResult> {
+export function getTopicAnalysis(req: TopicRequest, deps: Deps & { /** Who is asking; scopes the queue and de-duplication. */ owner?: string }): Promise<TopicResult> {
   if (req.cacheOnly) return fetchTopicAnalysis(req, deps)
   const owner = deps.owner ?? 'anonymous'
   const key = `${owner}|${[req.topic.trim().toLowerCase().replace(/\s+/g, ' '), req.region ?? '', req.language ?? '', String(req.recentDays ?? 30), req.refresh ? 'r' : ''].join('|')}`
@@ -37,39 +37,72 @@ export function getTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; s
   return p
 }
 
-async function fetchTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number }): Promise<TopicResult> {
+/** Another server instance is running this very research: the caller should retry shortly instead of paying for it twice. */
+export class InProgressError extends Error { constructor(message: string) { super(message) } }
+
+type Deps = { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number; /** Test hook: how long to wait between polls while another instance works (ms). */ pollMs?: number; /** Test hook: how long to wait for another instance before giving up (ms). */ waitMs?: number }
+const LEASE_MS = 120_000, RESERVE_TTL_MS = 600_000, PARTIAL_TTL_MS = 3_600_000
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+/** Waits for the instance that holds the lease to publish its result; null when it did not finish in time. */
+async function waitForResult(key: string, deps: Deps): Promise<TopicAnalysis | null> {
+  const now = deps.now ?? Date.now, poll = deps.pollMs ?? 1500, deadline = Date.now() + (deps.waitMs ?? 25_000)
+  while (Date.now() < deadline) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return hit.payload; await sleep(poll) }
+  return deps.store.get<TopicAnalysis>(key, now()).then(h => h?.payload ?? null)
+}
+
+async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicResult> {
   const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta, cap = deps.cap ?? dailyCap()
   const topic = req.topic.trim().replace(/\s+/g, ' ')
   const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
   const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
-  const used = () => deps.store.unitsSince(startOfUtcDay(now()))
+  const used = () => deps.store.unitsSince(quotaDayStart(now()))
+  const result = async (analysis: TopicAnalysis, cached: boolean, usedToday?: number): Promise<TopicResult> => ({ analysis, cached, usage: { usedToday: usedToday ?? await used(), cap, persistent: deps.store.persistent } })
 
-  if (!req.refresh) {
-    const hit = await deps.store.get<TopicAnalysis>(key, now())
-    if (hit) return { analysis: hit.payload, cached: true, usage: { usedToday: await used(), cap, persistent: deps.store.persistent } }
-  }
+  if (!req.refresh) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return result(hit.payload, true) }
   if (req.cacheOnly) return { analysis: null, cached: false, usage: { usedToday: await used(), cap, persistent: deps.store.persistent } }
-  const before = await used()
-  if (before + UNITS.topic > cap) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${before} de ${cap} unidades usadas hoy. Vuelve mañana o repite búsquedas ya guardadas (son gratis).`, before, cap)
 
-  const common = { query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25 }
-  // Every call that reached YouTube is recorded as its own usage line the moment it succeeds: a refresh (which overwrites the cached
-  // analysis) and a second search that fails half-way are both counted, so a retry can never look free.
-  const paid = async (input: Parameters<SearchFn>[0]) => { const r = await search(input); await recordUsage(deps.store, 'topic', UNITS.topic / 2, now()); return r }
-  const top = await paid({ ...common, order: 'viewCount', publishedWithinDays: 365 })
-  const recent = await paid({ ...common, order: 'date', publishedWithinDays: recentDays })
-  const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, recentDays, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
-  const analysis = analyzeTopic(samples, now())
-  // The quota is already spent: if the cache write fails, still return the analysis instead of throwing it away.
-  try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
-  return { analysis, cached: false, usage: { usedToday: before + UNITS.topic, cap, persistent: deps.store.persistent } }
+  // Exclusive lease across ALL server instances: two instances never run the same research at once. The loser waits for the winner's result.
+  if (!(await deps.store.lock(`topic:${key}`, LEASE_MS, now()))) {
+    const shared = await waitForResult(key, deps)
+    if (shared) return result(shared, true)
+    throw new InProgressError('Otra consulta idéntica sigue en marcha. Espera unos segundos y vuelve a intentarlo: no se ha gastado cuota.')
+  }
+  try {
+    if (!req.refresh) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return result(hit.payload, true) }   // the winner before us may have just finished
+    // A first search that succeeded before an earlier failure is reused: only the missing search is paid again.
+    const partialKey = cacheKey('partial', [topic, req.region, req.language, 'top'])
+    const partial = req.refresh ? null : await deps.store.get<Sample>(partialKey, now())
+    const need = partial ? UNITS.topic / 2 : UNITS.topic
+    // Reserve the budget BEFORE spending it (check and reservation are one atomic step), then settle with what was really spent.
+    const reservation = `v2|reserve|${key}|${now()}|${Math.random().toString(36).slice(2, 8)}`
+    const r = await deps.store.reserve(reservation, need, cap, RESERVE_TTL_MS, now())
+    if (!r.ok) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${r.used} de ${cap} unidades usadas o reservadas hoy. Vuelve mañana o repite búsquedas ya guardadas (son gratis).`, r.used, cap)
+    let spent = 0
+    try {
+      const common = { query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25 }
+      let top: Sample
+      if (partial) top = partial.payload
+      else { top = await search({ ...common, order: 'viewCount', publishedWithinDays: 365 }); spent += UNITS.topic / 2; await deps.store.put(partialKey, 'partial', top, 0, PARTIAL_TTL_MS, now()).catch(() => undefined) }
+      const recent = await search({ ...common, order: 'date', publishedWithinDays: recentDays }); spent += UNITS.topic / 2
+      const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, recentDays, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
+      const analysis = analyzeTopic(samples, now())
+      // The quota is already spent: if the cache write fails, still return the analysis instead of throwing it away.
+      try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()); await deps.store.delete(partialKey).catch(() => undefined) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
+      return result(analysis, false, r.used - need + spent)
+    } finally {
+      // Whatever happened, what reached YouTube is counted; a reservation that spent nothing is released.
+      if (spent > 0) await deps.store.settle(reservation, spent, now()).catch(e => console.error('Could not settle quota reservation', e instanceof Error ? e.message : e))
+      else await deps.store.release(reservation).catch(() => undefined)
+    }
+  } finally { await deps.store.unlock(`topic:${key}`).catch(() => undefined) }
 }
 
 /**
  * Measures growth for an analysis already in the cache: one more search for the PREVIOUS window (same length, adjacent, newest first),
  * judged by the same relevance rules (~102 units). Without a cached analysis there is nothing to compare, so it refuses.
  */
-export function getGrowth(req: { topic: string; region: string | null; language: string | null; recentDays?: number }, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number; owner?: string }): Promise<TopicResult> {
+export function getGrowth(req: { topic: string; region: string | null; language: string | null; recentDays?: number }, deps: Deps & { owner?: string }): Promise<TopicResult> {
   const owner = deps.owner ?? 'anonymous'
   return serial(owner, async () => {
     const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta, cap = deps.cap ?? dailyCap()
@@ -78,14 +111,22 @@ export function getGrowth(req: { topic: string; region: string | null; language:
     const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
     const hit = await deps.store.get<TopicAnalysis>(key, now())
     if (!hit) throw new Error('Primero hay que analizar el tema: no hay ninguna ventana reciente con la que comparar.')
-    const usage = async () => ({ usedToday: await deps.store.unitsSince(startOfUtcDay(now())), cap, persistent: deps.store.persistent })
+    const usage = async (extra = 0) => ({ usedToday: (await deps.store.unitsSince(quotaDayStart(now()))) + extra, cap, persistent: deps.store.persistent })
     if (hit.payload.growth?.state === 'calculable' || hit.payload.growth?.previous) return { analysis: hit.payload, cached: true, usage: await usage() }
-    const before = await deps.store.unitsSince(startOfUtcDay(now()))
-    if (before + UNITS.search > cap) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${before} de ${cap} unidades usadas hoy.`, before, cap)
-    const previous = await search({ query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25, order: 'date', publishedWithinDays: recentDays * 2, publishedBeforeDays: recentDays })
-    await recordUsage(deps.store, 'growth', UNITS.search, now())
-    const analysis = applyGrowth(hit.payload, previous, now())
-    try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache growth', e instanceof Error ? e.message : e) }
-    return { analysis, cached: false, usage: { usedToday: before + UNITS.search, cap, persistent: deps.store.persistent } }
+    const lockKey = `growth:${key}`
+    if (!(await deps.store.lock(lockKey, LEASE_MS, now()))) throw new InProgressError('Otra medición del crecimiento de este tema sigue en marcha. Vuelve a intentarlo en unos segundos: no se ha gastado cuota.')
+    try {
+      const reservation = `v2|reserve|growth|${key}|${now()}|${Math.random().toString(36).slice(2, 8)}`
+      const r = await deps.store.reserve(reservation, UNITS.search, cap, RESERVE_TTL_MS, now())
+      if (!r.ok) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${r.used} de ${cap} unidades usadas o reservadas hoy.`, r.used, cap)
+      let spent = 0
+      try {
+        const previous = await search({ query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25, order: 'date', publishedWithinDays: recentDays * 2, publishedBeforeDays: recentDays })
+        spent = UNITS.search
+        const analysis = applyGrowth(hit.payload, previous, now())
+        try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache growth', e instanceof Error ? e.message : e) }
+        return { analysis, cached: false, usage: await usage() }
+      } finally { if (spent > 0) await deps.store.settle(reservation, spent, now()).catch(() => undefined); else await deps.store.release(reservation).catch(() => undefined) }
+    } finally { await deps.store.unlock(lockKey).catch(() => undefined) }
   })
 }

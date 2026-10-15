@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { youtubeConfigured, YouTubeApiError } from '@/lib/providers/youtube-data'
 import { openStore } from '@/lib/research/cache'
-import { BudgetError, getGrowth, getTopicAnalysis } from '@/lib/research/sample'
+import { BudgetError, InProgressError, getGrowth, getTopicAnalysis } from '@/lib/research/sample'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +29,7 @@ export async function GET(request: Request) {
     const result = await getTopicAnalysis({ topic, region, language: lang, recentDays: Number.isFinite(days) && days > 0 ? days : undefined, refresh: p.get('refresh') === '1', cacheOnly: p.get('cacheOnly') === '1' }, { store, owner: user.id })
     return NextResponse.json({ configured: true, ...result }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
+    if (error instanceof InProgressError) return NextResponse.json({ error: error.message, retry: true, configured: true }, { status: 409 })
     if (error instanceof BudgetError) return NextResponse.json({ error: error.message, budget: { used: error.used, cap: error.cap }, configured: true }, { status: 429 })
     console.error('Topic analysis failure', { status: error instanceof YouTubeApiError ? error.status : null, details: error instanceof Error ? error.message : 'unknown' })
     return NextResponse.json({ error: error instanceof YouTubeApiError ? error.message : 'No se pudo analizar el tema.', configured: true }, { status: 502 })

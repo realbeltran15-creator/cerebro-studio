@@ -16,3 +16,27 @@ chmod 644 "$DIR"/*.sql
 run "$P -d postgres -c 'create database t'"
 run "cd $DIR && $P -d t -f migrations_check.sql" | tee "$DIR/out.txt"
 grep -q "ALL MIGRATION CHECKS PASSED" "$DIR/out.txt"
+
+# Real concurrency: 8 simultaneous database sessions of the SAME user race for the same budget and the same lease.
+# The advisory lock must let exactly floor(cap / units) reservations through and exactly one session win the lease.
+run "$P -d postgres -c 'create database r'"
+cat > "$DIR/race_setup.sql" <<'SQL'
+create schema auth;
+create table auth.users (id uuid primary key);
+create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+grant usage on schema auth to anon, authenticated; grant execute on function auth.uid() to anon, authenticated;
+grant usage on schema public to anon, authenticated;
+alter default privileges in schema public grant all on tables to anon, authenticated;
+insert into auth.users values ('00000000-0000-0000-0000-00000000000a');
+\i 20261013120000_research_cache.sql
+SQL
+chmod 644 "$DIR/race_setup.sql"
+run "cd $DIR && $P -d r -f race_setup.sql"
+for i in 1 2 3 4 5 6 7 8; do
+  run "$P -d r -At -c \"set role authenticated; set request.jwt.claim.sub='00000000-0000-0000-0000-00000000000a'; select 'R:' || (public.research_reserve('race|$i', 102, 300, 600)->>'ok'); select 'L:' || public.research_lock('race-lease', 60)\"" >> "$DIR/race.txt" &
+done
+wait
+RESERVED=$(grep -c '^R:true' "$DIR/race.txt" || true); LEASES=$(grep -c '^L:true' "$DIR/race.txt" || true)
+echo "race: reservations accepted=$RESERVED (expected 2 for cap 300 / 102 units), leases won=$LEASES (expected 1)"
+[ "$RESERVED" = "2" ] && [ "$LEASES" = "1" ]
+echo "CONCURRENCY CHECK PASSED"
