@@ -724,3 +724,17 @@ describe('structural fixes: clean samples, one fetch per topic, honest counters,
     expect(isFresh({ fetchedAt: 'garbage' }, NOW)).toBe(false)
   })
 })
+
+describe('language filter: undeclared language is explicit, not silently fatal', () => {
+  const de = { ...EMPTY_FILTERS, languages: ['de'] }
+  const seen = (o: O) => ({ ...vid(o), regions: ['DE'] }) as SeenVideo
+  it('keeps videos with no declared language by default, and drops them when asked', () => {
+    const vids = [seen({ lang: 'de' }), seen({ lang: 'en' }), seen({ lang: null })]
+    expect(filterVideos(vids, de).map(v => v.declaredLanguage)).toEqual(['de', null])
+    expect(filterVideos(vids, { ...de, includeUndeclaredLanguage: false }).map(v => v.declaredLanguage)).toEqual(['de'])
+  })
+  it('stored filters keep the choice and default to including', () => {
+    expect(sanitizeFilters({}).includeUndeclaredLanguage).toBe(true)
+    expect(sanitizeFilters({ includeUndeclaredLanguage: false }).includeUndeclaredLanguage).toBe(false)
+  })
+})

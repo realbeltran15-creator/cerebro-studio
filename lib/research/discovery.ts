@@ -8,13 +8,6 @@ import { recurringTerms } from '@/lib/radar'
 
 export type VideoFormat = 'short' | 'brief' | 'medium' | 'long'
 
-export const FORMATS: Array<{ id: VideoFormat; label: string; note: string }> = [
-  { id: 'short', label: 'Shorts (hasta 60 s)', note: 'Calculado por duración: la API no indica si un vídeo es un Short.' },
-  { id: 'brief', label: 'Cortos (1–4 min)', note: '' },
-  { id: 'medium', label: 'Medios (4–20 min)', note: '' },
-  { id: 'long', label: 'Largos (más de 20 min)', note: '' },
-]
-
 export function formatOf(seconds: number | null): VideoFormat | null {
   if (seconds === null) return null
   if (seconds <= 60) return 'short'
@@ -51,45 +44,15 @@ export type SortKey = 'api' | 'views' | 'viewsPerDay' | 'ratio' | 'engagement' |
 
 export const SORTS: Array<[SortKey, string]> = [['api', 'Orden de YouTube'], ['views', 'Más vistas'], ['viewsPerDay', 'Más vistas por día'], ['ratio', 'Vistas ≫ suscriptores (canal pequeño)'], ['engagement', 'Más interacción'], ['newest', 'Más recientes']]
 
-export type ResultFilters = {
-  format: VideoFormat | ''
-  /** Only videos whose uploader declared this language. Videos with no declared language are kept out when set. */
-  language: string
-  minViews: number | null
-  maxSubscribers: number | null
-  /** Minimum views ÷ subscribers of the channel. */
-  minRatio: number | null
-  /** Hide results published longer ago than this many days. */
-  maxAgeDays: number | null
-  sort: SortKey
-}
-
-export const NO_FILTERS: ResultFilters = { format: '', language: '', minViews: null, maxSubscribers: null, minRatio: null, maxAgeDays: null, sort: 'api' }
-
-export function activeFilterCount(f: ResultFilters) {
-  return [f.format, f.language, f.minViews, f.maxSubscribers, f.minRatio, f.maxAgeDays].filter(v => v !== '' && v !== null).length + (f.sort !== 'api' ? 1 : 0)
-}
-
-export function applyFilters(results: YouTubeVideoResult[], f: ResultFilters, now = Date.now()): YouTubeVideoResult[] {
-  const kept = results.filter(v => {
-    if (f.format && formatOf(v.observed.durationSeconds) !== f.format) return false
-    if (f.language && v.declaredLanguage !== f.language) return false
-    if (f.minViews !== null && (v.observed.views ?? -1) < f.minViews) return false
-    if (f.maxSubscribers !== null && (v.observed.channelSubscribers === null || v.observed.channelSubscribers > f.maxSubscribers)) return false
-    if (f.minRatio !== null && (v.calculated.viewsToSubscribers ?? -1) < f.minRatio) return false
-    if (f.maxAgeDays !== null) {
-      const t = Date.parse(v.publishedAt)
-      if (!Number.isFinite(t) || now - t > f.maxAgeDays * 86400000) return false
-    }
-    return true
-  })
+/** Sorts a copy of the list by one metric (missing values last). Filtering lives in the main filter panel (filters.ts), never here. */
+export function sortVideos(results: YouTubeVideoResult[], sort: SortKey): YouTubeVideoResult[] {
   const num = (n: number | null) => n ?? -Infinity
   const key: Partial<Record<SortKey, (v: YouTubeVideoResult) => number>> = {
     views: v => num(v.observed.views), viewsPerDay: v => num(v.calculated.viewsPerDay), ratio: v => num(v.calculated.viewsToSubscribers),
     engagement: v => num(v.calculated.engagementRate), newest: v => (Number.isFinite(Date.parse(v.publishedAt)) ? Date.parse(v.publishedAt) : -Infinity),
   }
-  const by = key[f.sort]
-  return by ? [...kept].sort((a, b) => by(b) - by(a)) : kept
+  const by = key[sort]
+  return by ? [...results].sort((a, b) => by(b) - by(a)) : results
 }
 
 /**

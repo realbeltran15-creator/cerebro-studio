@@ -83,6 +83,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
           {notice && <p className="muted small" role="status">{notice}</p>}
         </div>}
         {has('languages') && <MultiSelect label="Idiomas" options={LANGUAGES} value={f.languages} onChange={languages => set({ languages })} logic={f.logic.languages} onLogic={logic('languages')} allEnabled={false} explanation={GROUP_SEMANTICS.languages.explanation} />}
+        {has('languages') && f.languages.length > 0 && <label className="msOpt"><input type="checkbox" checked={f.includeUndeclaredLanguage} onChange={e => set({ includeUndeclaredLanguage: e.target.checked })} /> Incluir vídeos sin idioma declarado (YouTube solo lo informa en una parte de los vídeos)</label>}
       </div><p className="muted small">País = donde YouTube muestra el vídeo, no donde viven los espectadores. Idioma = el que declaró quien subió el vídeo (a veces falta).</p></fieldset>}
 
       {(tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international') && <fieldset className="filterStep"><legend>2 · Qué quieres buscar</legend>

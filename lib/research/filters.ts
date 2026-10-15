@@ -39,6 +39,8 @@ export const VERDICT_OPTIONS: Array<[string, string]> = [['oportunidad', 'Nicho 
 
 export type ResearchFilters = {
   countries: string[]; languages: string[]; niches: string[]; formats: string[]; contentTypes: string[]
+  /** YouTube reports a language for only a minority of videos. true (default): a video with no declared language is kept by the language filter; false: only videos that declare a chosen language. */
+  includeUndeclaredLanguage: boolean
   analysis: AnalysisFilters
   metrics: MetricFilters
   /** Only content published in the last N days (null = no limit). */
@@ -48,7 +50,7 @@ export type ResearchFilters = {
 }
 
 export const EMPTY_FILTERS: ResearchFilters = {
-  countries: [], languages: [], niches: [], formats: [], contentTypes: [], analysis: NO_ANALYSIS, metrics: NO_METRICS, periodDays: null,
+  countries: [], languages: [], niches: [], formats: [], contentTypes: [], includeUndeclaredLanguage: true, analysis: NO_ANALYSIS, metrics: NO_METRICS, periodDays: null,
   rpm: { min: null, max: null, includeUnknown: false },
   logic: { countries: 'any', languages: 'any', niches: 'any', formats: 'any', contentTypes: 'any' },
 }
@@ -127,7 +129,7 @@ export function mergeRegions(charts: Array<{ region: string; videos: YouTubeVide
 export function videoMatches(v: SeenVideo, f: ResearchFilters, now = Date.now()): boolean {
   const L = (g: GroupId) => effectiveLogic(g, f.logic[g], 'video').logic
   if (!hit(f.countries, v.regions, L('countries'))) return false
-  if (f.languages.length && !(v.declaredLanguage && f.languages.includes(v.declaredLanguage))) return false
+  if (f.languages.length && !(v.declaredLanguage ? f.languages.includes(v.declaredLanguage) : f.includeUndeclaredLanguage)) return false
   if (f.formats.length && !f.formats.includes(inferFormat(v).format)) return false
   const niches = nichesOf(v).map(n => n.niche)
   if (!hit(f.niches, niches, L('niches'))) return false
@@ -206,7 +208,7 @@ export function sanitizeFilters(raw: unknown): ResearchFilters {
   const rpm = (r.rpm && typeof r.rpm === 'object' ? r.rpm : {}) as Record<string, unknown>
   const logic = (r.logic && typeof r.logic === 'object' ? r.logic : {}) as Record<string, unknown>
   return {
-    countries: strs(r.countries), languages: strs(r.languages), niches: strs(r.niches), formats: strs(r.formats), contentTypes: strs(r.contentTypes), metrics: sanitizeMetrics(r.metrics), analysis: sanitizeAnalysis(r.analysis),
+    countries: strs(r.countries), languages: strs(r.languages), niches: strs(r.niches), formats: strs(r.formats), contentTypes: strs(r.contentTypes), includeUndeclaredLanguage: r.includeUndeclaredLanguage !== false, metrics: sanitizeMetrics(r.metrics), analysis: sanitizeAnalysis(r.analysis),
     periodDays: optNum(r.periodDays), rpm: { min: optNum(rpm.min), max: optNum(rpm.max), includeUnknown: rpm.includeUnknown === true },
     logic: { countries: lg(logic.countries), languages: lg(logic.languages), niches: lg(logic.niches), formats: lg(logic.formats), contentTypes: lg(logic.contentTypes) },
   }
@@ -279,6 +281,7 @@ export function describeActive(f: ResearchFilters, names: { country: (c: string)
     for (const v of f[key]) chips.push({ id: `${key}:${v}`, group, label: name(v), remove: g => ({ ...g, [key]: g[key].filter(x => x !== v) }) })
   }
   list('countries', 'País', names.country); list('languages', 'Idioma', names.language); list('niches', 'Nicho', names.niche); list('formats', 'Formato', names.format); list('contentTypes', 'Tipo', names.contentType)
+  if (f.languages.length && !f.includeUndeclaredLanguage) chips.push({ id: 'lang-strict', group: 'Idioma', label: 'solo vídeos que lo declaran', remove: g => ({ ...g, includeUndeclaredLanguage: true }) })
   if (f.periodDays !== null) chips.push({ id: 'period', group: 'Periodo', label: `últimos ${f.periodDays} días`, remove: g => ({ ...g, periodDays: null }) })
   if (f.rpm.min !== null || f.rpm.max !== null) chips.push({ id: 'rpm', group: 'RPM estimado', label: `${f.rpm.min ?? '0'}–${f.rpm.max ?? '∞'} USD`, remove: g => ({ ...g, rpm: { ...g.rpm, min: null, max: null } }) })
   for (const v of f.metrics.categories) chips.push({ id: `cat:${v}`, group: 'Categoría', label: names.category(v), remove: g => ({ ...g, metrics: { ...g.metrics, categories: g.metrics.categories.filter(x => x !== v) } }) })
