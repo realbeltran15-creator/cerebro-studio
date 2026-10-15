@@ -779,13 +779,15 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 
   // Guided research: 20 per market in six markets, as a budgeted, resumable queue, with a report.
   await page.getByRole('button', { name: 'Restablecer filtros' }).click()
-  state.used = 0; await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css }); await tab('Nichos').click()
+  state.used = 0; await page.evaluate(() => localStorage.removeItem('cerebro.research.ledger')); await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css }); await tab('Nichos').click()
   for (const [q, o] of [['Estados', /Estados Unidos/], ['Alemania', /Alemania/], ['Australia', /Australia/], ['Reino', /Reino Unido/], ['Canad', /Canadá/], ['Suiza', /Suiza/]]) await pick('Países', q, o)
   check('research: when the button would search, a second button applies the filters without searching', (await page.getByRole('button', { name: 'Solo aplicar filtros (sin buscar)' }).count()) === 1)
   const beforeApply = requests.length
   await page.getByRole('button', { name: 'Solo aplicar filtros (sin buscar)' }).click()
   await page.getByText(/Aplicados · 6 activos/).waitFor({ timeout: 20000 })
   check('research: applying only costs nothing', requests.length === beforeApply)
+  // The browser keeps its own tally of what it spent (searches above cost 306 units): start the guided test from a fresh day.
+  await page.evaluate(() => localStorage.removeItem('cerebro.research.ledger')); await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css }); await tab('Nichos').click()
   const guided = page.getByRole('region', { name: 'Investigación guiada' })
   await guided.getByRole('button', { name: /Preparar plan \(120 análisis\)/ }).click()
   await guided.getByText(/hacen falta/).waitFor({ timeout: 10000 })
@@ -820,8 +822,8 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const pend = async () => Number((await guided2.getByText(/\d+ análisis pendientes/).first().innerText()).match(/(\d+) análisis pendientes/)[1])
   const pending1 = await pend()
   check('research: after a reload the guided plan and its finished analyses are still there', rows2.length === 6 && rows2.reduce((t, r) => t + Number(r.split('\t')[2]), 0) === doneNow && pending1 === 120 - doneNow, { rows2, pending1, doneNow })
-  state.used = 0; await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css }); await tab('Nichos').click()
-  await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/Hoy has usado 0 de/).waitFor({ timeout: 10000 })
+  state.used = 0; await page.evaluate(() => localStorage.removeItem('cerebro.research.ledger')); await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css }); await tab('Nichos').click()
+  await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/Hoy has usado 0 de/).waitFor({ timeout: 10000 }).catch(async e => { console.log('DEBUG', await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/Hoy has usado/).allInnerTexts(), await page.evaluate(() => localStorage.getItem('cerebro.research.ledger'))); throw e })
   await guided2.getByRole('checkbox', { name: /gastará/ }).check()
   await guided2.getByRole('button', { name: /Ejecutar lo que cabe hoy \(29 análisis/ }).click()
   await guided2.getByText(new RegExp(`${pending1 - 29} análisis pendientes`)).waitFor({ timeout: 90000 })

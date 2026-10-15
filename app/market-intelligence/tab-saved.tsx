@@ -35,6 +35,7 @@ export function SavedTab({ items, onChanged }: { items: Opportunity[]; onChanged
       <h3>{item.title}</h3>
       <p>{item.region || 'Mercado sin definir'} · {item.language || 'Idioma sin definir'} · {item.status}</p>
       <p>Fuente: {item.source_platform}{item.query ? ` · ${item.query}` : ''}</p>
+      <SavedDetail item={item} />
     </article>)}</div>
     <h3 className="sectionTitle">Registro manual</h3>
     <form className="marketForm" onSubmit={add}>
@@ -46,7 +47,25 @@ export function SavedTab({ items, onChanged }: { items: Opportunity[]; onChanged
     </form>
     {error && <p className="error" role="alert">{error}</p>}
     <h3 className="sectionTitle">Análisis de esta sesión ({list.length})</h3>
-    <p className="muted small">Los análisis de pago se conservan en esta pestaña (y en la caché del servidor una semana) para no repetirlos. Borrarlos aquí no devuelve cuota.</p>
+    <p className="muted small">Los análisis de pago se conservan en este navegador (y en la caché del servidor una semana) para no repetirlos. Borrarlos aquí no devuelve cuota.</p>
     <button type="button" className="ghost" disabled={list.length === 0} onClick={clearAnalyses}>Olvidar análisis de esta sesión</button>
   </section>
+}
+
+type Snap = { fetchedAt?: string; recentDays?: number; units?: number; videos?: Array<{ videoId: string; url: string; title: string; channelTitle: string; thumbnailUrl: string | null; views: number | null }> }
+type Calc = { verdict?: string; confidence?: string; indices?: { demand: number; supply: number; competition: number; growth: number; opportunity: number } }
+
+/** What was saved with the opportunity: verdict, indices, confidence, date and the example videos with their official thumbnails. */
+function SavedDetail({ item }: { item: Opportunity }) {
+  const snap = ((item.observed_metrics as { snapshot?: Snap } | null)?.snapshot) ?? null
+  const calc = (item.calculated_metrics ?? {}) as Calc
+  if (!snap && !calc.indices) return null
+  return <div className="small">
+    {calc.indices && <p className="muted">Demanda {calc.indices.demand} · Oferta {calc.indices.supply} · Competencia {calc.indices.competition} · Crecimiento {calc.indices.growth} · Oportunidad {calc.indices.opportunity} (0–100){calc.verdict ? ` · ${calc.verdict}` : ''}{calc.confidence ? ` · confianza ${calc.confidence}` : ''}</p>}
+    {snap?.fetchedAt && <p className="muted">Consultado el {new Date(snap.fetchedAt).toLocaleDateString('es-ES')}{snap.recentDays ? ` · ventana de recientes ${snap.recentDays} días` : ''}{snap.units ? ` · ${snap.units} unidades de cuota` : ''}</p>}
+    {snap?.videos && snap.videos.length > 0 && <div className="recoGrid">{snap.videos.slice(0, 4).map(v => <a key={v.videoId} href={v.url} target="_blank" rel="noreferrer" className="videoTile">
+      {v.thumbnailUrl && /* eslint-disable-next-line @next/next/no-img-element */ <img className="thumb" src={v.thumbnailUrl} alt={`Miniatura de ${v.title}`} loading="lazy" />}
+      <span>{v.title}</span><span className="muted">{v.channelTitle}</span>
+    </a>)}</div>}
+  </div>
 }

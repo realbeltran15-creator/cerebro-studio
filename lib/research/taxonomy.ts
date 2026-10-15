@@ -11,7 +11,7 @@ export type Niche = { id: string; label: string; /** YouTube category ids that p
 export const NICHES: Niche[] = [
   { id: 'tecnologia', label: 'Tecnología', categories: [28], words: ['tecnología', 'tecnologia', 'tech', 'technology', 'gadget', 'smartphone', 'iphone', 'android', 'software', 'hardware', 'pc ', 'laptop', 'programación', 'programming', 'coding', 'ciberseguridad', 'cybersecurity'], seeds: ['mejores gadgets', 'tutorial de programación', 'ciberseguridad para principiantes'] },
   { id: 'ia', label: 'Inteligencia artificial', categories: [], words: ['inteligencia artificial', 'artificial intelligence', ' ia ', ' ai ', 'chatgpt', 'gemini', 'claude', 'openai', 'machine learning', 'aprendizaje automático', 'midjourney', 'künstliche intelligenz', 'llm'], seeds: ['herramientas de inteligencia artificial', 'automatizar con ia', 'ia para negocios'] },
-  { id: 'finanzas', label: 'Finanzas e inversión', categories: [], words: ['inversión', 'inversion', 'invertir', 'invest', 'bolsa', 'stock', 'acciones', 'etf', 'cripto', 'crypto', 'bitcoin', 'ahorro', 'savings', 'dinero', 'finanzas', 'finance', 'hipoteca', 'jubilación', 'aktien', 'geld'], seeds: ['cómo invertir desde cero', 'ahorrar dinero', 'finanzas personales'] },
+  { id: 'finanzas', label: 'Finanzas e inversión', categories: [], words: ['inversión', 'inversion', 'invertir', 'investing', 'investment', 'investor', 'bolsa', 'stocks', 'stock market', 'acciones', 'etf', 'cripto', 'crypto', 'bitcoin', 'ahorro', 'savings', 'dinero', 'finanzas', 'finance', 'hipoteca', 'jubilación', 'aktien', 'geld'], seeds: ['cómo invertir desde cero', 'ahorrar dinero', 'finanzas personales'] },
   { id: 'negocios', label: 'Negocios y emprendimiento', categories: [], words: ['negocio', 'negocios', 'business', 'emprender', 'emprendimiento', 'startup', 'ecommerce', 'dropshipping', 'marketing', 'ventas', 'sales', 'freelance', 'ingresos pasivos', 'side hustle'], seeds: ['ideas de negocio', 'marketing digital', 'ingresos pasivos'] },
   { id: 'educacion', label: 'Educación y ciencia', categories: [27, 28], words: ['ciencia', 'science', 'física', 'physics', 'química', 'biología', 'biology', 'matemáticas', 'math', 'explicado', 'explained', 'cómo funciona', 'how it works', 'universo', 'espacio', 'space', 'wissenschaft'], seeds: ['ciencia explicada', 'cómo funciona', 'curiosidades científicas'] },
   { id: 'historia', label: 'Historia y documentales', categories: [], words: ['historia', 'history', 'imperio', 'empire', 'guerra', 'war', 'medieval', 'antigua', 'ancient', 'documental', 'documentary', 'geschichte', 'histoire'], seeds: ['historia medieval', 'imperios olvidados', 'documental histórico'] },
@@ -23,10 +23,10 @@ export const NICHES: Niche[] = [
   { id: 'entretenimiento', label: 'Entretenimiento y humor', categories: [23, 24, 1, 22], words: ['humor', 'comedia', 'comedy', 'sketch', 'reacción', 'reaction', 'broma', 'prank', 'meme', 'challenge', 'reto', 'película', 'movie', 'serie', 'series'], seeds: ['sketch de comedia', 'reacciones', 'historias graciosas'] },
   { id: 'musica', label: 'Música y ambiente', categories: [10], words: ['música', 'music', 'canción', 'song', 'lofi', 'lo-fi', 'chill', 'relajante', 'relaxing', 'ambient', 'ambiental', 'piano', 'guitarra', 'guitar', 'beats', 'playlist', 'study music', 'sleep music'], seeds: ['música para estudiar', 'sonidos ambientales', 'lofi para dormir'] },
   { id: 'noticias', label: 'Noticias y política', categories: [25], words: ['noticias', 'news', 'política', 'politics', 'elecciones', 'election', 'gobierno', 'government', 'actualidad', 'nachrichten'], seeds: ['análisis de actualidad', 'política internacional', 'economía explicada'] },
-  { id: 'hogar', label: 'Hogar y bricolaje', categories: [26], words: ['bricolaje', 'diy', 'hazlo tú mismo', 'reforma', 'renovation', 'decoración', 'decor', 'jardín', 'garden', 'huerto', 'carpintería', 'woodworking', 'herramientas', 'tools'], seeds: ['reformas baratas', 'huerto en casa', 'carpintería para principiantes'] },
+  { id: 'hogar', label: 'Hogar y bricolaje', categories: [26], words: ['bricolaje', 'diy', 'hazlo tú mismo', 'reforma', 'renovation', 'decoración', 'decor', 'jardín', 'garden', 'huerto', 'carpintería', 'woodworking', 'herramientas manuales', 'power tools'], seeds: ['reformas baratas', 'huerto en casa', 'carpintería para principiantes'] },
   { id: 'motor', label: 'Motor y vehículos', categories: [2], words: ['coche', 'coches', 'car', 'cars', 'moto', 'motorcycle', 'motor', 'tesla', 'eléctrico', 'electric vehicle', 'ev ', 'auto', 'mecánica', 'mechanic'], seeds: ['coches eléctricos', 'mecánica básica', 'reseñas de coches'] },
   { id: 'animales', label: 'Animales y mascotas', categories: [15], words: ['perro', 'dog', 'gato', 'cat', 'mascota', 'pet', 'animal', 'animales', 'animals', 'cachorro', 'puppy', 'kitten', 'tier'], seeds: ['adiestramiento de perros', 'cuidado de gatos', 'animales salvajes'] },
-  { id: 'belleza', label: 'Belleza y moda', categories: [], words: ['maquillaje', 'makeup', 'belleza', 'beauty', 'moda', 'fashion', 'skincare', 'peluquería', 'hair', 'outfit', 'estilo', 'style'], seeds: ['rutina skincare', 'moda minimalista', 'peinados fáciles'] },
+  { id: 'belleza', label: 'Belleza y moda', categories: [], words: ['maquillaje', 'makeup', 'belleza', 'beauty', 'moda', 'fashion', 'skincare', 'peluquería', 'hair', 'outfit'], seeds: ['rutina skincare', 'moda minimalista', 'peinados fáciles'] },
   { id: 'misterio', label: 'Misterio y true crime', categories: [], words: ['misterio', 'mystery', 'true crime', 'crimen', 'crime', 'asesino', 'killer', 'paranormal', 'conspiración', 'conspiracy', 'desaparecido', 'unsolved', 'sin resolver'], seeds: ['casos sin resolver', 'misterios históricos', 'crímenes reales'] },
   { id: 'desarrollo', label: 'Desarrollo personal', categories: [], words: ['productividad', 'productivity', 'hábitos', 'habits', 'motivación', 'motivation', 'mentalidad', 'mindset', 'disciplina', 'discipline', 'estoicismo', 'stoic', 'autoayuda', 'self improvement'], seeds: ['hábitos que cambian la vida', 'estoicismo práctico', 'productividad sin estrés'] },
   { id: 'idiomas', label: 'Idiomas', categories: [27], words: ['aprender inglés', 'learn english', 'idioma', 'idiomas', 'language learning', 'vocabulario', 'vocabulary', 'gramática', 'grammar', 'pronunciación', 'pronunciation', 'deutsch lernen', 'apprendre'], seeds: ['inglés para viajar', 'vocabulario cotidiano', 'alemán desde cero'] },
@@ -36,6 +36,15 @@ export const nicheLabel = (id: string) => NICHES.find(n => n.id === id)?.label ?
 
 const strip = (s: string) => ` ${s.toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}#+\- ]+/gu, ' ').replace(/\s+/g, ' ')} `
 
+/**
+ * Whole-word match. Words of 5+ letters also match as a prefix (inversión → inversiones, Aktien → Aktienmarkt), but never inside another
+ * word: "invest" no longer matches "investigation", nor "tier" "frontier". Short words must be complete.
+ */
+export function wordHit(text: string, w: string): boolean {
+  const t = w.trim()
+  return t.length >= 5 ? text.includes(` ${t}`) : text.includes(` ${t} `)
+}
+
 export type NicheMatch = { niche: string; reason: string }
 
 /** A video can belong to several niches (multi-label): "tecnología" and "inteligencia artificial" are not exclusive. */
@@ -43,7 +52,7 @@ export function nichesOf(video: Pick<YouTubeVideoResult, 'title' | 'tags' | 'cat
   const text = strip([video.title, ...(video.tags ?? [])].join(' '))
   const out: NicheMatch[] = []
   for (const n of NICHES) {
-    const hit = n.words.find(w => text.includes(w.startsWith(' ') || w.endsWith(' ') ? w : ` ${w}`) || (w.length >= 5 && text.includes(w)))
+    const hit = n.words.find(w => wordHit(text, w))
     if (hit) { out.push({ niche: n.id, reason: `palabra «${hit.trim()}» en título o etiquetas` }); continue }
     if (video.categoryId && n.categories.includes(Number(video.categoryId))) out.push({ niche: n.id, reason: `categoría de YouTube ${video.categoryId}` })
   }
@@ -62,8 +71,8 @@ export type InferredFormat = { format: 'short' | 'brief' | 'medium' | 'long' | '
  * and a 60–180 s video only counts when it says #shorts. This is an inference, and the screen says so.
  */
 export function inferFormat(v: Pick<YouTubeVideoResult, 'title' | 'tags' | 'observed' | 'live'>): InferredFormat {
-  if (v.live === 'live' || v.live === 'upcoming') return { format: 'live', confidence: 'alta', reason: 'YouTube lo marca como directo' }
-  if (v.live === 'was_live') return { format: 'live', confidence: 'media', reason: 'tiene datos de retransmisión en directo' }
+  // Only a stream that is on air (or scheduled) is a "directo". An ended stream or a premiere keeps its normal format, by duration.
+  if (v.live === 'live' || v.live === 'upcoming') return { format: 'live', confidence: 'alta', reason: v.live === 'live' ? 'YouTube lo marca como directo en emisión' : 'YouTube lo marca como directo programado' }
   const s = v.observed.durationSeconds
   if (s === null) return { format: 'unknown', confidence: 'baja', reason: 'sin duración' }
   const tagged = /(^|\s)#shorts?\b/i.test(v.title) || (v.tags ?? []).some(t => /^#?shorts?$/i.test(t))
@@ -86,8 +95,9 @@ export const CONTENT_TYPES: ContentType[] = [
 
 export function contentTypesOf(v: Pick<YouTubeVideoResult, 'title' | 'tags' | 'live'>): Array<{ id: string; reason: string }> {
   const text = strip([v.title, ...(v.tags ?? [])].join(' '))
-  const out = CONTENT_TYPES.flatMap(c => { const w = c.words.find(x => text.includes(x.startsWith(' ') || x.endsWith(' ') ? x : ` ${x}`) || text.includes(x)); return w ? [{ id: c.id, reason: `«${w.trim()}»` }] : [] })
-  if (v.live && v.live !== null) out.push({ id: 'directo', reason: 'marcado como directo en YouTube' })
+  const out = CONTENT_TYPES.flatMap(c => { const w = c.words.find(x => wordHit(text, x)); return w ? [{ id: c.id, reason: `«${w.trim()}»` }] : [] })
+  if (v.live === 'live' || v.live === 'upcoming') out.push({ id: 'directo', reason: 'marcado como directo en YouTube' })
+  else if (v.live === 'was_live') out.push({ id: 'directo', reason: 'emisión en directo ya finalizada (o estreno)' })
   return out
 }
 

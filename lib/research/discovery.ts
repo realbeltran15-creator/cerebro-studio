@@ -98,9 +98,17 @@ export function applyFilters(results: YouTubeVideoResult[], f: ResultFilters, no
  */
 export const NEGLECTED = { maxSubscribers: 20_000, minRatio: 3, minViews: 5_000 } as const
 
+/** Label, VEVO and auto-generated "- Topic" channels: their subscriber counts say nothing about the size of the audience behind a video. */
+const LABEL_CHANNEL = /vevo|\s-\s*topic$|\brecords?\b|\brecordings\b|\bmusic group\b|\bentertainment\b|\blabel\b|\bofficial\b/i
+export const isLabelChannel = (v: Pick<YouTubeVideoResult, 'channelTitle'>) => LABEL_CHANNEL.test(v.channelTitle)
+/** More than this many views per subscriber means the subscriber figure does not describe the audience (label channel, reupload, external traffic). */
+export const MAX_PLAUSIBLE_RATIO = 500
+
 export function isNeglectedNiche(v: YouTubeVideoResult) {
   const subs = v.observed.channelSubscribers, views = v.observed.views, ratio = v.calculated.viewsToSubscribers
-  return subs !== null && views !== null && ratio !== null && subs <= NEGLECTED.maxSubscribers && views >= NEGLECTED.minViews && ratio >= NEGLECTED.minRatio
+  if (v.live === 'live' || v.live === 'upcoming') return false
+  if (isLabelChannel(v)) return false
+  return subs !== null && views !== null && ratio !== null && subs <= NEGLECTED.maxSubscribers && views >= NEGLECTED.minViews && ratio >= NEGLECTED.minRatio && ratio <= MAX_PLAUSIBLE_RATIO
 }
 
 export function neglectedNiches(results: YouTubeVideoResult[]) {

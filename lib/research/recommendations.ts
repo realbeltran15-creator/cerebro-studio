@@ -31,12 +31,16 @@ export type Pref = 'any' | 'short' | 'long' | 'small'
 const isShort = (v: RecoVideo) => v.format.format === 'short'
 const isLong = (v: RecoVideo) => ['brief', 'medium', 'long'].includes(v.format.format)
 
-/** Up to `n` representative videos of an analysis: best views per day first, different channels first, never one already shown. */
+const isLive = (v: RecoVideo) => v.format.format === 'live'
+
+/** Does the video belong in a section that asks for `pref`? Shorts/long sections are strict: a recommendation never shows a video of the wrong format. */
+const fits = (r: RecoVideo, pref: Pref) => pref === 'short' ? isShort(r) : pref === 'long' ? isLong(r) : true
+
+/** Up to `n` representative videos of an analysis: best views per day first, different channels first, never one already shown, never a live stream. */
 function pickVideos(a: TopicAnalysis, used: Set<string>, n: number, pref: Pref): RecoVideo[] {
   const market = marketLabel(a.region, a.language)
-  const pool = a.topVideos.filter(v => !used.has(v.videoId)).map(v => ({ v, r: toVideo(v, market, a.language) }))
-  const score = (x: { v: YouTubeVideoResult; r: RecoVideo }) => (pref === 'short' && isShort(x.r) ? 1e9 : pref === 'long' && isLong(x.r) ? 1e9 : pref === 'small' && (x.r.subscribers ?? Infinity) <= 20000 ? 1e9 : 0) + (x.v.calculated.viewsPerDay ?? 0)
-  pool.sort((x, y) => score(y) - score(x))
+  const pool = a.topVideos.filter(v => !used.has(v.videoId)).map(v => ({ v, r: toVideo(v, market, a.language) })).filter(x => !isLive(x.r) && fits(x.r, pref))
+  pool.sort((x, y) => (y.v.calculated.viewsPerDay ?? 0) - (x.v.calculated.viewsPerDay ?? 0))
   const out: RecoVideo[] = [], channels = new Set<string>()
   for (const x of pool) { if (out.length >= n) break; if (channels.has(x.v.channelId)) continue; channels.add(x.v.channelId); out.push(x.r) }
   for (const x of pool) { if (out.length >= n) break; if (!out.some(o => o.videoId === x.v.videoId)) out.push(x.r) }
@@ -72,7 +76,7 @@ export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts:
 
   // Specific videos (international, small channels) claim their videos first; niche cards then show other examples. The page order stays the requested one.
   // 6. International trends: real videos present in several countries' lists.
-  const intl: Reco[] = chartVideos.filter(v => v.regions.length >= 2 && !used.has(v.videoId)).sort((x, y) => y.regions.length - x.regions.length || (y.observed.views ?? 0) - (x.observed.views ?? 0)).slice(0, per).map(v => {
+  const intl: Reco[] = chartVideos.filter(v => v.regions.length >= 2 && !used.has(v.videoId) && v.live !== 'live' && v.live !== 'upcoming').sort((x, y) => y.regions.length - x.regions.length || (y.observed.views ?? 0) - (x.observed.views ?? 0)).slice(0, per).map(v => {
     used.add(v.videoId); return { kind: 'video' as const, key: `intl:${v.videoId}`, video: toVideo(v, v.regions.map(countryName).join(', '), v.declaredLanguage ?? null), reason: `Está a la vez en las listas oficiales de ${v.regions.map(countryName).join(', ')}.` }
   })
   const terms = crossRegionTerms(wanted.filter(r => input.charts[r]).map(r => ({ region: r, videos: input.charts[r] })))
@@ -85,7 +89,7 @@ export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts:
   const small: Reco[] = neglectedNiches([...pool.values()].filter(v => !used.has(v.videoId))).slice(0, per).map(v => {
     used.add(v.videoId); return { kind: 'video' as const, key: `small:${v.videoId}`, video: toVideo(v, (v as SeenVideo).regions?.map(countryName).join(', ') || 'análisis', v.declaredLanguage ?? null), reason: `${(v.observed.views ?? 0).toLocaleString('es-ES')} visualizaciones con ${(v.observed.channelSubscribers ?? 0).toLocaleString('es-ES')} suscriptores (${v.calculated.viewsToSubscribers}× más vistas que suscriptores). Por sí solo no prueba que el nicho esté desatendido.` }
   })
-  add('small', 'Oportunidades para canales pequeños', 'Vídeos de canales de hasta 20.000 suscriptores que superan con creces su tamaño.', small, 'Sin vídeos que cumplan los umbrales con los datos cargados.')
+  add('small', 'Oportunidades para canales pequeños', 'Vídeos de canales de hasta 20.000 suscriptores que superan con creces su tamaño. Se excluyen directos, canales de discográficas (VEVO, «- Topic», Records…) y ratios de más de 500 vistas por suscriptor, donde el dato de suscriptores no describe la audiencia.', small, 'Sin vídeos que cumplan los umbrales con los datos cargados.')
 
   // 1. Highest demand: analyses first, then the official charts grouped by niche (free data).
   const demandItems: Reco[] = top(analyses, a => a.indices.demand, a => `Demanda ${a.indices.demand}/100: ${a.reasons[0] ?? ''}`)
@@ -96,7 +100,7 @@ export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts:
     for (const [niche, vs] of [...byNiche.entries()].sort((a, b) => b[1].reduce((t, v) => t + (v.observed.views ?? 0), 0) - a[1].reduce((t, v) => t + (v.observed.views ?? 0), 0))) {
       if (demandItems.length >= per) break
       if (taken.has(nicheLabel(niche))) continue
-      const fresh = vs.filter(v => !used.has(v.videoId)).sort((x, y) => (y.observed.views ?? 0) - (x.observed.views ?? 0)).slice(0, vpn)
+      const fresh = vs.filter(v => !used.has(v.videoId) && v.live !== 'live' && v.live !== 'upcoming').sort((x, y) => (y.observed.views ?? 0) - (x.observed.views ?? 0)).slice(0, vpn)
       if (!fresh.length) continue
       fresh.forEach(v => used.add(v.videoId))
       const total = vs.reduce((t, v) => t + (v.observed.views ?? 0), 0)

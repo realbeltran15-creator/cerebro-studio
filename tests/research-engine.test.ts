@@ -519,7 +519,7 @@ describe('the report: complete, honest about what it does not know', () => {
     ...analyzeTopic({ ...samples(many(25, () => ({ views: 90000, days: 90, dur: 700, title: o.title ?? 'Inteligencia artificial para negocios' })), many(10, () => ({ views: 4000, days: 5, dur: 700, title: o.title ?? 'Inteligencia artificial para negocios' }))), region: o.region === undefined ? 'DE' : o.region, language: o.lang === undefined ? 'de' : o.lang, topic: o.title ?? 'KI Tools', recentDays: 30 }, NOW),
   })
   it('keeps every promised field per analysis and marks unknown ones as unknown', () => {
-    const md = reportMarkdown([a({ title: 'KI Tools' }), a({ region: 'CH', title: 'Mecánica de coches' })], { generatedAt: '2026-10-13T00:00:00Z' })
+    const md = reportMarkdown([a({ title: 'KI Tools: künstliche Intelligenz im Alltag' }), a({ region: 'CH', title: 'Mecánica de coches' })], { generatedAt: '2026-10-13T00:00:00Z' })
     for (const must of ['# Informe de investigación de nichos', '## Método y límites', 'Parámetros', 'Fecha de consulta', 'Evidencia', 'Confianza', 'Formato recomendado', 'Escenarios', 'Viabilidad (criterio editorial, no medido)', 'RPM ESTIMADO', 'No disponible con esta fuente', 'Google Trends no está conectado']) expect(md, must).toContain(must)
     expect(md).toMatch(/Suiza \(alemán\)/); expect(md).toMatch(/Referencia de RPM del país:\*\* desconocida/)
     expect(md).not.toMatch(/RPM verificado:/); expect(md).toMatch(/nada de lo de aquí es RPM verificado/)
@@ -642,5 +642,41 @@ describe('recommendations: real videos only, thumbnails from the API, no repeats
     const r = input([a1, a2], {}, { ...EMPTY_FILTERS, countries: ['DE'], analysis: { ...NO_ANALYSIS, minDemand: 0 } })
     const topics = r.sections[0].items.map(i => (i.kind === 'niche' ? i.topic : ''))
     expect(topics).toEqual([a2.topic])
+  })
+})
+
+describe('audit fixes: live streams, label channels, strict formats, niche words, quota ledger', () => {
+  it('only an on-air or scheduled stream is a "directo"; an ended stream keeps its format by duration', () => {
+    expect(inferFormat(vid({ dur: 5400, live: 'live' })).format).toBe('live')
+    expect(inferFormat(vid({ dur: 5400, live: 'upcoming' })).format).toBe('live')
+    expect(inferFormat(vid({ dur: 5400, live: 'was_live' })).format).toBe('long')
+    expect(inferFormat(vid({ dur: 50, live: 'was_live' })).format).toBe('short')
+  })
+  it('VEVO / label channels and implausible ratios are never "small channel" opportunities', async () => {
+    const { isNeglectedNiche } = await import('@/lib/research/discovery')
+    const ok = vid({ views: 90000, subs: 4000 })
+    expect(isNeglectedNiche(ok)).toBe(true)
+    expect(isNeglectedNiche({ ...ok, channelTitle: 'ArtistVEVO' })).toBe(false)
+    expect(isNeglectedNiche({ ...ok, channelTitle: 'Artist - Topic' })).toBe(false)
+    expect(isNeglectedNiche({ ...ok, channelTitle: 'Big Records' })).toBe(false)
+    expect(isNeglectedNiche(vid({ views: 30_000_000, subs: 5000 }))).toBe(false)
+    expect(isNeglectedNiche({ ...ok, live: 'live' })).toBe(false)
+  })
+  it('niche words match whole words, not fragments of other words', () => {
+    const ids = (title: string) => nichesOf({ title, tags: [], categoryId: null, channelTitle: '' }).map(n => n.niche)
+    expect(ids('Investigation of the frontier')).not.toContain('finanzas')
+    expect(ids('Prettier setup')).not.toContain('animales')
+    expect(ids('Herramientas de inteligencia artificial')).not.toContain('hogar')
+    expect(ids('Cómo invertir en bolsa')).toContain('finanzas')
+    expect(ids('Aktienmarkt heute')).toContain('finanzas')
+  })
+  it('the browser ledger counts every kind of spend and takes the stricter budget', async () => {
+    const { addUnits, effectiveUsage, emptyLedger, parseLedger } = await import('@/lib/research/ledger')
+    let l = emptyLedger(NOW); l = addUnits(l, 204, NOW); l = addUnits(l, 102, NOW); l = addUnits(l, 2, NOW)
+    expect(l.units).toBe(308)
+    expect(effectiveUsage({ usedToday: 100, cap: 6000, persistent: false }, l).remaining).toBe(6000 - 308)
+    expect(effectiveUsage({ usedToday: 5000, cap: 6000, persistent: true }, l).remaining).toBe(1000)
+    expect(parseLedger(JSON.stringify(l), NOW + 86400000).units).toBe(0)
+    expect(parseLedger('{bad', NOW).units).toBe(0)
   })
 })
