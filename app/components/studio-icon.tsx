@@ -21,6 +21,7 @@ const paths: Record<string, string> = {
   library: 'M4 4h4v16H4zM10 4h4v16h-4zM16 5l4-1 3 15-4 1z',
   link: 'M10 14a4 4 0 0 0 5.6 0l3-3a4 4 0 0 0-5.6-5.6l-1 1M14 10a4 4 0 0 0-5.6 0l-3 3a4 4 0 0 0 5.6 5.6l1-1',
   bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
+  megaphone: 'M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12',
   plus: 'M12 5v14M5 12h14',
   arrow: 'M5 12h14M13 6l6 6-6 6',
   check: 'M5 12l5 5L20 7',

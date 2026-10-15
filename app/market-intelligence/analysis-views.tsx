@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { useResearch } from './research-context'
@@ -65,6 +66,7 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
     <button type="button" className={state === 'saved' || state === 'exists' ? 'ghost' : undefined} disabled={state === 'saving' || state === 'saved' || state === 'exists'} onClick={() => void save()} style={{ marginTop: 10 }}>
       {state === 'saving' ? 'Guardando…' : state === 'saved' ? 'Guardado en Oportunidades' : state === 'exists' ? 'Ya estaba guardado' : 'Guardar para investigar después'}
     </button>
+    {' '}<Link className="open" href={`/campaigns?topic=${encodeURIComponent(a.topic)}${a.region ? `&country=${a.region}` : ''}`}>Planificar campaña</Link>
     {state === 'error' && <p className="error" role="alert">{msg}</p>}
   </article>
 }

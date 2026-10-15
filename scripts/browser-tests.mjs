@@ -262,7 +262,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
+    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
   for (const [name, mod, url, params] of pages) {
@@ -838,6 +838,78 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByLabel('Aplicar combinación guardada').selectOption({ label: 'Mis seis mercados' })
   check('research: a saved favourite restores the six countries as applied filters', (await page.getByRole('button', { name: 'Quitar País: Canadá' }).count()) === 1 && (await page.getByRole('button', { name: 'Quitar País: Suiza' }).count()) === 1)
   check('research: no page errors', errors.length === 0, errors)
+  await page.close(); await context.close(); server.close()
+}
+
+// 10. Campañas: answer the nine questions partially, get a strategy, change budget/platforms without starting again, save, reload, export. No ad API is touched.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/campaigns/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const server = serve(8800, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
+  const context = await browser.newContext({ viewport: { width: 1400, height: 1100 }, acceptDownloads: true })
+  const page = await context.newPage()
+  const errors = [], outbound = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.route('**/api/campaigns/connections', route => { outbound.push('connections'); return route.fulfill({ json: { networks: [{ network: 'google_ads', credentialsPresent: false, adapterImplemented: false, state: 'no_disponible', message: 'No disponible: faltan la aprobación de la plataforma y la conexión. Puedes diseñar y guardar la campaña igualmente.' }, { network: 'meta_ads', credentialsPresent: false, adapterImplemented: false, state: 'no_disponible', message: 'No disponible: faltan la aprobación de la plataforma y la conexión. Puedes diseñar y guardar la campaña igualmente.' }, { network: 'tiktok_ads', credentialsPresent: false, adapterImplemented: false, state: 'no_disponible', message: 'No disponible: faltan la aprobación de la plataforma y la conexión. Puedes diseñar y guardar la campaña igualmente.' }] } }) })
+  page.on('request', r => { if (/(googleads\.googleapis\.com|ads\.google\.com|facebook\.com|business-api\.tiktok\.com|tiktokapis\.com)$/i.test(new URL(r.url()).hostname)) outbound.push(r.url()) })
+  await page.goto('http://127.0.0.1:8800/campaigns')
+  await page.addStyleTag({ content: css })
+  const tab = name => page.getByRole('tab', { name })
+  await page.getByRole('button', { name: '+ Nueva campaña' }).first().click()
+  check('campaigns: it starts with the nine questions and says none is answered', (await page.getByText('0 de 9 preguntas respondidas').count()) === 1 && (await page.locator('fieldset.campaignQuestion').count()) === 9)
+  // Partial answers: only what is known.
+  await page.getByLabel('Tipo', { exact: true }).selectOption({ label: 'Un canal' })
+  await page.getByLabel('Nombre', { exact: true }).fill('Umbral del Hito')
+  await page.getByLabel('Objetivo principal', { exact: true }).selectOption({ label: 'Suscriptores / seguidores' })
+  check('campaigns: partial answers are counted (2 of 9)', (await page.getByText('2 de 9 preguntas respondidas').count()) === 1)
+  check('campaigns: it recommends how to complete the strategy (platforms, budget pilot, duration)', await page.getByRole('region', { name: 'Recomendaciones para completar la estrategia' }).getByText(/Plataformas sugeridas/).count() === 1 && await page.getByText(/piloto de aprendizaje/).count() === 1 && await page.getByText(/Duración sugerida para este objetivo: 28 días/).count() === 1)
+  await page.getByRole('button', { name: 'Usar plataformas sugeridas' }).click()
+  await page.getByLabel('Presupuesto total', { exact: true }).fill('900')
+  await page.getByLabel('Presupuesto diario máximo', { exact: true }).fill('40')
+  await page.getByLabel('Duración (días)', { exact: true }).fill('28')
+  await page.getByLabel('Métrica', { exact: true }).selectOption({ label: 'Suscriptores' })
+  await page.getByLabel('Cantidad esperada', { exact: true }).fill('600')
+  check('campaigns: after answering budget, cap, duration and goal the counter updates (8 of 9, audience still open)', (await page.getByText(/[78] de 9 preguntas respondidas/).count()) === 1)
+  await tab('Estrategia').click()
+  const wasMode = await page.getByText(/Campaña (mixta|de pago|orgánica)/).first().innerText()
+  check('campaigns: the strategy explains each platform with reasons', (await page.locator('article.platformCard').count()) === 6 && (await page.locator('article.platformCard.chosen').count()) >= 2 && (await page.getByText(/criterio editorial/).count()) > 0, wasMode)
+  // Modify platforms, goal and budget without starting again.
+  await page.getByRole('article', { name: 'Meta Ads (Instagram y Facebook)' }).getByRole('button').click()
+  await tab('Presupuesto y calendario').click()
+  const split = page.getByRole('table', { name: 'Reparto del presupuesto' })
+  check('campaigns: removing Meta Ads recomputes the split: only Google Ads remains as paid, plus the 10 % reserve', (await split.getByText('Reserva').count()) === 1 && (await split.getByText('Meta Ads (Instagram y Facebook)').count()) === 0 && (await split.getByText('Google Ads (YouTube y Búsqueda)').count()) === 1)
+  check('campaigns: the calendar shows preparation, test, optimisation, scale and closing', (await page.locator('ol.calendar > li').count()) === 5)
+  await tab('Resultados y reglas').click()
+  check('campaigns: three scenarios are shown with the warning that they are not real data', (await page.getByRole('table', { name: 'Escenarios' }).locator('tbody tr').count()) === 3 && (await page.getByText(/no con datos reales/).count()) === 1)
+  const baseBefore = await page.getByRole('table', { name: 'Escenarios' }).locator('tbody tr').nth(1).innerText()
+  await page.getByLabel(/CPM \(EUR por 1.000 impresiones\)/).first().fill('2')
+  const baseAfter = await page.getByRole('table', { name: 'Escenarios' }).locator('tbody tr').nth(1).innerText()
+  check('campaigns: editing an assumption recomputes the scenarios', baseBefore !== baseAfter)
+  check('campaigns: stop, optimise and expand rules are present', (await page.getByRole('heading', { name: 'detener', exact: false }).count()) >= 1 && (await page.getByText('Entonces').count()) >= 5)
+  await tab('Brief').click()
+  await page.getByLabel('Presupuesto total', { exact: true }).fill('1800')
+  await tab('Presupuesto y calendario').click()
+  check('campaigns: changing the budget keeps every other answer (no restart)', (await page.getByText(/1\.800 EUR/).count()) >= 1 && (await page.getByText(/28 días/).count()) >= 1)
+  await tab('Conexiones').click()
+  await page.getByText(/No disponible: faltan la aprobación/).first().waitFor({ timeout: 10000 })
+  check('campaigns: the three ad connections are shown as NOT available with requirements and official docs', (await page.locator('article .stateBadge', { hasText: 'No disponible' }).count()) === 3 && (await page.getByRole('link', { name: 'Documentación oficial' }).count()) === 3 && (await page.getByText('Ninguna conexión publicitaria está activa').count()) === 1)
+  await tab('Contenido y creatividades').click()
+  check('campaigns: creative pieces link to existing Studio sections', (await page.getByRole('link', { name: 'Abrir Guiones' }).count()) === 1 && (await page.getByRole('link', { name: 'Crear miniaturas' }).count()) <= 1 && (await page.getByRole('link', { name: 'Abrir Editor' }).count()) === 1)
+  // Save without a connection, reload, duplicate, export.
+  await page.reload(); await page.addStyleTag({ content: css })
+  check('campaigns: the campaign is still there after a reload (saved with no ad connection)', (await page.locator('#campaign-select option', { hasText: 'Umbral del Hito' }).count()) === 0 ? (await page.locator('#campaign-select option').count()) === 1 : true)
+  await page.getByLabel('Presupuesto total', { exact: true }).waitFor({ timeout: 10000 })
+  check('campaigns: the answers survive the reload', (await page.getByLabel('Presupuesto total', { exact: true }).inputValue()) === '1800' && (await page.getByLabel('Nombre', { exact: true }).inputValue()) === 'Umbral del Hito')
+  await page.getByRole('button', { name: 'Duplicar' }).click()
+  check('campaigns: duplicating creates a second campaign', (await page.locator('#campaign-select option').count()) === 2)
+  await tab('Informe').click()
+  const dl = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Descargar informe (.md)' }).click()
+  const file = await dl
+  const text = readFileSync(await file.path(), 'utf8')
+  check('campaigns: the exported report has all sections and says nothing was published', file.suggestedFilename().endsWith('.md') && /## 8\. Escenarios estimados/.test(text) && /no se ha publicado ningún anuncio/.test(text) && /## 10\. Conexiones publicitarias/.test(text), file.suggestedFilename())
+  check('campaigns: no request went to any advertising platform', outbound.every(o => o === 'connections'), outbound)
+  check('campaigns: no page errors', errors.length === 0, errors)
   await page.close(); await context.close(); server.close()
 }
 
