@@ -32,9 +32,9 @@ describe('audit example 1: «ISA explained» must not return Indonesian religiou
   it('real ISA videos in English are kept', () => {
     for (const t of ['Stocks and Shares ISA Explained | UK Investing for Beginners', 'Cash ISA vs Stocks and Shares ISA: which is best in 2026?', 'What is an ISA? ISA allowance explained']) expect(judge(t, T, 'GB', 'en', { lang: 'en' }).relevant, t).toBe(true)
   })
-  it('other uses of the name «Isa», even in English, are rejected when their words point to another domain', () => {
+  it('other uses of the name «Isa», even in English, stay out of the metrics (rejected or dubious, never counted)', () => {
     const party = judge('Isa and the garden party tonight with friends', T, 'GB', 'en'), dog = judge('My dog Isa goes to the groomer', T, 'GB', 'en', { cat: '15' })
-    for (const a of [party, dog]) { expect(a.relevant).toBe(false); expect(a.reason).toBe('nicho') }
+    for (const a of [party, dog]) { expect(a.relevant).toBe(false); expect(['nicho', 'contexto']).toContain(a.reason) }   // not claimed wrong, but never counted
   })
   it('the analysis excludes the contamination and says so; the indices come only from the on-topic videos', () => {
     const good = many(15, i => ({ title: `Stocks and Shares ISA explained part ${i}`, lang: 'en', views: 20000, ch: `g${i}` }))
@@ -43,7 +43,7 @@ describe('audit example 1: «ISA explained» must not return Indonesian religiou
     const dirty = analyzeTopic(samples(T, 'GB', 'en', [...bad, ...good], many(8, i => ({ title: `ISA explained new rules ${i}`, lang: 'en', days: 5 + i, ch: `r${i}` }))), NOW)
     expect(dirty.quality.excluded.idioma).toBe(10); expect(dirty.indices.demand).toBe(clean.indices.demand); expect(dirty.indices.competition).toBe(clean.indices.competition)
     expect(dirty.topVideos.every(v => v.declaredLanguage === 'en')).toBe(true)
-    expect(dirty.quality.examples.some(e => /Kisah/.test(e.title))).toBe(true)
+    expect(dirty.sample.filter(v => v.status === 'descartado' && v.reason === 'idioma' && /Kisah/.test(v.title))).toHaveLength(10)
   })
 })
 
@@ -227,5 +227,121 @@ describe('relevance is not over-strict: inflections, acronyms and ordinary queri
   it('ordinary seed queries keep their natural videos', () => {
     ok('cómo invertir desde cero', 'Cómo invertir en bolsa desde cero: guía para principiantes 2026'); ok('lofi para dormir', 'Música lofi para dormir profundamente | 3 horas')
     ok('Aktien kaufen für Anfänger', 'Aktien kaufen für Anfänger – Schritt für Schritt erklärt', 'DE', 'de'); ok('cuidado de gatos', 'Cuidado de gatos: lo que todo dueño primerizo debe saber')
+  })
+})
+
+
+describe('meaning disambiguation: ISA, HSA, ETF, Super and queries with several meanings', () => {
+  const judgeQ = (q: string, title: string, o: Partial<O> = {}, region = 'GB', lang = 'en') => assessVideo(vid({ title, lang, ...o }), queryProfile(q), expectedLanguages(region, lang))
+  const status = (q: string, title: string, o: Partial<O> = {}, region = 'GB', lang = 'en') => { const a = judgeQ(q, title, o, region, lang); return `${a.status}${a.reason ? `:${a.reason}` : ''}` }
+
+  it('a query that is only an ambiguous term knows its intended meaning (money), and says so', () => {
+    for (const t of ['isa', 'hsa', 'etf', 'super', 'ira', 'fire']) expect(queryProfile(`${t} explained`).ambiguity?.intended.id, t).toBe('finanzas')
+    expect(queryProfile('super mario odyssey').ambiguity).toBeNull()   // the other words already say which «super» is meant
+    expect(queryProfile('mortgage guide').ambiguity).toBeNull()
+  })
+
+  describe('ISA (UK) — the contamination found by the real validation', () => {
+    const Q = 'ISA explained'
+    it('accepts videos that confirm the savings-account meaning and quotes the words that confirmed it', () => {
+      for (const t of ['Stocks and Shares ISA explained: how to invest £20,000 tax free', 'Cash ISA vs Lifetime ISA 2026 – which is best for savings?', 'What is an ISA? UK savings allowance explained']) expect(status(Q, t), t).toBe('aceptado')
+      expect(judgeQ(Q, 'Stocks and Shares ISA explained: how to invest £20,000 tax free').detail).toMatch(/confirmado por: .*(stocks and shares|invest)/)
+    })
+    it('rejects religion, a military unit and video games, naming the meaning and the words seen', () => {
+      const rel = judgeQ(Q, 'Who is Isa? The story of Jesus in the Quran explained'), mil = judgeQ(Q, 'ISA Intelligence Support Activity explained | US Army special forces unit'), game = judgeQ(Q, 'ISA gameplay walkthrough: Minecraft server explained')
+      expect([rel.status, rel.reason]).toEqual(['descartado', 'sentido']); expect(rel.detail).toMatch(/religión.*jesus|religión.*quran/)
+      expect([mil.status, mil.reason]).toEqual(['descartado', 'sentido']); expect(mil.detail).toMatch(/militar/)
+      expect([game.status, game.reason]).toEqual(['descartado', 'sentido']); expect(game.detail).toMatch(/videojuegos/)
+    })
+    it('a video with no context either way is «dudoso» — out of the metrics, but NOT called wrong', () => {
+      const a = judgeQ(Q, 'ISA explained', { chTitle: 'Canal' })
+      expect(a.status).toBe('dudoso'); expect(a.reason).toBe('contexto'); expect(a.relevant).toBe(false); expect(a.detail).toMatch(/nada en el título, etiquetas, descripción o canal confirma/)
+    })
+    it('context can come from the description, the tags or the channel, so legitimate videos are not dropped for a short title', () => {
+      expect(status(Q, 'ISAs explained simply', { desc: 'Tax-free savings and investing in the UK: how an ISA works' })).toBe('aceptado')
+      expect(status(Q, 'ISAs explained simply', { tags: ['savings', 'investing', 'uk'] })).toBe('aceptado')
+      expect(status(Q, 'ISAs explained simply', { chTitle: 'Meaningful Money' })).toBe('aceptado')
+    })
+    it('the more specific sense wins when both appear', () => {
+      expect(status(Q, 'ISA explained: invest your savings tax free, not the Jesus story', {})).toBe('aceptado')   // 3 money cues vs 1 religion cue
+      expect(status(Q, 'Isa Jesus Quran Bible church explained: savings')).toMatch(/^descartado:sentido/)
+    })
+    it('the analysis counts only the confirmed videos and keeps the rest inspectable with reasons', () => {
+      const good = many(12, i => ({ title: `Stocks and Shares ISA explained part ${i}: invest tax free`, lang: 'en', views: 20000, ch: `g${i}` }))
+      const religion = many(3, i => ({ title: `Who is Isa ${i}? Jesus in the Quran explained`, lang: 'en', views: 9_000_000, ch: `r${i}` }))
+      const army = many(1, () => ({ title: 'ISA Intelligence Support Activity explained | Army special forces', lang: 'en', views: 4_000_000 }))
+      const game = many(1, () => ({ title: 'ISA gameplay Minecraft server explained', lang: 'en', views: 3_000_000 }))
+      const unknown = many(2, () => ({ title: 'ISA explained', lang: 'en', views: 100000 }))
+      const a = analyzeTopic(samples('ISA explained', 'GB', 'en', [...religion, ...army, ...game, ...unknown, ...good], many(8, i => ({ title: `ISA explained: new savings allowance ${i}`, lang: 'en', days: 5 + i, ch: `n${i}` }))), NOW)
+      expect(a.quality.excluded.sentido).toBe(5); expect(a.quality.uncertain).toBe(2); expect(a.quality.kept).toBe(12 + 8)
+      expect(a.sample).toHaveLength(12 + 3 + 1 + 1 + 2 + 8)
+      expect(a.sample.filter(v => v.status === 'descartado').every(v => v.reason === 'sentido' && v.detail.length > 10)).toBe(true)
+      expect(a.sample.filter(v => v.status === 'dudoso').every(v => v.reason === 'contexto')).toBe(true)
+      expect(a.topVideos.every(v => /Stocks and Shares/.test(v.title))).toBe(true)
+      const onlyGood = analyzeTopic(samples('ISA explained', 'GB', 'en', good, many(8, i => ({ title: `ISA explained: new savings allowance ${i}`, lang: 'en', days: 5 + i, ch: `n${i}` }))), NOW)
+      expect(a.indices.demand).toBe(onlyGood.indices.demand); expect(a.indices.competition).toBe(onlyGood.indices.competition)
+    })
+    it('when more than half of the results are dubious or wrong the confidence is low and no «oportunidad» is claimed', () => {
+      const noise = many(14, i => ({ title: `Who is Isa ${i}? Jesus and the Quran explained`, lang: 'en', views: 800000, ch: `x${i}` }))
+      const a = analyzeTopic(samples('ISA explained', 'GB', 'en', [...noise, ...many(6, i => ({ title: `Cash ISA explained savings ${i}`, lang: 'en', views: 200000, subs: 2000, days: 40 }))], many(5, i => ({ title: `Cash ISA explained savings new ${i}`, lang: 'en', days: 3 + i }))), NOW)
+      expect(a.confidence).toBe('baja'); expect(a.verdict).not.toBe('oportunidad')
+    })
+  })
+
+  describe('HSA, ETF, Super', () => {
+    it('HSA (US): health savings account is accepted; school / concert uses are rejected; no context is dudoso', () => {
+      const Q = 'HSA explained'
+      expect(status(Q, 'HSA explained: health savings account tax advantages for 2026', {}, 'US')).toBe('aceptado')
+      expect(status(Q, 'Should you invest your HSA? The triple tax advantage', {}, 'US')).toBe('aceptado')
+      expect(status(Q, 'HSA school concert lyrics official video', {}, 'US')).toBe('descartado:sentido')
+      expect(status(Q, 'HSA explained', {}, 'US')).toBe('dudoso:contexto')
+    })
+    it('ETF: exchange traded funds are accepted; a game video is rejected; a bare title is dudoso', () => {
+      const Q = 'ETF explained'
+      expect(status(Q, 'ETFs explained: index funds for beginners (Vanguard VWCE, S&P 500)')).toBe('aceptado')
+      expect(status(Q, 'ETF gameplay on Roblox explained')).toBe('descartado:sentido')
+      expect(status(Q, 'ETF explained')).toBe('dudoso:contexto')
+    })
+    it('Super (Australia): superannuation is accepted; Super Mario and superhero videos are rejected', () => {
+      const Q = 'super explained'
+      expect(status(Q, 'Superannuation explained: how super funds work in Australia', {}, 'AU')).toBe('aceptado')
+      expect(status(Q, 'Industry super vs retail super: fees and returns in 2026', {}, 'AU')).toBe('aceptado')
+      expect(status(Q, 'Super Mario Odyssey gameplay walkthrough explained', {}, 'AU')).toBe('descartado:sentido')
+      expect(status(Q, 'Superhero movie trailer explained', {}, 'AU')).toBe('descartado:sentido')
+      expect(status(Q, 'Super explained', {}, 'AU')).toBe('dudoso:contexto')
+    })
+    it('the same word with other words in the query is not forced into the money sense', () => {
+      expect(status('super mario odyssey', 'Super Mario Odyssey full walkthrough gameplay', {}, 'US')).toBe('aceptado')
+      expect(status('fire safety at home', 'Fire safety at home: extinguisher and escape plan', {}, 'US')).toBe('aceptado')
+    })
+  })
+
+  describe('queries with several meanings that are NOT in the table (data-driven)', () => {
+    const finance = (n: number) => many(n, i => ({ title: `Best savings account interest rates at the bank ${i}`, lang: 'en', views: 30000, ch: `f${i}` }))
+    const games = (n: number) => many(n, i => ({ title: `Savings account bug in Roblox gameplay ${i}`, lang: 'en', views: 30000, ch: `g${i}` }))
+    const neutral = (n: number) => many(n, i => ({ title: `My savings account story ${i}`, lang: 'en', views: 30000, ch: `n${i}` }))
+    it('when the sample itself shows other meanings, every video must confirm the intended one; neutral ones become «dudosos»', () => {
+      const a = analyzeTopic(samples('savings account', 'GB', 'en', [...finance(10), ...games(8), ...neutral(6)], many(6, i => ({ title: `Savings account interest rates new ${i}`, lang: 'en', days: 3 + i }))), NOW)
+      expect(a.quality.ambiguousSample).toBe(true); expect(a.quality.uncertain).toBe(6)
+      expect(a.sample.filter(v => /My savings account story/.test(v.title)).every(v => v.status === 'dudoso')).toBe(true)
+      expect(a.sample.filter(v => /Roblox/.test(v.title)).every(v => v.status === 'descartado')).toBe(true)
+    })
+    it('when the sample is clean the same neutral videos are accepted: nothing is dropped without a verifiable reason', () => {
+      const a = analyzeTopic(samples('savings account', 'GB', 'en', [...finance(10), ...neutral(6)], many(6, i => ({ title: `Savings account interest rates new ${i}`, lang: 'en', days: 3 + i }))), NOW)
+      expect(a.quality.ambiguousSample).toBe(false); expect(a.quality.uncertain).toBe(0)
+      expect(a.sample.filter(v => /My savings account story/.test(v.title)).every(v => v.status === 'aceptado')).toBe(true)
+    })
+  })
+
+  describe('transparency: every video the search returned can be inspected', () => {
+    it('lists ALL accepted, dubious and rejected videos (not five), with links and reasons, and exports them', async () => {
+      const { sampleCsv } = await import('@/lib/research/export')
+      const bad = many(30, i => ({ title: `Who is Isa ${i}? Jesus and the Quran explained`, lang: 'en', ch: `b${i}` }))
+      const a = analyzeTopic(samples('ISA explained', 'GB', 'en', [...bad, ...many(10, i => ({ title: `Cash ISA explained savings ${i}`, lang: 'en', ch: `g${i}` }))], many(5, i => ({ title: `Cash ISA explained savings new ${i}`, lang: 'en', days: 3 + i }))), NOW)
+      expect(a.sample.length).toBe(45); expect(a.sample.filter(v => v.status === 'descartado')).toHaveLength(30)
+      expect(a.sample.every(v => /^https:\/\/www\.youtube\.com\/watch\?v=/.test(v.url) && v.title.length > 0)).toBe(true)
+      const csv = sampleCsv(a).split('\n'); expect(csv).toHaveLength(46); expect(csv[0]).toMatch(/^estado,motivo,detalle,título,canal,enlace/)
+      expect(csv.filter(l => l.startsWith('descartado,sentido')).length).toBe(30)
+    })
   })
 })

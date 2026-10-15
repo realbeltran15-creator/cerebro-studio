@@ -20,6 +20,8 @@ export async function saveAnalysis(db: Db, a: TopicAnalysis): Promise<'saved' | 
     observed_metrics: {
       // Everything needed to reopen the analysis later, not just the headline numbers: window, units spent, the examples with their official thumbnails.
       snapshot: { topic: a.topic, region: a.region, language: a.language, recentDays: a.recentDays ?? 30, units: a.units, fetchedAt: a.fetchedAt,
+        // Every video the search returned and what was decided about it (compact), so the judgement can be reviewed after the browser forgets it.
+        sample: (a.sample ?? []).map(v => [v.videoId, v.status, v.reason, v.title, v.channelTitle, v.views, v.inTop, v.inRecent]),
         videos: a.topVideos.map(v => ({ videoId: v.videoId, url: v.url, title: v.title, channelTitle: v.channelTitle, thumbnailUrl: v.thumbnailUrl, publishedAt: v.publishedAt, views: v.observed.views, subscribers: v.observed.channelSubscribers, durationSeconds: v.observed.durationSeconds, live: v.live ?? null })) },
       sampleSizes: a.sampleSizes, approxTotals: a.approxTotals, evidence: a.evidence.filter(e => e.kind === 'observado'), fetchedAt: a.fetchedAt, source: 'youtube_data_api', market: marketLabel(a.region, a.language) },
     calculated_metrics: { indices: a.indices, growth: a.growth, quality: a.quality, formatQuality: a.formatQuality, growthPct: a.growthPct, verdict: a.verdict, reasons: a.reasons, byFormat: a.byFormat, niches: a.niches, confidence: a.confidence, confidenceNote: a.confidenceNote, rpmReference: { label: RPM_LABEL.estimado, entries: rpm } },

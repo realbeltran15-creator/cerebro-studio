@@ -25,3 +25,12 @@ export function keywordsCsv(a: TopicAnalysis) {
     ...a.questions.map(q => ['pregunta', q.text, '', q.views ?? '', marketLabel(a.region, a.language), 'título de vídeo formulado como pregunta']),
   ])
 }
+
+const STATUS = { aceptado: 'aceptado', dudoso: 'dudoso (sin confirmar)', descartado: 'descartado' } as const
+/** Every video the search returned for one analysis, accepted or not, with the reason: lets the user audit the engine's judgement. */
+export function sampleCsv(a: TopicAnalysis) {
+  return toCsv([
+    ['estado', 'motivo', 'detalle', 'título', 'canal', 'enlace', 'vistas', 'publicado', 'duración_s', 'muestra', 'idioma', 'verificación_idioma', 'posible_anuncio', 'viral_atípico', 'formato_inferido', 'consulta', 'mercado', 'fecha_consulta'],
+    ...(a.sample ?? []).map(v => [STATUS[v.status], v.reason ?? '', v.detail, v.title, v.channelTitle, v.url, v.views ?? '', v.publishedAt, v.durationSeconds ?? '', v.inTop && v.inRecent ? 'más vistos y recientes' : v.inTop ? 'más vistos del año' : 'recientes', v.language ?? '', v.languageVerdict, v.promo ? 'sí' : 'no', v.outlier ? 'sí' : 'no', v.format, a.topic, marketLabel(a.region, a.language), a.fetchedAt]),
+  ])
+}

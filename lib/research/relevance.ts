@@ -35,13 +35,67 @@ export function termHit(text: string, term: string): boolean {
   return one(term) || (SYNONYMS[term] ?? []).some(alt => (alt.includes(' ') ? text.includes(` ${alt}`) : one(alt)))
 }
 
-export type QueryProfile = { terms: string[]; niches: string[]; raw: string }
+// ---------- Ambiguous terms: which MEANING does the query intend? ----------
+/**
+ * A word-list of known meanings for terms that people search with several senses («ISA» is a UK savings account, a name of Jesus in
+ * Indonesian and Arabic, a military unit, a game…). For each sense: the words that give it away. A video is judged by which sense its
+ * own title, tags, description and channel point to — and the verdict names the words it saw, so every exclusion can be checked.
+ * Terms that are NOT in this table are covered by the data-driven check (see `isAmbiguousSample`), not by a rigid list.
+ */
+export type Sense = { id: string; label: string; /** The sense this research tool is about (money). */ intended?: boolean; niche?: string; words: string[] }
+export const SENSES: Record<string, Sense[]> = {
+  isa: [
+    { id: 'finanzas', label: 'cuenta de ahorro/inversión (ISA)', intended: true, niche: 'finanzas', words: ['cash isa', 'stocks and shares', 'stocks shares', 'lifetime isa', 'junior isa', 'isa allowance', 'tax free', 'allowance', 'savings', 'saver', 'invest', 'investing', 'investment', 'interest', 'rates', 'hmrc', 'pension', 'portfolio', 'fund', 'funds', 'shares', 'stocks', 'bank', 'building society', 'wealth', 'money', 'finance', 'financial', 'mortgage', 'inflation', 'dividend', 'index fund', 'tax', 'budget', 'accounts'] },
+    { id: 'religion', label: 'religión (Isa = Jesús)', words: ['nabi', 'jesus', 'christ', 'islam', 'islamic', 'quran', 'koran', 'allah', 'prophet', 'bible', 'church', 'kisah', 'injil', 'nazareth', 'maryam', 'muslim', 'christian', 'sermon', 'gospel', 'ayat', 'surah', 'ceramah', 'dakwah', 'tuhan', 'rasul', 'messiah', 'crucifixion', 'miracle', 'miracles', 'saints', 'sheikh'] },
+    { id: 'militar', label: 'unidad o terminología militar', words: ['intelligence support activity', 'special forces', 'army', 'delta force', 'seal', 'jsoc', 'military', 'battalion', 'regiment', 'soldier', 'operators', 'special operations', 'combat', 'weapons', 'tactical'] },
+    { id: 'videojuegos', label: 'videojuegos', words: ['game', 'games', 'gameplay', 'minecraft', 'roblox', 'fortnite', 'walkthrough', 'lets play', 'gaming', 'speedrun', 'mod', 'mods', 'server', 'player', 'valorant', 'skin', 'clan', 'tournament', 'boss', 'level', 'rpg', 'playthrough', 'ps5', 'xbox', 'steam'] },
+  ],
+  hsa: [
+    { id: 'finanzas', label: 'cuenta de ahorro sanitaria (HSA)', intended: true, niche: 'finanzas', words: ['health savings account', 'health savings', 'hdhp', 'high deductible', 'deductible', 'tax advantage', 'tax advantaged', 'contribution', 'contributions', 'medical expenses', 'fsa', 'invest', 'investing', 'investment', 'irs', 'retirement', 'triple tax', 'savings', 'insurance', 'premiums', 'fidelity', 'lively', 'tax', 'taxes', 'money', 'finance'] },
+    { id: 'otro', label: 'otro uso de HSA (colegios, siglas, juegos)', words: ['school', 'hsa class', 'gameplay', 'minecraft', 'roblox', 'valorant', 'concert', 'album', 'lyrics', 'official video', 'soundtrack', 'trailer', 'student council', 'alumni'] },
+  ],
+  etf: [
+    { id: 'finanzas', label: 'fondo cotizado (ETF)', intended: true, niche: 'finanzas', words: ['exchange traded fund', 'exchange traded funds', 'index fund', 'index funds', 'etfs', 'vanguard', 'ishares', 'dividend', 'dividends', 'portfolio', 'invest', 'investing', 'investment', 'stocks', 'shares', 'expense ratio', 'vwce', 'voo', 'spy', 'passive', 'broker', 'sp 500', 's p 500', 'msci', 'bonds', 'fund', 'funds', 'wealth', 'money', 'finance', 'returns'] },
+    { id: 'otro', label: 'otro uso de ETF (siglas, juegos, música)', words: ['gameplay', 'minecraft', 'roblox', 'valorant', 'lyrics', 'official video', 'album', 'concert', 'trailer', 'task force', 'emergency', 'fanfic', 'anime'] },
+  ],
+  super: [
+    { id: 'finanzas', label: 'superannuation / fondo de jubilación (Australia)', intended: true, niche: 'finanzas', words: ['superannuation', 'super fund', 'super funds', 'industry super', 'smsf', 'self managed super', 'employer contributions', 'contribution', 'contributions', 'retirement', 'pension', 'ato', 'balance', 'fees', 'invest', 'investing', 'investment', 'return', 'returns', 'unisuper', 'australiansuper', 'hostplus', 'tax', 'money', 'finance', 'wealth', 'savings'] },
+    { id: 'otro', label: 'otro uso de «super» (superhéroes, juegos, deporte)', words: ['superhero', 'mario', 'smash', 'bowl', 'hero', 'heroes', 'man', 'woman', 'girl', 'power', 'powers', 'gameplay', 'game', 'games', 'sonic', 'marvel', 'dc', 'anime', 'cartoon', 'toy', 'toys', 'trailer', 'movie', 'film', 'league', 'football', 'nfl'] },
+  ],
+  ira: [
+    { id: 'finanzas', label: 'cuenta de jubilación individual (IRA)', intended: true, niche: 'finanzas', words: ['roth', 'traditional ira', 'rollover', 'contribution', 'contributions', 'retirement', '401k', 'irs', 'tax', 'taxes', 'invest', 'investing', 'investment', 'brokerage', 'fidelity', 'vanguard', 'limits', 'savings', 'money', 'finance', 'wealth'] },
+    { id: 'otro', label: 'otro uso de IRA (historia, política, nombres)', words: ['republican army', 'irish', 'ireland', 'terrorist', 'troubles', 'provisional', 'war', 'history', 'documentary', 'belfast', 'band', 'lyrics'] },
+  ],
+  fire: [
+    { id: 'finanzas', label: 'independencia financiera (FIRE)', intended: true, niche: 'finanzas', words: ['financial independence', 'retire early', 'early retirement', 'savings rate', 'fatfire', 'leanfire', 'coastfire', 'invest', 'investing', 'investment', 'portfolio', 'net worth', 'passive income', '4 rule', 'safe withdrawal', 'retirement', 'money', 'finance', 'wealth', 'budget'] },
+    { id: 'otro', label: 'fuego', words: ['firefighter', 'wildfire', 'burning', 'flame', 'flames', 'campfire', 'fireplace', 'fireworks', 'rescue', 'extinguisher', 'forest', 'smoke', 'blaze', 'arson', 'gun', 'shooting', 'weapon'] },
+  ],
+}
+const AMBIGUOUS_TERMS = new Set(Object.keys(SENSES))
+
+const phraseHit = (text: string, w: string) => (w.includes(' ') ? text.includes(` ${w}`) : w.length >= 7 ? text.includes(` ${w}`) : text.includes(` ${w} `) || text.includes(` ${w}s `))
+export type SenseEvidence = { intended: string[]; competing: Array<{ sense: Sense; hits: string[] }> }
+export function senseEvidence(video: Pick<YouTubeVideoResult, 'title' | 'tags' | 'description' | 'channelTitle'>, term: string): SenseEvidence {
+  const raw = [video.title, ...(video.tags ?? []), video.description ?? '', video.channelTitle].join(' ')
+  const text = fold(raw), senses = SENSES[term] ?? []
+  const hits = (s: Sense) => { const h = s.words.filter(w => phraseHit(text, fold(w).trim())); if (s.intended && /[£€$]\s?\d/.test(raw)) h.push('importe en dinero'); return h }
+  return { intended: hits(senses.find(x => x.intended)!), competing: senses.filter(x => !x.intended).map(sense => ({ sense, hits: hits(sense) })) }
+}
+
+export type QueryProfile = { terms: string[]; niches: string[]; raw: string; /** Set when the query is one of the ambiguous terms (alone, or with the money niche). */ ambiguity: { term: string; intended: Sense } | null }
 export function queryProfile(query: string): QueryProfile {
   const ws = words(query)
   const terms = ws.filter(w => !STOP.has(w) && !MODIFIER.has(w) && !PLACE.has(w) && !/^\d+$/.test(w))
   // A query made only of modifiers/places ("best uk") has no topic of its own: fall back to every non-stop word.
   const use = terms.length ? terms : ws.filter(w => !STOP.has(w))
-  return { terms: use, niches: nichesOf({ title: query, tags: [], categoryId: null, channelTitle: '' }, { useCategory: false }).map(n => n.niche), raw: query }
+  // The domain comes from the TOPIC words only: «explained» or «guide» must not make a finance query look educational.
+  const found = nichesOf({ title: use.join(' '), tags: [], categoryId: null, channelTitle: '' }, { useCategory: false }).map(n => n.niche)
+  const amb = use.find(t => AMBIGUOUS_TERMS.has(t))
+  const intended = amb ? SENSES[amb].find(x => x.intended) : undefined
+  // «super mario» has other topic terms and no money niche: the other words already say which «super» is meant.
+  const ambiguity = amb && intended && (use.length === 1 || found.includes(intended.niche ?? '')) ? { term: amb, intended } : null
+  const niches = ambiguity?.intended.niche ? [...new Set([...found, ambiguity.intended.niche])] : found
+  return { terms: use, niches, raw: query, ambiguity }
 }
 
 // ---------- Language ----------
@@ -110,8 +164,14 @@ export function viralOutliers(values: number[]): Set<number> {
 }
 
 // ---------- The judgement ----------
-export type ExclusionReason = 'tema' | 'nicho' | 'idioma' | 'directo'
-export type Assessment = { relevant: boolean; reason: ExclusionReason | null; detail: string; coverage: number; language: LanguageCheck; promo: boolean }
+/**
+ * aceptado   = counted in the metrics.
+ * descartado = excluded for a verifiable reason (another language, another topic, another meaning of the word, a live stream).
+ * dudoso     = excluded from the metrics but NOT called wrong: nothing in the video confirms the intended meaning. It is listed so it can be checked.
+ */
+export type ExclusionReason = 'tema' | 'nicho' | 'idioma' | 'directo' | 'sentido' | 'contexto'
+export type VideoStatus = 'aceptado' | 'dudoso' | 'descartado'
+export type Assessment = { relevant: boolean; status: VideoStatus; reason: ExclusionReason | null; detail: string; coverage: number; language: LanguageCheck; promo: boolean; /** Words that confirmed (or contradicted) the meaning. */ evidence: string[] }
 
 /** Minimum share of the topic terms a video must show (title/tags count fully, description half). */
 export const minCoverage = (n: number) => (n <= 2 ? 0.75 : n === 3 ? 0.67 : 0.6)
@@ -126,43 +186,56 @@ const compatible = (a: string, b: string) => a === b || GENERIC.has(b) || NEIGHB
  * is a finance phrase, but "Best first time buyer cars" is about cars. So the niches are re-read from the video WITHOUT the query terms:
  * if what remains points to another, incompatible domain and nothing in it supports the query's domain, the video is off-topic.
  */
-function nicheConflict(v: YouTubeVideoResult, q: QueryProfile): { conflict: boolean; detail: string } {
-  if (!q.niches.length) return { conflict: false, detail: '' }
-  let rest = ` ${[v.title, ...(v.tags ?? [])].join(' ')} `
+function nicheEvidence(v: YouTubeVideoResult, q: QueryProfile): { own: string[]; foreign: string[]; conflict: boolean } {
+  // Everything the video says about itself, minus the query's own words (they must not vouch for the video).
+  let rest = ` ${[v.title, ...(v.tags ?? []), v.description ?? '', v.channelTitle].join(' ')} `
   for (const t of q.terms) rest = fold(rest).replace(new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\w*`, 'g'), ' ')
   const own = nichesOf({ title: rest, tags: [], categoryId: null, channelTitle: '' }, { useCategory: false }).map(x => x.niche)
-  if (own.some(x => q.niches.includes(x))) return { conflict: false, detail: '' }
+  const supports = own.some(x => q.niches.includes(x))
   const foreign = own.filter(x => !q.niches.some(qn => compatible(qn, x)))
-  return foreign.length ? { conflict: true, detail: `fuera de las palabras del tema, el vídeo trata de ${foreign.join(', ')} y el tema es de ${q.niches.join(', ')}` } : { conflict: false, detail: '' }
+  return { own, foreign, conflict: !!q.niches.length && !supports && foreign.length > 0 }
 }
 
-export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: string[]): Assessment {
+export type AssessOptions = { /** Require positive evidence of the intended topic, not just the absence of a contradiction (used when the sample itself is ambiguous). */ strict?: boolean }
+
+export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: string[], opts: AssessOptions = {}): Assessment {
   const lang = languageCheck(v, expected), promo = isPromo(v)
-  const base = { language: lang, promo }
-  if (v.live === 'live' || v.live === 'upcoming') return { ...base, relevant: false, reason: 'directo', detail: 'directo en emisión o programado', coverage: 0 }
+  const out = (status: VideoStatus, reason: ExclusionReason | null, detail: string, coverage: number, evidence: string[] = []): Assessment => ({ relevant: status === 'aceptado', status, reason, detail, coverage, language: lang, promo, evidence })
+  if (v.live === 'live' || v.live === 'upcoming') return out('descartado', 'directo', 'directo en emisión o programado', 0)
   // Language first: a video in another language cannot satisfy the topic words of this market, and that is the clearer reason to show.
-  if (lang.verdict === 'no_coincide') return { ...base, relevant: false, reason: 'idioma', detail: `idioma ${lang.language} (${lang.source}) fuera del mercado (${expected.join(', ')})`, coverage: 0 }
+  if (lang.verdict === 'no_coincide') return out('descartado', 'idioma', `idioma ${lang.language} (${lang.source}) fuera del mercado (${expected.join(', ')})`, 0)
   const head = fold([v.title, ...(v.tags ?? [])].join(' ')), desc = fold(v.description ?? '')
   const n = q.terms.length
   let score = 0
   for (const t of q.terms) { if (termHit(head, t)) score += 1; else if (termHit(desc, t)) score += 0.5 }
   const coverage = n ? score / n : 1
-  if (n && coverage < minCoverage(n)) return { ...base, relevant: false, reason: 'tema', detail: `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage }
-  const nc = nicheConflict(v, q)
-  if (nc.conflict) return { ...base, relevant: false, reason: 'nicho', detail: nc.detail, coverage }
-  // A short, ambiguous single term ("isa") needs corroboration: the language must at least be verified as the market's.
-  if (n === 1 && q.terms[0].length <= 4 && q.niches.length && lang.verdict !== 'coincide') {
-    const vn = nichesOf(v, { useCategory: false }).map(x => x.niche)
-    if (!vn.some(x => q.niches.includes(x))) return { ...base, relevant: false, reason: 'tema', detail: `«${q.terms[0]}» es ambiguo y nada confirma que sea el mismo tema`, coverage }
+  if (n && coverage < minCoverage(n)) return out('descartado', 'tema', `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage)
+
+  // Which meaning of an ambiguous term does the video use? Decided by what the video itself says, and the words are quoted.
+  if (q.ambiguity) {
+    const ev = senseEvidence(v, q.ambiguity.term), best = [...ev.competing].sort((x, y) => y.hits.length - x.hits.length)[0]
+    if (best && best.hits.length > ev.intended.length) return out('descartado', 'sentido', `«${q.ambiguity.term.toUpperCase()}» aquí es ${best.sense.label} (palabras: ${best.hits.slice(0, 4).join(', ')})`, coverage, best.hits)
+    if (ev.intended.length === 0) return out('dudoso', 'contexto', `nada en el título, etiquetas, descripción o canal confirma que «${q.ambiguity.term.toUpperCase()}» sea ${q.ambiguity.intended.label}`, coverage)
+    if (best && best.hits.length === ev.intended.length && best.hits.length > 0) return out('dudoso', 'contexto', `significado ambiguo: tantas pistas de ${q.ambiguity.intended.label} (${ev.intended.slice(0, 3).join(', ')}) como de ${best.sense.label} (${best.hits.slice(0, 3).join(', ')})`, coverage, ev.intended)
+    const ne = nicheEvidence(v, q)
+    if (ne.conflict) return out('descartado', 'nicho', `fuera de las palabras del tema, el vídeo trata de ${ne.foreign.join(', ')} y el tema es de ${q.niches.join(', ')}`, coverage)
+    return out('aceptado', null, `confirmado por: ${ev.intended.slice(0, 4).join(', ')}`, coverage, ev.intended)
   }
-  return { ...base, relevant: true, reason: null, detail: '', coverage }
+
+  const ne = nicheEvidence(v, q)
+  if (ne.conflict) return out('descartado', 'nicho', `fuera de las palabras del tema, el vídeo trata de ${ne.foreign.join(', ')} y el tema es de ${q.niches.join(', ')}`, coverage)
+  if (opts.strict && q.niches.length && !ne.own.some(x => q.niches.includes(x))) return out('dudoso', 'contexto', `el tema es de ${q.niches.join(', ')} y nada en el vídeo, salvo las palabras de la consulta, lo confirma`, coverage)
+  return out('aceptado', null, '', coverage)
 }
 
 export type SampleQuality = {
   examined: number; kept: number
+  /** Excluded for a verifiable reason, by reason. */
   excluded: Record<ExclusionReason, number>
-  /** Examples of what was dropped and why (max 5), so the user can check the judgement. */
-  examples: Array<{ title: string; reason: ExclusionReason; detail: string }>
+  /** Left out of the metrics because nothing confirms the intended meaning (not called wrong). */
+  uncertain: number
+  /** True when the sample itself showed several meanings, so every video had to confirm the intended one. */
+  ambiguousSample: boolean
   promo: number; outliers: number
   languageUnverified: number
   /** Kept videos whose CHANNEL declares the market's country / that declare any country. */

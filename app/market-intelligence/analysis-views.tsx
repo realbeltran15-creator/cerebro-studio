@@ -10,6 +10,7 @@ import { formatOpportunity, type TopicAnalysis, type Verdict } from '@/lib/resea
 import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization'
 import { fmtNumber } from '@/lib/research/format'
 import { UNITS } from '@/lib/research/filters'
+import { SampleInspector } from './sample-inspector'
 import { nicheLabel } from '@/lib/research/taxonomy'
 import { saveAnalysis } from '@/lib/research/save'
 import { analysesCsv } from '@/lib/research/export'
@@ -57,13 +58,8 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
     <div style={{ display: 'grid', gap: 8 }}>{(Object.keys(INDEX_LABEL) as Array<keyof typeof INDEX_LABEL>).map(k => <IndexBar key={k} name={k} value={a.indices[k]} />)}</div>
     <ul className="small" style={{ margin: '10px 0 0 16px' }}>{a.reasons.map(r => <li key={r}>{r}</li>)}</ul>
     {a.growth.state === 'no_calculable' && <p className="small" style={{ marginTop: 8 }}><button type="button" className="ghost" disabled={growthBusy} onClick={() => void measureGrowth(a)}>{growthBusy ? 'Midiendo…' : `Medir crecimiento (+${UNITS.search} unidades)`}</button> <span className="muted">Compara los últimos {a.recentDays} días con los {a.recentDays} anteriores.</span></p>}
-    {a.quality && <details className="small" style={{ marginTop: 8 }}><summary>Calidad de la muestra: {a.quality.kept} de {a.quality.examined} resultados sirven</summary>
-      <ul style={{ margin: '6px 0 0 16px' }}>
-        <li>Descartados: {a.quality.excluded.tema + a.quality.excluded.nicho} por tema o nicho, {a.quality.excluded.idioma} por idioma, {a.quality.excluded.directo} directos.</li>
-        <li>Fuera de la demanda: {a.quality.promo} posibles anuncios y {a.quality.outliers} virales atípicos.</li>
-        <li>Idioma sin verificar: {a.quality.languageUnverified}. {a.region && a.quality.channelCountryKnown ? `Canales con país ${a.region}: ${a.quality.channelInMarket} de ${a.quality.channelCountryKnown} que declaran país (el país de búsqueda no garantiza el del vídeo).` : ''}</li>
-        {a.quality.examples.map(x => <li key={x.title} className="muted">«{x.title}» — {x.detail}</li>)}
-      </ul></details>}
+    {a.quality && <p className="small muted" style={{ marginTop: 8 }}>Calidad de la muestra: {a.quality.kept} de {a.quality.examined} resultados cuentan; {a.quality.excluded.tema + a.quality.excluded.nicho + a.quality.excluded.sentido} son de otro tema o significado, {a.quality.excluded.idioma} de otro idioma, {a.quality.excluded.directo} directos y {a.quality.uncertain} dudosos. Fuera de la demanda: {a.quality.promo} posibles anuncios y {a.quality.outliers} virales atípicos. Idioma sin verificar: {a.quality.languageUnverified}.{a.region && a.quality.channelCountryKnown ? ` Canales con país ${a.region}: ${a.quality.channelInMarket} de ${a.quality.channelCountryKnown} que declaran país (el país de búsqueda no garantiza el del vídeo).` : ''}</p>}
+    <SampleInspector a={a} />
     <p className="small" style={{ marginTop: 8 }}><b>Formato:</b> {fo.recommended ? (fo.recommended === 'short' ? 'Shorts' : 'vídeo largo') : 'sin preferencia clara'} — {fo.reason}</p>
     {chosen.length > 0 && <p className="small" aria-label="Evidencia del formato elegido"><b>Formato elegido:</b> {chosen.map(f => f === 'short' ? `Shorts (inferidos): ${a.byFormat.short.count} en el top, ${a.byFormat.short.recentCount} recientes, mediana ${a.byFormat.short.medianViewsPerDay ?? '—'} vistas/día` : `vídeos de más de 1 min: ${a.byFormat.long.count} en el top, ${a.byFormat.long.recentCount} recientes, mediana ${a.byFormat.long.medianViewsPerDay ?? '—'} vistas/día`).filter((x, i, l) => l.indexOf(x) === i).join(' · ')}.</p>}
     {a.niches.slice(0, 2).map(n => <RpmLine key={n} niche={n} format={chosen.length === 1 && chosen[0] === 'short' ? 'short' : 'long'} />)}

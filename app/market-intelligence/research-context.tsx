@@ -109,9 +109,9 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     if (!hydrated) return
     const write = (a: Record<string, TopicAnalysis>) => store()?.setItem(DATA, JSON.stringify({ analyses: a, charts, guided }))
     try { write(analyses) } catch {
-      // Storage full: first keep only 3 example videos per analysis (their thumbnails still work), then none; the numbers always stay.
-      const shrink = (n: number) => write(Object.fromEntries(Object.entries(analyses).map(([k, v]) => [k, { ...v, topVideos: v.topVideos.slice(0, n) }])))
-      try { shrink(3) } catch { try { shrink(0) } catch { /* keep in memory only */ } }
+      // Storage full: first drop the per-video sample detail, then keep only 3 example videos per analysis, then none; the numbers always stay.
+      const shrink = (n: number, keepSample: boolean) => write(Object.fromEntries(Object.entries(analyses).map(([k, v]) => [k, { ...v, topVideos: v.topVideos.slice(0, n), sample: keepSample ? v.sample : [] }])))
+      try { shrink(9, false) } catch { try { shrink(3, false) } catch { try { shrink(0, false) } catch { /* keep in memory only */ } } }
     }
   }, [analyses, charts, guided, hydrated])
 

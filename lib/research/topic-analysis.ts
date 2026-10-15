@@ -1,7 +1,7 @@
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { stopwords } from '@/lib/radar'
 import { inferFormat, nichesOf, type Confidence } from './taxonomy'
-import { assessVideo, expectedLanguages, queryProfile, viralOutliers, type ExclusionReason, type SampleQuality } from './relevance'
+import { assessVideo, expectedLanguages, queryProfile, viralOutliers, type Assessment, type ExclusionReason, type SampleQuality, type VideoStatus } from './relevance'
 export type { SampleQuality } from './relevance'
 
 /**
@@ -17,6 +17,16 @@ export type TopicSamples = { topic: string; region: string | null; language: str
 
 export type Verdict = 'oportunidad' | 'saturado' | 'sin_demanda' | 'mixto'
 export type Evidence = { label: string; value: string; kind: 'observado' | 'calculado' | 'inferido' }
+
+/** One video of the raw search, with the verdict it got and why: nothing the engine looked at is hidden from the user. */
+export type SampleVideo = {
+  videoId: string; url: string; title: string; channelTitle: string
+  views: number | null; publishedAt: string; durationSeconds: number | null
+  inTop: boolean; inRecent: boolean
+  status: VideoStatus; reason: ExclusionReason | null; detail: string
+  language: string | null; languageVerdict: 'coincide' | 'no_coincide' | 'sin_verificar'
+  promo: boolean; outlier: boolean; format: string; live: string | null
+}
 
 export type FormatStats = { count: number; recentCount: number; medianViewsPerDay: number | null }
 
@@ -47,6 +57,8 @@ export type TopicAnalysis = {
   evidence: Evidence[]
   /** What the relevance, language and outlier rules did to the raw search results. */
   quality: SampleQuality
+  /** Every video the search returned (both samples), accepted or not, with its verdict and reason. */
+  sample: SampleVideo[]
   byFormat: { short: FormatStats; long: FormatStats }
   /** How sure the Shorts count is: confirmed by #shorts vs only ≤ 60 s, and short clips that are not Shorts. */
   formatQuality: { shortConfirmed: number; shortProbable: number; clipsNotShort: number }
@@ -123,25 +135,31 @@ const k = (n: number) => new Intl.NumberFormat('es-ES', { notation: n >= 10000 ?
 /** Thresholds that decide what counts as enough evidence. Exported so the screen and the tests state the same numbers. */
 export const EVIDENCE = { minTop: 10, minRecent: 5, minCohort: 8, minKeptShare: 0.4, topVideoShare: 0.5, growthUp: 2, growthDown: 0.75 } as const
 
-/** Judges every video of both samples (topic, niche, language, live, promo) and keeps the ones that may influence the indices. */
-function clean(s: TopicSamples): { top: YouTubeVideoResult[]; recent: YouTubeVideoResult[]; promoTop: Set<string>; quality: SampleQuality } {
+/** Judges every video of both samples (topic, meaning, niche, language, live, promo) and keeps the ones that may influence the indices. */
+function clean(s: TopicSamples): { top: YouTubeVideoResult[]; recent: YouTubeVideoResult[]; promoTop: Set<string>; quality: SampleQuality; verdicts: Map<string, Assessment>; inTop: Set<string>; inRecent: Set<string> } {
   const q = queryProfile(s.topic), expected = expectedLanguages(s.region, s.language)
-  const excluded: Record<ExclusionReason, number> = { tema: 0, nicho: 0, idioma: 0, directo: 0 }
-  const examples: SampleQuality['examples'] = [], verdicts = new Map<string, ReturnType<typeof assessVideo>>()
-  let examined = 0, promo = 0, unverified = 0, inMarket = 0, known = 0
-  const judge = (v: YouTubeVideoResult) => {
-    let a = verdicts.get(v.videoId)
-    if (!a) {
-      a = assessVideo(v, q, expected); verdicts.set(v.videoId, a); examined++
-      if (!a.relevant && a.reason) { excluded[a.reason]++; if (examples.length < 5) examples.push({ title: v.title.slice(0, 90), reason: a.reason, detail: a.detail }) }
-      else { if (a.promo) promo++; if (a.language.verdict === 'sin_verificar') unverified++; if (v.channelCountry) { known++; if (s.region && v.channelCountry === s.region) inMarket++ } }
-    }
-    return a
+  const all = (() => { const u = new Set<string>(); return [...s.top.videos, ...s.recent.videos].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)) })()
+  // Pass 1: is the SAMPLE itself ambiguous? (a share of the results that passed the topic words point to other domains or meanings)
+  const first = new Map(all.map(v => [v.videoId, assessVideo(v, q, expected)]))
+  const onTopic = all.filter(v => { const a = first.get(v.videoId)!; return a.reason !== 'idioma' && a.reason !== 'directo' && a.reason !== 'tema' })
+  const wrongMeaning = onTopic.filter(v => ['nicho', 'sentido'].includes(first.get(v.videoId)!.reason ?? '')).length
+  const ambiguousSample = !!q.niches.length && onTopic.length >= 8 && wrongMeaning / onTopic.length >= 0.2
+  // Pass 2: when ambiguous, every video must positively confirm the intended meaning.
+  const verdicts = ambiguousSample ? new Map(all.map(v => [v.videoId, assessVideo(v, q, expected, { strict: true })])) : first
+  const excluded: Record<ExclusionReason, number> = { tema: 0, nicho: 0, idioma: 0, directo: 0, sentido: 0, contexto: 0 }
+  let uncertain = 0, promo = 0, unverified = 0, inMarket = 0, known = 0
+  for (const v of all) {
+    const a = verdicts.get(v.videoId)!
+    if (a.status === 'descartado' && a.reason) excluded[a.reason]++
+    else if (a.status === 'dudoso') uncertain++
+    else { if (a.promo) promo++; if (a.language.verdict === 'sin_verificar') unverified++; if (v.channelCountry) { known++; if (s.region && v.channelCountry === s.region) inMarket++ } }
   }
-  const uniqueRelevant = (vs: YouTubeVideoResult[]) => { const u = new Set<string>(); return vs.filter(v => { if (u.has(v.videoId)) return false; u.add(v.videoId); return judge(v).relevant }) }
-  const top = uniqueRelevant(s.top.videos), recent = uniqueRelevant(s.recent.videos)
+  const keepOf = (vs: YouTubeVideoResult[]) => { const u = new Set<string>(); return vs.filter(v => { if (u.has(v.videoId)) return false; u.add(v.videoId); return verdicts.get(v.videoId)!.relevant }) }
+  const top = keepOf(s.top.videos), recent = keepOf(s.recent.videos)
   const promoTop = new Set([...top, ...recent].filter(v => verdicts.get(v.videoId)?.promo).map(v => v.videoId))
-  return { top, recent, promoTop, quality: { examined, kept: new Set([...top, ...recent].map(v => v.videoId)).size, excluded, examples, promo, outliers: 0, languageUnverified: unverified, channelInMarket: inMarket, channelCountryKnown: known } }
+  const kept = new Set([...top, ...recent].map(v => v.videoId)).size
+  return { top, recent, promoTop, verdicts, inTop: new Set(s.top.videos.map(v => v.videoId)), inRecent: new Set(s.recent.videos.map(v => v.videoId)),
+    quality: { examined: all.length, kept, excluded, uncertain, ambiguousSample, promo, outliers: 0, languageUnverified: unverified, channelInMarket: inMarket, channelCountryKnown: known } }
 }
 
 /** Median views/day of a cohort after dropping promotions and viral outliers, plus how many videos stand behind it. Only videos aged ≥ 3 days. */
@@ -149,7 +167,8 @@ function cohort(vs: YouTubeVideoResult[], promo: Set<string>, now: number) {
   const aged = vs.filter(v => !promo.has(v.videoId) && (ageDays(v, now) ?? 0) >= 3)
   const vpd = aged.map(v => v.calculated.viewsPerDay).filter(num)
   const out = viralOutliers(vpd), kept = vpd.filter((_, i) => !out.has(i))
-  return { n: kept.length, medianVpd: median(kept), outliers: out.size }
+  const withVpd = aged.filter(v => typeof v.calculated.viewsPerDay === 'number' && Number.isFinite(v.calculated.viewsPerDay))
+  return { n: kept.length, medianVpd: median(kept), outliers: out.size, outlierIds: new Set(withVpd.filter((_, i) => out.has(i)).map(v => v.videoId)) }
 }
 
 export function growthFrom(recent: { n: number; medianVpd: number | null }, previous: { n: number; medianVpd: number | null } | null, windowDays: number): GrowthResult {
@@ -177,13 +196,17 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const rawRecentLen = new Set(s.recent.videos.map(v => v.videoId)).size
 
   // Demand: views/day of the on-topic most-viewed videos. Promotions and viral outliers are shown but never set the number.
-  const topVpdAll = top.filter(v => !promo.has(v.videoId)).map(v => v.calculated.viewsPerDay).filter(num)
+  const topCand = top.filter(v => !promo.has(v.videoId) && num(v.calculated.viewsPerDay))
+  const topVpdAll = topCand.map(v => v.calculated.viewsPerDay as number)
   const topOut = viralOutliers(topVpdAll), topVpd = median(topVpdAll.filter((_, i) => !topOut.has(i)))
+  const outlierIds = new Set(topCand.filter((_, i) => topOut.has(i)).map(v => v.videoId))
   const recentCohort = cohort(recent, promo, now)
   const demand = Math.round(0.6 * logScore(topVpd, 20000) + 0.4 * logScore(recentCohort.medianVpd ?? (topVpd ?? 0) * 0.5, 20000))
   const topViews = top.map(v => v.observed.views ?? 0), topTotal = topViews.reduce((t, x) => t + x, 0)
   const oneVideoShare = topTotal ? Math.max(0, ...topViews) / topTotal : 0
+  recentCohort.outlierIds.forEach(id => outlierIds.add(id))
   const quality: SampleQuality = { ...c.quality, outliers: topOut.size + recentCohort.outliers }
+  const sample: SampleVideo[] = (() => { const u = new Set<string>(); return [...s.top.videos, ...s.recent.videos].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)).map(v => { const a = c.verdicts.get(v.videoId)!; return { videoId: v.videoId, url: v.url, title: v.title.slice(0, 140), channelTitle: v.channelTitle.slice(0, 60), views: v.observed.views, publishedAt: v.publishedAt, durationSeconds: v.observed.durationSeconds, inTop: c.inTop.has(v.videoId), inRecent: c.inRecent.has(v.videoId), status: a.status, reason: a.reason, detail: a.detail.slice(0, 200), language: a.language.language, languageVerdict: a.language.verdict, promo: a.promo, outlier: outlierIds.has(v.videoId), format: inferFormat(v).format, live: v.live ?? null } }) })()
 
   // Supply: how much is being published and by how many different channels (on-topic videos only).
   const WINDOW = s.recentDays ?? 30
@@ -219,6 +242,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const lowReasons: string[] = []
   if (top.length < EVIDENCE.minTop || recent.length < EVIDENCE.minRecent) lowReasons.push(`solo ${top.length} vídeos relevantes entre los más vistos y ${recent.length} entre los recientes`)
   if (quality.examined >= 10 && keptShare < EVIDENCE.minKeptShare) lowReasons.push(`más de la mitad de los resultados de YouTube (${quality.examined - quality.kept} de ${quality.examined}) no eran del tema o del mercado`)
+  if (quality.examined >= 10 && quality.uncertain / quality.examined >= 0.3) lowReasons.push(`${quality.uncertain} de ${quality.examined} resultados son dudosos: nada confirma que traten del significado buscado`)
   if (oneVideoShare > EVIDENCE.topVideoShare && top.length >= 5) lowReasons.push(`un solo vídeo reúne el ${Math.round(oneVideoShare * 100)} % de las vistas de la muestra`)
   const confidence: Confidence = lowReasons.length ? 'baja' : enough ? 'media' : 'baja'
 
@@ -232,10 +256,11 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const confidenceNote = `Muestra de ${top.length} vídeos relevantes entre los más vistos y ${recent.length} entre los recientes (de ${quality.examined} resultados de YouTube; ${quality.kept} sirven; YouTube no permite contar todos los vídeos ni creadores).${lowReasons.length ? ` Confianza baja: ${lowReasons.join('; ')}.` : ''} ${subsKnown.length}/${top.length} canales con suscriptores visibles. Con una sola fuente la confianza nunca pasa de «media».`
 
   const fq = (() => { const all = both.map(v => inferFormat(v)); return { shortConfirmed: all.filter(f => f.format === 'short' && f.confidence === 'alta').length, shortProbable: all.filter(f => f.format === 'short' && f.confidence !== 'alta').length, clipsNotShort: all.filter(f => f.format === 'brief' && f.confidence === 'baja').length } })()
-  const ex = quality.excluded
+  const ex = quality.excluded, wrong = ex.tema + ex.nicho + ex.sentido
   const evidence: Evidence[] = [
     { label: 'Resultados de YouTube examinados / que sirven', value: `${quality.examined} / ${quality.kept}`, kind: 'observado' },
-    ...(quality.examined - quality.kept ? [{ label: 'Descartados por tema, nicho, idioma o directo', value: `${ex.tema + ex.nicho} tema/nicho · ${ex.idioma} idioma · ${ex.directo} directos`, kind: 'calculado' as const }] : []),
+    ...(quality.examined - quality.kept ? [{ label: 'Fuera de las métricas (inspecciónalos en «Muestra»)', value: `${wrong} de otro tema o significado · ${ex.idioma} de otro idioma · ${ex.directo} directos · ${quality.uncertain} dudosos sin confirmar`, kind: 'calculado' as const }] : []),
+    ...(quality.ambiguousSample ? [{ label: 'La consulta tiene varios significados', value: 'solo cuentan los vídeos que confirman el sentido buscado', kind: 'inferido' as const }] : []),
     ...(quality.promo ? [{ label: 'Posibles anuncios o promociones (fuera de la demanda)', value: String(quality.promo), kind: 'inferido' as const }] : []),
     ...(quality.outliers ? [{ label: 'Vídeos virales atípicos (fuera de la demanda)', value: String(quality.outliers), kind: 'calculado' as const }] : []),
     { label: 'Idioma sin verificar entre los que sirven', value: `${quality.languageUnverified} de ${quality.kept}`, kind: 'inferido' },
@@ -273,7 +298,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     byFormat: { short: stats(top, recent, isShortProper), long: stats(top, recent, isLong) }, formatQuality: fq,
     niches, terms: extractTerms(both), emerging: emergingTerms(top, recent), questions: extractQuestions(both),
     sampleSizes: { top: top.length, recent: recent.length }, approxTotals: { top: s.top.approxTotal, recent: s.recent.approxTotal },
-    topVideos: top.filter(v => !promo.has(v.videoId)).slice(0, 9),
+    topVideos: top.filter(v => !promo.has(v.videoId)).slice(0, 9), sample,
   }
 }
 
@@ -284,8 +309,9 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
 export function applyGrowth(a: TopicAnalysis, previous: Sample, now = Date.now()): TopicAnalysis {
   const q = queryProfile(a.topic), expected = expectedLanguages(a.region, a.language)
   const seen = new Set<string>()
-  const relevant = previous.videos.filter(v => { if (seen.has(v.videoId)) return false; seen.add(v.videoId); return assessVideo(v, q, expected).relevant })
-  const promo = new Set(relevant.filter(v => assessVideo(v, q, expected).promo).map(v => v.videoId))
+  const strict = !!a.quality?.ambiguousSample
+  const relevant = previous.videos.filter(v => { if (seen.has(v.videoId)) return false; seen.add(v.videoId); return assessVideo(v, q, expected, { strict }).relevant })
+  const promo = new Set(relevant.filter(v => assessVideo(v, q, expected, { strict }).promo).map(v => v.videoId))
   const prev = cohort(relevant, promo, now)
   const growth = growthFrom(a.growth.recent, { n: prev.n, medianVpd: prev.medianVpd }, a.recentDays)
   const growthIdx = growthIndex(growth)
