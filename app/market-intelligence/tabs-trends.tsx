@@ -3,17 +3,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { YouTubeResults } from '../components/youtube-results'
 import { RpmLine, RunStatus } from './analysis-views'
+import { RecoSectionView } from './reco-views'
+import { buildRecommendations } from '@/lib/research/recommendations'
 import { Results, useFiltered } from './tabs-analysis'
 import { useResearch } from './research-context'
-import { COUNTRIES, CONTINENTS, neglectedNiches, NEGLECTED } from '@/lib/research/discovery'
+import { COUNTRIES, CONTINENTS } from '@/lib/research/discovery'
 import { crossRegionTerms } from '@/lib/research/discovery'
 import { blockers, filterVideos, forTab, mergeRegions, UNITS, type SeenVideo } from '@/lib/research/filters'
 import { countryName, marketLabel } from '@/lib/research/markets'
 import { COUNTRY_RPM, RPM_LABEL, NICHE_RPM, SCENARIO_VIEWS, SOURCES, UNKNOWN_RPM_NICHES, VERIFIED_RPM_STATUS, formatAdjusted, nicheRpm, passesRpmFilter, revenueScenarios } from '@/lib/research/monetization'
 import { NICHES, nicheLabel, nichesOf } from '@/lib/research/taxonomy'
-import { formatOpportunity } from '@/lib/research/topic-analysis'
 import type { YouTubeSaveContext } from '../components/youtube-results'
-import { fmtCompact, fmtNumber, fmtUsd, plural } from '@/lib/research/format'
+import { fmtCompact, fmtNumber, fmtUsd } from '@/lib/research/format'
 
 const ctx = (q: string, region: string | null): YouTubeSaveContext => ({ query: q, region, language: null, origin: 'radar' })
 const fmt = fmtCompact
@@ -21,7 +22,7 @@ const usd = fmtUsd
 
 /** Official "most popular" charts for the chosen countries (2 units each) merged into one list, with the filters applied. */
 export function TrendingCompare({ compact = false, onSaved }: { compact?: boolean; onSaved: () => void }) {
-  const { filters, charts, loadCharts, chartsBusy, chartsError } = useResearch()
+  const { filters, charts, chartsBusy, chartsError } = useResearch()
   const regions = filters.countries
   const missing = regions.filter(r => !charts[r])
   const merged = useMemo(() => mergeRegions(regions.filter(r => charts[r]).map(r => ({ region: r, videos: charts[r] }))), [regions, charts])
@@ -114,55 +115,29 @@ export function MonetizationTab() {
   </section>
 }
 
-function Section({ id, title, children, empty }: { id: string; title: string; children?: React.ReactNode; empty?: string }) {
-  return <details open className="panel" style={{ marginBottom: 12 }} aria-label={title}><summary><b>{id}. {title}</b></summary><div style={{ marginTop: 10 }}>{children ?? <p className="muted small">{empty}</p>}</div></details>
-}
-
-/** Sections A–H: recommendations built from the charts and analyses the user already has, plus clear next steps for what is missing. */
-export function DiscoverTab({ onSaved, goTo }: { onSaved: () => void; goTo: (tab: string) => void }) {
-  const { filters, charts, loadCharts, chartsBusy, chartsError, list, markets } = useResearch()
+/** Visual recommendations: nine sections built from the analyses and official charts already fetched, each with real videos and thumbnails. */
+export function DiscoverTab({ goTo }: { onSaved: () => void; goTo: (tab: string) => void }) {
+  const { filters, charts, loadCharts, chartsBusy, chartsError, list } = useResearch()
   // The home country is fixed when the tab opens: choosing countries in the filters must never trigger a query by itself.
   const [home] = useState(() => { try { const h = window.localStorage.getItem('cerebro.homeRegion'); return h && COUNTRIES.some(c => c.code === h) ? h : 'ES' } catch { return 'ES' } })
   useEffect(() => { if (!charts[home] && !chartsBusy) void loadCharts([home]) }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  const wanted = filters.countries.length ? filters.countries : [home]
-  const loaded = wanted.filter(r => charts[r])
+  const wanted = useMemo(() => (filters.countries.length ? filters.countries : [home]), [filters.countries, home])
   const waiting = wanted.filter(r => !charts[r])
-  const merged = useMemo(() => mergeRegions(loaded.map(r => ({ region: r, videos: charts[r] }))), [loaded, charts])
-  const videos = useMemo(() => filterVideos(merged, filters), [merged, filters])
-  const why = useMemo(() => (merged.length > 0 && videos.length === 0 ? blockers(merged, filters) : []), [merged, videos, filters])
   const fa = useFiltered(list, 'discover')
-  const analyses = fa.rows
+  const loadedCharts = useMemo(() => Object.fromEntries(wanted.filter(r => charts[r]).map(r => [r, charts[r]])), [wanted, charts])
+  const reco = useMemo(() => buildRecommendations({ analyses: list, charts: loadedCharts, filters }), [list, loadedCharts, filters])
+  const videosOnPage = reco.sections.reduce((t, s) => t + s.items.reduce((u, i) => u + (i.kind === 'video' ? 1 : i.videos.length), 0), 0)
 
-  const byNiche = useMemo(() => { const m = new Map<string, { n: number; views: number }>(); for (const v of videos) for (const x of nichesOf(v)) { const e = m.get(x.niche) ?? { n: 0, views: 0 }; e.n++; e.views += v.observed.views ?? 0; m.set(x.niche, e) } return [...m.entries()].sort((a, b) => b[1].views - a[1].views).slice(0, 8) }, [videos])
-  const pool = useMemo(() => { const seen = new Map<string, SeenVideo>(); for (const v of [...videos, ...analyses.flatMap(a => a.topVideos).map(v => ({ ...v, regions: [] as string[] }))]) seen.set(v.videoId, seen.get(v.videoId) ?? v); return [...seen.values()] }, [videos, analyses])
-  const small = useMemo(() => neglectedNiches(pool).slice(0, 6), [pool])
-  const sorted = (f: (a: (typeof analyses)[number]) => number) => [...analyses].sort((a, b) => f(b) - f(a))
-  const gaps = sorted(a => a.indices.opportunity).filter(a => a.verdict === 'oportunidad')
-  const emerging = sorted(a => a.indices.growth).filter(a => a.indices.growth >= 60 || a.emerging.length > 0).slice(0, 4)
-  const money = sorted(a => a.indices.demand).flatMap(a => a.niches.map(n => ({ a, n, r: formatAdjusted(nicheRpm(n), 'long') }))).filter(x => x.r.status === 'estimado' && passesRpmFilter(x.n, filters.rpm)).slice(0, 5)
-  const keywords = analyses.filter(a => a.indices.competition <= 55).flatMap(a => a.terms.slice(0, 3).map(t => ({ t, a }))).slice(0, 8)
-  const formats = analyses.map(a => ({ a, f: formatOpportunity(a) })).filter(x => x.f.recommended)
-  const none = 'Sin análisis todavía.'
-  const emptyList = list.length ? 'Ningún análisis cumple los filtros (mira el aviso de arriba).' : none
   return <div>
-    <p className="muted small" style={{ marginBottom: 10 }}>Lista oficial de populares de <b>{wanted.map(countryName).join(', ')}</b>{filters.countries.length ? '' : ' (tu país por defecto: elige países en los filtros para cambiarlo)'}. Al entrar solo se carga esa lista ({UNITS.trending} unidades por país); lo demás parte de análisis que tú lances: nada caro se ejecuta solo.</p>
+    <p className="muted small" style={{ marginBottom: 10 }}>Recomendaciones para <b>{wanted.map(countryName).join(', ')}</b>{filters.countries.length ? '' : ' (tu país por defecto: elige países en los filtros para cambiarlo)'}, con vídeos reales y sus miniaturas oficiales. Al entrar solo se carga la lista oficial de populares ({UNITS.trending} unidades por país); lo demás parte de análisis que tú lances: nada caro se ejecuta solo.{reco.updatedAt ? ` Datos actualizados el ${new Date(reco.updatedAt).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })}.` : ''} Cada vídeo aparece una sola vez en toda la página ({videosOnPage} vídeos).</p>
     {waiting.length > 0 && filters.countries.length > 0 && !chartsBusy && <p className="notice" role="status">Faltan las tendencias de {waiting.map(countryName).join(', ')}: pulsa <b>«Aplicar y cargar tendencias»</b> en los filtros ({waiting.length * UNITS.trending} unidades).</p>}
     {chartsBusy && <p className="muted small" role="status">Cargando tendencias…</p>}
     {chartsError && <p className="error" role="alert">{chartsError}</p>}
-    {list.length === 0 && <div className="notice" role="status"><p><b>B, C, E, G y H necesitan analizar nichos.</b> Aún no hay análisis: <button type="button" className="ghost" onClick={() => goTo('niches')}>Ir a Nichos</button> (cuesta cuota y siempre pide confirmación).</p></div>}
+    {list.length === 0 && <div className="notice" role="status"><p><b>Las recomendaciones por demanda, desatendidos, emergentes, monetización, competencia y formato necesitan analizar nichos.</b> Aún no hay análisis: <button type="button" className="ghost" onClick={() => goTo('niches')}>Ir a Nichos</button> (el botón de buscar muestra el coste y siempre pide confirmación si es alto).</p></div>}
     {fa.notice}
-    <Section id="A" title="Nichos con más visualizaciones" empty={chartsBusy ? 'Cargando tendencias…' : 'Aún no hay listas cargadas.'}>
-      {byNiche.length > 0 && <div className="tableScroll"><table className="dataTable"><thead><tr><th>Nicho (inferido)</th><th>Vídeos en la lista</th><th>Visualizaciones sumadas</th></tr></thead><tbody>{byNiche.map(([n, x]) => <tr key={n}><td>{nicheLabel(n)}</td><td>{x.n}</td><td>{fmt(x.views)}</td></tr>)}</tbody></table></div>}
-      {merged.length > 0 && videos.length === 0 && <p className="warnBox" role="status">Ningún vídeo de las {plural(merged.length, 'lista', 'listas')} cumple los filtros.{why.length ? ` Quitando ${why.slice(0, 3).map(w => `${w.group} aparecerían ${w.wouldShow}`).join('; quitando ')}.` : ' Prueba con menos filtros.'}</p>}
-      {merged.length > 0 && <p className="muted small">Calculado sobre la lista oficial de populares: {plural(videos.length, 'vídeo', 'vídeos')} de {merged.length} tras filtros. Un vídeo puede contar en varios nichos.</p>}
-    </Section>
-    <Section id="B" title="Nichos descuidados">{gaps.length ? gaps.slice(0, 5).map(a => <p key={a.topic + a.region} className="small"><b>{a.topic}</b> · {marketLabel(a.region, a.language)} — oportunidad {a.indices.opportunity}/100, demanda {a.indices.demand}, competencia {a.indices.competition}, oferta {a.indices.supply}. {a.reasons[0]}</p>) : analyses.length ? <p className="muted small">Ninguno de los {analyses.length} análisis tiene demanda alta con poca oferta y competencia. Eso también es información.</p> : <p className="muted small">{emptyList}</p>}</Section>
-    <Section id="C" title="Nichos emergentes">{emerging.length ? emerging.map(a => <p key={a.topic + a.region} className="small"><b>{a.topic}</b> · {marketLabel(a.region, a.language)} — crecimiento {a.indices.growth}/100 ({a.growthPct ?? '—'} %){a.emerging.length ? `; frases al alza: ${a.emerging.slice(0, 3).map(t => t.term).join(', ')}` : ''}</p>) : analyses.length ? <p className="muted small">Ningún análisis muestra un crecimiento claro.</p> : <p className="muted small">{emptyList}</p>}</Section>
-    <Section id="D" title="Tendencias internacionales"><TrendingCompare compact onSaved={onSaved} /></Section>
-    <Section id="E" title="Oportunidades de monetización">{money.length ? <>{money.map(({ a, n }) => <div key={a.topic + a.region + n}><p className="small"><b>{a.topic}</b> · {marketLabel(a.region, a.language)} — demanda {a.indices.demand}/100, competencia {a.indices.competition}/100</p><RpmLine niche={n} /></div>)}<p className="muted small">RPM de referencia por nicho, no de este tema ni de ningún canal.</p></> : analyses.length ? <p className="muted small">Ningún análisis cae en un nicho con RPM de referencia dentro del filtro.</p> : <p className="muted small">{emptyList}</p>}</Section>
-    <Section id="F" title="Oportunidades para canales pequeños" empty="Sin vídeos que lo cumplan todavía.">{small.length > 0 && <><p className="muted small">Vídeos de canales de hasta {fmtNumber(NEGLECTED.maxSubscribers)} suscriptores con al menos {fmtNumber(NEGLECTED.minViews)} vistas y {NEGLECTED.minRatio}× más vistas que suscriptores. Por sí solo esto <b>no</b> prueba que el nicho esté descuidado: mira la sección B.</p><YouTubeResults results={small} context={ctx('canales-pequeños', null)} onSaved={onSaved} /></>}</Section>
-    <Section id="G" title="Palabras clave prometedoras">{keywords.length ? <div className="legend">{keywords.map(({ t, a }) => <span key={t.term + a.topic + a.region} className="pill" title={`${a.topic} · ${marketLabel(a.region, a.language)} · competencia ${a.indices.competition}/100`}>{t.term} · {t.videos}</span>)}</div> : analyses.length ? <p className="muted small">No hay frases con competencia manejable.</p> : <p className="muted small">{emptyList}</p>}<p className="muted small">Frases de títulos de temas con competencia ≤ 55. Sin volúmenes de búsqueda.</p></Section>
-    <Section id="H" title="Oportunidades por formato">{formats.length ? formats.slice(0, 5).map(({ a, f }) => <p key={a.topic + a.region} className="small"><b>{a.topic}</b> · {marketLabel(a.region, a.language)} → {f.recommended === 'short' ? 'Shorts' : 'vídeo largo'}: {f.reason}</p>) : analyses.length ? <p className="muted small">Los formatos están cubiertos en la muestra.</p> : <p className="muted small">{emptyList}</p>}</Section>
-    <p className="muted small">Mercados que se usarían para analizar: {markets.map(m => m.label).join(' · ')}.</p>
+    {reco.sections.map(sec => <RecoSectionView key={sec.id} s={sec}>
+      {sec.id === 'international' && reco.internationalTerms.length > 0 && <div className="legend" style={{ margin: '4px 0 10px' }} aria-label="Términos compartidos"><span className="muted small">Términos en varios países <span className="tag calculado">calculado</span>:</span>{reco.internationalTerms.map(t => <span key={t.term} className="pill" title={t.regions.map(countryName).join(', ')}>{t.term} · {t.regions.length} países</span>)}</div>}
+      {sec.id === 'international' && <p className="small" style={{ marginBottom: 8 }}><button type="button" className="ghost" onClick={() => goTo('international')}>Ver la comparación completa por país</button></p>}
+    </RecoSectionView>)}
   </div>
 }

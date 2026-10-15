@@ -5,7 +5,7 @@ import { MultiSelect } from '../components/multi-select'
 import { useResearch } from './research-context'
 import { COUNTRIES, CONTINENTS, LANGUAGES } from '@/lib/research/discovery'
 import { CONTENT_TYPE_OPTIONS, FORMAT_OPTIONS, NICHES, nicheLabel } from '@/lib/research/taxonomy'
-import { GROUP_SEMANTICS, MAX_COUNTRIES, TAB_FILTERS, forTab, TAB_SCOPE, YT_CATEGORIES, activeCount, describeActive, type FilterPart, type MetricFilters, type TabId } from '@/lib/research/filters'
+import { GROUP_SEMANTICS, MAX_COUNTRIES, TAB_FILTERS, VERDICT_OPTIONS, forTab, TAB_SCOPE, YT_CATEGORIES, activeCount, describeActive, type AnalysisFilters, type FilterPart, type MetricFilters, type TabId } from '@/lib/research/filters'
 import { countryName } from '@/lib/research/markets'
 import { parseTopics, planLabel, searchPlanFor } from '@/lib/research/search-plan'
 import { suggestSeeds } from '@/lib/research/seeds'
@@ -32,6 +32,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
   const parts = TAB_FILTERS[tab] as FilterPart[]
   const has = (p: FilterPart) => parts.includes(p)
   const set = (patch: Partial<typeof f>) => setDraft({ ...f, ...patch })
+  const ana = (patch: Partial<AnalysisFilters>) => setDraft({ ...f, analysis: { ...f.analysis, ...patch } })
   const met = (patch: Partial<MetricFilters>) => setDraft({ ...f, metrics: { ...f.metrics, ...patch } })
   const logic = (g: keyof typeof f.logic) => (l: 'any' | 'all') => setDraft({ ...f, logic: { ...f.logic, [g]: l } })
   const chips = useMemo(() => describeActive(forTab(tab, applied), NAMES), [applied, tab])
@@ -121,6 +122,19 @@ export function FilterPanel({ tab }: { tab: TabId }) {
           <p className="muted small">Filtra por el rango ESTIMADO del nicho; no es el RPM real de nadie.</p>
         </div>}
       </div>
+      {has('analysis') && <details open={false}>
+        <summary><b>Resultado del análisis</b> <span className="muted small">demanda, oferta, competencia, crecimiento, clasificación</span></summary>
+        <div className="filterGrid" style={{ marginTop: 10 }}>
+          <Range label="Demanda (mín. 0–100)" a={f.analysis.minDemand} onA={v => ana({ minDemand: v })} />
+          <Range label="Oferta (máx. 0–100)" a={f.analysis.maxSupply} onA={v => ana({ maxSupply: v })} />
+          <Range label="Competencia (máx. 0–100)" a={f.analysis.maxCompetition} onA={v => ana({ maxCompetition: v })} />
+          <Range label="Crecimiento (mín. 0–100)" a={f.analysis.minGrowth} onA={v => ana({ minGrowth: v })} />
+          <Range label="Oportunidad (mín. 0–100)" a={f.analysis.minOpportunity} onA={v => ana({ minOpportunity: v })} />
+          <MultiSelect label="Clasificación" options={VERDICT_OPTIONS} value={f.analysis.verdicts} onChange={verdicts => ana({ verdicts })} />
+          <div><label className="muted small" htmlFor="rf-conf">Confianza mínima</label><select id="rf-conf" value={f.analysis.minConfidence ?? ''} onChange={e => ana({ minConfidence: e.target.value === 'media' ? 'media' : e.target.value === 'baja' ? 'baja' : null })}><option value="">Cualquiera</option><option value="media">Media o superior</option></select></div>
+        </div>
+        <p className="muted small" style={{ marginTop: 8 }}>Son los índices que calcula Cerebro Studio con la muestra de YouTube (0–100): filtran los <b>análisis ya hechos</b>, no cambian qué se consulta. Un «nicho desatendido» típico: demanda ≥ 50, competencia ≤ 55 y oferta ≤ 60.</p>
+      </details>}
       {has('advanced') && <details>
         <summary><b>Filtros avanzados</b> <span className="muted small">rendimiento, canal, duración, texto y dinero estimado</span></summary>
         <div className="filterGrid" style={{ marginTop: 10 }}>

@@ -6,10 +6,8 @@ import { GuidedPanel } from './guided-panel'
 import { useResearch } from './research-context'
 import { keyOf, marketLabel } from '@/lib/research/markets'
 import { keywordsCsv } from '@/lib/research/export'
-import { passesRpmFilter } from '@/lib/research/monetization'
 import { fmtNumber } from '@/lib/research/format'
-import { forTab, type TabId } from '@/lib/research/filters'
-import { formatCovered } from '@/lib/research/topic-analysis'
+import { analysisExclusions, forTab, type TabId } from '@/lib/research/filters'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
 
 export type FilteredAnalyses = { rows: TopicAnalysis[]; hidden: TopicAnalysis[]; reasons: Array<{ group: string; count: number }>; showAll: boolean; setShowAll: (v: boolean) => void; notice: ReactNode }
@@ -22,14 +20,7 @@ export function useFiltered(list: TopicAnalysis[], tab: TabId): FilteredAnalyses
   const { filters: applied } = useResearch()
   const f = useMemo(() => forTab(tab, applied), [tab, applied])
   const [showAll, setShowAll] = useState(false)
-  const verdicts = useMemo(() => list.map(a => {
-    const why: string[] = []
-    if (f.niches.length && !(f.logic.niches === 'all' ? f.niches.every(n => a.niches.includes(n)) : f.niches.some(n => a.niches.includes(n)))) why.push('nichos')
-    if (f.countries.length && (!a.region || !f.countries.includes(a.region))) why.push('países')
-    if ((f.rpm.min !== null || f.rpm.max !== null) && !(a.niches.length ? a.niches.some(n => passesRpmFilter(n, f.rpm)) : f.rpm.includeUnknown)) why.push('RPM estimado')
-    if (f.formats.length && !formatCovered(a, f.formats)) why.push('formatos')
-    return { a, why }
-  }), [list, f])
+  const verdicts = useMemo(() => list.map(a => ({ a, why: analysisExclusions(a, f) })), [list, f])
   const hidden = verdicts.filter(v => v.why.length).map(v => v.a)
   const reasons = Object.entries(verdicts.flatMap(v => v.why).reduce<Record<string, number>>((m, g) => ({ ...m, [g]: (m[g] ?? 0) + 1 }), {})).map(([group, count]) => ({ group, count })).sort((x, y) => y.count - x.count)
   const rows = showAll ? list : verdicts.filter(v => !v.why.length).map(v => v.a)
@@ -46,7 +37,10 @@ export function Results({ list, onSaved, empty }: { list: TopicAnalysis[]; onSav
   const [index, setIndex] = useState<keyof typeof INDEX_LABEL>('opportunity')
   const sorted = useMemo(() => [...list].sort((a, b) => b.indices.opportunity - a.indices.opportunity), [list])
   if (!list.length) return <p className="emptyState">{empty}</p>
+  const poor = list.filter(a => a.confidence === 'baja' || a.sampleSizes.top < 20)
+  const markets = new Set(list.map(a => `${a.region}|${a.language}`)).size
   return <>
+    {markets > 1 && poor.length > 0 && <p className="warnBox" role="status">Cobertura desigual: {poor.length} de {list.length} análisis tienen muestra pequeña o confianza baja ({poor.slice(0, 3).map(a => `${a.topic} · ${marketLabel(a.region, a.language)}`).join('; ')}). Compáralos con cautela: no son datos equivalentes.</p>}
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }}>
       <ViewToggle value={view} onChange={setView} />
       {view === 'chart' && <select value={index} onChange={e => setIndex(e.target.value as keyof typeof INDEX_LABEL)} aria-label="Índice del gráfico">{Object.entries(INDEX_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>}
@@ -118,21 +112,4 @@ function KeywordCompare({ list }: { list: TopicAnalysis[] }) {
     <div className="tableScroll"><table className="dataTable"><thead><tr><th>Frase</th>{cols.map(a => <th key={keyOf(a)}>{a.topic}<br />{marketLabel(a.region, a.language)}</th>)}</tr></thead>
       <tbody>{terms.map(t => <tr key={t}><td>{t}</td>{cols.map(a => { const x = a.terms.find(y => y.term === t); return <td key={keyOf(a)}>{x ? `${Math.round(x.share * 100)} %` : '—'}</td> })}</tr>)}</tbody></table></div>
   </details>
-}
-
-/** Side-by-side comparison of everything analysed, with the differences in data coverage stated. */
-export function CompareTab({ onSaved }: { onSaved: () => void }) {
-  const { list, filters } = useResearch()
-  const fa = useFiltered(list, 'compare')
-  const shown = fa.rows
-  const needAll = filters.logic.countries === 'all' && filters.countries.length > 1
-  const rows = needAll ? shown.filter(a => shown.filter(b => b.topic.toLowerCase() === a.topic.toLowerCase()).map(b => b.region).filter(Boolean).length >= filters.countries.length && filters.countries.every(c => shown.some(b => b.topic.toLowerCase() === a.topic.toLowerCase() && b.region === c))) : shown
-  const poor = rows.filter(a => a.confidence === 'baja' || a.sampleSizes.top < 20)
-  return <section className="panel" aria-label="Comparador avanzado">
-    <h3>Comparador avanzado</h3>
-    <p className="muted small" style={{ margin: '6px 0 10px' }}>Compara cualquier tema y mercado ya analizado. {needAll ? 'Con «Todos (AND)» en países solo salen temas analizados en cada país elegido.' : 'Los análisis se hacen en las otras secciones; aquí no se gasta cuota.'}</p>
-    {poor.length > 0 && <p className="warnBox" role="status">Cobertura desigual: {poor.length} de {rows.length} análisis tienen muestra pequeña o confianza baja ({poor.slice(0, 3).map(a => `${a.topic} · ${marketLabel(a.region, a.language)}`).join('; ')}). Compara con cautela: no son datos equivalentes.</p>}
-    {fa.notice}
-    <Results list={rows} onSaved={onSaved} empty={list.length ? 'Ningún análisis cumple los filtros: mira el aviso de arriba.' : 'Aún no hay análisis que comparar. Hazlos en Nichos o Palabras clave.'} />
-  </section>
 }

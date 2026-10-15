@@ -541,3 +541,106 @@ describe('the report: complete, honest about what it does not know', () => {
     expect(head.split(',').length).toBeGreaterThanOrEqual(30); expect(row).toContain(`'=HYPERLINK`)
   })
 })
+
+import { buildRecommendations } from '@/lib/research/recommendations'
+import { analysisExclusions, NO_ANALYSIS, sanitizeAnalysis, analysisActive } from '@/lib/research/filters'
+
+describe('analysis-level filters (demand, supply, competition, growth, classification)', () => {
+  const f = (a: Partial<typeof NO_ANALYSIS> = {}, o: Partial<ResearchFilters> = {}): ResearchFilters => ({ ...EMPTY_FILTERS, ...o, logic: { ...EMPTY_FILTERS.logic }, metrics: { ...NO_METRICS }, analysis: { ...NO_ANALYSIS, ...a } })
+  const mk = (i: { d: number; s: number; c: number; g: number; o: number }, v: 'oportunidad' | 'saturado' | 'sin_demanda' | 'mixto' = 'mixto') => ({ ...analyzeTopic(samples(many(25, () => ({ views: 90000, days: 90 })), many(10, () => ({ views: 4000, days: 5 }))), NOW), indices: { demand: i.d, supply: i.s, competition: i.c, growth: i.g, opportunity: i.o }, verdict: v })
+  it('each threshold excludes exactly the analyses that fail it, and says which filter did', () => {
+    const a = mk({ d: 60, s: 40, c: 30, g: 70, o: 65 }, 'oportunidad')
+    expect(analysisExclusions(a, f())).toEqual([])
+    expect(analysisExclusions(a, f({ minDemand: 70 }))).toEqual(['demanda'])
+    expect(analysisExclusions(a, f({ maxSupply: 30 }))).toEqual(['oferta'])
+    expect(analysisExclusions(a, f({ maxCompetition: 20 }))).toEqual(['competencia'])
+    expect(analysisExclusions(a, f({ minGrowth: 80 }))).toEqual(['crecimiento'])
+    expect(analysisExclusions(a, f({ minOpportunity: 90 }))).toEqual(['oportunidad'])
+    expect(analysisExclusions(a, f({ verdicts: ['saturado'] }))).toEqual(['clasificación'])
+    expect(analysisExclusions(a, f({ minDemand: 50, maxSupply: 60, maxCompetition: 55, verdicts: ['oportunidad'] }))).toEqual([])
+    expect(analysisExclusions({ ...a, confidence: 'baja' }, f({ minConfidence: 'media' }))).toEqual(['confianza'])
+  })
+  it('combines with niches, countries, RPM and format, reporting every reason', () => {
+    const a = { ...mk({ d: 10, s: 90, c: 90, g: 10, o: 5 }, 'saturado'), niches: ['motor'], region: 'DE' }
+    expect(analysisExclusions(a, f({ minDemand: 50, maxCompetition: 40 }, { countries: ['US'], rpm: { min: 1, max: null, includeUnknown: false } })).sort()).toEqual(['competencia', 'demanda', 'países', 'RPM estimado'].sort())
+  })
+  it('sanitizes saved values: only 0–100, known classifications, known confidence', () => {
+    expect(sanitizeAnalysis({ minDemand: 150, maxSupply: -1, maxCompetition: 55, verdicts: ['oportunidad', 'x'], minConfidence: 'alta' })).toMatchObject({ minDemand: null, maxSupply: null, maxCompetition: 55, verdicts: ['oportunidad'], minConfidence: null })
+    expect(analysisActive({ ...NO_ANALYSIS, minDemand: 5, verdicts: ['a', 'b'] })).toBe(2)
+    expect(validateFilters(f({ minDemand: 150 }))[0]).toMatch(/entre 0 y 100/)
+    const chip = describeActive(f({ maxCompetition: 55, verdicts: ['oportunidad'] }), { country: c => c, niche: n => n, language: l => l, format: x => x, contentType: x => x, category: x => x })
+    expect(chip.map(c => `${c.group}: ${c.label}`)).toEqual(['Competencia: ≤ 55', 'Clasificación: Nicho desatendido con demanda'])
+    expect(chip[0].remove(f({ maxCompetition: 55 })).analysis.maxCompetition).toBeNull()
+  })
+})
+
+describe('recommendations: real videos only, thumbnails from the API, no repeats', () => {
+  const withVideos = (title: string, region: string, vids: YouTubeVideoResult[], over: Record<string, unknown> = {}) => ({ ...analyzeTopic({ ...samples(vids, many(8, () => ({ views: 3000, days: 6, title }))), region, language: region === 'DE' ? 'de' : 'en', topic: title }, NOW), topVideos: vids.slice(0, 6), ...over }) as ReturnType<typeof analyzeTopic>
+  const v = (title: string, o: O & { thumb?: string | null } = {}) => { const x = vid({ title, ...o }); return { ...x, url: `https://www.youtube.com/watch?v=${x.videoId}`, thumbnailUrl: o.thumb === undefined ? `https://i.ytimg.com/vi/${title.replace(/\W+/g, '')}/mqdefault.jpg` : o.thumb } }
+  const shared = [v('Guía A', { views: 300000, days: 40, subs: 3000, ch: 'c1', dur: 900 }), v('Short B #shorts', { views: 90000, days: 10, subs: 1200, ch: 'c2', dur: 40 }), v('Todo C', { views: 150000, days: 100, subs: 800000, ch: 'c3', dur: 1500 })]
+  const a1 = withVideos('inteligencia artificial para negocios', 'US', shared, { niches: ['ia'] })
+  const a2 = withVideos('KI Tools Test', 'DE', shared.slice(0, 2), { niches: ['ia'] })
+  const input = (analyses: ReturnType<typeof analyzeTopic>[], charts: Record<string, YouTubeVideoResult[]> = {}, filters = EMPTY_FILTERS) => buildRecommendations({ analyses, charts, filters })
+
+  it('always returns the nine sections in the requested order, empty with an explanation instead of invented items', () => {
+    const r = input([])
+    expect(r.sections.map(s => s.id)).toEqual(['demand', 'neglected', 'emerging', 'money', 'lowcomp', 'international', 'small', 'shorts', 'long'])
+    expect(r.sections.every(s => s.items.length === 0 && s.empty.length > 10)).toBe(true); expect(r.updatedAt).toBeNull()
+  })
+  it('a video appears at most once across all sections (regression: repeats)', () => {
+    const r = input([a1, a2])
+    const ids = r.sections.flatMap(s => s.items.flatMap(i => (i.kind === 'video' ? [i.video.videoId] : i.videos.map(x => x.videoId))))
+    expect(ids.length).toBeGreaterThan(0); expect(new Set(ids).size).toBe(ids.length)
+  })
+  it('shows up to three representative videos per niche, from different channels, with the API thumbnail and facts', () => {
+    const demand = input([a1]).sections[0].items[0]
+    expect(demand.kind).toBe('niche'); if (demand.kind !== 'niche') return
+    expect(demand.videos.length).toBeLessThanOrEqual(3); expect(new Set(demand.videos.map(x => x.channelTitle)).size).toBeGreaterThan(0)
+    const first = demand.videos[0]
+    expect(first.thumbnailUrl).toMatch(/^https:\/\/i\.ytimg\.com\/vi\//); expect(first.url).toMatch(/^https:\/\/www\.youtube\.com\/watch\?v=/)
+    expect(first).toMatchObject({ views: expect.any(Number), publishedAt: expect.any(String), market: 'Estados Unidos (inglés)' }); expect(first.format.reason.length).toBeGreaterThan(0)
+    expect(demand.updatedAt).toBe(a1.fetchedAt); expect(demand.reason).toMatch(/^Demanda \d+\/100/)
+  })
+  it('never invents a thumbnail: a video the API gave none for stays without one', () => {
+    const a = withVideos('tema sin miniatura', 'US', [v('Sin miniatura', { thumb: null, views: 100000, days: 20, subs: 900000 })], { niches: ['ia'] })
+    const item = input([a]).sections[0].items[0]; expect(item.kind === 'niche' && item.videos[0].thumbnailUrl).toBeNull()
+  })
+  it('the neglected section takes only real opportunities; the Shorts/long sections only format gaps', () => {
+    const opp = { ...a1, verdict: 'oportunidad' as const }, sat = { ...a2, verdict: 'saturado' as const }
+    const r = input([opp, sat])
+    const neglected = r.sections.find(s => s.id === 'neglected')!.items
+    expect(neglected.map(i => (i.kind === 'niche' ? i.topic : ''))).toEqual([opp.topic])
+    const gapShort = withVideos('gap shorts', 'US', Array.from({ length: 20 }, () => v('Largo', { views: 400000, days: 100, dur: 700, ch: 'x' })), { niches: ['ia'] })
+    expect(input([gapShort]).sections.find(s => s.id === 'shorts')!.items).toHaveLength(1)
+    expect(input([gapShort]).sections.find(s => s.id === 'long')!.items).toHaveLength(0)
+  })
+  it('monetisation lists only niches with an ESTIMATED reference, labelled as such; unknown niches are left out', () => {
+    const known = { ...a1, niches: ['educacion'] }, unknown = { ...a2, niches: ['motor'] }
+    const items = input([known, unknown]).sections.find(s => s.id === 'money')!.items
+    expect(items).toHaveLength(1); const it0 = items[0]; expect(it0.kind === 'niche' && it0.rpmNote).toMatch(/ESTIMADO/)
+  })
+  it('international trends are real videos present in several countries and shared terms; one-country videos are not "international"', () => {
+    const both = vid({ title: 'Inteligencia artificial hoy', views: 800000, subs: 500000 }), onlyUs = vid({ title: 'Solo en EE. UU.', views: 600000, subs: 400000 })
+    const r = input([], { US: [both, onlyUs], DE: [both] }, { ...EMPTY_FILTERS, countries: ['US', 'DE'] })
+    const intl = r.sections.find(s => s.id === 'international')!
+    expect(intl.items).toHaveLength(1); expect(intl.items[0].kind === 'video' && intl.items[0].video.videoId).toBe(both.videoId)
+    expect(intl.items[0].kind === 'video' && intl.items[0].reason).toMatch(/Estados Unidos, Alemania/)
+    expect(r.internationalTerms.some(t => t.term === 'inteligencia artificial hoy' || t.regions.length === 2)).toBe(true)
+  })
+  it('small-channel wins need a small channel, enough views and a high ratio', () => {
+    const win = v('Canal pequeño gana', { views: 90000, subs: 2000, days: 20 }), big = v('Canal grande', { views: 90000, subs: 2_000_000, days: 20 }), low = v('Pocas vistas', { views: 900, subs: 100, days: 20 })
+    const a = withVideos('tema', 'US', [win, big, low], { niches: ['ia'] })
+    const items = input([a]).sections.find(s => s.id === 'small')!.items
+    expect(items.map(i => (i.kind === 'video' ? i.video.title : ''))).toEqual(['Canal pequeño gana'])
+  })
+  it('with no analyses the demand section is filled from the official charts, labelled as inferred and not as an analysis', () => {
+    const r = input([], { ES: [vid({ title: 'Receta de pasta fácil', views: 500000, subs: 900000 }), vid({ title: 'Otra receta de cocina', views: 300000, subs: 900000 })] })
+    const item = r.sections[0].items[0]
+    expect(item.kind === 'niche' && item.source).toBe('chart'); expect(item.kind === 'niche' && item.indices).toBeNull(); expect(item.kind === 'niche' && item.reason).toMatch(/inferido/)
+  })
+  it('the applied filters apply to the recommendations too (niche and classification)', () => {
+    const r = input([a1, a2], {}, { ...EMPTY_FILTERS, countries: ['DE'], analysis: { ...NO_ANALYSIS, minDemand: 0 } })
+    const topics = r.sections[0].items.map(i => (i.kind === 'niche' ? i.topic : ''))
+    expect(topics).toEqual([a2.topic])
+  })
+})

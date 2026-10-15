@@ -177,7 +177,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     byFormat: { short: stats(top, recent, isShort), long: stats(top, recent, isLong) },
     niches, terms: extractTerms([...top, ...recent]), emerging: emergingTerms(top, recent), questions: extractQuestions([...top, ...recent]),
     sampleSizes: { top: top.length, recent: recent.length }, approxTotals: { top: s.top.approxTotal, recent: s.recent.approxTotal },
-    topVideos: top.slice(0, 6),
+    topVideos: top.slice(0, 9),
   }
 }
 

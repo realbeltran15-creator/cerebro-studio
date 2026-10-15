@@ -7,13 +7,13 @@ import { YouTubeResearch } from './youtube-research'
 import { ChannelResearch } from './channel-analysis'
 import { ResearchProvider } from './research-context'
 import { FilterPanel } from './filter-panel'
-import { CompareTab, KeywordsTab, NichesTab } from './tabs-analysis'
+import { KeywordsTab, NichesTab } from './tabs-analysis'
 import { DiscoverTab, InternationalTab, MonetizationTab } from './tabs-trends'
 import { SavedTab, type Opportunity } from './tab-saved'
 import { createClient } from '../../lib/supabase/client'
 import type { TabId } from '@/lib/research/filters'
 
-const TABS = [['discover', 'Descubrir oportunidades'], ['niches', 'Nichos'], ['keywords', 'Palabras clave'], ['international', 'Tendencias internacionales'], ['competition', 'Competencia y canales'], ['money', 'Monetización'], ['compare', 'Comparador'], ['saved', 'Guardadas']] as const satisfies ReadonlyArray<readonly [TabId, string]>
+const TABS = [['discover', 'Descubrir oportunidades'], ['niches', 'Nichos'], ['keywords', 'Palabras clave'], ['international', 'Tendencias internacionales'], ['competition', 'Competencia y canales'], ['money', 'Monetización'], ['saved', 'Guardadas']] as const satisfies ReadonlyArray<readonly [TabId, string]>
 type Tab = (typeof TABS)[number][0]
 
 export default function MarketIntelligencePage() {
@@ -54,7 +54,6 @@ export default function MarketIntelligencePage() {
       {tab === 'international' && <InternationalTab onSaved={() => void load()} />}
       {tab === 'competition' && <><YouTubeResearch onSaved={() => void load()} /><ChannelResearch onSaved={() => void load()} /></>}
       {tab === 'money' && <MonetizationTab />}
-      {tab === 'compare' && <CompareTab onSaved={() => void load()} />}
       {tab === 'saved' && <SavedTab items={items} onChanged={() => void load()} />}
       <p className="authNote">Los datos observados, las métricas calculadas, las estimaciones y las recomendaciones se mantienen separados y etiquetados. Esta pantalla no afirma viralidad ni publica contenido.</p>
     </ResearchProvider> : null}

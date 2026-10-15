@@ -1,6 +1,7 @@
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { contentTypesOf, inferFormat, nichesOf } from './taxonomy'
 import { formatAdjusted, nicheRpm, passesRpmFilter, type RpmFilter } from './monetization'
+import { formatCovered, type TopicAnalysis } from './topic-analysis'
 
 /**
  * Combinable multi-select filters for Investigación. Selecting values never runs a query by itself: queries are planned
@@ -31,8 +32,14 @@ export const NO_METRICS: MetricFilters = { minViews: null, maxViews: null, minVi
 /** YouTube's fixed list of assignable video categories (ids are stable). */
 export const YT_CATEGORIES: Array<[string, string]> = [['1', 'Cine y animación'], ['2', 'Coches y vehículos'], ['10', 'Música'], ['15', 'Mascotas y animales'], ['17', 'Deportes'], ['19', 'Viajes y eventos'], ['20', 'Videojuegos'], ['22', 'Gente y blogs'], ['23', 'Comedia'], ['24', 'Entretenimiento'], ['25', 'Noticias y política'], ['26', 'Cómo hacer y estilo'], ['27', 'Educación'], ['28', 'Ciencia y tecnología'], ['29', 'ONG y activismo']]
 
+/** Filters on the RESULT of an analysis (0–100 indices from the sample), not on single videos. Null/empty = not applied. */
+export type AnalysisFilters = { minDemand: number | null; maxSupply: number | null; maxCompetition: number | null; minGrowth: number | null; minOpportunity: number | null; verdicts: string[]; minConfidence: 'baja' | 'media' | null }
+export const NO_ANALYSIS: AnalysisFilters = { minDemand: null, maxSupply: null, maxCompetition: null, minGrowth: null, minOpportunity: null, verdicts: [], minConfidence: null }
+export const VERDICT_OPTIONS: Array<[string, string]> = [['oportunidad', 'Nicho desatendido con demanda'], ['mixto', 'Señales mixtas / emergente'], ['saturado', 'Popular y saturado'], ['sin_demanda', 'Poca oferta pero poca demanda']]
+
 export type ResearchFilters = {
   countries: string[]; languages: string[]; niches: string[]; formats: string[]; contentTypes: string[]
+  analysis: AnalysisFilters
   metrics: MetricFilters
   /** Only content published in the last N days (null = no limit). */
   periodDays: number | null
@@ -41,7 +48,7 @@ export type ResearchFilters = {
 }
 
 export const EMPTY_FILTERS: ResearchFilters = {
-  countries: [], languages: [], niches: [], formats: [], contentTypes: [], metrics: NO_METRICS, periodDays: null,
+  countries: [], languages: [], niches: [], formats: [], contentTypes: [], analysis: NO_ANALYSIS, metrics: NO_METRICS, periodDays: null,
   rpm: { min: null, max: null, includeUnknown: false },
   logic: { countries: 'any', languages: 'any', niches: 'any', formats: 'any', contentTypes: 'any' },
 }
@@ -141,7 +148,7 @@ export const filterVideos = (videos: SeenVideo[], f: ResearchFilters, now = Date
 export function activeCount(f: ResearchFilters) {
   const m = f.metrics
   const metricsActive = [m.minViews, m.maxViews, m.minViewsPerDay, m.minLikes, m.minComments, m.minEngagement, m.minSubscribers, m.maxSubscribers, m.minRatio, m.minDurationMin, m.maxDurationMin, m.minEstRevenue, m.maxEstRevenue].filter(x => x !== null).length + (m.include.trim() ? 1 : 0) + (m.exclude.trim() ? 1 : 0) + (m.categories.length ? 1 : 0)
-  return metricsActive + f.countries.length + f.languages.length + f.niches.length + f.formats.length + f.contentTypes.length + (f.periodDays !== null ? 1 : 0) + (f.rpm.min !== null || f.rpm.max !== null ? 1 : 0)
+  return analysisActive(f.analysis) + metricsActive + f.countries.length + f.languages.length + f.niches.length + f.formats.length + f.contentTypes.length + (f.periodDays !== null ? 1 : 0) + (f.rpm.min !== null || f.rpm.max !== null ? 1 : 0)
 }
 
 // ---------- Cost planning ----------
@@ -174,6 +181,15 @@ const strs = (v: unknown, max = 40) => Array.isArray(v) ? v.filter((x): x is str
 const optNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
 const lg = (v: unknown): Logic => (v === 'all' ? 'all' : 'any')
 
+const index100 = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null)
+export function sanitizeAnalysis(raw: unknown): AnalysisFilters {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const allowed = new Set(VERDICT_OPTIONS.map(([k]) => k))
+  return { minDemand: index100(r.minDemand), maxSupply: index100(r.maxSupply), maxCompetition: index100(r.maxCompetition), minGrowth: index100(r.minGrowth), minOpportunity: index100(r.minOpportunity),
+    verdicts: strs(r.verdicts).filter(v => allowed.has(v)), minConfidence: r.minConfidence === 'baja' || r.minConfidence === 'media' ? r.minConfidence : null }
+}
+export const analysisActive = (a: AnalysisFilters) => [a.minDemand, a.maxSupply, a.maxCompetition, a.minGrowth, a.minOpportunity, a.minConfidence].filter(x => x !== null).length + (a.verdicts.length ? 1 : 0)
+
 export function sanitizeMetrics(raw: unknown): MetricFilters {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const txt = (v: unknown) => (typeof v === 'string' ? v.slice(0, 200) : '')
@@ -190,7 +206,7 @@ export function sanitizeFilters(raw: unknown): ResearchFilters {
   const rpm = (r.rpm && typeof r.rpm === 'object' ? r.rpm : {}) as Record<string, unknown>
   const logic = (r.logic && typeof r.logic === 'object' ? r.logic : {}) as Record<string, unknown>
   return {
-    countries: strs(r.countries), languages: strs(r.languages), niches: strs(r.niches), formats: strs(r.formats), contentTypes: strs(r.contentTypes), metrics: sanitizeMetrics(r.metrics),
+    countries: strs(r.countries), languages: strs(r.languages), niches: strs(r.niches), formats: strs(r.formats), contentTypes: strs(r.contentTypes), metrics: sanitizeMetrics(r.metrics), analysis: sanitizeAnalysis(r.analysis),
     periodDays: optNum(r.periodDays), rpm: { min: optNum(rpm.min), max: optNum(rpm.max), includeUnknown: rpm.includeUnknown === true },
     logic: { countries: lg(logic.countries), languages: lg(logic.languages), niches: lg(logic.niches), formats: lg(logic.formats), contentTypes: lg(logic.contentTypes) },
   }
@@ -211,30 +227,28 @@ export function addPreset(list: Preset[], name: string, filters: ResearchFilters
 }
 
 // ---------- Which filters each section uses ----------
-export type FilterPart = 'countries' | 'languages' | 'niches' | 'formats' | 'contentTypes' | 'period' | 'rpm' | 'advanced'
-export type TabId = 'discover' | 'niches' | 'keywords' | 'international' | 'competition' | 'money' | 'compare' | 'saved'
+export type FilterPart = 'countries' | 'languages' | 'niches' | 'formats' | 'contentTypes' | 'period' | 'rpm' | 'advanced' | 'analysis'
+export type TabId = 'discover' | 'niches' | 'keywords' | 'international' | 'competition' | 'money' | 'saved'
 
 /** Filters that actually change the results of each section. Hiding the rest avoids controls that look useful but do nothing. */
 export const TAB_FILTERS: Record<TabId, FilterPart[]> = {
-  discover: ['countries', 'languages', 'niches', 'formats', 'contentTypes', 'period', 'rpm', 'advanced'],
-  niches: ['countries', 'languages', 'niches', 'formats', 'period', 'rpm'],
-  keywords: ['countries', 'languages', 'niches', 'period'],
+  discover: ['countries', 'languages', 'niches', 'formats', 'contentTypes', 'period', 'rpm', 'advanced', 'analysis'],
+  niches: ['countries', 'languages', 'niches', 'formats', 'period', 'rpm', 'analysis'],
+  keywords: ['countries', 'languages', 'niches', 'period', 'analysis'],
   international: ['countries', 'languages', 'niches', 'formats', 'contentTypes', 'period', 'rpm', 'advanced'],
   competition: ['countries', 'languages', 'formats', 'period'],
   money: ['countries', 'niches', 'formats', 'rpm'],
-  compare: ['countries', 'niches', 'formats', 'rpm'],
   saved: [],
 }
 
 /** What each section does with the filters, in one sentence, shown above the results. */
 export const TAB_SCOPE: Record<TabId, string> = {
-  discover: 'Los filtros se aplican a las listas de vídeos populares de los países elegidos y a los análisis que ya hayas hecho.',
-  niches: 'Los países e idiomas definen en qué mercados se analiza cada tema (cada mercado cuesta una consulta). Nichos y RPM filtran los análisis ya hechos; el formato destaca la evidencia de ese formato y oculta los análisis sin muestra de él; el periodo fija la ventana de «recientes».',
+  discover: 'Las recomendaciones se construyen con las listas de populares de los países elegidos y con los análisis que ya hayas hecho; los filtros se aplican a ambos.',
+  niches: 'Los países e idiomas definen en qué mercados se analiza cada tema (cada mercado cuesta una consulta). Nichos, RPM y los umbrales de demanda, oferta, competencia y crecimiento filtran los análisis ya hechos; el formato destaca la evidencia de ese formato y oculta los análisis sin muestra de él; el periodo fija la ventana de «recientes». Aquí mismo se comparan en tarjetas, tabla o gráfico.',
   keywords: 'Los países e idiomas definen los mercados; el periodo fija la ventana de «recientes». Las frases salen de los vídeos de la muestra.',
   international: 'Compara las listas oficiales de populares de los países elegidos (2 unidades por país) y analiza un mismo tema en cada mercado.',
   competition: 'La búsqueda se hace en cada mercado elegido (102 unidades por mercado); formato y periodo se aplican a la consulta.',
   money: 'Filtra la tabla de referencia por nicho, formato y RPM estimado. Los países sirven para consultar el rango de referencia de cada uno.',
-  compare: 'Compara los análisis ya hechos que cumplen los filtros; no gasta cuota.',
   saved: 'Aquí no se aplican filtros: son tus combinaciones y oportunidades guardadas.',
 }
 
@@ -249,6 +263,7 @@ export function validateFilters(f: ResearchFilters): string[] {
   if (f.rpm.min !== null && f.rpm.max !== null && f.rpm.min > f.rpm.max) out.push(`RPM: el mínimo (${f.rpm.min}) es mayor que el máximo (${f.rpm.max}).`)
   for (const [a, b, name] of PAIRS) { const x = f.metrics[a], y = f.metrics[b]; if (typeof x === 'number' && typeof y === 'number' && x > y) out.push(`${name[0].toUpperCase()}${name.slice(1)}: el mínimo (${x}) es mayor que el máximo (${y}).`) }
   if (f.countries.length > MAX_COUNTRIES) out.push(`Países: el máximo son ${MAX_COUNTRIES} a la vez.`)
+  for (const [k, name] of [['minDemand', 'Demanda'], ['maxSupply', 'Oferta'], ['maxCompetition', 'Competencia'], ['minGrowth', 'Crecimiento'], ['minOpportunity', 'Oportunidad']] as const) { const v = f.analysis[k]; if (typeof v === 'number' && (v < 0 || v > 100)) out.push(`${name}: el valor tiene que estar entre 0 y 100 (es una escala de 0 a 100).`) }
   return out
 }
 export const MAX_COUNTRIES = 8
@@ -267,6 +282,11 @@ export function describeActive(f: ResearchFilters, names: { country: (c: string)
   if (f.periodDays !== null) chips.push({ id: 'period', group: 'Periodo', label: `últimos ${f.periodDays} días`, remove: g => ({ ...g, periodDays: null }) })
   if (f.rpm.min !== null || f.rpm.max !== null) chips.push({ id: 'rpm', group: 'RPM estimado', label: `${f.rpm.min ?? '0'}–${f.rpm.max ?? '∞'} USD`, remove: g => ({ ...g, rpm: { ...g.rpm, min: null, max: null } }) })
   for (const v of f.metrics.categories) chips.push({ id: `cat:${v}`, group: 'Categoría', label: names.category(v), remove: g => ({ ...g, metrics: { ...g.metrics, categories: g.metrics.categories.filter(x => x !== v) } }) })
+  const an = f.analysis
+  const aNum = (id: string, group: string, key: keyof AnalysisFilters, label: (v: number) => string) => { const v = an[key] as number | null; if (v !== null) chips.push({ id, group, label: label(v), remove: g => ({ ...g, analysis: { ...g.analysis, [key]: null } }) }) }
+  aNum('a-dem', 'Demanda', 'minDemand', v => `≥ ${v}`); aNum('a-sup', 'Oferta', 'maxSupply', v => `≤ ${v}`); aNum('a-comp', 'Competencia', 'maxCompetition', v => `≤ ${v}`); aNum('a-gro', 'Crecimiento', 'minGrowth', v => `≥ ${v}`); aNum('a-opp', 'Oportunidad', 'minOpportunity', v => `≥ ${v}`)
+  if (an.minConfidence) chips.push({ id: 'a-conf', group: 'Confianza', label: `≥ ${an.minConfidence}`, remove: g => ({ ...g, analysis: { ...g.analysis, minConfidence: null } }) })
+  for (const v of an.verdicts) chips.push({ id: `a-ver:${v}`, group: 'Clasificación', label: VERDICT_OPTIONS.find(([k]) => k === v)?.[1] ?? v, remove: g => ({ ...g, analysis: { ...g.analysis, verdicts: g.analysis.verdicts.filter(x => x !== v) } }) })
   const m = f.metrics
   const num = (id: string, group: string, a: keyof MetricFilters, b: keyof MetricFilters | null, unit = '') => {
     const x = m[a] as number | null, y = b ? m[b] as number | null : null
@@ -299,7 +319,7 @@ export function forTab(tab: TabId, f: ResearchFilters): ResearchFilters {
   return {
     ...f,
     countries: use.has('countries') ? f.countries : [], languages: use.has('languages') ? f.languages : [], niches: use.has('niches') ? f.niches : [], formats: use.has('formats') ? f.formats : [], contentTypes: use.has('contentTypes') ? f.contentTypes : [],
-    periodDays: use.has('period') ? f.periodDays : null, rpm: use.has('rpm') ? f.rpm : { ...f.rpm, min: null, max: null }, metrics: use.has('advanced') ? f.metrics : NO_METRICS,
+    periodDays: use.has('period') ? f.periodDays : null, rpm: use.has('rpm') ? f.rpm : { ...f.rpm, min: null, max: null }, metrics: use.has('advanced') ? f.metrics : NO_METRICS, analysis: use.has('analysis') ? f.analysis : NO_ANALYSIS,
   }
 }
 
@@ -322,4 +342,27 @@ export function durationParam(formats: string[]): 'short' | 'medium' | 'long' | 
   if (f.every(x => x === 'medium')) return 'medium'
   if (f.every(x => x === 'long')) return 'long'
   return undefined
+}
+
+const CONF_RANK = { baja: 0, media: 1 } as const
+
+/**
+ * Why an ANALYSIS is left out by the applied filters (empty = it stays). One place for the rule so that the results list, the recommendations
+ * and the hidden-results notice always agree.
+ */
+export function analysisExclusions(a: TopicAnalysis, f: ResearchFilters): string[] {
+  const why: string[] = []
+  if (f.niches.length && !(f.logic.niches === 'all' ? f.niches.every(n => a.niches.includes(n)) : f.niches.some(n => a.niches.includes(n)))) why.push('nichos')
+  if (f.countries.length && (!a.region || !f.countries.includes(a.region))) why.push('países')
+  if ((f.rpm.min !== null || f.rpm.max !== null) && !(a.niches.length ? a.niches.some(n => passesRpmFilter(n, f.rpm)) : f.rpm.includeUnknown)) why.push('RPM estimado')
+  if (f.formats.length && !formatCovered(a, f.formats)) why.push('formatos')
+  const A = f.analysis, i = a.indices
+  if (A.minDemand !== null && i.demand < A.minDemand) why.push('demanda')
+  if (A.maxSupply !== null && i.supply > A.maxSupply) why.push('oferta')
+  if (A.maxCompetition !== null && i.competition > A.maxCompetition) why.push('competencia')
+  if (A.minGrowth !== null && i.growth < A.minGrowth) why.push('crecimiento')
+  if (A.minOpportunity !== null && i.opportunity < A.minOpportunity) why.push('oportunidad')
+  if (A.verdicts.length && !A.verdicts.includes(a.verdict)) why.push('clasificación')
+  if (A.minConfidence && CONF_RANK[a.confidence as keyof typeof CONF_RANK] < CONF_RANK[A.minConfidence]) why.push('confianza')
+  return why
 }

@@ -601,9 +601,11 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   // Entering: cheap and automatic; nothing expensive.
   await page.getByText('Corto viral de gatos').first().waitFor({ timeout: 20000 })
   check('research: entering loads only the cheap official chart of one country', requests.filter(r => r.includes('/trending')).length === 1 && requests.every(r => !r.includes('/topic') && !r.includes('/youtube?')), requests)
-  check('research: the eight sections are in the navigation, above the filters', (await page.getByRole('tab').count()) === 8 && /1 · Qué quieres investigar/.test(await body()))
+  check('research: the seven sections (the Comparador was folded into Nichos) are in the navigation, above the filters', (await page.getByRole('tab').count()) === 7 && (await page.getByRole('tab', { name: 'Comparador' }).count()) === 0 && /1 · Qué quieres investigar/.test(await body()))
   check('research: the button starts disabled with "Sin filtros"', await go().isDisabled() && (await page.getByText('Sin filtros', { exact: true }).count()) >= 1)
-  check('research: the discovery sections say what the home chart is and that analyses are missing (no invented data)', /Lista oficial de populares de España/.test(await body()) && (await page.getByText(/B, C, E, G y H necesitan analizar nichos/).count()) === 1)
+  check('research: discovery names its market, shows the nine recommendation sections, and says analyses are missing instead of inventing them', /Recomendaciones para España/.test(await body()) && (await page.locator('details.recoSection').count()) === 9 && (await page.getByText(/necesitan analizar nichos/).count()) === 1)
+  const thumbHrefs = await page.locator('.recoSection .thumb').evaluateAll(els => els.map(e => e.getAttribute('href')))
+  check('research: recommendations from the official chart show real videos with the official YouTube thumbnail and a link to YouTube', thumbHrefs.length >= 1 && thumbHrefs.every(h => /^https:\/\/www\.youtube\.com\/watch\?v=/.test(h)) && (await page.locator('.recoSection .thumb img').first().getAttribute('src')).startsWith('https://i.ytimg.com/vi/'), thumbHrefs)
 
   // Prueba A: draft → one button that applies and loads.
   const before = requests.length
@@ -655,6 +657,16 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await hid.getByRole('button', { name: /Mostrar todos de todas formas/ }).click()
   check('research: "show all anyway" brings them back', (await page.getByRole('article', { name: 'Análisis de historia medieval' }).count()) === 1)
   await page.getByRole('button', { name: 'Restablecer filtros' }).click()
+  await page.getByText('Resultado del análisis').click()
+  await page.getByLabel('Demanda (mín. 0–100)').fill('150')
+  check('research: an out-of-range analysis threshold is explained and blocks the button', (await page.getByRole('alert').getByText(/Demanda: el valor tiene que estar entre 0 y 100/).count()) === 1 && await go().isDisabled())
+  await page.getByLabel('Demanda (mín. 0–100)').fill('75')
+  await page.getByLabel('Competencia (máx. 0–100)').fill('60')
+  await go().click()
+  const hid2 = page.getByRole('status', { name: 'Resultados ocultos por filtros' })
+  check('research: demand and competition thresholds filter the analyses (only the opportunity with demand 72 is out, the saturated one fails competition) and say why', (await page.getByRole('button', { name: 'Quitar Demanda: ≥ 75' }).count()) === 1 && (await hid2.getByText(/demanda: \d/).count()) === 1 && (await hid2.getByText(/competencia: \d/).count()) === 1)
+  await page.getByRole('button', { name: 'Quitar Demanda: ≥ 75' }).click(); await page.getByRole('button', { name: 'Quitar Competencia: ≤ 60' }).click()
+  check('research: removing the threshold chips brings every analysis back', (await hid2.count()) === 0 && (await page.getByRole('article', { name: /^Análisis de/ }).count()) >= 3)
   await page.getByRole('button', { name: 'Tabla' }).click()
   check('research: table view lists all three topics', (await page.getByRole('cell', { name: 'música de moda' }).count()) === 1)
   await page.getByRole('button', { name: 'Gráfico' }).click()
@@ -688,7 +700,11 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 
   // Scoped filters per section and Guardadas.
   await tab('Descubrir oportunidades').click()
-  check('research: discovery B/C/E/G/H use the analyses', (await page.getByText(/historia medieval.*oportunidad 74\/100/).count()) >= 1)
+  const recoSecs = await page.locator('details.recoSection > summary').allInnerTexts()
+  check('research: after analysing, the recommendation sections fill with niche cards, each with representative videos and its reason', (await page.getByRole('article', { name: 'Recomendación de nicho: historia medieval' }).count()) >= 1 && (await page.getByRole('article', { name: 'Recomendación de nicho: historia medieval' }).first().locator('.videoTile').count()) >= 2 && (await page.getByText(/Por qué:/).count()) >= 1, recoSecs)
+  const allHrefs = await page.locator('.recoSection .thumb').evaluateAll(els => els.map(e => e.getAttribute('href')))
+  check('research: the same video is never shown twice on the page (regression: repeated videos across sections)', new Set(allHrefs).size === allHrefs.length && allHrefs.length >= 3, allHrefs)
+  check('research: the nine sections follow the requested order', ['mayor demanda', 'desatendidos', 'emergentes', 'monetización', 'menor competencia', 'internacionales', 'canales pequeños', 'Shorts', 'vídeos largos'].every((w, i) => recoSecs[i]?.toLowerCase().includes(w.toLowerCase())), recoSecs)
   await tab('Monetización').click()
   check('research: the Monetización section only offers the filters that act on it', (await page.getByRole('button', { name: 'Idiomas', exact: true }).count()) === 0 && (await page.getByRole('button', { name: 'Países', exact: true }).count()) === 1 && (await page.getByLabel('RPM estimado mínimo').count()) === 1)
   await tab('Guardadas').click()
@@ -729,10 +745,10 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByLabel('Tema a comparar').fill('historia medieval')
   await page.getByRole('checkbox', { name: /gastará/ }).check().catch(() => {})
   await go().click()
+  await page.getByText(/Resultados actualizados: 3 análisis nuevos/).waitFor({ timeout: 30000 })
   await page.getByText(/Mayor oportunidad calculada para/).waitFor({ timeout: 20000 })
   check('research: the same niche is analysed in each of the three markets', (await page.getByRole('article', { name: 'Análisis de historia medieval' }).count()) >= 3)
-  await tab('Comparador').click()
-  check('research: the comparator warns that coverage is uneven (Australia has a small sample)', (await page.getByText(/Cobertura desigual/).count()) === 1)
+  check('research: the results warn that coverage is uneven when markets differ (Australia has a small sample)', (await page.getByText(/Cobertura desigual/).count()) === 1)
 
   // Competition: the search text lives in the panel; one button; cost shown; states.
   await tab('Competencia y canales').click()
