@@ -61,9 +61,13 @@ export function sortVideos(results: YouTubeVideoResult[], sort: SortKey): YouTub
  */
 export const NEGLECTED = { maxSubscribers: 20_000, minRatio: 3, minViews: 5_000 } as const
 
-/** Label, VEVO and auto-generated "- Topic" channels: their subscriber counts say nothing about the size of the audience behind a video. */
-const LABEL_CHANNEL = /vevo|\s-\s*topic$|\brecords?\b|\brecordings\b|\bmusic group\b|\bentertainment\b|\blabel\b|\bofficial\b/i
-export const isLabelChannel = (v: Pick<YouTubeVideoResult, 'channelTitle'>) => LABEL_CHANNEL.test(v.channelTitle)
+/**
+ * Channels whose subscriber count says nothing about the audience behind a video: VEVO and auto-generated "- Topic" channels always;
+ * label-like names (Records, Entertainment, Official…) only inside YouTube's Music category, so "Mystery Entertainment" is not excluded.
+ */
+const ALWAYS_LABEL = /vevo|\s-\s*topic$/i
+const MUSIC_LABEL = /\brecords?\b|\brecordings\b|\bmusic group\b|\bentertainment\b|\blabel\b|\bofficial\b/i
+export const isLabelChannel = (v: Pick<YouTubeVideoResult, 'channelTitle'> & { categoryId?: string | null }) => ALWAYS_LABEL.test(v.channelTitle) || (v.categoryId === '10' && MUSIC_LABEL.test(v.channelTitle))
 /** More than this many views per subscriber means the subscriber figure does not describe the audience (label channel, reupload, external traffic). */
 export const MAX_PLAUSIBLE_RATIO = 500
 

@@ -19,6 +19,9 @@ function sanitizeSource(v: unknown): Brief['source'] {
   return { opportunityId: str(o.opportunityId, 64), summary: str(o.summary, 600), language: str(o.language, 5), fetchedAt: str(o.fetchedAt, 40) }
 }
 
+/** A real calendar date in AAAA-MM-DD form, or '' (2026-02-31 and month 13 are refused, not silently rolled over). */
+export function validDate(v: string): string { if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return ''; const t = Date.parse(`${v}T00:00:00Z`); return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v ? v : '' }
+
 export function sanitizeBrief(raw: unknown): Brief {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const ass: Brief['assumptions'] = {}
@@ -33,7 +36,7 @@ export function sanitizeBrief(raw: unknown): Brief {
     goal: oneOf(r.goal, ['awareness', 'views', 'subscribers', 'traffic', 'leads', 'sales', 'engagement']), countries: strs(r.countries), ageMin: num(r.ageMin), ageMax: num(r.ageMax),
     interests: str(r.interests), audienceNotes: str(r.audienceNotes, 1000),
     platforms: strs(r.platforms).filter((p): p is Brief['platforms'][number] => ['youtube_organic', 'instagram_organic', 'tiktok_organic', 'google_ads', 'meta_ads', 'tiktok_ads'].includes(p)),
-    totalBudget: num(r.totalBudget), dailyCap: num(r.dailyCap), durationDays: (() => { const n = num(r.durationDays); return n !== null && n >= 1 && n <= 365 ? Math.round(n) : null })(), startDate: /^\d{4}-\d{2}-\d{2}$/.test(str(r.startDate, 10)) ? str(r.startDate, 10) : '',
+    totalBudget: num(r.totalBudget), dailyCap: (() => { const n = num(r.dailyCap); return n !== null && n > 0 ? n : null })(), durationDays: (() => { const n = num(r.durationDays); return n !== null && n >= 1 && n <= 365 ? Math.round(n) : null })(), startDate: validDate(str(r.startDate, 10)),
     expectedMetric: oneOf(r.expectedMetric, ['views', 'clicks', 'subscribers', 'leads', 'sales', 'reach']), expectedValue: num(r.expectedValue), currency: oneOf(r.currency, ['EUR', 'USD', 'GBP', 'CHF']) ?? 'EUR',
     projectId: str(r.projectId, 64), sourceTopic: str(r.sourceTopic, 200), source: sanitizeSource(r.source), kpis: strsLong(r.kpis), assumptions: ass,
   }
@@ -55,4 +58,4 @@ export function create(brief: Brief = EMPTY_BRIEF, now = new Date().toISOString(
 export function upsert(list: SavedCampaign[], c: SavedCampaign, now = new Date().toISOString()): SavedCampaign[] { const next = { ...c, updatedAt: now }; return list.some(x => x.id === c.id) ? list.map(x => (x.id === c.id ? next : x)) : [next, ...list] }
 export const remove = (list: SavedCampaign[], id: string) => list.filter(c => c.id !== id)
 export function duplicate(list: SavedCampaign[], id: string, now = new Date().toISOString()): SavedCampaign[] { const c = list.find(x => x.id === id); if (!c) return list; const d = create({ ...c.brief, name: `${c.brief.name || c.brief.subjectName || 'Campaña'} (copia)` }, now); return [d, ...list] }
-export const setStatus = (list: SavedCampaign[], id: string, status: CampaignStatus) => list.map(c => (c.id === id ? { ...c, status } : c))
+export const setStatus = (list: SavedCampaign[], id: string, status: CampaignStatus, now = new Date().toISOString()) => list.map(c => (c.id === id ? { ...c, status, updatedAt: now } : c))

@@ -19,8 +19,11 @@ export function parseLedger(raw: string | null, now = Date.now()): Ledger {
 
 export const addUnits = (l: Ledger, units: number, now = Date.now()): Ledger => ({ day: startOfUtcDay(now), units: (l.day === startOfUtcDay(now) ? l.units : 0) + Math.max(Math.round(units), 0) })
 
-export function effectiveUsage(server: { usedToday: number; cap: number; persistent: boolean } | null, ledger: Ledger, defaultCap = 6000) {
+/** `server.day` (UTC midnight the figure belongs to) lets a tab left open past midnight drop yesterday's numbers instead of staying blocked. */
+export function effectiveUsage(server: { usedToday: number; cap: number; persistent: boolean; day?: number } | null, ledger: Ledger, defaultCap = 6000, now = Date.now()) {
+  const today = startOfUtcDay(now)
+  const liveServer = server && (server.day === undefined || server.day === today) ? server : null
   const cap = server?.cap ?? defaultCap
-  const usedToday = Math.max(server?.usedToday ?? 0, ledger.units)
+  const usedToday = Math.max(liveServer?.usedToday ?? 0, ledger.day === today ? ledger.units : 0)
   return { usedToday, cap, remaining: Math.max(cap - usedToday, 0), persistent: server?.persistent ?? false }
 }

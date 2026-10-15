@@ -660,7 +660,7 @@ describe('audit fixes: live streams, label channels, strict formats, niche words
     expect(isNeglectedNiche(ok)).toBe(true)
     expect(isNeglectedNiche({ ...ok, channelTitle: 'ArtistVEVO' })).toBe(false)
     expect(isNeglectedNiche({ ...ok, channelTitle: 'Artist - Topic' })).toBe(false)
-    expect(isNeglectedNiche({ ...ok, channelTitle: 'Big Records' })).toBe(false)
+    expect(isNeglectedNiche({ ...ok, channelTitle: 'Big Records', categoryId: '10' })).toBe(false)
     expect(isNeglectedNiche(vid({ views: 30_000_000, subs: 5000 }))).toBe(false)
     expect(isNeglectedNiche({ ...ok, live: 'live' })).toBe(false)
   })
@@ -676,8 +676,8 @@ describe('audit fixes: live streams, label channels, strict formats, niche words
     const { addUnits, effectiveUsage, emptyLedger, parseLedger } = await import('@/lib/research/ledger')
     let l = emptyLedger(NOW); l = addUnits(l, 204, NOW); l = addUnits(l, 102, NOW); l = addUnits(l, 2, NOW)
     expect(l.units).toBe(308)
-    expect(effectiveUsage({ usedToday: 100, cap: 6000, persistent: false }, l).remaining).toBe(6000 - 308)
-    expect(effectiveUsage({ usedToday: 5000, cap: 6000, persistent: true }, l).remaining).toBe(1000)
+    expect(effectiveUsage({ usedToday: 100, cap: 6000, persistent: false }, l, 6000, NOW).remaining).toBe(6000 - 308)
+    expect(effectiveUsage({ usedToday: 5000, cap: 6000, persistent: true }, l, 6000, NOW).remaining).toBe(1000)
     expect(parseLedger(JSON.stringify(l), NOW + 86400000).units).toBe(0)
     expect(parseLedger('{bad', NOW).units).toBe(0)
   })
@@ -736,5 +736,38 @@ describe('language filter: undeclared language is explicit, not silently fatal',
   it('stored filters keep the choice and default to including', () => {
     expect(sanitizeFilters({}).includeUndeclaredLanguage).toBe(true)
     expect(sanitizeFilters({ includeUndeclaredLanguage: false }).includeUndeclaredLanguage).toBe(false)
+  })
+})
+
+describe('review fixes: every paid call is counted, midnight rollover, cache hits are free, label names', () => {
+  const ok = async () => ({ videos: many(5, () => ({})), approxTotal: 1 })
+  it('a refresh is counted again, not overwritten', async () => {
+    const store = new MemoryCacheStore(`refresh-${Math.random()}`), deps = { store, search: ok, owner: 'r1', now: () => NOW }
+    await getTopicAnalysis({ topic: 'tema r', region: null, language: null }, deps)
+    expect(await store.unitsSince(NOW - 1000)).toBe(204)
+    await getTopicAnalysis({ topic: 'tema r', region: null, language: null, refresh: true }, deps)
+    expect(await store.unitsSince(NOW - 1000)).toBe(408)
+  })
+  it('a fetch whose second search fails still counts the first one, and the retry is not free', async () => {
+    const store = new MemoryCacheStore(`partial-${Math.random()}`)
+    let calls = 0
+    const flaky = async () => { if (++calls === 2) throw new Error('503'); return ok() }
+    await expect(getTopicAnalysis({ topic: 'tema p', region: null, language: null }, { store, search: flaky, owner: 'p1', now: () => NOW })).rejects.toThrow('503')
+    expect(await store.unitsSince(NOW - 1000)).toBe(102)
+  })
+  it('a ledger or server figure from yesterday does not block today', async () => {
+    const { effectiveUsage } = await import('@/lib/research/ledger')
+    const yesterday = { day: Date.UTC(2026, 9, 12), units: 5900 }
+    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: Date.UTC(2026, 9, 12) }, yesterday, 6000, NOW).remaining).toBe(6000)
+    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: Date.UTC(2026, 9, 13) }, { day: Date.UTC(2026, 9, 13), units: 100 }, 6000, NOW).remaining).toBe(100)
+  })
+  it('generic label words only exclude channels inside the Music category', async () => {
+    const { isNeglectedNiche } = await import('@/lib/research/discovery')
+    const base = vid({ views: 90000, subs: 4000 })
+    for (const name of ['Mystery Entertainment', 'Speed Records', "Dave's Official Channel"]) {
+      expect(isNeglectedNiche({ ...base, channelTitle: name, categoryId: '24' }), name).toBe(true)
+      expect(isNeglectedNiche({ ...base, channelTitle: name, categoryId: '10' }), `${name} (music)`).toBe(false)
+    }
+    expect(isNeglectedNiche({ ...base, channelTitle: 'XVEVO', categoryId: '24' })).toBe(false)
   })
 })

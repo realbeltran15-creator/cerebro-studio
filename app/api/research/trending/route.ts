@@ -21,7 +21,8 @@ export async function GET(request: Request) {
   if (category && !/^\d{1,4}$/.test(category)) return NextResponse.json({ error: 'Categoría no válida.' }, { status: 400 })
   try {
     const results = await trendingYouTubeVideos({ regionCode: region, categoryId: category || undefined })
-    await recordUsage(await openStore(supabase as never, user.id), 'chart', UNITS.trending)
+    // Counting is best effort: a failure here must not hide results that were already paid for.
+    try { await recordUsage(await openStore(supabase as never, user.id), 'chart', UNITS.trending) } catch { /* logged by recordUsage when it can */ }
     // Recommendations compare many countries at once; they must not fill the Radar history with extra readings.
     const record = params.get('snapshot') !== '0'
     const comparison = record ? await recordTrendSnapshot(supabase, { ownerId: user.id, region, categoryId: category || null, source: 'radar', videos: results }) : null

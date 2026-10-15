@@ -1,5 +1,7 @@
 import { COUNTRIES } from '@/lib/research/discovery'
 import { COUNTRY_TIER, DEFAULT_ASSUMPTIONS, GOALS, GOAL_CONVERSION, GOAL_METRIC, PLATFORMS, SUBJECTS, TIER_FACTOR, METRICS, modeOf, platformInfo } from './catalog'
+import { startOfUtcDay } from '@/lib/research/cache'
+import { validDate } from './store'
 import type { Assumption, Brief, Goal, Mode, PlatformId } from './types'
 
 export type QuestionState = { n: number; key: string; question: string; done: boolean; answer: string; hint: string }
@@ -92,6 +94,9 @@ export function assumptionFor(b: Brief, id: PlatformId): Assumption & { custom: 
   return { cpm, ctr, conversion, custom: o.cpm !== undefined || o.ctr !== undefined || o.conversion !== undefined }
 }
 
+/** Is the expected result measured in the same unit the scenarios produce? (sales vs views cannot be compared.) */
+const sameMetric = (b: Brief) => !!b.goal && !!b.expectedMetric && GOAL_METRIC[b.goal] === b.expectedMetric
+
 function budgetOf(b: Brief, platforms: PlatformId[], days: number | null): BudgetPlan {
   const cur = b.currency, warnings: string[] = []
   const paid = platforms.filter(p => platformInfo(p).kind === 'paid')
@@ -113,7 +118,7 @@ function budgetOf(b: Brief, platforms: PlatformId[], days: number | null): Budge
   const suggestedDays = b.durationDays ?? (b.goal ? SUGGESTED_DAYS[b.goal] : null)
   const effDays = days ?? suggestedDays
   const suggestedDailyCap = total !== null && total > 0 && effDays ? Math.ceil((total / effDays) * 1.25) : null
-  if (total !== null && total > 0 && b.dailyCap !== null && effDays) {
+  if (total !== null && total > 0 && b.dailyCap !== null && b.dailyCap > 0 && effDays) {
     const need = Math.ceil(total / b.dailyCap)
     if (need > effDays) warnings.push(`Con un máximo diario de ${money(b.dailyCap, cur)} gastar ${money(total, cur)} lleva ${need} días, y la campaña dura ${effDays}: o sube el tope diario a ${money(Math.ceil(total / effDays), cur)} o alarga la duración.`)
   }
@@ -126,18 +131,22 @@ function budgetOf(b: Brief, platforms: PlatformId[], days: number | null): Budge
 
 function calendarOf(b: Brief, days: number | null, mode: Mode | null): CalendarPhase[] {
   const D = days ?? (b.goal ? SUGGESTED_DAYS[b.goal] : 14)
-  const start = b.startDate || ''
-  const t = Math.max(3, Math.round(D * 0.25)), o = Math.min(D - 1, t + Math.max(3, Math.round(D * 0.35)))
+  const start = validDate(b.startDate)
   const d = (n: number) => (start ? addDays(start, n - 1) : null)
   const paid = mode === 'paid' || mode === 'mixed'
-  const phases: CalendarPhase[] = [
-    { name: 'Preparación', fromDay: -6, toDay: 0, from: start ? addDays(start, -7) : null, to: start ? addDays(start, -1) : null, tasks: ['Definir la propuesta en una frase y el gancho de los primeros 3 segundos.', 'Producir las piezas creativas (ver Creatividades) y 2–3 variantes del gancho.', 'Preparar el seguimiento: enlaces con UTM y, si hay conversiones, píxel o API de conversiones.', ...(paid ? ['Crear las cuentas publicitarias y el método de pago (lo hace la persona; Cerebro Studio no publica anuncios).'] : []), 'Revisar cada pieza contra derechos de autor y políticas de la plataforma.'] },
+  const prep: CalendarPhase = { name: 'Preparación', fromDay: -6, toDay: 0, from: start ? addDays(start, -7) : null, to: start ? addDays(start, -1) : null, tasks: ['Definir la propuesta en una frase y el gancho de los primeros 3 segundos.', 'Producir las piezas creativas (ver Creatividades) y 2–3 variantes del gancho.', 'Preparar el seguimiento: enlaces con UTM y, si hay conversiones, píxel o API de conversiones.', ...(paid ? ['Crear las cuentas publicitarias y el método de pago (lo hace la persona; Cerebro Studio no publica anuncios).'] : []), 'Revisar cada pieza contra derechos de autor y políticas de la plataforma.'] }
+  const close: CalendarPhase = { name: 'Cierre e informe', fromDay: D, toDay: D, from: d(D), to: d(D), tasks: ['Comparar resultados con el objetivo y con los escenarios.', 'Guardar qué creatividades y públicos funcionaron para la siguiente campaña.', 'Exportar el informe final.'] }
+  // Under a week there is no room for test → optimise → scale: one launch-and-measure phase, honestly labelled.
+  if (D < 7) return [prep, { name: 'Lanzamiento y medición', fromDay: 1, toDay: D, from: d(1), to: d(D), tasks: [paid ? 'Lanzar 2–3 creatividades con presupuesto igual y medir cada día; solo hay margen para retirar la peor.' : 'Publicar las piezas y medir cuál retiene mejor.', 'Registrar cada día: gasto, impresiones, clics y resultados.'] }, close]
+  // 7+ days: phases never overlap and always end by day D (scale stops the day before the closing day).
+  const t = Math.max(2, Math.round(D * 0.25)), o = Math.min(D - 2, t + Math.max(2, Math.round(D * 0.35)))
+  return [
+    prep,
     { name: 'Prueba', fromDay: 1, toDay: t, from: d(1), to: d(t), tasks: [paid ? 'Lanzar 3 creatividades × 2 públicos con presupuesto pequeño e igual.' : 'Publicar las primeras piezas y medir cuál retiene mejor.', 'No tocar nada en las primeras 48 h (las plataformas necesitan datos).', 'Registrar cada día: gasto, impresiones, clics y resultados.'] },
     { name: 'Optimización', fromDay: t + 1, toDay: o, from: d(t + 1), to: d(o), tasks: ['Aplicar las reglas de «detener / optimizar / ampliar» cada 3 días.', 'Retirar la creatividad y el público más débiles; duplicar variantes de la mejor.', 'Mejorar la página o el vídeo de destino si los clics no se convierten.'] },
-    { name: 'Escala', fromDay: o + 1, toDay: D, from: d(o + 1), to: d(D), tasks: [paid ? 'Subir el presupuesto de lo que funciona un 20 % cada 3 días como máximo.' : 'Repetir el formato que mejor funcionó y reutilizarlo en las otras plataformas.', 'Añadir un mercado o una plataforma nuevos solo si el anterior cumple el coste por resultado.'] },
-    { name: 'Cierre e informe', fromDay: D, toDay: D, from: d(D), to: d(D), tasks: ['Comparar resultados con el objetivo y con los escenarios.', 'Guardar qué creatividades y públicos funcionaron para la siguiente campaña.', 'Exportar el informe final.'] },
+    { name: 'Escala', fromDay: o + 1, toDay: D - 1, from: d(o + 1), to: d(D - 1), tasks: [paid ? 'Subir el presupuesto de lo que funciona un 20 % cada 3 días como máximo.' : 'Repetir el formato que mejor funcionó y reutilizarlo en las otras plataformas.', 'Añadir un mercado o una plataforma nuevos solo si el anterior cumple el coste por resultado.'] },
+    close,
   ]
-  return phases
 }
 
 function contentOf(b: Brief, platforms: PlatformId[]): ContentItem[] {
@@ -184,6 +193,7 @@ function scenariosOf(b: Brief, platforms: PlatformId[], budget: BudgetPlan): { s
   const paid = platforms.filter(p => platformInfo(p).kind === 'paid')
   if (!b.goal) return { set: null, note: 'Elige un objetivo para estimar escenarios.' }
   if (!paid.length) return { set: null, note: 'Sin plataformas de pago no hay base numérica: el resultado orgánico depende de tu constancia y de tu audiencia previa. Fija hitos (piezas publicadas por semana) y mide.' }
+  if (b.totalBudget === 0) return { set: null, note: 'El presupuesto total es 0 pero hay plataformas de pago: sube el presupuesto o quita las plataformas de pago.' }
   if (!budget.lines.length) return { set: null, note: 'Falta el presupuesto total para calcular escenarios.' }
   const variants: Array<[Scenario['name'], number, number, number]> = [['Conservador', 1.3, 0.7, 0.6], ['Base', 1, 1, 1], ['Optimista', 0.8, 1.3, 1.4]]
   const FREQUENCY = 2
@@ -196,7 +206,7 @@ function scenariosOf(b: Brief, platforms: PlatformId[], budget: BudgetPlan): { s
       results += b.goal === 'awareness' ? imp / FREQUENCY : clk * Math.min(a.conversion * convF, 1)
     }
     const r = Math.round(results)
-    return { name, spend: round2(spend), impressions: Math.round(impressions), clicks: Math.round(clicks), results: r, costPerResult: r > 0 ? round2(spend / r) : null, pctOfGoal: b.expectedValue ? Math.round((r / b.expectedValue) * 100) : null }
+    return { name, spend: round2(spend), impressions: Math.round(impressions), clicks: Math.round(clicks), results: r, costPerResult: r > 0 ? round2(spend / r) : null, pctOfGoal: b.expectedValue && sameMetric(b) ? Math.round((r / b.expectedValue) * 100) : null }
   })
   const metric = METRICS.find(m => m[0] === GOAL_METRIC[b.goal!])?.[1] ?? 'Resultados'
   return { set: { metricLabel: metric, assumptions: paid.map(p => { const a = assumptionFor(b, p); return { id: p, platform: platformInfo(p).label, cpm: a.cpm, ctr: a.ctr, conversion: a.conversion, custom: a.custom } }), scenarios,
@@ -205,7 +215,7 @@ function scenariosOf(b: Brief, platforms: PlatformId[], budget: BudgetPlan): { s
 
 function rulesOf(b: Brief, budget: BudgetPlan, set: ScenarioSet | null): Rule[] {
   const cur = b.currency
-  const target = b.totalBudget && b.expectedValue ? round2(b.totalBudget / b.expectedValue) : set?.scenarios[1].costPerResult ?? null
+  const target = b.totalBudget && b.expectedValue && sameMetric(b) ? round2(b.totalBudget / b.expectedValue) : set?.scenarios[1].costPerResult ?? null
   const t = target !== null ? money(target, cur) : 'tu coste objetivo por resultado'
   const metric = b.goal ? METRIC_ONE[GOAL_METRIC[b.goal]] : 'resultado'
   const test = budget.phases[0] ? money(budget.phases[0].amount, cur) : 'el presupuesto de prueba'
@@ -219,7 +229,7 @@ function rulesOf(b: Brief, budget: BudgetPlan, set: ScenarioSet | null): Rule[] 
   ]
 }
 
-export function buildStrategy(b: Brief): Strategy {
+export function buildStrategy(b: Brief, now = Date.now()): Strategy {
   const questions = questionsOf(b), answered = questions.filter(q => q.done).length
   const chosen = effectivePlatforms(b)
   const platforms = rankPlatforms(b).map(p => ({ ...p, chosen: chosen.includes(p.id) }))
@@ -239,7 +249,11 @@ export function buildStrategy(b: Brief): Strategy {
   if (b.expectedValue === null && b.goal) suggestions.push('Define una cifra de resultado esperada: sin ella el sistema usa el coste por resultado del escenario base como referencia.')
   if (!b.interests.trim() && !b.audienceNotes.trim() && b.ageMin === null) suggestions.push('Describe al público: edad, intereses y un problema concreto que resuelves.')
   const warnings = [...budget.warnings]
-  if (days !== null && days < 7 && (mode === 'paid' || mode === 'mixed')) warnings.push('Con menos de 7 días no hay tiempo de probar y optimizar: los resultados serán ruido.')
+  if (days !== null && days < 7) warnings.push('Con menos de 7 días no hay tiempo de probar, optimizar y escalar: el calendario se reduce a lanzar y medir, y los resultados serán ruido.')
+  if (b.totalBudget === 0 && (mode === 'paid' || mode === 'mixed')) warnings.push('Presupuesto 0 con plataformas de pago: no habrá gasto en medios. Sube el presupuesto o quita las plataformas de pago.')
+  if (b.goal && b.expectedMetric && b.expectedValue !== null && !sameMetric(b)) warnings.push(`El objetivo «${label(GOALS, b.goal)}» se mide en ${METRICS.find(m => m[0] === GOAL_METRIC[b.goal!])?.[1].toLowerCase()} y esperas ${METRICS.find(m => m[0] === b.expectedMetric)?.[1].toLowerCase()}: no se comparan los escenarios con esa cifra.`)
+  if (b.startDate && !validDate(b.startDate)) warnings.push('La fecha de inicio no es una fecha válida (AAAA-MM-DD): el calendario se muestra por días, sin fechas.')
+  else if (b.startDate && Date.parse(`${b.startDate}T00:00:00Z`) < startOfUtcDay(now)) warnings.push('La fecha de inicio ya ha pasado.')
   if (b.goal === 'sales' && (mode === 'paid' || mode === 'mixed')) warnings.push('Sin seguimiento de conversiones (píxel / API de conversiones) las plataformas no pueden optimizar ventas.')
   if (b.countries.length > 3) warnings.push('Más de 3 países dispersa el presupuesto: empieza por 1–2 y amplía.')
   const subj = b.subjectName.trim() || label(SUBJECTS, b.subject).toLowerCase() || 'tu proyecto'

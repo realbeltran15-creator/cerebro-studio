@@ -25,6 +25,7 @@ export function CampaignsApp() {
   const [ready, setReady] = useState(false)
   const [saved, setSaved] = useState<'ok' | 'no'>('ok')
   const linked = useRef(false)
+  const booted = useRef(false)
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([])
   useEffect(() => {
     // Optional link with Estudio projects: if the list cannot be read (not signed in, offline), campaigns still work.
@@ -34,6 +35,9 @@ export function CampaignsApp() {
   }, [])
 
   useEffect(() => {
+    // React StrictMode runs effects twice in development; the second run would reload the list without the campaign just created from a link.
+    if (booted.current) return
+    booted.current = true
     let l = loadCampaigns(store())
     const pre = fromLink()
     if (pre && !linked.current) { linked.current = true; const c = create({ ...EMPTY_BRIEF, ...pre }); l = upsert(l, c); setCurrentId(c.id); try { window.history.replaceState(null, '', '/campaigns') } catch { /* ignore */ } }

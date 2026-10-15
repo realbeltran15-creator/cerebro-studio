@@ -1,6 +1,6 @@
 import { searchYouTubeVideosMeta, type YouTubeSearchInput, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { analyzeTopic, type TopicAnalysis, type TopicSamples } from './topic-analysis'
-import { cacheKey, DEFAULT_TTL_MS, startOfUtcDay, type CacheStore } from './cache'
+import { cacheKey, DEFAULT_TTL_MS, recordUsage, startOfUtcDay, type CacheStore } from './cache'
 import { DEFAULT_DAILY_CAP, UNITS } from './filters'
 
 export class BudgetError extends Error { constructor(message: string, readonly used: number, readonly cap: number) { super(message) } }
@@ -53,11 +53,14 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; 
   if (before + UNITS.topic > cap) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${before} de ${cap} unidades usadas hoy. Vuelve mañana o repite búsquedas ya guardadas (son gratis).`, before, cap)
 
   const common = { query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25 }
-  const top = await search({ ...common, order: 'viewCount', publishedWithinDays: 365 })
-  const recent = await search({ ...common, order: 'date', publishedWithinDays: recentDays })
+  // Every call that reached YouTube is recorded as its own usage line the moment it succeeds: a refresh (which overwrites the cached
+  // analysis) and a second search that fails half-way are both counted, so a retry can never look free.
+  const paid = async (input: Parameters<SearchFn>[0]) => { const r = await search(input); await recordUsage(deps.store, 'topic', UNITS.topic / 2, now()); return r }
+  const top = await paid({ ...common, order: 'viewCount', publishedWithinDays: 365 })
+  const recent = await paid({ ...common, order: 'date', publishedWithinDays: recentDays })
   const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, recentDays, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
   const analysis = analyzeTopic(samples, now())
   // The quota is already spent: if the cache write fails, still return the analysis instead of throwing it away.
-  try { await deps.store.put(key, 'topic', analysis, UNITS.topic, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
+  try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
   return { analysis, cached: false, usage: { usedToday: before + UNITS.topic, cap, persistent: deps.store.persistent } }
 }

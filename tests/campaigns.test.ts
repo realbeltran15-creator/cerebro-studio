@@ -170,3 +170,44 @@ describe('campaigns: Investigación → Campañas keeps the evidence, and the St
     expect(buildStrategy(full).chosenKpis.length).toBeGreaterThan(2)
   })
 })
+
+describe('review fixes: short campaigns, mismatched metrics, bad input', () => {
+  const dur = (d: number, extra: Partial<Brief> = {}) => buildStrategy(b({ ...full, durationDays: d, ...extra }), Date.parse('2026-10-15T00:00:00Z'))
+  it('the calendar never overlaps, never runs backwards and ends on the last day, for every duration from 1 to 60', () => {
+    for (let d = 1; d <= 60; d++) {
+      const cal = dur(d).calendar.filter(p => p.fromDay >= 1)
+      expect(cal[0].fromDay, `d=${d}`).toBe(1)
+      for (const p of cal) { expect(p.toDay, `d=${d} ${p.name}`).toBeGreaterThanOrEqual(p.fromDay); expect(p.toDay, `d=${d} ${p.name}`).toBeLessThanOrEqual(d) }
+      for (let i = 1; i < cal.length - 1; i++) expect(cal[i].fromDay, `d=${d}`).toBe(cal[i - 1].toDay + 1)
+      expect(cal.at(-1)!.name).toBe('Cierre e informe'); expect(cal.at(-1)!.toDay).toBe(d)
+      for (const p of cal) if (p.from && p.to) expect(p.from <= p.to, `d=${d} dates`).toBe(true)
+    }
+  })
+  it('under 7 days the plan is compact and every mode gets the warning', () => {
+    expect(dur(3).calendar.map(p => p.name)).toEqual(['Preparación', 'Lanzamiento y medición', 'Cierre e informe'])
+    expect(dur(3, { platforms: ['youtube_organic'], totalBudget: 0 }).warnings.join(' ')).toMatch(/menos de 7 días/)
+  })
+  it('scenarios are only compared with the goal when both use the same metric', () => {
+    const m = dur(28, { goal: 'sales', expectedMetric: 'views', expectedValue: 10000 })
+    expect(m.scenarios!.scenarios.every(s => s.pctOfGoal === null)).toBe(true)
+    expect(m.warnings.join(' ')).toMatch(/no se comparan los escenarios/)
+    expect(m.rules.find(r => r.kind === 'ampliar')!.when).not.toMatch(/0,09 EUR/)
+  })
+  it('a zero daily cap is not accepted and a start date must be a real date', async () => {
+    const { sanitizeBrief, validDate } = await import('@/lib/campaigns/store')
+    expect(sanitizeBrief({ dailyCap: 0 }).dailyCap).toBeNull()
+    expect(buildStrategy(b({ ...full, dailyCap: 0 })).warnings.join(' ')).not.toMatch(/Infinity/)
+    expect(validDate('2026-02-31')).toBe(''); expect(validDate('2026-13-01')).toBe(''); expect(validDate('2026-02-28')).toBe('2026-02-28')
+    expect(dur(14, { startDate: '2026-02-31' }).warnings.join(' ')).toMatch(/no es una fecha válida/)
+    expect(dur(14, { startDate: '2026-10-01' }).warnings.join(' ')).toMatch(/ya ha pasado/)
+  })
+  it('a paid platform with a zero budget says so instead of "falta el presupuesto"', () => {
+    const z = buildStrategy(b({ goal: 'traffic', platforms: ['meta_ads'], totalBudget: 0 }))
+    expect(z.warnings.join(' ')).toMatch(/Presupuesto 0 con plataformas de pago/); expect(z.scenarioNote).toMatch(/es 0/)
+  })
+  it('changing the status updates the modification date', async () => {
+    const { setStatus } = await import('@/lib/campaigns/store')
+    const c = create(full, '2026-10-01T00:00:00Z')
+    expect(setStatus([c], c.id, 'lista', '2026-10-02T00:00:00Z')[0].updatedAt).toBe('2026-10-02T00:00:00Z')
+  })
+})

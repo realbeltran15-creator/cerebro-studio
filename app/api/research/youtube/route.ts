@@ -28,12 +28,11 @@ export async function GET(request: Request) {
   const category = params.get('category')?.trim() ?? ''
   const max = Number(params.get('max'))
 
-  // Same daily budget as the analyses: a free-text search costs about 102 units and is counted with them.
-  const store = await openStore(supabase as never, user.id)
-  const used = await store.unitsSince(startOfUtcDay()), cap = dailyCap()
-  if (used + UNITS.search > cap) return NextResponse.json({ error: `Presupuesto diario de Investigación agotado: ${used} de ${cap} unidades usadas hoy. Vuelve mañana.`, budget: { used, cap }, configured: true }, { status: 429 })
-
   try {
+    // Same daily budget as the analyses: a free-text search costs about 102 units and is counted with them.
+    const store = await openStore(supabase as never, user.id)
+    const used = await store.unitsSince(startOfUtcDay()), cap = dailyCap()
+    if (used + UNITS.search > cap) return NextResponse.json({ error: `Presupuesto diario de Investigación agotado: ${used} de ${cap} unidades usadas hoy. Vuelve mañana.`, budget: { used, cap }, configured: true }, { status: 429 })
     const results = await searchYouTubeVideos({
       query,
       order: order && orders.has(order) ? order : 'relevance',
