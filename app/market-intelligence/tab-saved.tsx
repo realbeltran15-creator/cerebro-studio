@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+import Link from 'next/link'
+import { campaignLink } from '@/lib/campaigns/link'
 import { useResearch } from './research-context'
 import type { OpportunityRow } from '@/lib/types/database'
 
@@ -59,8 +61,9 @@ type Calc = { verdict?: string; confidence?: string; indices?: { demand: number;
 function SavedDetail({ item }: { item: Opportunity }) {
   const snap = ((item.observed_metrics as { snapshot?: Snap } | null)?.snapshot) ?? null
   const calc = (item.calculated_metrics ?? {}) as Calc
-  if (!snap && !calc.indices) return null
+  const link = campaignLink({ topic: item.query || item.title, region: item.region, language: item.language, verdict: calc.verdict ?? null, demand: calc.indices?.demand ?? null, competition: calc.indices?.competition ?? null, opportunity: calc.indices?.opportunity ?? null, fetchedAt: snap?.fetchedAt ?? null, opportunityId: item.id })
   return <div className="small">
+    <p><Link className="open" href={link}>Planificar campaña con esta oportunidad</Link></p>
     {calc.indices && <p className="muted">Demanda {calc.indices.demand} · Oferta {calc.indices.supply} · Competencia {calc.indices.competition} · Crecimiento {calc.indices.growth} · Oportunidad {calc.indices.opportunity} (0–100){calc.verdict ? ` · ${calc.verdict}` : ''}{calc.confidence ? ` · confianza ${calc.confidence}` : ''}</p>}
     {snap?.fetchedAt && <p className="muted">Consultado el {new Date(snap.fetchedAt).toLocaleDateString('es-ES')}{snap.recentDays ? ` · ventana de recientes ${snap.recentDays} días` : ''}{snap.units ? ` · ${snap.units} unidades de cuota` : ''}</p>}
     {snap?.videos && snap.videos.length > 0 && <div className="recoGrid">{snap.videos.slice(0, 4).map(v => <a key={v.videoId} href={v.url} target="_blank" rel="noreferrer" className="videoTile">

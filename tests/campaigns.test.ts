@@ -137,3 +137,36 @@ describe('campaigns: saving without any connection', () => {
     expect(clean.totalBudget).toBeNull(); expect(clean.goal).toBeNull(); expect(clean.platforms).toEqual(['meta_ads']); expect(clean.currency).toBe('EUR'); expect(clean.durationDays).toBeNull(); expect(clean.assumptions).toEqual({})
   })
 })
+
+describe('campaigns: Investigación → Campañas keeps the evidence, and the Studio links carry the project', () => {
+  it('the link round-trips topic, market, verdict, indices and date without recomputing anything', async () => {
+    const { campaignLink, briefFromLink } = await import('@/lib/campaigns/link')
+    const url = campaignLink({ topic: 'huerto en casa', region: 'DE', language: 'de', verdict: 'oportunidad', demand: 71.4, competition: 32, opportunity: 66, fetchedAt: '2026-10-13T12:00:00.000Z', opportunityId: 'opp-1' })
+    const brief = briefFromLink(url.split('?')[1])!
+    expect(brief.countries).toEqual(['DE']); expect(brief.subjectName).toBe('huerto en casa'); expect(brief.goal).toBe('subscribers')
+    expect(brief.source!.summary).toMatch(/veredicto de Investigación: oportunidad, demanda 71\/100, competencia 32\/100, oportunidad 66\/100/)
+    expect(brief.source!.opportunityId).toBe('opp-1'); expect(brief.source!.fetchedAt).toBe('2026-10-13T12:00:00.000Z'); expect(brief.source!.language).toBe('de')
+    const strategy = buildStrategy({ ...EMPTY_BRIEF, ...brief } as Brief)
+    expect(strategy.origin).toMatch(/Tema «huerto en casa»/); expect(campaignReport({ ...EMPTY_BRIEF, ...brief } as Brief)).toContain('Datos del 2026-10-13')
+  })
+  it('hostile or malformed links are neutralised', async () => {
+    const { briefFromLink } = await import('@/lib/campaigns/link')
+    expect(briefFromLink('')).toBeNull()
+    const b = briefFromLink('topic=x&country=<script>&verdict=evil&demand=999&at=nope&lang=zzz')!
+    expect(b.countries).toEqual([]); expect(b.source!.summary).not.toMatch(/evil|999/); expect(b.source!.fetchedAt).toBe(''); expect(b.source!.language).toBe('')
+  })
+  it('the source survives saving and loading', () => {
+    const c = create({ ...full, source: { opportunityId: 'o', summary: 's', language: 'de', fetchedAt: '2026-10-13' }, kpis: ['CTR'] })
+    expect(sanitizeBrief(JSON.parse(JSON.stringify(c.brief))).source?.opportunityId).toBe('o'); expect(c.brief.kpis).toEqual(['CTR'])
+  })
+  it('creative links open the linked project, and the language of each market is stated', () => {
+    const s = buildStrategy(b({ ...full, projectId: 'p-9' }))
+    expect(s.creatives.find(c => c.studioLabel === 'Abrir Guiones')!.studioHref).toBe('/scripts?project=p-9')
+    expect(s.creatives.find(c => /Textos de anuncio/.test(c.title))!.studioHref).toBe('/projects/p-9')
+    expect(s.creatives[0].spec).toMatch(/Idioma de las piezas: en, de/)
+  })
+  it('chosen KPIs replace the suggested ones in the report', () => {
+    expect(campaignReport(b({ ...full, kpis: ['Suscriptores ganados'] }))).toMatch(/\*\*A seguir:\*\* Suscriptores ganados/)
+    expect(buildStrategy(full).chosenKpis.length).toBeGreaterThan(2)
+  })
+})

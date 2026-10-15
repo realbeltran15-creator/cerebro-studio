@@ -13,8 +13,9 @@ create table if not exists public.research_cache (
 );
 create index if not exists research_cache_owner_fetched_idx on public.research_cache (owner_id, fetched_at desc);
 alter table public.research_cache enable row level security;
+revoke all on public.research_cache from anon;
 do $$ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'research_cache' and policyname = 'research_cache_owner_all') then
-    create policy research_cache_owner_all on public.research_cache for all using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()));
+    create policy research_cache_owner_all on public.research_cache for all to authenticated using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()));
   end if;
 end $$;

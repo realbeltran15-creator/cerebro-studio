@@ -12,6 +12,13 @@ const str = (v: unknown, max = 600) => (typeof v === 'string' ? v.slice(0, max) 
 const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 40).slice(0, 40) : [])
 const oneOf = <T extends string>(v: unknown, list: readonly T[]): T | null => (typeof v === 'string' && (list as readonly string[]).includes(v) ? (v as T) : null)
 
+const strsLong = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 80).slice(0, 20) : [])
+function sanitizeSource(v: unknown): Brief['source'] {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  return { opportunityId: str(o.opportunityId, 64), summary: str(o.summary, 600), language: str(o.language, 5), fetchedAt: str(o.fetchedAt, 40) }
+}
+
 export function sanitizeBrief(raw: unknown): Brief {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const ass: Brief['assumptions'] = {}
@@ -28,7 +35,7 @@ export function sanitizeBrief(raw: unknown): Brief {
     platforms: strs(r.platforms).filter((p): p is Brief['platforms'][number] => ['youtube_organic', 'instagram_organic', 'tiktok_organic', 'google_ads', 'meta_ads', 'tiktok_ads'].includes(p)),
     totalBudget: num(r.totalBudget), dailyCap: num(r.dailyCap), durationDays: (() => { const n = num(r.durationDays); return n !== null && n >= 1 && n <= 365 ? Math.round(n) : null })(), startDate: /^\d{4}-\d{2}-\d{2}$/.test(str(r.startDate, 10)) ? str(r.startDate, 10) : '',
     expectedMetric: oneOf(r.expectedMetric, ['views', 'clicks', 'subscribers', 'leads', 'sales', 'reach']), expectedValue: num(r.expectedValue), currency: oneOf(r.currency, ['EUR', 'USD', 'GBP', 'CHF']) ?? 'EUR',
-    projectId: str(r.projectId, 64), sourceTopic: str(r.sourceTopic, 200), assumptions: ass,
+    projectId: str(r.projectId, 64), sourceTopic: str(r.sourceTopic, 200), source: sanitizeSource(r.source), kpis: strsLong(r.kpis), assumptions: ass,
   }
 }
 

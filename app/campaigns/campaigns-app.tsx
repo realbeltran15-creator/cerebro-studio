@@ -1,10 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { briefFromLink } from '@/lib/campaigns/link'
 import { buildStrategy } from '@/lib/campaigns/strategy'
 import { campaignJson, campaignReport } from '@/lib/campaigns/report'
 import { create, duplicate, loadCampaigns, remove, saveCampaigns, setStatus, upsert } from '@/lib/campaigns/store'
 import { EMPTY_BRIEF, type Brief, type CampaignStatus, type SavedCampaign } from '@/lib/campaigns/types'
+import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { BriefTab, BudgetTab, ConnectionsTab, ContentTab, ResultsTab, StrategyTab } from './views'
 
 const TABS = [['brief', 'Brief'], ['strategy', 'Estrategia'], ['content', 'Contenido y creatividades'], ['budget', 'Presupuesto y calendario'], ['results', 'Resultados y reglas'], ['connections', 'Conexiones'], ['report', 'Informe']] as const
@@ -13,15 +15,8 @@ const store = () => { try { return window.localStorage } catch { return null } }
 const download = (name: string, text: string, type: string) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
 const slug = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'campana'
 
-/** Prefill from Investigación: /campaigns?topic=…&country=US. Never auto-creates a second campaign on reload. */
-function fromLink(): Partial<Brief> | null {
-  try {
-    const p = new URLSearchParams(window.location.search), topic = p.get('topic')
-    if (!topic) return null
-    const country = (p.get('country') ?? '').toUpperCase()
-    return { name: `Canal sobre ${topic}`.slice(0, 120), subject: 'channel', subjectName: topic.slice(0, 200), sourceTopic: topic.slice(0, 200), goal: 'subscribers', countries: /^[A-Z]{2}$/.test(country) ? [country] : [], projectId: (p.get('project') ?? '').slice(0, 64) }
-  } catch { return null }
-}
+/** Prefill from Investigación (see lib/campaigns/link.ts). The query string is removed afterwards so a reload never creates a second campaign. */
+function fromLink(): Partial<Brief> | null { try { return briefFromLink(window.location.search) } catch { return null } }
 
 export function CampaignsApp() {
   const [list, setList] = useState<SavedCampaign[]>([])
@@ -30,6 +25,13 @@ export function CampaignsApp() {
   const [ready, setReady] = useState(false)
   const [saved, setSaved] = useState<'ok' | 'no'>('ok')
   const linked = useRef(false)
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([])
+  useEffect(() => {
+    // Optional link with Estudio projects: if the list cannot be read (not signed in, offline), campaigns still work.
+    let off = false
+    ;(async () => { try { const { data } = await getSupabaseBrowserClient().from('projects').select('id,name').order('updated_at', { ascending: false }).limit(100); if (!off && Array.isArray(data)) setProjects(data as Array<{ id: string; name: string }>) } catch { /* optional */ } })()
+    return () => { off = true }
+  }, [])
 
   useEffect(() => {
     let l = loadCampaigns(store())
@@ -64,7 +66,7 @@ export function CampaignsApp() {
     {!current ? <section className="panel"><h3>Empieza una campaña</h3><p>Responde a nueve preguntas (puedes dejar las que no sepas) y Cerebro Studio propone la estrategia, el presupuesto y el calendario. También puedes empezar desde un análisis de <a className="open" href="/market-intelligence">Investigación</a>.</p><button type="button" onClick={add}>+ Nueva campaña</button></section> : <>
       <div className="researchTabs" role="tablist" aria-label="Secciones de la campaña">{TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}</div>
       <div role="tabpanel" aria-label={TABS.find(t => t[0] === tab)![1]}>
-        {tab === 'brief' && <BriefTab brief={brief} set={set} strategy={strategy} />}
+        {tab === 'brief' && <BriefTab brief={brief} set={set} strategy={strategy} projects={projects} />}
         {tab === 'strategy' && <StrategyTab brief={brief} set={set} strategy={strategy} />}
         {tab === 'content' && <ContentTab strategy={strategy} />}
         {tab === 'budget' && <BudgetTab brief={brief} set={set} strategy={strategy} />}

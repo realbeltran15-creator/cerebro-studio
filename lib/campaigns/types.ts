@@ -27,13 +27,17 @@ export type Brief = {
   currency: Currency
   /** Optional links to the rest of Cerebro Studio. */
   projectId: string; sourceTopic: string
+  /** Where the idea came from (Investigación): kept so the plan and the report can cite the evidence, never re-computed here. */
+  source: { opportunityId: string; summary: string; language: string; fetchedAt: string } | null
+  /** KPIs the user chose to track (empty = the suggested ones). */
+  kpis: string[]
   /** Per-platform overrides of the example assumptions. */
   assumptions: Partial<Record<PlatformId, Partial<Assumption>>>
 }
 
 export const EMPTY_BRIEF: Brief = {
   name: '', subject: null, subjectName: '', subjectUrl: '', goal: null, countries: [], ageMin: null, ageMax: null, interests: '', audienceNotes: '',
-  platforms: [], totalBudget: null, dailyCap: null, durationDays: null, startDate: '', expectedMetric: null, expectedValue: null, currency: 'EUR', projectId: '', sourceTopic: '', assumptions: {},
+  platforms: [], totalBudget: null, dailyCap: null, durationDays: null, startDate: '', expectedMetric: null, expectedValue: null, currency: 'EUR', projectId: '', sourceTopic: '', source: null, kpis: [], assumptions: {},
 }
 
 export type CampaignStatus = 'borrador' | 'lista' | 'archivada'

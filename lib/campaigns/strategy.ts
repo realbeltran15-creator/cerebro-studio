@@ -19,6 +19,10 @@ export type Strategy = {
   platforms: PlatformPlan[]; audience: { demographics: string; markets: string[]; segments: Segment[] }
   content: ContentItem[]; creatives: Creative[]; budget: BudgetPlan; calendar: CalendarPhase[]; kpis: Array<{ platform: string; kpis: string[] }>
   scenarios: ScenarioSet | null; scenarioNote: string; rules: Rule[]; warnings: string[]
+  /** Evidence carried from Investigación, cited as received. */
+  origin: string | null
+  /** KPIs to track: the user's choice, or all the suggested ones. */
+  kpiOptions: string[]; chosenKpis: string[]
 }
 
 const METRIC_ONE = { views: 'visualización', clicks: 'clic', subscribers: 'suscriptor', leads: 'contacto', sales: 'venta', reach: 'persona alcanzada' } as const
@@ -75,6 +79,9 @@ export function suggestPlatforms(b: Brief): PlatformId[] {
   const organic = ranked.filter(p => p.kind === 'organic').slice(0, 2)
   return [...organic, ...paid].map(p => p.id)
 }
+
+/** Platforms the plan actually uses: the user's choice, or the suggestion when none was made. */
+export const effectivePlatforms = (b: Brief): PlatformId[] => (b.platforms.length ? b.platforms : suggestPlatforms(b))
 
 const tierFactor = (countries: string[]) => countries.length ? countries.reduce((t, c) => t + TIER_FACTOR[COUNTRY_TIER[c] ?? 'medio'], 0) / countries.length : 1
 
@@ -146,15 +153,18 @@ function contentOf(b: Brief, platforms: PlatformId[]): ContentItem[] {
 }
 
 function creativesOf(b: Brief, platforms: PlatformId[]): Creative[] {
+  const proj = (href: string) => (b.projectId ? `${href}?project=${encodeURIComponent(b.projectId)}` : href)
+  const langs = [...new Set(b.countries.map(c => COUNTRIES.find(x => x.code === c)?.language).filter(Boolean))]
+  const langNote = langs.length ? ` Idioma de las piezas: ${langs.join(', ')} (uno por mercado).` : ''
   const has = (...ids: PlatformId[]) => platforms.filter(p => ids.includes(p)).map(p => platformInfo(p).label)
   const vertical = has('instagram_organic', 'tiktok_organic', 'meta_ads', 'tiktok_ads')
   const list: Creative[] = [
-    { title: 'Guion corto con gancho, desarrollo y llamada a la acción', spec: 'Hasta 3 variantes de gancho (primeros 3 segundos) para probar.', platforms: platforms.map(p => platformInfo(p).label), studioHref: '/scripts', studioLabel: 'Abrir Guiones' },
+    { title: 'Guion corto con gancho, desarrollo y llamada a la acción', spec: `Hasta 3 variantes de gancho (primeros 3 segundos) para probar.${langNote}`, platforms: platforms.map(p => platformInfo(p).label), studioHref: proj('/scripts'), studioLabel: 'Abrir Guiones' },
   ]
-  if (vertical.length) list.push({ title: 'Vídeo vertical 9:16', spec: 'Formato vertical a pantalla completa; consulta la duración y los márgenes seguros vigentes de cada plataforma antes de exportar.', platforms: vertical, studioHref: '/repurpose', studioLabel: 'Convertir a vertical' })
-  if (has('youtube_organic', 'google_ads').length) list.push({ title: 'Vídeo horizontal 16:9 y miniatura', spec: 'Miniatura 16:9 con 2 variantes (A/B).', platforms: has('youtube_organic', 'google_ads'), studioHref: '/thumbnails', studioLabel: 'Crear miniaturas' })
-  list.push({ title: 'Montaje, voz y música', spec: 'Montaje con subtítulos; voz y música con licencia registrada en la Biblioteca.', platforms: platforms.map(p => platformInfo(p).label), studioHref: '/editor', studioLabel: 'Abrir Editor' })
-  if (platforms.some(p => platformInfo(p).kind === 'paid')) list.push({ title: 'Textos de anuncio y página de destino', spec: '2 titulares y 2 descripciones por variante; el enlace lleva UTM.', platforms: has('google_ads', 'meta_ads', 'tiktok_ads'), studioHref: b.projectId ? `/projects` : '/projects', studioLabel: 'Ver proyectos' })
+  if (vertical.length) list.push({ title: 'Vídeo vertical 9:16', spec: 'Formato vertical a pantalla completa; consulta la duración y los márgenes seguros vigentes de cada plataforma antes de exportar.', platforms: vertical, studioHref: proj('/repurpose'), studioLabel: 'Convertir a vertical' })
+  if (has('youtube_organic', 'google_ads').length) list.push({ title: 'Vídeo horizontal 16:9 y miniatura', spec: 'Miniatura 16:9 con 2 variantes (A/B).', platforms: has('youtube_organic', 'google_ads'), studioHref: proj('/thumbnails'), studioLabel: 'Crear miniaturas' })
+  list.push({ title: 'Montaje, voz y música', spec: 'Montaje con subtítulos; voz y música con licencia registrada en la Biblioteca.', platforms: platforms.map(p => platformInfo(p).label), studioHref: proj('/editor'), studioLabel: 'Abrir Editor' })
+  if (platforms.some(p => platformInfo(p).kind === 'paid')) list.push({ title: 'Textos de anuncio y página de destino', spec: '2 titulares y 2 descripciones por variante; el enlace lleva UTM.', platforms: has('google_ads', 'meta_ads', 'tiktok_ads'), studioHref: b.projectId ? `/projects/${encodeURIComponent(b.projectId)}` : '/projects', studioLabel: b.projectId ? 'Abrir el proyecto' : 'Ver proyectos' })
   return list
 }
 
@@ -211,7 +221,7 @@ function rulesOf(b: Brief, budget: BudgetPlan, set: ScenarioSet | null): Rule[] 
 
 export function buildStrategy(b: Brief): Strategy {
   const questions = questionsOf(b), answered = questions.filter(q => q.done).length
-  const chosen = b.platforms.length ? b.platforms : suggestPlatforms(b)
+  const chosen = effectivePlatforms(b)
   const platforms = rankPlatforms(b).map(p => ({ ...p, chosen: chosen.includes(p.id) }))
   const mode = modeOf(chosen)
   const days = b.durationDays
@@ -234,7 +244,11 @@ export function buildStrategy(b: Brief): Strategy {
   if (b.countries.length > 3) warnings.push('Más de 3 países dispersa el presupuesto: empieza por 1–2 y amplía.')
   const subj = b.subjectName.trim() || label(SUBJECTS, b.subject).toLowerCase() || 'tu proyecto'
   const summary = `Campaña ${mode === 'mixed' ? 'mixta (orgánica + pago)' : mode === 'paid' ? 'de pago' : mode === 'organic' ? 'orgánica' : '(sin modalidad definida)'} para ${subj}${b.goal ? ` con el objetivo «${label(GOALS, b.goal)}»` : ''}${b.countries.length ? ` en ${b.countries.map(countryName).join(', ')}` : ''}${days ? `, durante ${days} días` : ''}${b.totalBudget !== null ? `, con ${money(b.totalBudget, b.currency)} de presupuesto` : ''}.`
+  const kpiList = chosen.flatMap(p => (b.goal && platformInfo(p).kpis[b.goal]) || ['Impresiones', 'Clics', 'Coste por resultado'])
+  const kpiOptions = [...new Set([...kpiList, ...(b.kpis ?? [])])]
+  const chosenKpis = b.kpis.length ? b.kpis : kpiOptions
   return {
+    origin: b.source?.summary ?? null, kpiOptions, chosenKpis,
     mode, answered, questions, suggestions, summary, platforms, audience: audienceOf(b), content: contentOf(b, chosen), creatives: creativesOf(b, chosen), budget,
     calendar: calendarOf(b, days, mode), kpis: chosen.map(p => ({ platform: platformInfo(p).label, kpis: (b.goal && platformInfo(p).kpis[b.goal]) || ['Impresiones', 'Clics', 'Coste por resultado'] })),
     scenarios: set, scenarioNote: note, rules: rulesOf(b, budget, set), warnings,

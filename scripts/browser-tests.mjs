@@ -908,6 +908,15 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const file = await dl
   const text = readFileSync(await file.path(), 'utf8')
   check('campaigns: the exported report has all sections and says nothing was published', file.suggestedFilename().endsWith('.md') && /## 8\. Escenarios estimados/.test(text) && /no se ha publicado ningún anuncio/.test(text) && /## 10\. Conexiones publicitarias/.test(text), file.suggestedFilename())
+  // From Investigación: the idea arrives with its evidence, and the URL is cleaned so a reload does not create another campaign.
+  const p2 = await context.newPage(); await p2.route('**/api/campaigns/connections', r => r.fulfill({ json: { networks: [] } }))
+  await p2.goto('http://127.0.0.1:8800/campaigns?topic=huerto%20en%20casa&country=DE&lang=de&verdict=oportunidad&demand=71&competition=32'); await p2.addStyleTag({ content: css })
+  await p2.getByText('Viene de Investigación.').waitFor({ timeout: 10000 })
+  check('campaigns: an opportunity sent from Investigación arrives with topic, country and its evidence', (await p2.getByLabel('Nombre', { exact: true }).inputValue()) === 'huerto en casa' && (await p2.getByText(/veredicto de Investigación: oportunidad, demanda 71\/100, competencia 32\/100/).count()) === 1 && (await p2.getByText('2 de 9 preguntas respondidas').count()) + (await p2.getByText('3 de 9 preguntas respondidas').count()) === 1)
+  const optionsBefore = await p2.locator('#campaign-select option').count()
+  await p2.reload(); await p2.getByLabel('Nombre', { exact: true }).waitFor({ timeout: 10000 })
+  check('campaigns: reloading after arriving from Investigación does not create a second campaign', (await p2.locator('#campaign-select option').count()) === optionsBefore)
+  await p2.close()
   check('campaigns: no request went to any advertising platform', outbound.every(o => o === 'connections'), outbound)
   check('campaigns: no page errors', errors.length === 0, errors)
   await page.close(); await context.close(); server.close()

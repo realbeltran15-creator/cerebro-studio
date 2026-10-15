@@ -48,6 +48,8 @@ export class SupabaseCacheStore implements CacheStore {
   async put(key: string, kind: string, payload: unknown, units: number, ttlMs: number, now = Date.now()) {
     const { error } = await this.db.from('research_cache').upsert({ owner_id: this.owner, cache_key: key, kind, payload, units, fetched_at: new Date(now).toISOString(), expires_at: new Date(now + ttlMs).toISOString() }, { onConflict: 'owner_id,cache_key' })
     if (error) throw error
+    // Housekeeping: now and then drop this user's rows that expired a month ago (cached analyses and usage log lines). Best effort.
+    if (Math.random() < 0.05) await this.db.from('research_cache').delete().eq('owner_id', this.owner).lt('expires_at', new Date(now - 30 * 86400000).toISOString()).then(() => undefined, () => undefined)
   }
   async unitsSince(sinceMs: number) {
     const { data, error } = await this.db.from('research_cache').select('units').eq('owner_id', this.owner).gte('fetched_at', new Date(sinceMs).toISOString())

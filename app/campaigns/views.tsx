@@ -7,7 +7,7 @@ import { COUNTRIES } from '@/lib/research/discovery'
 import { fmtNumber } from '@/lib/research/format'
 import { CURRENCIES, GOALS, METRICS, PLATFORMS, SUBJECTS } from '@/lib/campaigns/catalog'
 import { NETWORKS, type Readiness } from '@/lib/campaigns/connections'
-import { suggestPlatforms, assumptionFor, type Strategy } from '@/lib/campaigns/strategy'
+import { suggestPlatforms, effectivePlatforms, assumptionFor, type Strategy } from '@/lib/campaigns/strategy'
 import type { Brief, PlatformId } from '@/lib/campaigns/types'
 import { NumField, SelectField, TextField } from './fields'
 
@@ -19,10 +19,13 @@ function Question({ q, children }: { q: Strategy['questions'][number]; children:
     <legend><span className={`qNum${q.done ? ' done' : ''}`}>{q.n}</span> {q.question}</legend>{children}<p className="muted small">{q.hint}</p></fieldset>
 }
 
-export function BriefTab({ brief, set, strategy }: P) {
+export function BriefTab({ brief, set, strategy, projects }: P & { projects: Array<{ id: string; name: string }> }) {
   return <div>
     <p role="status" className="notice" style={{ margin: '0 0 14px' }}><b>{strategy.answered} de 9 preguntas respondidas.</b> Puedes dejar preguntas en blanco: la estrategia se calcula con lo que hay y te dice qué falta.</p>
     <TextField label="Nombre de la campaña" value={brief.name} onChange={name => set({ name })} placeholder="Ej.: Lanzamiento del canal en EE. UU." />
+    {projects.length > 0 && <div><label className="muted small" htmlFor="campaign-project">Proyecto de Cerebro Studio (opcional): las piezas se preparan dentro de él</label>
+      <select id="campaign-project" value={brief.projectId} onChange={e => set({ projectId: e.target.value })}><option value="">Sin proyecto</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>}
+    {brief.source && <p className="notice" role="note"><b>Viene de Investigación.</b> {brief.source.summary}</p>}
     <div className="campaignGrid">
       <Question q={strategy.questions[0]}><SelectField label="Tipo" value={brief.subject} onChange={subject => set({ subject })} options={SUBJECTS} empty="Elige…" />
         <TextField label="Nombre" value={brief.subjectName} onChange={subjectName => set({ subjectName })} placeholder="Nombre del vídeo, canal, producto o tienda" />
@@ -50,8 +53,10 @@ export function BriefTab({ brief, set, strategy }: P) {
 }
 
 export function StrategyTab({ strategy, brief, set }: P) {
-  const toggle = (id: PlatformId) => set({ platforms: (brief.platforms.length ? brief.platforms : strategy.platforms.filter(p => p.chosen).map(p => p.id)).includes(id) ? (brief.platforms.length ? brief.platforms : strategy.platforms.filter(p => p.chosen).map(p => p.id)).filter(x => x !== id) : [...(brief.platforms.length ? brief.platforms : strategy.platforms.filter(p => p.chosen).map(p => p.id)), id] })
+  const current = effectivePlatforms(brief)
+  const toggle = (id: PlatformId) => set({ platforms: current.includes(id) ? current.filter(x => x !== id) : [...current, id] })
   return <div>
+    {strategy.origin && <p className="notice" role="note"><b>Origen en Investigación:</b> {strategy.origin}</p>}
     <p>{strategy.summary}</p>
     {strategy.warnings.map(w => <p key={w} className="error" role="alert">⚠ {w}</p>)}
     <h3 className="sectionTitle">Plataformas y por qué</h3>
@@ -106,6 +111,7 @@ export function ResultsTab({ strategy, brief, set }: P) {
   return <div>
     <h3 className="sectionTitle">Indicadores de rendimiento</h3>
     <ul>{strategy.kpis.map(k => <li key={k.platform}><b>{k.platform}:</b> {k.kpis.join(', ')}</li>)}</ul>
+    <fieldset className="chips" aria-label="Indicadores a seguir"><legend>Indicadores a seguir (si no eliges ninguno, se siguen todos)</legend>{strategy.kpiOptions.map(k => <button key={k} type="button" className={`chip${brief.kpis.includes(k) ? ' active' : ''}`} aria-pressed={brief.kpis.includes(k)} onClick={() => set({ kpis: brief.kpis.includes(k) ? brief.kpis.filter(x => x !== k) : [...brief.kpis, k] })}>{k}</button>)}</fieldset>
     <h3 className="sectionTitle">Escenarios de resultados estimados</h3>
     {sc ? <>
       <p className="notice" role="note">Estimación con supuestos de ejemplo, <b>no con datos reales</b> de tus cuentas. Edítalos abajo con los de un piloto.</p>
