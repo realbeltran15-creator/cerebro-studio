@@ -46,3 +46,6 @@ Limitación: no es un Supabase completo (no se probó PostgREST ni Realtime), y 
 2. Aplicar `20261013120000_research_cache.sql` con la herramienta de migraciones de Supabase (o `supabase db push`), no con SQL suelto.
 3. Comprobar: `select count(*) from public.research_cache;` (0 filas), `select polname from pg_policy` y que `/api/research/usage` devuelva `persistent: true`.
 4. Si algo falla: ejecutar el `down` correspondiente.
+
+
+Detalle de persistencia (qué guarda, supervivencia a despliegues, duplicados, cuota, políticas y reversión): `docs/informe-persistencia-research-cache.md`.

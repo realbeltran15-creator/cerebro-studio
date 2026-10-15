@@ -51,6 +51,22 @@ select pg_temp.expect_fail($q$select count(*) from public.campaigns$q$, 'anon ha
 select pg_temp.expect_fail($q$select count(*) from public.research_cache$q$, 'anon has no privileges on research_cache');
 reset role;
 
+\echo == the app's write pattern: upsert on (owner_id, cache_key), usage lines, daily sum, expiry
+insert into public.research_cache (owner_id, cache_key, kind, payload, units, fetched_at, expires_at) values ('00000000-0000-0000-0000-00000000000a', 'v2|topic|x', 'topic', '{"v":1}', 0, now(), now() + interval '7 days')
+  on conflict (owner_id, cache_key) do update set payload = excluded.payload, units = excluded.units, fetched_at = excluded.fetched_at, expires_at = excluded.expires_at;
+insert into public.research_cache (owner_id, cache_key, kind, payload, units, fetched_at, expires_at) values ('00000000-0000-0000-0000-00000000000a', 'v2|topic|x', 'topic', '{"v":2}', 0, now(), now() + interval '7 days')
+  on conflict (owner_id, cache_key) do update set payload = excluded.payload, units = excluded.units, fetched_at = excluded.fetched_at, expires_at = excluded.expires_at;
+insert into public.research_cache (owner_id, cache_key, kind, payload, units, fetched_at, expires_at) values
+  ('00000000-0000-0000-0000-00000000000a', 'v1|usage|topic|1|a', 'usage', '{}', 102, now(), now() + interval '2 days'),
+  ('00000000-0000-0000-0000-00000000000a', 'v1|usage|topic|2|b', 'usage', '{}', 102, now(), now() + interval '2 days'),
+  ('00000000-0000-0000-0000-00000000000a', 'v1|usage|old|3|c', 'usage', '{}', 500, now() - interval '2 days', now() - interval '1 day');
+do $$ begin
+  if (select count(*) from public.research_cache where cache_key = 'v2|topic|x') <> 1 then raise exception 'upsert created a duplicate'; end if;
+  if (select payload->>'v' from public.research_cache where cache_key = 'v2|topic|x') <> '2' then raise exception 'upsert did not replace the payload'; end if;
+  if (select coalesce(sum(units), 0) from public.research_cache where owner_id = '00000000-0000-0000-0000-00000000000a' and fetched_at >= date_trunc('day', now() at time zone 'utc') at time zone 'utc') <> 204 + 204 then raise exception 'daily sum wrong (k1 had 204 units from the RLS test)'; end if;
+  if (select count(*) from public.research_cache where expires_at < now()) <> 1 then raise exception 'expiry bookkeeping wrong'; end if;
+end $$;
+
 \echo == project deletion keeps the campaign (project_id set null); user deletion removes their data
 delete from public.projects where id = 'aaaaaaaa-0000-0000-0000-000000000001';
 do $$ begin if (select project_id from public.campaigns limit 1) is not null then raise exception 'project_id should be nulled'; end if; end $$;

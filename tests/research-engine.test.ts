@@ -769,3 +769,77 @@ describe('review fixes: every paid call is counted, midnight rollover, cache hit
     expect(isNeglectedNiche({ ...base, channelTitle: 'XVEVO', categoryId: '24' })).toBe(false)
   })
 })
+
+describe('research_cache persistence: what survives a redeploy, how duplicates and quota are controlled (SupabaseCacheStore against a faithful fake table)', () => {
+  /** A fake of the table with the same constraints as the migration: unique (owner_id, cache_key), RLS-style owner scoping. */
+  const table = () => {
+    const rows: Array<{ owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; fetched_at: string; expires_at: string }> = []
+    const from = () => {
+      let filters: Array<(r: (typeof rows)[number]) => boolean> = []
+      const api = {
+        select: () => api, eq: (k: keyof (typeof rows)[number], v: unknown) => { filters = [...filters, r => r[k] === v]; return api },
+        gte: (k: 'fetched_at', v: string) => { filters = [...filters, r => r[k] >= v]; return api },
+        limit: async () => ({ data: rows.filter(r => filters.every(f => f(r))), error: null }),
+        then: (res: (x: { data: unknown; error: null }) => void) => res({ data: rows.filter(r => filters.every(f => f(r))), error: null }),
+        upsert: async (row: (typeof rows)[number]) => { const i = rows.findIndex(r => r.owner_id === row.owner_id && r.cache_key === row.cache_key); if (i >= 0) rows[i] = row; else rows.push(row); return { error: null } },
+      }
+      return api
+    }
+    return { rows, db: { from } }
+  }
+  const ok = async () => ({ videos: many(6, i => ({ title: `tema video ${i}` })), approxTotal: 5 })
+  it('a result survives a new deployment: a fresh store instance over the same table answers from cache with ZERO YouTube calls', async () => {
+    const { SupabaseCacheStore } = await import('@/lib/research/cache')
+    const t = table(), search = vi.fn(ok)
+    const first = await getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, { store: new SupabaseCacheStore(t.db, 'u1'), search, owner: 'u1', now: () => NOW })
+    expect(first.cached).toBe(false); expect(search).toHaveBeenCalledTimes(2)
+    const afterDeploy = await getTopicAnalysis({ topic: 'Tema', region: 'US', language: 'en' }, { store: new SupabaseCacheStore(t.db, 'u1'), search, owner: 'u1', now: () => NOW + 3 * 86400000 })
+    expect(afterDeploy.cached).toBe(true); expect(search).toHaveBeenCalledTimes(2); expect(afterDeploy.analysis?.topic).toBe('tema')
+    // …but after the lifetime (7 days) it is fetched again.
+    await getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, { store: new SupabaseCacheStore(t.db, 'u1'), search, owner: 'u1', now: () => NOW + 8 * 86400000 })
+    expect(search).toHaveBeenCalledTimes(4)
+  })
+  it('the memory fallback (migration not applied) does NOT survive a new instance of the server process', async () => {
+    const { MemoryCacheStore } = await import('@/lib/research/cache')
+    const a = new MemoryCacheStore('mem-owner-1'); await a.put('k', 'topic', { x: 1 }, 0, 1000, NOW)
+    // Same process: visible. A new serverless instance starts with an empty Map; simulated by another owner id (a different Map entry).
+    expect(await new MemoryCacheStore('mem-owner-1').get('k', NOW)).not.toBeNull(); expect(await new MemoryCacheStore('mem-owner-2').get('k', NOW)).toBeNull()
+    expect(a.persistent).toBe(false)
+  })
+  it('stores only the analysis (no raw search responses), usage lines and nothing else; users are isolated', async () => {
+    const { SupabaseCacheStore, recordUsage } = await import('@/lib/research/cache')
+    const t = table()
+    await getTopicAnalysis({ topic: 'tema', region: null, language: null }, { store: new SupabaseCacheStore(t.db, 'u1'), search: ok, owner: 'u1', now: () => NOW })
+    await recordUsage(new SupabaseCacheStore(t.db, 'u1'), 'search', 102, NOW)
+    expect(new Set(t.rows.map(r => r.kind))).toEqual(new Set(['topic', 'usage']))
+    expect(new Set(t.rows.map(r => r.owner_id))).toEqual(new Set(['u1']))
+    const topic = t.rows.find(r => r.kind === 'topic')!
+    expect(Object.keys(topic.payload as object)).toEqual(expect.arrayContaining(['indices', 'quality', 'sample', 'growth', 'topVideos'])); expect(JSON.stringify(topic.payload)).not.toMatch(/api[_-]?key|authorization/i)
+    expect(Date.parse(topic.expires_at) - Date.parse(topic.fetched_at)).toBe(7 * 86400000)
+    // another user does not see u1's cache or spend
+    const other = new SupabaseCacheStore(t.db, 'u2'); expect(await other.unitsSince(NOW - 1000)).toBe(0)
+  })
+  it('duplicate queries are prevented at every level: cache hit, in-flight sharing, serial queue and the unique key; refresh overwrites one row but counts twice', async () => {
+    const { SupabaseCacheStore } = await import('@/lib/research/cache')
+    const t = table(), store = new SupabaseCacheStore(t.db, 'u1'), search = vi.fn(async () => { await new Promise(r => setTimeout(r, 10)); return { videos: many(6, i => ({ title: `tema video ${i}` })), approxTotal: 5 } })
+    const deps = { store, search, owner: 'u1', now: () => NOW }
+    await Promise.all([1, 2, 3].map(() => getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, deps)))
+    expect(search).toHaveBeenCalledTimes(2)                                           // three simultaneous requests = one paid analysis
+    await getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, deps); expect(search).toHaveBeenCalledTimes(2)   // later request = cache
+    expect(t.rows.filter(r => r.kind === 'topic')).toHaveLength(1)
+    await getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en', refresh: true }, deps)
+    expect(t.rows.filter(r => r.kind === 'topic')).toHaveLength(1)                    // the unique (owner, key) row was replaced, not duplicated
+    expect(await store.unitsSince(NOW - 1000)).toBe(408)                              // …and both paid fetches are counted
+  })
+  it('quota control: the daily cap counts every kind of spend, refuses before spending and resets at UTC midnight', async () => {
+    const { SupabaseCacheStore, recordUsage, startOfUtcDay } = await import('@/lib/research/cache')
+    const t = table(), store = new SupabaseCacheStore(t.db, 'u1')
+    await recordUsage(store, 'search', 102, NOW); await recordUsage(store, 'chart', 2, NOW)
+    const search = vi.fn(ok)
+    await expect(getTopicAnalysis({ topic: 'nuevo', region: null, language: null }, { store, search, owner: 'u1', now: () => NOW, cap: 300 })).rejects.toBeInstanceOf(BudgetError)
+    expect(search).not.toHaveBeenCalled()
+    const tomorrow = startOfUtcDay(NOW) + 86400000 + 1000
+    expect(await store.unitsSince(startOfUtcDay(tomorrow))).toBe(0)
+    await getTopicAnalysis({ topic: 'nuevo', region: null, language: null }, { store, search, owner: 'u1', now: () => tomorrow, cap: 300 }); expect(search).toHaveBeenCalledTimes(2)
+  })
+})
