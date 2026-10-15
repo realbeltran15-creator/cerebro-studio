@@ -41,6 +41,8 @@ type Ctx = {
   usage: Usage; refreshUsage: () => Promise<void>
   plan: (topics: string[], markets?: Market[]) => Plan
   run: (topics: string[], markets?: Market[], opts?: { refresh?: boolean }) => Promise<{ ok: number; failed: string[] }>
+  /** Adds the previous window to an analysis and calculates growth (≈ 102 units). */
+  measureGrowth: (a: TopicAnalysis) => Promise<void>; growthBusy: boolean
   progress: Progress; error: string; cancel: () => void; clearAnalyses: () => void
   /** Official most-popular charts already fetched (2 quota units each), by country. */
   charts: Record<string, YouTubeVideoResult[]>; loadCharts: (regions: string[]) => Promise<void>; chartsBusy: boolean; chartsError: string
@@ -85,6 +87,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const [lastPlan, setLastPlan] = useState<SearchPlan | null>(null)
   const [search, setSearch] = useState<SearchState>({ videos: [], ranFor: null, busy: false, error: '', done: '' })
   const [hydrated, setHydrated] = useState(false)
+  const [growthBusy, setGrowthBusy] = useState(false)
   const stop = useRef(false)
 
   useEffect(() => {
@@ -95,7 +98,8 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     // Analyses are paid for, so they live in this browser (localStorage) and survive closing the tab: a multi-day research can resume.
     try {
       const raw = store()?.getItem(DATA)
-      if (raw) { const d = JSON.parse(raw) as { analyses?: Record<string, TopicAnalysis>; charts?: Record<string, YouTubeVideoResult[]>; guided?: GuidedPlan | null }; if (d.analyses && typeof d.analyses === 'object') setAnalyses(d.analyses); if (d.charts && typeof d.charts === 'object') setCharts(d.charts); if (d.guided && Array.isArray(d.guided.jobs)) setGuided(d.guided) }
+      if (raw) { const d = JSON.parse(raw) as { analyses?: Record<string, TopicAnalysis>; charts?: Record<string, YouTubeVideoResult[]>; guided?: GuidedPlan | null }; if (d.analyses && typeof d.analyses === 'object') setAnalyses(Object.fromEntries(Object.entries(d.analyses).filter(([, a]) => a && a.quality && a.growth)));  // analyses from before the relevance rules are dropped, not reused
+       if (d.charts && typeof d.charts === 'object') setCharts(d.charts); if (d.guided && Array.isArray(d.guided.jobs)) setGuided(d.guided) }
     } catch { /* ignore */ }
     try { const l = parseLedger(store()?.getItem(LEDGER) ?? null); ledgerRef.current = l; setLedger(l) } catch { /* ignore */ }
     setPresets(loadPresets(store())); setHydrated(true)
@@ -150,6 +154,20 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     return { ok, failed }
   }, [analyses, spend, remainingNow])
 
+  const measureGrowth = useCallback(async (a: TopicAnalysis) => {
+    if (remainingNow() < UNITS.search) { setError('No queda presupuesto de hoy para medir el crecimiento (102 unidades).'); return }
+    setGrowthBusy(true); setError('')
+    try {
+      const p = new URLSearchParams({ q: a.topic, days: String(a.recentDays), growth: '1' }); if (a.region) p.set('region', a.region); if (a.language) p.set('lang', a.language)
+      const r = await fetch(`/api/research/topic?${p}`, { cache: 'no-store' })
+      const j = await r.json() as { analysis?: TopicAnalysis; error?: string; usage?: { usedToday: number; cap: number; persistent: boolean } }
+      if (!r.ok || !j.analysis) { setError(j.error ?? 'No se pudo medir el crecimiento.'); return }
+      spend(UNITS.search)
+      setAnalyses(all => ({ ...all, [analysisKey(a.topic, a.region, a.language, a.recentDays)]: j.analysis! }))
+      if (j.usage) { serverRef.current = { ...j.usage, day: startOfUtcDay() }; setUsage({ usedToday: j.usage.usedToday, cap: j.usage.cap, remaining: Math.max(j.usage.cap - j.usage.usedToday, 0), persistent: j.usage.persistent }) }
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo medir el crecimiento.') } finally { setGrowthBusy(false) }
+  }, [spend, remainingNow])
+
   const run = useCallback((topics: string[], ms: Market[] = markets, opts: { refresh?: boolean } = {}) =>
     runJobs(topics.flatMap(topic => ms.map(market => ({ topic, market }))), { recentDays, refresh: opts.refresh }), [runJobs, markets, recentDays])
 
@@ -203,7 +221,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const removeChip = useCallback((chip: ActiveChip) => { setApplied(f => chip.remove(f)); setDraft(f => chip.remove(f)); setLastRun(null) }, [])
   const persistPresets = (list: Preset[]) => { setPresets(list); savePresets(store(), list) }
   const value: Ctx = {
-    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses, charts, loadCharts, chartsBusy, chartsError, list: Object.values(analyses), usage, refreshUsage, plan, run, progress, error, cancel: () => { stop.current = true }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
+    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses, charts, loadCharts, chartsBusy, chartsError, list: Object.values(analyses), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
     presets, savePreset: name => persistPresets(addPreset(presets, name, draft)), applyPreset: id => { const p = presets.find(x => x.id === id); if (p) { const f = sanitizeFilters(p.filters); setDraft(f); setApplied(f); setLastRun(null) } }, deletePreset: id => persistPresets(presets.filter(p => p.id !== id)),
   }
   return <C.Provider value={value}>{children}</C.Provider>

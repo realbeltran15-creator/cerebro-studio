@@ -11,7 +11,7 @@ export type Niche = { id: string; label: string; /** YouTube category ids that p
 export const NICHES: Niche[] = [
   { id: 'tecnologia', label: 'Tecnología', categories: [28], words: ['tecnología', 'tecnologia', 'tech', 'technology', 'gadget', 'smartphone', 'iphone', 'android', 'software', 'hardware', 'pc ', 'laptop', 'programación', 'programming', 'coding', 'ciberseguridad', 'cybersecurity'], seeds: ['mejores gadgets', 'tutorial de programación', 'ciberseguridad para principiantes'] },
   { id: 'ia', label: 'Inteligencia artificial', categories: [], words: ['inteligencia artificial', 'artificial intelligence', ' ia ', ' ai ', 'chatgpt', 'gemini', 'claude', 'openai', 'machine learning', 'aprendizaje automático', 'midjourney', 'künstliche intelligenz', 'llm'], seeds: ['herramientas de inteligencia artificial', 'automatizar con ia', 'ia para negocios'] },
-  { id: 'finanzas', label: 'Finanzas e inversión', categories: [], words: ['inversión', 'inversion', 'invertir', 'investing', 'investment', 'investor', 'bolsa', 'stocks', 'stock market', 'acciones', 'etf', 'cripto', 'crypto', 'bitcoin', 'ahorro', 'savings', 'dinero', 'finanzas', 'finance', 'hipoteca', 'jubilación', 'aktien', 'geld'], seeds: ['cómo invertir desde cero', 'ahorrar dinero', 'finanzas personales'] },
+  { id: 'finanzas', label: 'Finanzas e inversión', categories: [], words: ['inversión', 'inversion', 'invertir', 'investing', 'investment', 'investor', 'bolsa', 'stocks', 'stock market', 'acciones', 'etf', 'cripto', 'crypto', 'bitcoin', 'ahorro', 'savings', 'dinero', 'finanzas', 'finance', 'hipoteca', 'jubilación', 'aktien', 'geld', 'isa', 'mortgage', 'first time buyer', 'pension', 'savings account', 'stocks and shares', 'property', 'buy to let', 'credit score', 'tax', 'taxes', 'impuestos', 'steuer', 'steuern', 'hypothek', 'immobilien', 'vivienda', 'inmobiliaria'], seeds: ['cómo invertir desde cero', 'ahorrar dinero', 'finanzas personales'] },
   { id: 'negocios', label: 'Negocios y emprendimiento', categories: [], words: ['negocio', 'negocios', 'business', 'emprender', 'emprendimiento', 'startup', 'ecommerce', 'dropshipping', 'marketing', 'ventas', 'sales', 'freelance', 'ingresos pasivos', 'side hustle'], seeds: ['ideas de negocio', 'marketing digital', 'ingresos pasivos'] },
   { id: 'educacion', label: 'Educación y ciencia', categories: [27, 28], words: ['ciencia', 'science', 'física', 'physics', 'química', 'biología', 'biology', 'matemáticas', 'math', 'explicado', 'explained', 'cómo funciona', 'how it works', 'universo', 'espacio', 'space', 'wissenschaft'], seeds: ['ciencia explicada', 'cómo funciona', 'curiosidades científicas'] },
   { id: 'historia', label: 'Historia y documentales', categories: [], words: ['historia', 'history', 'imperio', 'empire', 'guerra', 'war', 'medieval', 'antigua', 'ancient', 'documental', 'documentary', 'geschichte', 'histoire'], seeds: ['historia medieval', 'imperios olvidados', 'documental histórico'] },
@@ -48,13 +48,13 @@ export function wordHit(text: string, w: string): boolean {
 export type NicheMatch = { niche: string; reason: string }
 
 /** A video can belong to several niches (multi-label): "tecnología" and "inteligencia artificial" are not exclusive. */
-export function nichesOf(video: Pick<YouTubeVideoResult, 'title' | 'tags' | 'categoryId' | 'channelTitle'>): NicheMatch[] {
+export function nichesOf(video: Pick<YouTubeVideoResult, 'title' | 'tags' | 'categoryId' | 'channelTitle'>, opts: { useCategory?: boolean } = {}): NicheMatch[] {
   const text = strip([video.title, ...(video.tags ?? [])].join(' '))
   const out: NicheMatch[] = []
   for (const n of NICHES) {
     const hit = n.words.find(w => wordHit(text, w))
     if (hit) { out.push({ niche: n.id, reason: `palabra «${hit.trim()}» en título o etiquetas` }); continue }
-    if (video.categoryId && n.categories.includes(Number(video.categoryId))) out.push({ niche: n.id, reason: `categoría de YouTube ${video.categoryId}` })
+    if (opts.useCategory !== false && video.categoryId && n.categories.includes(Number(video.categoryId))) out.push({ niche: n.id, reason: `categoría de YouTube ${video.categoryId}` })
   }
   return out
 }
@@ -70,17 +70,23 @@ export type InferredFormat = { format: 'short' | 'brief' | 'medium' | 'long' | '
  * Shorts are NOT labelled by the API. A video of up to 60 s is a "probable Short"; a #shorts tag in the title raises the confidence,
  * and a 60–180 s video only counts when it says #shorts. This is an inference, and the screen says so.
  */
-export function inferFormat(v: Pick<YouTubeVideoResult, 'title' | 'tags' | 'observed' | 'live'>): InferredFormat {
+export function inferFormat(v: Pick<YouTubeVideoResult, 'title' | 'tags' | 'observed' | 'live'> & { description?: string; categoryId?: string | null }): InferredFormat {
   // Only a stream that is on air (or scheduled) is a "directo". An ended stream or a premiere keeps its normal format, by duration.
   if (v.live === 'live' || v.live === 'upcoming') return { format: 'live', confidence: 'alta', reason: v.live === 'live' ? 'YouTube lo marca como directo en emisión' : 'YouTube lo marca como directo programado' }
   const s = v.observed.durationSeconds
   if (s === null) return { format: 'unknown', confidence: 'baja', reason: 'sin duración' }
-  const tagged = /(^|\s)#shorts?\b/i.test(v.title) || (v.tags ?? []).some(t => /^#?shorts?$/i.test(t))
-  if (s <= 60) return { format: 'short', confidence: tagged ? 'alta' : 'media', reason: tagged ? 'dura ≤ 60 s y lleva la etiqueta #shorts' : 'dura ≤ 60 s (sin etiqueta #shorts)' }
-  if (s <= 180 && tagged) return { format: 'short', confidence: 'media', reason: 'lleva #shorts y dura ≤ 3 min' }
+  // The API has no "is a Short" flag and no aspect ratio. #shorts in the title, tags or description is the only explicit signal.
+  const tagged = /(^|\s)#shorts?\b/i.test(`${v.title} ${v.description ?? ''}`) || (v.tags ?? []).some(t => /^#?shorts?$/i.test(t))
+  if (tagged && s <= 180) return { format: 'short', confidence: 'alta', reason: `lleva #shorts y dura ${Math.round(s)} s` }
+  if (s <= 60) {
+    // A clip of up to a minute is often NOT a Short: music videos, trailers, teasers, scenes and highlights are cut to that length too.
+    if (v.categoryId === '10' || CLIP_LIKE.test(v.title)) return { format: 'brief', confidence: 'baja', reason: 'dura ≤ 60 s pero parece un clip, tráiler o vídeo musical: no se confirma como Short' }
+    return { format: 'short', confidence: 'media', reason: 'dura ≤ 60 s sin #shorts: probable Short (la API no permite confirmarlo)' }
+  }
   const f = formatOf(s)!
-  return { format: f, confidence: 'alta', reason: `duración ${Math.round(s / 60)} min` }
+  return { format: f, confidence: 'alta', reason: s <= 180 ? `dura ${Math.round(s)} s sin #shorts: vídeo corto, no Short confirmado` : `duración ${Math.round(s / 60)} min` }
 }
+const CLIP_LIKE = /\b(official (music )?video|lyrics?|letra|trailer|teaser|clip|scene|highlights?|best moments|full (episode|movie)|escena)\b/i
 
 export type ContentType = { id: string; label: string; words: string[] }
 export const CONTENT_TYPES: ContentType[] = [

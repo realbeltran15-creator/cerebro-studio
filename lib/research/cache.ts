@@ -16,7 +16,8 @@ export interface CacheStore {
 export const DEFAULT_TTL_MS = 7 * 86400000
 
 export function cacheKey(kind: string, parts: Array<string | null | undefined>) {
-  return ['v1', kind, ...parts.map(p => (p ?? '').toString().trim().toLowerCase().replace(/\s+/g, ' '))].join('|')
+  // v2: analyses made before the relevance/language/growth rules are never reused (they could contain off-topic videos).
+  return ['v2', kind, ...parts.map(p => (p ?? '').toString().trim().toLowerCase().replace(/\s+/g, ' '))].join('|')
 }
 
 export const startOfUtcDay = (now = Date.now()) => { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) }

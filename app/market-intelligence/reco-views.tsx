@@ -55,7 +55,7 @@ export function RecoCard({ r }: { r: Reco }) {
       <h4>{r.topic}</h4>
       <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><span className="pill">{r.market}</span>{v ? <span className={`pill ${v.cls}`}>{v.label}</span> : <span className="pill">Lista oficial</span>}</span>
     </div>
-    {r.indices && <p className="small muted">Demanda {r.indices.demand} · Oferta {r.indices.supply} · Competencia {r.indices.competition} · Crecimiento {r.indices.growth} · Oportunidad {r.indices.opportunity} <span className="tag calculado">calculado</span></p>}
+    {r.indices && <p className="small muted">Demanda {r.indices.demand} · Oferta {r.indices.supply} · Competencia {r.indices.competition} · Crecimiento {r.indices.growth ?? 'No calculable'} · Oportunidad {r.indices.opportunity} <span className="tag calculado">calculado</span></p>}
     <p className="small"><b>Por qué:</b> {r.reason}</p>
     {r.rpmNote && <p className="small"><span className="tag estimado">ESTIMADO</span> {r.rpmNote}</p>}
     {r.videos.length > 0 ? <div className="tileRow">{r.videos.map(v => <VideoTile key={v.videoId} v={v} />)}</div> : <p className="muted small">{r.examplesElsewhere ? 'Sus vídeos de ejemplo ya aparecen en otra recomendación (cada vídeo se muestra una sola vez).' : 'Sin vídeos de ejemplo disponibles (no hay muestra guardada de este análisis).'}</p>}

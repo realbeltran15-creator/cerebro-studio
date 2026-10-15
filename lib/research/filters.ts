@@ -363,7 +363,7 @@ export function analysisExclusions(a: TopicAnalysis, f: ResearchFilters): string
   if (A.minDemand !== null && i.demand < A.minDemand) why.push('demanda')
   if (A.maxSupply !== null && i.supply > A.maxSupply) why.push('oferta')
   if (A.maxCompetition !== null && i.competition > A.maxCompetition) why.push('competencia')
-  if (A.minGrowth !== null && i.growth < A.minGrowth) why.push('crecimiento')
+  if (A.minGrowth !== null && (i.growth === null || i.growth < A.minGrowth)) why.push(i.growth === null ? 'crecimiento (No calculable)' : 'crecimiento')
   if (A.minOpportunity !== null && i.opportunity < A.minOpportunity) why.push('oportunidad')
   if (A.verdicts.length && !A.verdicts.includes(a.verdict)) why.push('clasificación')
   if (A.minConfidence && CONF_RANK[a.confidence as keyof typeof CONF_RANK] < CONF_RANK[A.minConfidence]) why.push('confianza')

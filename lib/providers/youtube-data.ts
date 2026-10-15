@@ -20,6 +20,8 @@ export type YouTubeSearchInput = {
   /** YouTube's own duration buckets: short < 4 min, medium 4–20 min, long > 20 min. */
   videoDuration?: 'short' | 'medium' | 'long'
   categoryId?: string
+  /** Only videos published BEFORE this many days ago (with publishedWithinDays: an exact window). */
+  publishedBeforeDays?: number
 }
 
 export type YouTubeVideoResult = {
@@ -34,6 +36,10 @@ export type YouTubeVideoResult = {
   declaredLanguage?: string | null
   /** YouTube's own category id (videos.list snippet.categoryId). */
   categoryId?: string | null
+  /** First 300 characters of the description (used only to judge relevance and #shorts; never shown as a claim). */
+  description?: string
+  /** Country the CHANNEL declares (channels.list snippet.country). Says where the channel is based, not who watches. */
+  channelCountry?: string | null
   /** Tags set by the uploader (first 15). Optional on videos. */
   tags?: string[]
   /** 'live' / 'upcoming' come from snippet.liveBroadcastContent; 'was_live' when liveStreamingDetails exists on an ended stream. */
@@ -96,12 +102,12 @@ async function call<T>(path: string, params: Record<string, string>, key: string
 type SearchResponse = { pageInfo?: { totalResults?: number }; items?: Array<{ id?: { videoId?: string } }> }
 type VideosResponse = { items?: Array<{
   id: string
-  snippet?: { title?: string; channelId?: string; channelTitle?: string; publishedAt?: string; defaultLanguage?: string; defaultAudioLanguage?: string; categoryId?: string; tags?: string[]; liveBroadcastContent?: string; thumbnails?: Record<string, { url?: string }> }
+  snippet?: { title?: string; description?: string; channelId?: string; channelTitle?: string; publishedAt?: string; defaultLanguage?: string; defaultAudioLanguage?: string; categoryId?: string; tags?: string[]; liveBroadcastContent?: string; thumbnails?: Record<string, { url?: string }> }
   statistics?: { viewCount?: string; likeCount?: string; commentCount?: string }
   contentDetails?: { duration?: string }
   liveStreamingDetails?: { actualStartTime?: string; actualEndTime?: string }
 }> }
-type ChannelsResponse = { items?: Array<{ id: string; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean } }> }
+type ChannelsResponse = { items?: Array<{ id: string; snippet?: { country?: string }; statistics?: { subscriberCount?: string; hiddenSubscriberCount?: boolean } }> }
 
 export async function searchYouTubeVideos(input: YouTubeSearchInput): Promise<YouTubeVideoResult[]> {
   return (await searchYouTubeVideosMeta(input)).videos
@@ -122,6 +128,7 @@ export async function searchYouTubeVideosMeta(input: YouTubeSearchInput): Promis
   if (input.videoDuration) params.videoDuration = input.videoDuration
   if (input.categoryId) params.videoCategoryId = input.categoryId
   if (input.publishedWithinDays) params.publishedAfter = new Date(Date.now() - input.publishedWithinDays * 86400000).toISOString()
+  if (input.publishedBeforeDays) params.publishedBefore = new Date(Date.now() - input.publishedBeforeDays * 86400000).toISOString()
 
   const search = await call<SearchResponse>('search', params, key)
   const ids = (search.items ?? []).map(i => i.id?.videoId).filter((id): id is string => Boolean(id))
@@ -170,9 +177,10 @@ async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResu
   if (items.length === 0) return []
   const channelIds = [...new Set(items.map(v => v.snippet?.channelId).filter((id): id is string => Boolean(id)))]
   const channels = channelIds.length
-    ? await call<ChannelsResponse>('channels', { part: 'statistics', id: channelIds.join(',') }, key)
+    ? await call<ChannelsResponse>('channels', { part: 'statistics,snippet', id: channelIds.join(',') }, key)
     : { items: [] }
   const subscribers = new Map((channels.items ?? []).map(c => [c.id, c.statistics?.hiddenSubscriberCount ? null : toNumber(c.statistics?.subscriberCount)]))
+  const countries = new Map((channels.items ?? []).map(c => [c.id, (c.snippet?.country ?? '').toUpperCase() || null]))
   const fetchedAt = new Date().toISOString()
   return items.map(v => {
     const views = toNumber(v.statistics?.viewCount)
@@ -191,6 +199,8 @@ async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResu
       publishedAt,
       thumbnailUrl: thumbs.medium?.url ?? thumbs.default?.url ?? null,
       categoryId: v.snippet?.categoryId ?? null,
+      description: (v.snippet?.description ?? '').slice(0, 300),
+      channelCountry: countries.get(v.snippet?.channelId ?? '') ?? null,
       tags: (v.snippet?.tags ?? []).slice(0, 15),
       live: v.snippet?.liveBroadcastContent === 'live' ? 'live' : v.snippet?.liveBroadcastContent === 'upcoming' ? 'upcoming' : v.liveStreamingDetails ? 'was_live' : null,
       declaredLanguage: (v.snippet?.defaultAudioLanguage ?? v.snippet?.defaultLanguage ?? '').slice(0, 2).toLowerCase() || null,

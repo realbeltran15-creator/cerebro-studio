@@ -12,17 +12,17 @@ type O = { title?: string; days?: number; views?: number; subs?: number | null; 
 let n = 0
 const vid = (o: O = {}): YouTubeVideoResult => {
   const days = o.days ?? 10, views = o.views ?? 1000, subs = o.subs === undefined ? 5000 : o.subs
-  return { videoId: `v${++n}`, url: '', title: o.title ?? 'video', channelId: o.ch ?? `c${n}`, channelTitle: 'C', publishedAt: new Date(NOW - days * 86400000).toISOString(), thumbnailUrl: null, declaredLanguage: o.lang === undefined ? 'es' : o.lang, tags: o.tags ?? [], categoryId: o.cat ?? null, live: o.live ?? null,
+  return { videoId: `v${++n}`, url: '', title: o.title ?? 'tema video', channelId: o.ch ?? `c${n}`, channelTitle: 'C', publishedAt: new Date(NOW - days * 86400000).toISOString(), thumbnailUrl: null, declaredLanguage: o.lang === undefined ? 'es' : o.lang, tags: o.tags ?? [], categoryId: o.cat ?? null, live: o.live ?? null,
     observed: { views, likes: 10, comments: 1, durationSeconds: o.dur === undefined ? 600 : o.dur, channelSubscribers: subs, fetchedAt: '' },
     calculated: { viewsPerDay: Math.round(views / Math.max(days, 1)), viewsToSubscribers: subs ? views / subs : null, engagementRate: 1 } }
 }
 const many = (count: number, f: (i: number) => O) => Array.from({ length: count }, (_, i) => vid(f(i)))
-const samples = (top: YouTubeVideoResult[], recent: YouTubeVideoResult[]): TopicSamples => ({ topic: 'tema', region: 'ES', language: 'es', top: { videos: top, approxTotal: 120000 }, recent: { videos: recent, approxTotal: 5000 }, fetchedAt: new Date(NOW).toISOString(), units: 204 })
+const samples = (top: YouTubeVideoResult[], recent: YouTubeVideoResult[], topic = 'tema'): TopicSamples => ({ topic, region: 'ES', language: 'es', top: { videos: top, approxTotal: 120000 }, recent: { videos: recent, approxTotal: 5000 }, fetchedAt: new Date(NOW).toISOString(), units: 204 })
 
 describe('topic analysis: demand against supply', () => {
   it('flags real demand with few small creators as an opportunity and explains why', () => {
     const top = many(25, i => ({ views: 400000 - i * 5000, days: 120, subs: 8000 + i * 500, ch: `small${i}` }))
-    const recent = many(6, i => ({ views: 30000, days: 5 + i * 4, subs: 7000, ch: `r${i % 2}` }))
+    const recent = many(12, i => ({ views: 30000, days: 5 + i * 2, subs: 7000, ch: `r${i % 2}` }))
     const a = analyzeTopic(samples(top, recent), NOW)
     expect(a.verdict).toBe('oportunidad')
     expect(a.indices.demand).toBeGreaterThanOrEqual(50)
@@ -53,12 +53,10 @@ describe('topic analysis: demand against supply', () => {
     expect(a.confidenceNote).toMatch(/no permite contar todos los vídeos/)
     expect(a.evidence.find(e => /aprox\., no es un censo/.test(e.label))?.value).not.toBe('sin dato')
   })
-  it('growth reflects whether recent videos earn at the pace of the year\'s best', () => {
-    const top = many(20, () => ({ views: 100000, days: 100 }))
-    const hot = analyzeTopic(samples(top, many(10, () => ({ views: 60000, days: 6 }))), NOW)
-    const cold = analyzeTopic(samples(top, many(10, () => ({ views: 600, days: 6 }))), NOW)
-    expect(hot.indices.growth).toBeGreaterThan(cold.indices.growth)
-    expect(hot.growthPct).toBeGreaterThan(0); expect(cold.growthPct).toBeLessThan(0)
+  it('growth is «No calculable» with one window and never defaults to a neutral number', () => {
+    const a = analyzeTopic(samples(many(20, () => ({ views: 100000, days: 100 })), many(10, () => ({ views: 60000, days: 6 }))), NOW)
+    expect(a.indices.growth).toBeNull(); expect(a.growthPct).toBeNull(); expect(a.growth.state).toBe('no_calculable')
+    expect(a.reasons.join(' ')).toMatch(/Crecimiento: No calculable/)
   })
   it('logScore is log-shaped and bounded', () => {
     expect(logScore(null, 1000)).toBe(0); expect(logScore(1000, 1000)).toBe(100); expect(logScore(10 ** 9, 1000)).toBe(100)
@@ -91,7 +89,7 @@ describe('format and niche inference (transparent, never exact)', () => {
     expect(inferFormat(vid({ dur: 120, title: 'Truco #Shorts' })).format).toBe('short')
     expect(inferFormat(vid({ dur: null })).format).toBe('unknown')
     expect(inferFormat(vid({ dur: 3000, live: 'live' })).format).toBe('live')
-    expect(inferFormat(vid({ dur: 45 })).reason).toMatch(/sin etiqueta/)
+    expect(inferFormat(vid({ dur: 45 })).reason).toMatch(/sin #shorts/)
   })
   it('a video can belong to several niches and says why', () => {
     const m = nichesOf(vid({ title: 'Las mejores herramientas de inteligencia artificial para programación' }))
@@ -518,7 +516,7 @@ describe('the single search button: what it will do and what it costs', () => {
 
 describe('the report: complete, honest about what it does not know', () => {
   const a = (o: O & { verdict?: 'oportunidad' | 'saturado' | 'sin_demanda' | 'mixto'; region?: string | null; lang?: string | null; niches?: string[] } = {}) => ({
-    ...analyzeTopic({ ...samples(many(25, () => ({ views: 90000, days: 90, dur: 700, title: o.title ?? 'Inteligencia artificial para negocios' })), many(10, () => ({ views: 4000, days: 5, dur: 700, title: o.title ?? 'Inteligencia artificial para negocios' }))), region: o.region === undefined ? 'DE' : o.region, language: o.lang === undefined ? 'de' : o.lang, topic: o.title ?? 'KI Tools', recentDays: 30 }, NOW),
+    ...analyzeTopic({ ...samples(many(25, () => ({ views: 90000, days: 90, dur: 700, title: o.title ?? 'KI Tools', lang: o.lang === undefined ? 'de' : o.lang })), many(10, () => ({ views: 4000, days: 5, dur: 700, title: o.title ?? 'KI Tools', lang: o.lang === undefined ? 'de' : o.lang })), o.title ?? 'KI Tools'), region: o.region === undefined ? 'DE' : o.region, language: o.lang === undefined ? 'de' : o.lang, topic: o.title ?? 'KI Tools', recentDays: 30 }, NOW),
   })
   it('keeps every promised field per analysis and marks unknown ones as unknown', () => {
     const md = reportMarkdown([a({ title: 'KI Tools: künstliche Intelligenz im Alltag' }), a({ region: 'CH', title: 'Mecánica de coches' })], { generatedAt: '2026-10-13T00:00:00Z' })
@@ -577,7 +575,8 @@ describe('analysis-level filters (demand, supply, competition, growth, classific
 })
 
 describe('recommendations: real videos only, thumbnails from the API, no repeats', () => {
-  const withVideos = (title: string, region: string, vids: YouTubeVideoResult[], over: Record<string, unknown> = {}) => ({ ...analyzeTopic({ ...samples(vids, many(8, () => ({ views: 3000, days: 6, title }))), region, language: region === 'DE' ? 'de' : 'en', topic: title }, NOW), topVideos: vids.slice(0, 6), ...over }) as ReturnType<typeof analyzeTopic>
+  // Mechanics of the recommendations, not of relevance: an empty topic judges nothing, then the real topic label is put back.
+  const withVideos = (title: string, region: string, vids: YouTubeVideoResult[], over: Record<string, unknown> = {}) => ({ ...analyzeTopic({ ...samples(vids, many(8, () => ({ views: 3000, days: 6, title })), ''), region, language: null }, NOW), topic: title, language: region === 'DE' ? 'de' : 'en', confidence: 'media', topVideos: vids.slice(0, 6), ...over }) as ReturnType<typeof analyzeTopic>
   const v = (title: string, o: O & { thumb?: string | null } = {}) => { const x = vid({ title, ...o }); return { ...x, url: `https://www.youtube.com/watch?v=${x.videoId}`, thumbnailUrl: o.thumb === undefined ? `https://i.ytimg.com/vi/${title.replace(/\W+/g, '')}/mqdefault.jpg` : o.thumb } }
   const shared = [v('Guía A', { views: 300000, days: 40, subs: 3000, ch: 'c1', dur: 900 }), v('Short B #shorts', { views: 90000, days: 10, subs: 1200, ch: 'c2', dur: 40 }), v('Todo C', { views: 150000, days: 100, subs: 800000, ch: 'c3', dur: 1500 })]
   const a1 = withVideos('inteligencia artificial para negocios', 'US', shared, { niches: ['ia'] })
@@ -691,8 +690,7 @@ describe('structural fixes: clean samples, one fetch per topic, honest counters,
     const recent = [shared, ...many(11, i => ({ views: 5000, days: 6 + i, subs: 9000, ch: `r${i}` }))]
     const a = analyzeTopic(samples(top, recent), NOW)
     expect(a.sampleSizes).toEqual({ top: 24 + 1, recent: 12 })
-    expect(a.evidence.find(e => /Directos/.test(e.label))?.value).toBe('1')
-    expect(a.confidenceNote).toMatch(/1 directos? en emisión/)
+    expect(a.quality.excluded.directo).toBe(1); expect(a.quality.examined).toBe(1 + 1 + 24 + 11)
     expect(a.topVideos.some(v => v.live === 'live')).toBe(false)
     expect(a.terms.every(t => t.videos <= 36)).toBe(true)
   })

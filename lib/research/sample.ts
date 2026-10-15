@@ -1,5 +1,5 @@
 import { searchYouTubeVideosMeta, type YouTubeSearchInput, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { analyzeTopic, type TopicAnalysis, type TopicSamples } from './topic-analysis'
+import { analyzeTopic, applyGrowth, type TopicAnalysis, type TopicSamples } from './topic-analysis'
 import { cacheKey, DEFAULT_TTL_MS, recordUsage, startOfUtcDay, type CacheStore } from './cache'
 import { DEFAULT_DAILY_CAP, UNITS } from './filters'
 
@@ -63,4 +63,29 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: { store: CacheStore; 
   // The quota is already spent: if the cache write fails, still return the analysis instead of throwing it away.
   try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
   return { analysis, cached: false, usage: { usedToday: before + UNITS.topic, cap, persistent: deps.store.persistent } }
+}
+
+/**
+ * Measures growth for an analysis already in the cache: one more search for the PREVIOUS window (same length, adjacent, newest first),
+ * judged by the same relevance rules (~102 units). Without a cached analysis there is nothing to compare, so it refuses.
+ */
+export function getGrowth(req: { topic: string; region: string | null; language: string | null; recentDays?: number }, deps: { store: CacheStore; search?: SearchFn; now?: () => number; cap?: number; owner?: string }): Promise<TopicResult> {
+  const owner = deps.owner ?? 'anonymous'
+  return serial(owner, async () => {
+    const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta, cap = deps.cap ?? dailyCap()
+    const topic = req.topic.trim().replace(/\s+/g, ' ')
+    const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
+    const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
+    const hit = await deps.store.get<TopicAnalysis>(key, now())
+    if (!hit) throw new Error('Primero hay que analizar el tema: no hay ninguna ventana reciente con la que comparar.')
+    const usage = async () => ({ usedToday: await deps.store.unitsSince(startOfUtcDay(now())), cap, persistent: deps.store.persistent })
+    if (hit.payload.growth?.state === 'calculable' || hit.payload.growth?.previous) return { analysis: hit.payload, cached: true, usage: await usage() }
+    const before = await deps.store.unitsSince(startOfUtcDay(now()))
+    if (before + UNITS.search > cap) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${before} de ${cap} unidades usadas hoy.`, before, cap)
+    const previous = await search({ query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25, order: 'date', publishedWithinDays: recentDays * 2, publishedBeforeDays: recentDays })
+    await recordUsage(deps.store, 'growth', UNITS.search, now())
+    const analysis = applyGrowth(hit.payload, previous, now())
+    try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache growth', e instanceof Error ? e.message : e) }
+    return { analysis, cached: false, usage: { usedToday: before + UNITS.search, cap, persistent: deps.store.persistent } }
+  })
 }

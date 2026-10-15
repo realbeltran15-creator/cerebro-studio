@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { youtubeConfigured, YouTubeApiError } from '@/lib/providers/youtube-data'
 import { openStore } from '@/lib/research/cache'
-import { BudgetError, getTopicAnalysis } from '@/lib/research/sample'
+import { BudgetError, getGrowth, getTopicAnalysis } from '@/lib/research/sample'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +22,10 @@ export async function GET(request: Request) {
   if (lang && !/^[a-z]{2}$/.test(lang)) return NextResponse.json({ error: 'Idioma no válido.' }, { status: 400 })
   try {
     const store = await openStore(supabase as never, user.id)
+    if (p.get('growth') === '1') {
+      const grown = await getGrowth({ topic, region, language: lang, recentDays: Number.isFinite(days) && days > 0 ? days : undefined }, { store, owner: user.id })
+      return NextResponse.json({ configured: true, ...grown }, { headers: { 'Cache-Control': 'no-store' } })
+    }
     const result = await getTopicAnalysis({ topic, region, language: lang, recentDays: Number.isFinite(days) && days > 0 ? days : undefined, refresh: p.get('refresh') === '1', cacheOnly: p.get('cacheOnly') === '1' }, { store, owner: user.id })
     return NextResponse.json({ configured: true, ...result }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {

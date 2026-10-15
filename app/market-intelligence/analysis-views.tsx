@@ -9,6 +9,7 @@ import { marketLabel } from '@/lib/research/markets'
 import { formatOpportunity, type TopicAnalysis, type Verdict } from '@/lib/research/topic-analysis'
 import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization'
 import { fmtNumber } from '@/lib/research/format'
+import { UNITS } from '@/lib/research/filters'
 import { nicheLabel } from '@/lib/research/taxonomy'
 import { saveAnalysis } from '@/lib/research/save'
 import { analysesCsv } from '@/lib/research/export'
@@ -19,14 +20,14 @@ export const VERDICT: Record<Verdict, { label: string; cls: string }> = {
 export const INDEX_LABEL = { demand: 'Demanda', supply: 'Oferta', competition: 'Competencia', growth: 'Crecimiento', opportunity: 'Oportunidad' } as const
 const INDEX_HELP: Record<keyof typeof INDEX_LABEL, string> = {
   demand: 'Vistas por día de los vídeos del tema (escala logarítmica).', supply: 'Cuánto se publica y por cuántos canales distintos.',
-  competition: 'Tamaño y concentración de los canales que dominan.', growth: 'Si los vídeos recientes rinden al ritmo del top del año (50 = igual).', opportunity: 'Combina demanda alta con poca competencia y oferta; sin demanda nunca pasa de 20.',
+  competition: 'Tamaño y concentración de los canales que dominan.', growth: 'Compara dos ventanas seguidas de la misma duración (50 = estable). Sin ellas: No calculable.', opportunity: 'Combina demanda alta con poca competencia y oferta; sin demanda nunca pasa de 20.',
 }
 const dateEs = (iso: string) => new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
 
-export function IndexBar({ name, value }: { name: keyof typeof INDEX_LABEL; value: number }) {
+export function IndexBar({ name, value }: { name: keyof typeof INDEX_LABEL; value: number | null }) {
   return <div title={INDEX_HELP[name]}>
-    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="small">{INDEX_LABEL[name]}</span><b className="small">{value}/100</b></div>
-    <div className="indexBar" role="img" aria-label={`${INDEX_LABEL[name]} ${value} de 100`}><span style={{ width: `${value}%` }} /></div>
+    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="small">{INDEX_LABEL[name]}</span><b className="small">{value === null ? 'No calculable' : `${value}/100`}</b></div>
+    <div className="indexBar" role="img" aria-label={value === null ? `${INDEX_LABEL[name]}: no calculable` : `${INDEX_LABEL[name]} ${value} de 100`}><span style={{ width: `${value ?? 0}%` }} /></div>
   </div>
 }
 
@@ -41,7 +42,7 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'exists' | 'error'>('idle')
   const [msg, setMsg] = useState('')
   const v = VERDICT[a.verdict], fo = formatOpportunity(a)
-  const { filters } = useResearch()
+  const { filters, measureGrowth, growthBusy } = useResearch()
   const chosen = filters.formats.filter(x => x !== 'live')
   async function save() {
     setState('saving'); setMsg('')
@@ -55,6 +56,14 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
     <p style={{ margin: '8px 0' }}><b>{a.headline}.</b></p>
     <div style={{ display: 'grid', gap: 8 }}>{(Object.keys(INDEX_LABEL) as Array<keyof typeof INDEX_LABEL>).map(k => <IndexBar key={k} name={k} value={a.indices[k]} />)}</div>
     <ul className="small" style={{ margin: '10px 0 0 16px' }}>{a.reasons.map(r => <li key={r}>{r}</li>)}</ul>
+    {a.growth.state === 'no_calculable' && <p className="small" style={{ marginTop: 8 }}><button type="button" className="ghost" disabled={growthBusy} onClick={() => void measureGrowth(a)}>{growthBusy ? 'Midiendo…' : `Medir crecimiento (+${UNITS.search} unidades)`}</button> <span className="muted">Compara los últimos {a.recentDays} días con los {a.recentDays} anteriores.</span></p>}
+    {a.quality && <details className="small" style={{ marginTop: 8 }}><summary>Calidad de la muestra: {a.quality.kept} de {a.quality.examined} resultados sirven</summary>
+      <ul style={{ margin: '6px 0 0 16px' }}>
+        <li>Descartados: {a.quality.excluded.tema + a.quality.excluded.nicho} por tema o nicho, {a.quality.excluded.idioma} por idioma, {a.quality.excluded.directo} directos.</li>
+        <li>Fuera de la demanda: {a.quality.promo} posibles anuncios y {a.quality.outliers} virales atípicos.</li>
+        <li>Idioma sin verificar: {a.quality.languageUnverified}. {a.region && a.quality.channelCountryKnown ? `Canales con país ${a.region}: ${a.quality.channelInMarket} de ${a.quality.channelCountryKnown} que declaran país (el país de búsqueda no garantiza el del vídeo).` : ''}</li>
+        {a.quality.examples.map(x => <li key={x.title} className="muted">«{x.title}» — {x.detail}</li>)}
+      </ul></details>}
     <p className="small" style={{ marginTop: 8 }}><b>Formato:</b> {fo.recommended ? (fo.recommended === 'short' ? 'Shorts' : 'vídeo largo') : 'sin preferencia clara'} — {fo.reason}</p>
     {chosen.length > 0 && <p className="small" aria-label="Evidencia del formato elegido"><b>Formato elegido:</b> {chosen.map(f => f === 'short' ? `Shorts (inferidos): ${a.byFormat.short.count} en el top, ${a.byFormat.short.recentCount} recientes, mediana ${a.byFormat.short.medianViewsPerDay ?? '—'} vistas/día` : `vídeos de más de 1 min: ${a.byFormat.long.count} en el top, ${a.byFormat.long.recentCount} recientes, mediana ${a.byFormat.long.medianViewsPerDay ?? '—'} vistas/día`).filter((x, i, l) => l.indexOf(x) === i).join(' · ')}.</p>}
     {a.niches.slice(0, 2).map(n => <RpmLine key={n} niche={n} format={chosen.length === 1 && chosen[0] === 'short' ? 'short' : 'long'} />)}
@@ -83,12 +92,13 @@ export function AnalysisTable({ list }: { list: TopicAnalysis[] }) {
 
 /** Simple SVG bars: one per analysis, for the chosen index. No chart library needed. */
 export function AnalysisChart({ list, index }: { list: TopicAnalysis[]; index: keyof typeof INDEX_LABEL }) {
-  const rows = [...list].sort((a, b) => b.indices[index] - a.indices[index]).slice(0, 12), h = 26
+  const val = (a: TopicAnalysis) => a.indices[index]
+  const rows = [...list].sort((a, b) => (val(b) ?? -1) - (val(a) ?? -1)).slice(0, 12), h = 26
   return <svg role="img" aria-label={`Gráfico de ${INDEX_LABEL[index]} por tema y mercado`} width="100%" viewBox={`0 0 640 ${rows.length * h + 8}`} style={{ maxWidth: 720 }}>
     {rows.map((a, i) => <g key={`${a.topic}|${a.region}|${a.language}`} transform={`translate(0 ${i * h + 4})`}>
       <text x="0" y="15" fontSize="12" fill="currentColor">{`${a.topic} · ${marketLabel(a.region, a.language)}`.slice(0, 34)}</text>
-      <rect x="240" y="3" width="320" height="14" rx="7" fill="var(--line)" /><rect x="240" y="3" width={Math.max(a.indices[index] * 3.2, 2)} height="14" rx="7" fill="var(--accent)" />
-      <text x="568" y="15" fontSize="12" fill="currentColor">{a.indices[index]}</text></g>)}
+      <rect x="240" y="3" width="320" height="14" rx="7" fill="var(--line)" /><rect x="240" y="3" width={Math.max((val(a) ?? 0) * 3.2, 2)} height="14" rx="7" fill="var(--accent)" />
+      <text x="568" y="15" fontSize="12" fill="currentColor">{val(a) ?? 'n/c'}</text></g>)}
   </svg>
 }
 

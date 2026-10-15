@@ -12,7 +12,7 @@ export const toCsv = (rows: unknown[][]) => rows.map(r => r.map(csvCell).join(',
 export function analysesCsv(list: TopicAnalysis[]) {
   return toCsv([
     ['tema', 'mercado', 'veredicto', 'demanda', 'oferta', 'competencia', 'crecimiento', 'oportunidad', 'confianza', 'muestra_top', 'muestra_recientes', 'formato_recomendado', 'fuente', 'actualizado'],
-    ...list.map(a => [a.topic, marketLabel(a.region, a.language), a.verdict, a.indices.demand, a.indices.supply, a.indices.competition, a.indices.growth, a.indices.opportunity, a.confidence, a.sampleSizes.top, a.sampleSizes.recent, formatOpportunity(a).recommended ?? '', 'YouTube Data API (muestra)', a.fetchedAt]),
+    ...list.map(a => [a.topic, marketLabel(a.region, a.language), a.verdict, a.indices.demand, a.indices.supply, a.indices.competition, a.indices.growth ?? 'No calculable', a.indices.opportunity, a.confidence, a.sampleSizes.top, a.sampleSizes.recent, formatOpportunity(a).recommended ?? '', 'YouTube Data API (muestra)', a.fetchedAt]),
   ])
 }
 
