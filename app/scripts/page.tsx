@@ -13,6 +13,7 @@ import {
 } from '@/lib/scripts'
 import type { OpportunityRow, ProjectRow, ScriptBasis, ScriptRow, ScriptSection } from '@/lib/types/database'
 import type { ScriptAssistMode, ScriptAssistProposal } from '@/lib/providers/openai-text'
+import { AdminHint } from '../components/admin-hint'
 
 type Draft = Pick<ScriptRow, 'title' | 'status' | 'idea' | 'brief' | 'hook' | 'cta' | 'review_notes'> & { sections: ScriptSection[] }
 
@@ -290,7 +291,7 @@ export default function ScriptsPage() {
           )}
           <section className="panel">
             <span className={assistReady ? 'stateBadge state-functional' : 'stateBadge state-integration_ready'}>Asistencia IA</span>
-            {assistReady === false && <p className="muted small" style={{ marginTop: 8 }}>Necesita <code>OPENAI_TEXT_API_KEY</code> u <code>OPENAI_API_KEY</code> en el servidor.</p>}
+            {assistReady === false && <div style={{ marginTop: 8 }}><p className="muted small" style={{ margin: 0 }}>La asistencia con IA todavía no está activada en este servidor: puedes escribir el guion a mano.</p><AdminHint names={['OPENAI_TEXT_API_KEY', 'OPENAI_API_KEY']} note="Basta con uno de estos ajustes:" /></div>}
             {assistReady && <>
               <p className="muted small" style={{ margin: '8px 0 10px' }}>Propone texto a partir de la idea, el brief y la investigación del proyecto. Cada petición tiene coste. Nada se guarda hasta que lo apliques y pulses Guardar.</p>
               <div className="versionList">

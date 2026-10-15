@@ -4,19 +4,29 @@ import { useCallback, useEffect, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { ProviderDirectory } from '../components/provider-directory'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+import { AdminHint } from '../components/admin-hint'
 
 type Connector = { id: string; provider: string; capability: string; enabled: boolean; updated_at: string }
 type Runtime = { id: string; capability: string; enabled: boolean; health: string }
 type Channel = { id: string; external_account_name: string | null; status: string; scopes: string[]; updated_at: string }
+
+/** Plain-language state of a service: what it means for the person using the app, not the internal health code. */
+function serviceState(enabled: boolean, health: string): { label: string; cls: string; help: string } {
+  if (!enabled || health === 'unconfigured') return { label: 'Falta configurarlo', cls: 'state-not_implemented', help: 'No está activado en este servidor, así que no se puede usar todavía. Quien administra Cerebro Studio debe añadir su acceso.' }
+  if (health === 'degraded') return { label: 'Funciona con problemas', cls: 'state-partial', help: 'Está activado, pero la última comprobación falló. Pulsa «Comprobar» (no tiene coste) para ver el motivo.' }
+  return { label: 'Listo para usar', cls: 'state-functional', help: 'Está activado y puede usarse.' }
+}
+const SERVICE_NAMES: Record<string, string> = { elevenlabs: 'ElevenLabs (voz y música)', openai: 'OpenAI', gemini: 'Google Gemini', cloudflare: 'Cloudflare Workers AI', fal: 'fal.ai', freesound: 'Freesound', pexels: 'Pexels', pixabay: 'Pixabay', kling: 'Kling', topmediai: 'TopMediai', higgsfield: 'Higgsfield', alibaba: 'Alibaba Wan', youtube: 'YouTube' }
+const serviceName = (id: string) => SERVICE_NAMES[id] ?? SERVICE_NAMES[id.split(/[-:_]/)[0]] ?? id.replace(/[-_]+/g, ' ')
 
 const oauthMessages: Record<string, [string, 'notice' | 'error']> = {
   connected: ['Canal de YouTube conectado.', 'notice'],
   denied: ['Cancelaste la autorización en Google.', 'error'],
   invalid_state: ['La autorización caducó o no coincide con tu sesión. Vuelve a intentarlo.', 'error'],
   no_channel: ['La cuenta de Google elegida no tiene canal de YouTube.', 'error'],
-  exchange_failed: ['Google no aceptó la autorización. Revisa que la URI de redirección esté registrada en el cliente OAuth.', 'error'],
+  exchange_failed: ['Google no aceptó la autorización. Inténtalo de nuevo; si se repite, avisa a quien administra Cerebro Studio (la dirección de retorno de la conexión no coincide).', 'error'],
   save_failed: ['No se pudo guardar la conexión.', 'error'],
-  not_configured: ['La conexión con YouTube no está configurada en el servidor.', 'error'],
+  not_configured: ['La conexión con YouTube todavía no está activada en este servidor. Avisa a quien administra Cerebro Studio.', 'error'],
 }
 
 const capabilityLabels: Record<string, string> = { image: 'Imagen', video: 'Vídeo', voice: 'Voz', render: 'Render', text: 'Texto', research: 'Investigación', automation: 'Automatización', channel: 'Canal' }
@@ -86,7 +96,7 @@ export default function ConnectorsPage() {
 
     <h3>Canal de YouTube</h3>
     <section className="panel" style={{ margin: '10px 0 18px' }}>
-      {!oauthReady ? <p className="muted">Pendiente de configurar en el servidor: <code>GOOGLE_OAUTH_CLIENT_ID</code>, <code>GOOGLE_OAUTH_CLIENT_SECRET</code> y <code>TOKEN_ENCRYPTION_KEY</code>.</p>
+      {!oauthReady ? <div><p className="muted">La conexión con YouTube todavía no está activada en este servidor. Quien administra Cerebro Studio debe completar su configuración; mientras tanto no puedes conectar tu canal.</p><AdminHint names={['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY']} /></div>
         : connected ? <>
           <p><b>{connected.external_account_name ?? 'Canal conectado'}</b> · conectado el {new Date(connected.updated_at).toLocaleString()}</p>
           <p className="muted small">Permisos: Analytics (solo lectura){connected.scopes.includes(UPLOAD_SCOPE) ? ' · subida de vídeos (cada publicación exige tu aprobación)' : ''}</p>
@@ -100,13 +110,13 @@ export default function ConnectorsPage() {
         </>}
     </section>
 
-    <h3>Runtime</h3>
+    <h3>Estado de los servicios</h3>
     <div className="pageActions" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
       {checkable.map(([id, label]) => <button key={id} type="button" className="ghost" onClick={() => void check(id, label)} disabled={Boolean(checking)}>{checking === id ? 'Comprobando…' : `Comprobar ${label} (sin coste)`}</button>)}
     </div>
     {Object.values(checks).filter(Boolean).map(m => <p key={m} role="status" className="muted small">{m}</p>)}
-    <div className="grid">{runtime.map(c => <article key={c.id}><small>{capabilityLabels[c.capability] ?? c.capability}</small><h3>{c.id}</h3><p>Estado: {c.enabled ? c.health : 'sin configurar'}</p></article>)}</div>
-    {rows.length > 0 && <><h3>Configuración registrada</h3><div className="grid">{rows.map(c => <article key={c.id}><small>{c.capability}</small><h3>{c.provider}</h3><p>Estado: {c.enabled ? 'Habilitado' : 'Deshabilitado'}</p></article>)}</div></>}
+    <div className="grid">{runtime.map(c => { const st = serviceState(c.enabled, c.health); return <article key={c.id}><small>{capabilityLabels[c.capability] ?? c.capability}</small><h3>{serviceName(c.id)}</h3><p><span className={`stateBadge ${st.cls}`}>{st.label}</span></p><p className="muted small">{st.help}</p></article> })}</div>
+    {rows.length > 0 && <><h3>Servicios que has activado o desactivado</h3><div className="grid">{rows.map(c => <article key={c.id}><small>{capabilityLabels[c.capability] ?? c.capability}</small><h3>{serviceName(c.provider)}</h3><p>{c.enabled ? 'Activado por ti' : 'Desactivado por ti'}</p></article>)}</div></>}
     <ProviderDirectory />
   </StudioShell>
 }

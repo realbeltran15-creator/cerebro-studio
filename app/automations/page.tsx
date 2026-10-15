@@ -8,6 +8,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { Automation, AutomationKind } from '@/lib/automations/run'
 import type { YouTubeCategory } from '@/lib/providers/youtube-data'
 import { parseKeywords, trendWatchFormConfig } from '@/lib/automations/keywords'
+import { AdminHint } from '../components/admin-hint'
 
 type Run = { id: string; automation_id: string; trigger: string; status: string; summary: Record<string, unknown>; error: string | null; started_at: string; finished_at: string | null }
 type Status = { providers?: Array<{ id: string; enabled: boolean }> }
@@ -132,8 +133,8 @@ export default function AutomationsPage() {
   return <StudioShell title="Automatizaciones" eyebrow="OPERACIONES" actions={<Link className="buttonLink ghost" href="/opportunities">Ver oportunidades</Link>}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
-    {status && !status.youtube && <p className="warnBox">Las automatizaciones usan YouTube Data API: falta <code>YOUTUBE_API_KEY</code> en el servidor.</p>}
-    {status && !status.scheduler && <p className="warnBox">La ejecución diaria automática no está activa: faltan <code>CRON_SECRET</code> y <code>SUPABASE_SERVICE_ROLE_KEY</code> en Vercel. Mientras tanto puedes ejecutarlas manualmente.</p>}
+    {status && !status.youtube && <div className="warnBox"><p style={{ margin: 0 }}>Las automatizaciones leen datos de YouTube y esa conexión todavía no está activada en este servidor.</p><AdminHint names={['YOUTUBE_API_KEY']} /></div>}
+    {status && !status.scheduler && <div className="warnBox"><p style={{ margin: 0 }}>La ejecución diaria automática no está activa en este servidor. Mientras tanto puedes ejecutar las automatizaciones a mano.</p><AdminHint names={['CRON_SECRET', 'SUPABASE_SERVICE_ROLE_KEY']} /></div>}
 
     <section className="panel" style={{ marginBottom: 18 }}>
       <form onSubmit={create} autoComplete="off" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

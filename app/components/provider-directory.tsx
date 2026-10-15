@@ -91,7 +91,7 @@ export function ProviderDirectory() {
       <div className="flowGrid">
         <div><b>1 · Flow (producto)</b>Interfaz web de Google para crear vídeo. Los créditos de Flow de Google AI Pro (1.000/mes) y Ultra (10.000/mes) solo se usan dentro de Flow. No tiene API pública: Cerebro no lo automatiza con métodos no oficiales.</div>
         <div><b>2 · Modelos de Google</b>Veo 3.1 (vídeo con audio), Imagen, Nano Banana / Gemini image, Lyria (música) y Gemini TTS (voz).</div>
-        <div><b>3 · APIs oficiales integradas</b>Gemini API con <code>GEMINI_API_KEY</code>: Veo 3.1 (Lite, Fast y estándar), Nano Banana (imagen) y Gemini TTS. <b>Comprobado en vivo el 2026-10-10:</b> con una clave sin facturación solo funcionan el texto y la voz; Veo, todas las versiones de imagen y Lyria devuelven 429. El acceso gratuito de la app de Gemini no cuenta como API gratuita.</div>
+        <div><b>3 · APIs oficiales integradas</b>Gemini API (con la clave del servidor): Veo 3.1 (Lite, Fast y estándar), Nano Banana (imagen) y Gemini TTS. <b>Comprobado en vivo el 2026-10-10:</b> con una clave sin facturación solo funcionan el texto y la voz; Veo, todas las versiones de imagen y Lyria devuelven 429. El acceso gratuito de la app de Gemini no cuenta como API gratuita.</div>
         <div><b>Créditos aprovechables</b>Google AI Pro incluye $10/mes y Ultra $40/mes en créditos de Google Cloud (Google Developer Program). Esos créditos son de Google Cloud, no de Flow; comprueba en la consola de facturación que se aplican al proyecto de la API antes de generar vídeo.</div>
       </div>
     </section>

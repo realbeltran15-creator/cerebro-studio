@@ -488,7 +488,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.goto('http://127.0.0.1:8795/')
   await page.getByText('Importar vídeos creados en Google Flow').waitFor({ timeout: 20000 })
   check('flow import: explains there is no public Flow API and that nothing happens until Importar', (await page.getByText(/Flow no ofrece una API pública/).count()) === 1 && (await page.getByText(/Hasta que pulses «Importar» no se lee ni se guarda nada/).count()) === 1)
-  check('flow import: Drive picker is disabled without its public identifiers, with the reason shown', await page.getByRole('button', { name: /Elegir de Google Drive/ }).isDisabled() && (await page.getByText(/NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID/).count()) === 1)
+  check('flow import: Drive picker is disabled without its public identifiers, with the reason shown', await page.getByRole('button', { name: /Elegir de Google Drive/ }).isDisabled() && (await page.getByText(/El selector de Google Drive todavía no está activado en este servidor/).count()) === 1 && (await page.getByText(/NEXT_PUBLIC_GOOGLE_PICKER/).count()) === 0)
   check('flow import: defaults to restricted until the user confirms the origin', (await page.getByText(/«Restringido»: la publicación queda bloqueada/).count()) === 1)
   // A fake MP4 whose sample description says H.264 (stsd box + avc1), and one that says VP9.
   const mp4 = fourcc => { const b = Buffer.alloc(400); b.write('ftyp', 4); b.write('stsd', 100); b.write(fourcc, 116); return b }
@@ -527,7 +527,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('shorts: verified sources are visible with their links and the rejected one is explained', (await page.getByRole('link', { name: 'nasa.gov' }).count()) === 1 && (await page.getByRole('link', { name: 'esa.int' }).count()) === 1 && (await page.getByText(/Dominio sin clasificar como fiable/).count()) === 1 && (await page.getByText('Fuentes del dato (2 verificadas)').count()) === 1)
   check('shorts: hook/fact controls are shown', (await page.getByText(/Gancho y dato principal en los primeros 2 s/).count()) === 1 && (await page.getByText('Cumple').count()) >= 2)
   check('shorts: interest evidence separates observed, calculated and inferred', (await page.getByText('Observado').count()) >= 1 && (await page.getByText('Calculado').count()) >= 1 && (await page.getByText('Inferido').count()) >= 1)
-  check('shorts: missing music is explained without blocking', (await page.getByText(/falta FREESOUND_API_KEY/).count()) === 1)
+  check('shorts: missing music is explained without blocking', (await page.getByText(/la búsqueda de música libre no está activada/).count()) === 1 && (await page.locator('details:not([open]) code', { hasText: 'FREESOUND_API_KEY' }).count()) === 1)
   check('shorts: approval is disabled until the render exists', await page.getByRole('button', { name: /Aprobar \(subida privada\)/ }).isDisabled())
   // The render starts by itself when the screen opens and is saved to the Library.
   await page.waitForFunction(() => window.__DB.assets.some(a => a.source_provider === 'browser-render'), null, { timeout: 90000 })

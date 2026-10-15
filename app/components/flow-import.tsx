@@ -150,7 +150,7 @@ export function FlowImport({ projectId, sceneId, onImported }: { projectId: stri
         </label>
       </div>
       <p id="flow-drive-note" className="muted small" style={{ marginTop: -6 }}>
-        {config ? 'Google te pedirá permiso solo para los archivos que elijas (permiso «drive.file»).' : 'El selector de Drive necesita NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY y NEXT_PUBLIC_GOOGLE_PICKER_APP_ID (son identificadores públicos, no secretos). Mientras tanto puedes subir los archivos descargados.'}
+        {config ? 'Google te pedirá permiso solo para los archivos que elijas (permiso «drive.file»).' : 'El selector de Google Drive todavía no está activado en este servidor. Mientras tanto puedes subir los archivos descargados.'}
       </p>
 
       <label htmlFor="flow-prompt">Prompt usado en Flow (opcional)

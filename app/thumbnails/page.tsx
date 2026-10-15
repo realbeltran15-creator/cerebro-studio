@@ -9,6 +9,7 @@ import type { ProjectRow } from '@/lib/types/database'
 import { modelById } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
 import { rankModels } from '@/lib/providers/router'
+import { autoPick } from '@/lib/providers/auto-model'
 
 type ModelLite = { id: string; modality: string; label: string; tier: CostTier; quality: number; ready: boolean; creditsExhausted?: boolean; capabilities: string[]; price: string }
 const AUTO = 'auto'
@@ -82,7 +83,8 @@ export default function ThumbnailsPage() {
     const full = models.map(m => modelById(m.id)).filter((x): x is NonNullable<typeof x> => Boolean(x))
     return rankModels(full, { modality: 'image', strategy: 'best_value', minQuality: 4, format: '16:9', needs: overlayText.trim() ? ['text_in_image'] : [] }, Object.fromEntries(models.map(m => [m.id, { ready: m.ready, creditsExhausted: m.creditsExhausted }])))
   }, [models, overlayText])
-  const auto = ranked.find(r => r.eligible) ?? null
+  // Free first: the default (Automático) only ever picks a model that costs nothing. A paid one is never preselected: the user chooses it and confirms its cost.
+  const { auto, paidEligible } = autoPick(ranked)
   const chosen = choice === AUTO ? auto?.model ?? null : modelById(choice) ?? null
   const chosenLite = models?.find(m => m.id === chosen?.id)
   const estimate = chosen?.estimateUsd({ format: '16:9' }) ?? 0
@@ -167,12 +169,12 @@ export default function ThumbnailsPage() {
         <div className="field-row">
           <label htmlFor="thumb-model">Modelo
             <select id="thumb-model" value={choice} onChange={e => { setChoice(e.target.value); setConfirming(false) }}>
-              <option value={AUTO}>Automático · calidad alta al menor coste{auto ? ` (${auto.model.label})` : ''}</option>
+              <option value={AUTO}>Automático · solo modelos gratuitos{auto ? ` (${auto.model.label})` : ' (ninguno disponible)'}</option>
               {readyModels.map(m => <option key={m.id} value={m.id}>{m.label} · {tierLabels[m.tier]} · calidad {m.quality}/5</option>)}
             </select>
           </label>
         </div>
-        {choice === AUTO && !auto && models && <p className="warnBox small">Ningún modelo configurado alcanza la calidad que necesita una miniatura{overlayText.trim() ? ' con texto legible' : ''}. Elige uno manualmente o configura otro proveedor.</p>}
+        {choice === AUTO && !auto && models && <p className="warnBox small">Ningún modelo gratuito alcanza la calidad que necesita una miniatura{overlayText.trim() ? ' con texto legible' : ''}.{paidEligible.length > 0 ? ` Hay ${paidEligible.length} de pago que sí la alcanzan: elige uno en la lista (se te pedirá confirmar el coste antes de generar).` : ' Configura otro proveedor en Conectores.'}</p>}
         {chosen && <p className="muted small">{chosen.label}: {chosenLite?.price ?? chosen.price}. No se muestran personas reales ni marcas; seleccionar no publica nada.</p>}
         {confirming && chosen ? <div className="warnBox" role="alertdialog" aria-label="Confirmar generación">
           <p><b>¿Generar una variante con {chosen.label}?</b> {chosen.tier === 'free' || chosen.tier === 'local' ? 'Usa el cupo gratuito; no tiene coste.' : `Coste: ${costText} (estimado).`}</p>

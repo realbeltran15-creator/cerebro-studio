@@ -7,6 +7,7 @@ import { YouTubeResults } from '../components/youtube-results'
 import { recurringTerms, type SnapshotItem, type TrendComparison } from '@/lib/radar'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubeCategory, YouTubeVideoResult } from '@/lib/providers/youtube-data'
+import { AdminHint } from '../components/admin-hint'
 
 const regions = [['ES', 'España'], ['MX', 'México'], ['AR', 'Argentina'], ['CO', 'Colombia'], ['CL', 'Chile'], ['PE', 'Perú'], ['US', 'Estados Unidos'], ['GB', 'Reino Unido'], ['DE', 'Alemania'], ['FR', 'Francia'], ['IT', 'Italia'], ['PT', 'Portugal'], ['BR', 'Brasil']] as const
 
@@ -75,7 +76,7 @@ export default function RadarPage() {
   const categoryName = (id: string) => categories.find(c => c.id === id)?.title ?? 'todas las categorías'
 
   return <StudioShell title="Radar de tendencias" eyebrow="INTELIGENCIA DE MERCADO" actions={<Link className="buttonLink ghost" href="/market-intelligence">Buscar un tema</Link>}>
-    {notConfigured && <p className="warnBox">El Radar necesita <code>YOUTUBE_API_KEY</code> en las variables del servidor.</p>}
+    {notConfigured && <div className="warnBox"><p style={{ margin: 0 }}>El Radar necesita la conexión con YouTube Data API y todavía no está activada en este servidor. Quien administra Cerebro Studio debe activarla.</p><AdminHint names={['YOUTUBE_API_KEY']} /></div>}
     <section className="panel" style={{ marginBottom: 18 }}>
       <p className="muted small" style={{ marginBottom: 12 }}>Vídeos más populares ahora mismo según YouTube (lista oficial por país y categoría). Solo lectura. Cada consulta consume unas 2 unidades de cuota.</p>
       <div className="marketForm">

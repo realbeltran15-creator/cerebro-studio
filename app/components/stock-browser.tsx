@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react'
 import { Icon } from './studio-icon'
+import { AdminHint } from '../components/admin-hint'
 
 type Kind = 'image' | 'video' | 'audio'
 type Source = 'freesound' | 'pexels' | 'pixabay'
@@ -79,7 +80,7 @@ export function StockBrowser({ kind, projectId, sceneId, defaultQuery = '', impo
         <button type="submit" className="ghost" disabled={busy || !current?.configured || !q.trim()}><Icon name="search" size={14} />{busy ? 'Buscando…' : 'Buscar'}</button>
       </form>
       {kind === 'audio' && <label className="toggle small"><input type="checkbox" checked={cc0} onChange={e => setCc0(e.target.checked)} /> Solo dominio público (CC0, sin atribución)</label>}
-      {current && !current.configured && <p className="muted small">Configura {current.id === 'freesound' ? 'FREESOUND_API_KEY' : current.id === 'pexels' ? 'PEXELS_API_KEY' : 'PIXABAY_API_KEY'} en Vercel (clave gratuita del sitio).</p>}
+      {current && !current.configured && <div><p className="muted small" style={{ margin: 0 }}>Este buscador todavía no está activado en este servidor (usa una clave gratuita del propio sitio). Quien administra Cerebro Studio debe añadirla.</p><AdminHint names={[current.id === 'freesound' ? 'FREESOUND_API_KEY' : current.id === 'pexels' ? 'PEXELS_API_KEY' : 'PIXABAY_API_KEY']} /></div>}
       {message && <p className="muted small" role="status">{message}</p>}
       {items.length > 0 && (
         <div className={kind === 'audio' ? 'stockList' : 'stockGrid'}>

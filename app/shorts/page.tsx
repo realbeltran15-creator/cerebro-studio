@@ -10,6 +10,7 @@ import { idempotencyKeyFor, approvalSummary, shortPayload } from '@/lib/shorts/p
 import { isRetentionDue, retentionWindow, themeRetention, type ObservedRetention } from '@/lib/shorts/retention'
 import type { Check } from '@/lib/shorts/script'
 import type { SourceVerdict } from '@/lib/shorts/sources'
+import { AdminHint } from '../components/admin-hint'
 
 type Item = {
   id: string; status: string; topic: string; theme: string; project_id: string | null; render_job_id: string | null; publication_job_id: string | null
@@ -157,7 +158,7 @@ export default function ShortsPage() {
         <section className="panel" aria-labelledby="sh-checks">
           <h3 id="sh-checks">Controles antes de aprobar</h3>
           <ul className="list">{(selected.checks ?? []).map(c => <li key={c.id} className="listItem"><span className={c.ok ? 'pill ok' : 'pill warn'}>{c.ok ? 'Cumple' : 'Falla'}</span> <span>{c.message}</span></li>)}</ul>
-          {selected.plan.musicMissing && <p className="muted small">Música: no se añadió (falta <code>FREESOUND_API_KEY</code> o no hubo una pista CC0 adecuada). El Short funciona sin música.</p>}
+          {selected.plan.musicMissing && <div><p className="muted small" style={{ margin: 0 }}>Música: no se añadió (la búsqueda de música libre no está activada o no hubo una pista CC0 adecuada). El Short funciona sin música.</p><AdminHint names={['FREESOUND_API_KEY']} /></div>}
           {selected.plan.music && <p className="muted small">Música CC0 de {selected.plan.music.author} ({selected.plan.music.license}).</p>}
         </section>
 

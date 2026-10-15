@@ -6,6 +6,7 @@ import { learnFromVideos } from '@/lib/analytics/learning'
 import { StudioShell } from '../components/studio-shell'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { importSummary, type ImportResult } from '@/lib/analytics/summary'
+import { AdminHint } from '../components/admin-hint'
 
 type Snapshot = { id: number; platform: string; external_content_id: string; metric_date: string; project_id: string | null; observed: Record<string, unknown>; calculated: Record<string, unknown> }
 type Connection = { external_account_name: string | null; status: string; scopes: string[]; updated_at: string }
@@ -67,7 +68,7 @@ export default function AnalyticsPage() {
   return <StudioShell title="Analytics" eyebrow="RESULTADOS">
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
-    {configured === false && <p className="warnBox">La conexión con YouTube no está configurada en el servidor (faltan <code>GOOGLE_OAUTH_CLIENT_ID</code>, <code>GOOGLE_OAUTH_CLIENT_SECRET</code> o <code>TOKEN_ENCRYPTION_KEY</code>).</p>}
+    {configured === false && <div className="warnBox"><p style={{ margin: 0 }}>La conexión con YouTube todavía no está activada en este servidor. Quien administra Cerebro Studio debe completarla para importar tus estadísticas.</p><AdminHint names={['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY']} /></div>}
 
     <section className="panel" style={{ marginBottom: 18 }}>
       <div className="cardHead" style={{ marginBottom: 8 }}>
