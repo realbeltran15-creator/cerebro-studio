@@ -10,8 +10,8 @@ export const GOALS: Array<[Goal, string, string]> = [
   ['sales', 'Ventas', 'Mide pedidos e ingresos; exige seguimiento de conversiones.'],
   ['engagement', 'Interacción / comunidad', 'Mide comentarios, guardados y compartidos.'],
 ]
-export const METRICS: Array<[ResultMetric, string]> = [['reach', 'Alcance'], ['views', 'Visualizaciones'], ['clicks', 'Clics'], ['subscribers', 'Suscriptores'], ['leads', 'Contactos'], ['sales', 'Ventas']]
-export const GOAL_METRIC: Record<Goal, ResultMetric> = { awareness: 'reach', views: 'views', subscribers: 'subscribers', traffic: 'clicks', leads: 'leads', sales: 'sales', engagement: 'views' }
+export const METRICS: Array<[ResultMetric, string]> = [['reach', 'Alcance'], ['views', 'Visualizaciones'], ['interactions', 'Interacciones'], ['clicks', 'Clics'], ['subscribers', 'Suscriptores'], ['leads', 'Contactos'], ['sales', 'Ventas']]
+export const GOAL_METRIC: Record<Goal, ResultMetric> = { awareness: 'reach', views: 'views', subscribers: 'subscribers', traffic: 'clicks', leads: 'leads', sales: 'sales', engagement: 'interactions' }
 export const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF'] as const
 
 export type PlatformInfo = {
@@ -67,7 +67,12 @@ export const DEFAULT_ASSUMPTIONS: Record<'google_ads' | 'meta_ads' | 'tiktok_ads
   tiktok_ads: { cpm: 7, ctr: 0.008 },
 }
 /** Example share of clicks that become the chosen result (a click itself for traffic; a view, subscriber, lead or sale otherwise). Editable. */
-export const GOAL_CONVERSION: Record<Goal, number> = { awareness: 1, views: 0.35, subscribers: 0.03, traffic: 1, leads: 0.08, sales: 0.02, engagement: 0.1 }
+export const GOAL_CONVERSION: Record<Goal, number> = { awareness: 1, views: 1, subscribers: 0.03, traffic: 1, leads: 0.08, sales: 0.02, engagement: 1 }
+/** Goals whose result is NOT a click: a video view or an interaction is a share of IMPRESSIONS (view rate), not of clicks. */
+export const IMPRESSION_BASED: ReadonlySet<Goal> = new Set<Goal>(['views', 'engagement'])
+/** Example view rate (share of impressions that become a view) per paid platform, and example interaction rate. Editable, never measured. */
+export const DEFAULT_VIEW_RATE = { google_ads: 0.2, meta_ads: 0.15, tiktok_ads: 0.25 } as const
+export const DEFAULT_INTERACTION_RATE = 0.015
 
 /** Market price level: media costs in rich markets are usually higher. Three coarse tiers, editorial. */
 export const COUNTRY_TIER: Record<string, 'alto' | 'medio'> = { US: 'alto', CH: 'alto', AU: 'alto', GB: 'alto', CA: 'alto', DE: 'alto', NO: 'alto', SE: 'alto', DK: 'alto', NL: 'alto', IE: 'alto', AT: 'alto', LU: 'alto', SG: 'alto', ES: 'medio', FR: 'medio', IT: 'medio', JP: 'medio', KR: 'medio', PT: 'medio', PL: 'medio' }

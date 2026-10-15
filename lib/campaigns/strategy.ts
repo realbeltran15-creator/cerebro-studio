@@ -1,5 +1,5 @@
 import { COUNTRIES } from '@/lib/research/discovery'
-import { COUNTRY_TIER, DEFAULT_ASSUMPTIONS, GOALS, GOAL_CONVERSION, GOAL_METRIC, PLATFORMS, SUBJECTS, TIER_FACTOR, METRICS, modeOf, platformInfo } from './catalog'
+import { COUNTRY_TIER, DEFAULT_ASSUMPTIONS, DEFAULT_INTERACTION_RATE, DEFAULT_VIEW_RATE, GOALS, GOAL_CONVERSION, GOAL_METRIC, IMPRESSION_BASED, PLATFORMS, SUBJECTS, TIER_FACTOR, METRICS, modeOf, platformInfo } from './catalog'
 import { startOfUtcDay } from '@/lib/research/cache'
 import { validDate } from './store'
 import { PLAYBOOKS, kindOf, type Playbook } from './playbooks'
@@ -16,9 +16,9 @@ export type Concentration = { recommended: boolean; applied: boolean; main: Plat
 export type BudgetPlan = { concentration: Concentration; total: number | null; daily: number | null; days: number | null; currency: string; lines: BudgetLine[]; phases: BudgetPhase[]; reserve: number; warnings: string[]; suggestedDailyCap: number | null; suggestedDays: number | null; pilotBudget: number | null }
 export type CalendarPhase = { name: string; fromDay: number; toDay: number; from: string | null; to: string | null; tasks: string[] }
 export type Scenario = { name: 'Conservador' | 'Base' | 'Optimista'; spend: number; impressions: number; clicks: number; results: number; costPerResult: number | null; pctOfGoal: number | null }
-export type ScenarioSet = { metricLabel: string; assumptions: Array<{ id: PlatformId; platform: string; cpm: number; ctr: number; conversion: number; custom: boolean }>; scenarios: Scenario[]; note: string }
+export type ScenarioSet = { metricLabel: string; assumptions: Array<{ id: PlatformId; platform: string; cpm: number; ctr: number; conversion: number; rate: number; /** What the result is a share of. */ basis: 'clics' | 'impresiones'; custom: boolean }>; scenarios: Scenario[]; note: string }
 export type Feasibility = { state: 'realista' | 'ambicioso' | 'poco_realista' | 'sin_base' | 'no_comparable'; headline: string; detail: string; budgetForGoal: number | null }
-export type Rule = { kind: 'detener' | 'optimizar' | 'ampliar'; when: string; then: string }
+export type Rule = { kind: 'detener' | 'optimizar' | 'ampliar'; /** Which part of a mixed campaign the rule governs. */ scope: 'pago' | 'orgánico' | 'ambos'; when: string; then: string }
 export type Strategy = {
   mode: Mode | null; answered: number; questions: QuestionState[]; suggestions: string[]; summary: string
   platforms: PlatformPlan[]; audience: { demographics: string; markets: string[]; segments: Segment[] }
@@ -32,12 +32,20 @@ export type Strategy = {
   kpiOptions: string[]; chosenKpis: string[]
 }
 
-const METRIC_ONE = { views: 'visualización', clicks: 'clic', subscribers: 'suscriptor', leads: 'contacto', sales: 'venta', reach: 'persona alcanzada' } as const
+const METRIC_ONE = { views: 'visualización', clicks: 'clic', subscribers: 'suscriptor', leads: 'contacto', sales: 'venta', reach: 'persona alcanzada', interactions: 'interacción' } as const
 const label = <T extends string>(list: Array<[T, string, ...string[]]>, v: T | null) => list.find(x => x[0] === v)?.[1] ?? ''
 const countryName = (c: string) => COUNTRIES.find(x => x.code === c)?.name ?? c
 const money = (n: number, cur: string) => `${n.toLocaleString('es-ES', { maximumFractionDigits: n < 100 ? 2 : 0 })} ${cur}`
 const round2 = (n: number) => Math.round(n * 100) / 100
 const addDays = (iso: string, d: number) => { const t = Date.parse(`${iso}T00:00:00Z`); return Number.isFinite(t) ? new Date(t + d * 86400000).toISOString().slice(0, 10) : null }
+
+/** Cost metrics only exist where money is spent: an organic platform never shows a cost per result. */
+const COST_KPI = /coste|roas|cpa|cpm|cpc|cpv/i
+function kpisFor(id: PlatformId, goal: Goal | null): string[] {
+  const p = platformInfo(id)
+  const list = (goal && p.kpis[goal]) || (p.kind === 'paid' ? ['Impresiones', 'Clics', 'Coste por resultado'] : ['Impresiones', 'Visualizaciones', 'Interacciones'])
+  return p.kind === 'organic' ? list.filter(k => !COST_KPI.test(k)) : list
+}
 
 /** Typical duration by objective (editorial): enough days for a test, an optimisation and a scale phase. */
 export const SUGGESTED_DAYS: Record<Goal, number> = { awareness: 21, views: 14, subscribers: 28, traffic: 14, leads: 21, sales: 28, engagement: 21 }
@@ -73,6 +81,7 @@ export function rankPlatforms(b: Brief): PlatformPlan[] {
     const pb = PLAYBOOKS[kindOf(b).kind]
     const boost = pb.boost[p.id] ?? 0
     if (boost && !(p.kind === 'paid' && !paidAllowed)) { score += boost; reasons.push(`${boost > 0 ? 'Favorece' : 'Resta'} el enfoque de «${pb.label}» (${boost > 0 ? '+' : ''}${boost}, criterio editorial).`) }
+    if (p.kind === 'paid' && paidAllowed && pb.paid === 'desaconsejado') { score -= 3; reasons.push(`Para «${pb.label}» los anuncios de pago rara vez compensan (criterio editorial): no se sugiere.`) }
     if (p.kind === 'organic') reasons.push('Sin coste de medios, pero exige constancia y producción.')
     if (b.subject === 'video' && p.network === 'youtube') reasons.push('El vídeo ya vive en YouTube: la audiencia llega directa al vídeo.')
     if ((b.subject === 'store' || b.subject === 'product') && p.id === 'meta_ads') reasons.push('Meta permite catálogo y audiencias por interés para producto y tienda.')
@@ -95,7 +104,7 @@ export function shouldConcentrate(b: Brief, paidCount: number): boolean {
 export function suggestPlatforms(b: Brief): PlatformId[] {
   const ranked = rankPlatforms(b).filter(p => p.score > 0)
   const paidMax = shouldConcentrate(b, 2) ? 1 : 2
-  const paid = b.totalBudget === 0 ? [] : ranked.filter(p => p.kind === 'paid').slice(0, paidMax)
+  const paid = b.totalBudget === 0 || PLAYBOOKS[kindOf(b).kind].paid === 'desaconsejado' ? [] : ranked.filter(p => p.kind === 'paid').slice(0, paidMax)
   const organic = ranked.filter(p => p.kind === 'organic').slice(0, 2)
   return [...organic, ...paid].map(p => p.id)
 }
@@ -109,7 +118,8 @@ export function assumptionFor(b: Brief, id: PlatformId): Assumption & { custom: 
   const base = DEFAULT_ASSUMPTIONS[id as keyof typeof DEFAULT_ASSUMPTIONS], o = b.assumptions[id] ?? {}
   const goal = b.goal ?? 'traffic'
   const cpm = o.cpm ?? round2((base?.cpm ?? 8) * tierFactor(b.countries)), ctr = o.ctr ?? base?.ctr ?? 0.008, conversion = o.conversion ?? GOAL_CONVERSION[goal]
-  return { cpm, ctr, conversion, custom: o.cpm !== undefined || o.ctr !== undefined || o.conversion !== undefined }
+  const rate = o.rate ?? (goal === 'views' ? DEFAULT_VIEW_RATE[id as keyof typeof DEFAULT_VIEW_RATE] ?? 0.15 : DEFAULT_INTERACTION_RATE)
+  return { cpm, ctr, conversion, rate, custom: o.cpm !== undefined || o.ctr !== undefined || o.conversion !== undefined || o.rate !== undefined }
 }
 
 /** Is the expected result measured in the same unit the scenarios produce? (sales vs views cannot be compared.) */
@@ -242,25 +252,29 @@ function scenariosOf(b: Brief, platforms: PlatformId[], budget: BudgetPlan): { s
       const a = assumptionFor(b, line.platform)
       const imp = line.amount / Math.max(a.cpm * cpmF, 0.01) * 1000, clk = imp * a.ctr * ctrF
       spend += line.amount; impressions += imp; clicks += clk
-      results += b.goal === 'awareness' ? imp / FREQUENCY : clk * Math.min(a.conversion * convF, 1)
+      // A view or an interaction is a share of IMPRESSIONS, never of clicks; only subscribers, leads and sales are shares of clicks.
+      results += b.goal === 'awareness' ? imp / FREQUENCY : IMPRESSION_BASED.has(b.goal!) ? imp * Math.min(a.rate * convF, 1) : clk * Math.min(a.conversion * convF, 1)
     }
     const r = Math.round(results)
     return { name, spend: round2(spend), impressions: Math.round(impressions), clicks: Math.round(clicks), results: r, costPerResult: r > 0 ? round2(spend / r) : null, pctOfGoal: b.expectedValue && sameMetric(b) ? Math.round((r / b.expectedValue) * 100) : null }
   })
   const metric = METRICS.find(m => m[0] === GOAL_METRIC[b.goal!])?.[1] ?? 'Resultados'
-  return { set: { metricLabel: metric, assumptions: paid.map(p => { const a = assumptionFor(b, p); return { id: p, platform: platformInfo(p).label, cpm: a.cpm, ctr: a.ctr, conversion: a.conversion, custom: a.custom } }), scenarios,
-    note: `Cálculo: gasto ÷ CPM × 1000 = impresiones; × CTR = clics; × conversión = resultados${b.goal === 'awareness' ? ' (alcance = impresiones ÷ frecuencia 2)' : ''}. Conservador / Base / Optimista varían CPM, CTR y conversión. Los supuestos son ejemplos editoriales, NO datos medidos: cámbialos con los de un piloto real.` }, note: '' }
+  return { set: { metricLabel: metric, assumptions: paid.map(p => { const a = assumptionFor(b, p); return { id: p, platform: platformInfo(p).label, cpm: a.cpm, ctr: a.ctr, conversion: a.conversion, rate: a.rate, basis: (IMPRESSION_BASED.has(b.goal!) ? 'impresiones' : 'clics') as 'clics' | 'impresiones', custom: a.custom } }), scenarios,
+    note: `Cálculo: gasto ÷ CPM × 1000 = impresiones; × CTR = clics; ${b.goal === 'awareness' ? 'alcance = impresiones ÷ frecuencia 2' : IMPRESSION_BASED.has(b.goal!) ? `${GOAL_METRIC[b.goal!] === 'views' ? 'visualizaciones' : 'interacciones'} = impresiones × tasa (no son clics)` : 'resultados = clics × conversión'}. Conservador / Base / Optimista varían CPM, CTR y conversión. Los supuestos son ejemplos editoriales, NO datos medidos: cámbialos con los de un piloto real.` }, note: '' }
 }
 
 function rulesOf(b: Brief, budget: BudgetPlan, set: ScenarioSet | null, mode: Mode | null, pb: Playbook): Rule[] {
   const cur = b.currency, paid = mode === 'paid' || mode === 'mixed', organic = mode === 'organic' || mode === 'mixed' || mode === null
-  const target = b.totalBudget && b.expectedValue && sameMetric(b) ? round2(b.totalBudget / b.expectedValue) : set?.scenarios[1].costPerResult ?? null
-  const t = target !== null ? money(target, cur) : 'tu coste objetivo por resultado'
+  const fromGoal = b.totalBudget && b.expectedValue && b.expectedValue > 0 && sameMetric(b) ? round2(b.totalBudget / b.expectedValue) : null
+  const target = fromGoal ?? set?.scenarios[1].costPerResult ?? null
+  // Never a rule that refers to «0» or divides by it: with no positive cost target the text says «tu coste objetivo».
+  const t = target !== null && Number.isFinite(target) && target > 0 ? money(target, cur) : 'tu coste objetivo por resultado'
   const metric = b.goal ? METRIC_ONE[GOAL_METRIC[b.goal]] : 'resultado'
   const test = budget.phases[0] ? money(budget.phases[0].amount, cur) : 'el presupuesto de prueba'
   const rules: Rule[] = []
-  if (paid) rules.push(
-    { kind: 'detener', when: `has gastado ${test} (la fase de prueba) y no hay ni un solo ${metric} atribuido, o el coste por ${metric} supera 2 × ${t}.`, then: 'Pausa esa creatividad o ese público; no reinviertas hasta cambiar el gancho o el destino.' },
+  const pushAll = (scope: Rule['scope'], ...rs: Array<Omit<Rule, 'scope'>>) => { rules.push(...rs.map(r => ({ ...r, scope }))) }
+  if (paid) pushAll('pago',
+    { kind: 'detener', when: `has gastado ${test} (la fase de prueba) y no hay ningún resultado atribuido (${metric}), o el coste por ${metric} supera 2 × ${t}.`, then: 'Pausa esa creatividad o ese público; no reinviertas hasta cambiar el gancho o el destino.' },
     { kind: 'detener', when: 'una plataforma o política rechaza el anuncio, o aparecen comentarios de derechos o de engaño.', then: 'Pausa de inmediato y corrige la pieza antes de reactivar.' },
     { kind: 'optimizar', when: 'el CTR está por debajo del 60 % del supuesto con al menos 1.000 impresiones.', then: 'Cambia el gancho de los primeros 3 segundos o la miniatura; el problema está en la creatividad.' },
     { kind: 'optimizar', when: 'hay clics pero el resultado final no llega (coste por resultado > 1,5 × objetivo).', then: 'Revisa la página o el vídeo de destino, la velocidad de carga y la coherencia con el anuncio.' },
@@ -268,25 +282,38 @@ function rulesOf(b: Brief, budget: BudgetPlan, set: ScenarioSet | null, mode: Mo
     { kind: 'ampliar', when: 'dos creatividades superan el objetivo en el mercado piloto.', then: 'Prueba el mismo anuncio en un segundo mercado con su idioma y su presupuesto propios.' },
   )
   // Organic: the only thing invested is time, so nothing here asks for money.
-  if (organic) rules.push(
+  if (organic) pushAll('orgánico',
     { kind: 'detener', when: 'un formato o una serie lleva 8–10 publicaciones y casi todas quedan por debajo de tu mediana de visualizaciones y de retención', then: 'Retira ese formato y dedica ese tiempo a otro; no insistas por insistir.' },
     { kind: 'detener', when: 'una pieza recibe una reclamación de derechos o un aviso de política', then: 'Retírala o corrígela de inmediato y revisa las demás con el mismo material.' },
     { kind: 'optimizar', when: 'una pieza tiene buena retención pero pocas impresiones o poco CTR', then: 'Cambia título y miniatura (o el primer segundo); el contenido ya funciona.' },
     { kind: 'optimizar', when: 'las piezas se abandonan en los primeros segundos', then: 'Reescribe el gancho antes de cambiar el tema.' },
     { kind: 'ampliar', when: 'dos o tres piezas seguidas superan tu mediana de visualizaciones o de retención', then: 'Publica más de ese formato (más cadencia con el mismo esfuerzo) y adáptalo a otra plataforma orgánica.' },
   )
-  for (const r of pb.rules) if (!r.paid || paid) rules.push({ kind: r.kind, when: r.when, then: r.then })
-  return rules
+  for (const r of pb.rules) if (!r.paid || paid) pushAll(r.paid ? 'pago' : 'ambos', { kind: r.kind, when: r.when, then: r.then })
+  return dedupeRules(rules)
+}
+
+const ruleTokens = (r: Pick<Rule, 'when' | 'then'>) => new Set(`${r.when} ${r.then}`.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(w => w.length > 3))
+/** A mixed campaign collects rules from the paid set, the organic set and the project kind: drop the ones that say the same thing (same kind, ≥ 50 % of their words shared). */
+export function dedupeRules(rules: Rule[]): Rule[] {
+  const kept: Array<{ rule: Rule; tokens: Set<string> }> = []
+  for (const rule of rules) {
+    const tokens = ruleTokens(rule)
+    const dup = kept.find(k => k.rule.kind === rule.kind && (k.rule.when === rule.when || [...tokens].filter(t => k.tokens.has(t)).length / Math.max(Math.min(tokens.size, k.tokens.size), 1) >= 0.5))
+    if (dup) { if (dup.rule.scope !== rule.scope) dup.rule = { ...dup.rule, scope: 'ambos' }; continue }
+    kept.push({ rule, tokens })
+  }
+  return kept.map(k => k.rule)
 }
 
 /** Compares the stated goal with what the budget buys in the scenarios. The goal is a wish; the scenarios are an estimate from example assumptions. */
 function feasibilityOf(b: Brief, set: ScenarioSet | null, mode: Mode | null): Feasibility {
   const diff = 'El objetivo es lo que quieres conseguir; los escenarios son lo que el presupuesto compra con supuestos de ejemplo (no medidos). Si no coinciden, cambia el objetivo, el presupuesto o los supuestos con datos de un piloto.'
-  if (!b.goal || b.expectedValue === null || b.expectedMetric === null) return { state: 'sin_base', headline: 'Sin objetivo numérico', detail: `Indica una métrica y una cantidad para poder compararlas con los escenarios. ${diff}`, budgetForGoal: null }
+  if (!b.goal || !b.expectedValue || b.expectedValue <= 0 || b.expectedMetric === null) return { state: 'sin_base', headline: 'Sin objetivo numérico', detail: `Indica una métrica y una cantidad para poder compararlas con los escenarios. ${diff}`, budgetForGoal: null }
   if (!sameMetric(b)) return { state: 'no_comparable', headline: 'Objetivo y escenarios en unidades distintas', detail: `El objetivo se mide en ${METRICS.find(m => m[0] === b.expectedMetric)?.[1].toLowerCase()} y los escenarios en ${METRICS.find(m => m[0] === GOAL_METRIC[b.goal!])?.[1].toLowerCase()}: no se pueden comparar.`, budgetForGoal: null }
   if (!set) return { state: 'sin_base', headline: mode === 'organic' ? 'Objetivo orgánico: sin estimación numérica' : 'Sin escenarios con los datos actuales', detail: mode === 'organic' ? `Sin medios de pago no hay base para estimar resultados con estos supuestos: compara el objetivo con tus resultados anteriores (por ejemplo, lo que han hecho tus últimas 10 publicaciones) y fija hitos por semana. ${diff}` : `Falta presupuesto o plataforma de pago para calcular escenarios. ${diff}`, budgetForGoal: null }
   const [cons, base, opt] = set.scenarios, goal = b.expectedValue, f = (n: number) => n.toLocaleString('es-ES')
-  const need = base.costPerResult !== null ? Math.round(base.costPerResult * goal) : null
+  const need = base.costPerResult !== null && base.costPerResult > 0 ? Math.round(base.costPerResult * goal) : null
   const line = `Estimación de ${set.metricLabel.toLowerCase()}: conservador ${f(cons.results)}, base ${f(base.results)}, optimista ${f(opt.results)}; tu objetivo: ${f(goal)}. ${need !== null ? `Al coste por resultado del escenario base harían falta ≈ ${f(need)} ${b.currency} para llegar a tu objetivo (tienes ${f(b.totalBudget ?? 0)}). ` : ''}${diff}`
   if (goal <= cons.results) return { state: 'realista', headline: 'Realista: se alcanza incluso en el escenario conservador', detail: line, budgetForGoal: need }
   if (goal <= base.results) return { state: 'realista', headline: 'Realista: se alcanza en el escenario base', detail: line, budgetForGoal: need }
@@ -316,6 +343,7 @@ export function buildStrategy(b: Brief, now = Date.now()): Strategy {
   if (b.expectedValue === null && b.goal) suggestions.push('Define una cifra de resultado esperada: sin ella el sistema usa el coste por resultado del escenario base como referencia.')
   if (!b.interests.trim() && !b.audienceNotes.trim() && b.ageMin === null) suggestions.push('Describe al público: edad, intereses y un problema concreto que resuelves.')
   const warnings = [...budget.warnings, ...pb.warnings]
+  if (pb.paid === 'desaconsejado' && chosen.some(p => platformInfo(p).kind === 'paid') && b.platforms.length) warnings.push(`Has elegido plataformas de pago, pero para «${pb.label}» no suelen compensar: si las mantienes, limítalas a una prueba pequeña (no más del 20 % del presupuesto) y compara con el resultado orgánico.`)
   if (days !== null && days < 7) warnings.push('Con menos de 7 días no hay tiempo de probar, optimizar y escalar: el calendario se reduce a lanzar y medir, y los resultados serán ruido.')
   if (b.totalBudget === 0 && (mode === 'paid' || mode === 'mixed')) warnings.push('Presupuesto 0 con plataformas de pago: no habrá gasto en medios. Sube el presupuesto o quita las plataformas de pago.')
   if (b.goal && b.expectedMetric && b.expectedValue !== null && !sameMetric(b)) warnings.push(`El objetivo «${label(GOALS, b.goal)}» se mide en ${METRICS.find(m => m[0] === GOAL_METRIC[b.goal!])?.[1].toLowerCase()} y esperas ${METRICS.find(m => m[0] === b.expectedMetric)?.[1].toLowerCase()}: no se comparan los escenarios con esa cifra.`)
@@ -325,13 +353,14 @@ export function buildStrategy(b: Brief, now = Date.now()): Strategy {
   if (b.countries.length > 3) warnings.push('Más de 3 países dispersa el presupuesto: empieza por 1–2 y amplía.')
   const subj = b.subjectName.trim() || label(SUBJECTS, b.subject).toLowerCase() || 'tu proyecto'
   const summary = `Campaña ${mode === 'mixed' ? 'mixta (orgánica + pago)' : mode === 'paid' ? 'de pago' : mode === 'organic' ? 'orgánica' : '(sin modalidad definida)'} para ${subj}${b.goal ? ` con el objetivo «${label(GOALS, b.goal)}»` : ''}${b.countries.length ? ` en ${b.countries.map(countryName).join(', ')}` : ''}${days ? `, durante ${days} días` : ''}${b.totalBudget !== null ? `, con ${money(b.totalBudget, b.currency)} de presupuesto` : ''}.`
-  const kpiList = chosen.flatMap(p => (b.goal && platformInfo(p).kpis[b.goal]) || ['Impresiones', 'Clics', 'Coste por resultado'])
-  const kpiOptions = [...new Set([...kpiList, ...pb.kpis, ...(b.kpis ?? [])])]
+  const kpiList = chosen.flatMap(p => kpisFor(p, b.goal))
+  const hasPaid = mode === 'paid' || mode === 'mixed'
+  const kpiOptions = [...new Set([...kpiList, ...pb.kpis.filter(k => hasPaid || !COST_KPI.test(k)), ...(b.kpis ?? [])])]
   const chosenKpis = b.kpis.length ? b.kpis : kpiOptions
   return {
     origin: b.source?.summary ?? null, kind: { id: kind.kind, label: pb.label, blurb: pb.blurb, inferred: kind.inferred }, feasibility: feasibilityOf(b, set, mode), kpiOptions, chosenKpis,
     mode, answered, questions, suggestions, summary, platforms, audience: audienceOf(b, pb), content: contentOf(b, chosen, pb), creatives: creativesOf(b, chosen, pb), budget,
-    calendar: calendarOf(b, days, mode, pb), kpis: chosen.map(p => ({ platform: platformInfo(p).label, kpis: (b.goal && platformInfo(p).kpis[b.goal]) || ['Impresiones', 'Clics', 'Coste por resultado'] })),
+    calendar: calendarOf(b, days, mode, pb), kpis: chosen.map(p => ({ platform: platformInfo(p).label, kpis: kpisFor(p, b.goal) })),
     scenarios: set, scenarioNote: note, rules: rulesOf(b, budget, set, mode, pb), warnings,
   }
 }

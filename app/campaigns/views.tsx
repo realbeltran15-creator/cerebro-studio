@@ -116,7 +116,7 @@ export function BudgetTab({ strategy, brief, set }: P) {
 
 export function ResultsTab({ strategy, brief, set }: P) {
   const sc = strategy.scenarios
-  const edit = (id: PlatformId, field: 'cpm' | 'ctr' | 'conversion', v: number | null) => {
+  const edit = (id: PlatformId, field: 'cpm' | 'ctr' | 'conversion' | 'rate', v: number | null) => {
     const prev = { ...(brief.assumptions[id] ?? {}) }; if (v === null) delete prev[field]; else prev[field] = v
     const next = { ...brief.assumptions, [id]: prev }; if (!Object.keys(prev).length) delete next[id]
     set({ assumptions: next })
@@ -136,11 +136,13 @@ export function ResultsTab({ strategy, brief, set }: P) {
       <div className="campaignGrid">{sc.assumptions.map(a => { const id = a.id; const cur = assumptionFor(brief, id); return <article key={id}><b>{a.platform}</b>{a.custom && <span className="muted small"> · editado</span>}
         <NumField label={`CPM (${brief.currency} por 1.000 impresiones)`} value={cur.cpm} onChange={v => edit(id, 'cpm', v)} min={0.01} step={0.5} />
         <NumField label="CTR (0–1, p. ej. 0,01 = 1 %)" value={cur.ctr} onChange={v => edit(id, 'ctr', v)} min={0.0001} max={1} step={0.001} />
-        <NumField label="Conversión de clic a resultado (0–1)" value={cur.conversion} onChange={v => edit(id, 'conversion', v)} min={0.0001} max={1} step={0.01} />
+        {a.basis === 'impresiones'
+          ? <NumField label={`Tasa de ${brief.goal === 'views' ? 'visualización' : 'interacción'} sobre impresiones (0–1)`} value={cur.rate} onChange={v => edit(id, 'rate', v)} min={0.0001} max={1} step={0.005} />
+          : <NumField label="Conversión de clic a resultado (0–1)" value={cur.conversion} onChange={v => edit(id, 'conversion', v)} min={0.0001} max={1} step={0.01} />}
         {a.custom && <button type="button" className="ghost" onClick={() => set({ assumptions: Object.fromEntries(Object.entries(brief.assumptions).filter(([k]) => k !== id)) })}>Volver al ejemplo</button>}</article> })}</div>
     </> : <p className="muted">{strategy.scenarioNote}</p>}
     <h3 className="sectionTitle">Cuándo detener, optimizar o ampliar</h3>
-    <div className="campaignGrid">{(['detener', 'optimizar', 'ampliar'] as const).map(k => <article key={k}><h4 style={{ textTransform: 'capitalize' }}>{k}</h4>{strategy.rules.filter(r => r.kind === k).map(r => <p key={r.when} className="small"><b>Si</b> {r.when}<br /><b>Entonces</b> {r.then}</p>)}</article>)}</div>
+    <div className="campaignGrid">{(['detener', 'optimizar', 'ampliar'] as const).map(k => <article key={k}><h4 style={{ textTransform: 'capitalize' }}>{k}</h4>{strategy.rules.filter(r => r.kind === k).map(r => <p key={r.when} className="small">{strategy.mode === 'mixed' && <span className="pill">{r.scope === 'ambos' ? 'Pago y orgánico' : r.scope === 'pago' ? 'Pago' : 'Orgánico'}</span>} <b>Si</b> {r.when}<br /><b>Entonces</b> {r.then}</p>)}</article>)}</div>
   </div>
 }
 

@@ -10,10 +10,10 @@ export type PlatformId = 'youtube_organic' | 'instagram_organic' | 'tiktok_organ
 /** What kind of project is promoted; it changes platforms, formats, audiences, KPIs and rules. */
 export type ProjectKind = 'lofi' | 'shorts' | 'canal_largo' | 'ecommerce' | 'digital' | 'otro'
 export type Currency = 'EUR' | 'USD' | 'GBP' | 'CHF'
-export type ResultMetric = 'views' | 'clicks' | 'subscribers' | 'leads' | 'sales' | 'reach'
+export type ResultMetric = 'views' | 'clicks' | 'subscribers' | 'leads' | 'sales' | 'reach' | 'interactions'
 
 /** Editable cost assumptions for one paid platform. They are EDITORIAL examples, never measured results. */
-export type Assumption = { cpm: number; ctr: number; /** Share of clicks that become the chosen result. */ conversion: number }
+export type Assumption = { cpm: number; ctr: number; /** Share of CLICKS that become the chosen result (subscriber, lead, sale). */ conversion: number; /** Share of IMPRESSIONS that become the result when it is not a click: a video view or an interaction. */ rate: number }
 
 export type Brief = {
   name: string

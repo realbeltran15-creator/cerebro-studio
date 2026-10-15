@@ -18,6 +18,8 @@ export type Playbook = {
   rules: PlaybookRule[]
   /** Goals that usually make sense for this kind (the first is proposed when none is chosen). */
   goals: string[]
+  /** What paid media usually does for this kind. «desaconsejado»: it rarely pays back, so it is NOT suggested (a user who picks it is warned). */
+  paid: 'desaconsejado' | 'neutral' | 'central'
 }
 
 export const PLAYBOOKS: Record<ProjectKind, Playbook> = {
@@ -45,7 +47,7 @@ export const PLAYBOOKS: Record<ProjectKind, Playbook> = {
       { kind: 'optimizar', when: 'un mix tiene buen porcentaje visto pero pocas impresiones', then: 'Cambia la miniatura y el título (A/B) y añádelo a una lista de reproducción por momento del día.' },
       { kind: 'ampliar', when: 'dos mixes superan en tiempo de visualización a tu mediana', then: 'Publica más de ese estilo en serie y lanza un directo 24/7 con esa escena.' },
     ],
-    goals: ['views', 'subscribers'],
+    goals: ['views', 'subscribers'], paid: 'desaconsejado',
   },
   shorts: {
     id: 'shorts', label: 'Canal de Shorts / vídeo vertical', blurb: 'Volumen y ritmo: series con un formato fijo, gancho en el primer segundo y un camino hacia el contenido largo.',
@@ -69,7 +71,7 @@ export const PLAYBOOKS: Record<ProjectKind, Playbook> = {
       { kind: 'optimizar', when: 'los vídeos tienen visualizaciones pero se abandonan en los primeros segundos', then: 'Reescribe el gancho (primera frase y primer plano) antes de cambiar el tema.' },
       { kind: 'ampliar', when: 'una serie supera tu mediana en tres vídeos seguidos', then: 'Publica más de ese formato, adáptalo a las otras plataformas y enlaza un vídeo largo.' },
     ],
-    goals: ['views', 'subscribers'],
+    goals: ['views', 'subscribers'], paid: 'neutral',
   },
   canal_largo: {
     id: 'canal_largo', label: 'Canal de vídeos largos (educativo, documental, comentario)', blurb: 'Se gana con buen título y miniatura, retención y series; los anuncios de vídeo pueden acelerar un vídeo que ya funciona.',
@@ -92,7 +94,7 @@ export const PLAYBOOKS: Record<ProjectKind, Playbook> = {
       { kind: 'optimizar', when: 'el CTR de impresiones es bajo pero el porcentaje visto es bueno', then: 'Cambia la miniatura y el título; el contenido ya funciona.' },
       { kind: 'ampliar', when: 'un vídeo supera tu mediana en CTR y retención', then: 'Hazle una continuación en serie y, si hay presupuesto, promociónalo.' },
     ],
-    goals: ['views', 'subscribers'],
+    goals: ['views', 'subscribers'], paid: 'neutral',
   },
   ecommerce: {
     id: 'ecommerce', label: 'Tienda online / producto físico', blurb: 'Se decide por el coste por compra frente al margen: sin seguimiento de conversiones y sin cuentas claras, el gasto no se puede optimizar.',
@@ -120,7 +122,7 @@ export const PLAYBOOKS: Record<ProjectKind, Playbook> = {
       { kind: 'optimizar', when: 'hay clics y visitas pero pocas compras', then: 'Revisa ficha de producto, precio, gastos de envío y velocidad de carga antes de tocar el anuncio.' },
       { kind: 'ampliar', when: 'el ROAS supera el punto de equilibrio durante 3 días seguidos', then: 'Sube el presupuesto un 20 % cada 3 días y duplica el anuncio ganador en un público similar.', paid: true },
     ],
-    goals: ['sales', 'traffic'],
+    goals: ['sales', 'traffic'], paid: 'central',
   },
   digital: {
     id: 'digital', label: 'Producto digital / curso / plantillas', blurb: 'Se vende confianza: contenido útil gratuito, un imán de captación y una secuencia hasta la compra.',
@@ -143,19 +145,21 @@ export const PLAYBOOKS: Record<ProjectKind, Playbook> = {
       { kind: 'optimizar', when: 'entran contactos pero casi nadie compra', then: 'Mejora la secuencia de correos y la oferta, no el anuncio.' },
       { kind: 'ampliar', when: 'el ingreso por contacto supera el coste por contacto durante 2 semanas', then: 'Amplía presupuesto y prueba un segundo mercado.', paid: true },
     ],
-    goals: ['leads', 'sales'],
+    goals: ['leads', 'sales'], paid: 'neutral',
   },
   otro: {
     id: 'otro', label: 'Otro tipo de proyecto', blurb: 'Plan general: elige un objetivo, prueba pocas variantes y decide con datos.',
-    boost: {}, content: [], creatives: [], segments: [], prep: [], test: [], kpis: [], warnings: [], rules: [], goals: [],
+    boost: {}, content: [], creatives: [], segments: [], prep: [], test: [], kpis: [], warnings: [], rules: [], goals: [], paid: 'neutral',
   },
 }
 
+/** Digital goods first: a «planner digital», a template pack or an ebook is NOT a physical shop even when it is sold in a store. */
+const DIGITAL = /\b(planner|planners|plantillas?|templates?|printables?|imprimibles?|ebook|e-book|pdf|notion|curso|cursos|course|courses|masterclass|membres[ií]a|newsletter|infoproducto|descargable|descarga digital|digital download|producto digital|digital product|software|app|saas|preset|presets|wallpaper|fuentes?|fonts?|stock (photos|im[aá]genes))\b|\bdigital\b/i
+const PHYSICAL = /\b(env[ií]o|env[ií]os|f[ií]sico|physical|dropshipping|almac[eé]n|inventario|shipping|packaging|artesan|velas?|ropa|zapatos|joyer[ií]a)\b/i
 const SIGNALS: Array<[ProjectKind, RegExp]> = [
   ['lofi', /\b(lo-?fi|lofi|chill(hop)?|ambient|ambiente|relajante|study music|m[uú]sica para (estudiar|dormir|concentrar)|beats to)\b/i],
   ['shorts', /\b(shorts?|reels?|tiktoks?|vertical|v[ií]deos? cortos?)\b/i],
   ['ecommerce', /\b(tienda|shop|store|ecommerce|e-commerce|shopify|etsy|amazon|producto f[ií]sico|dropshipping)\b/i],
-  ['digital', /\b(curso|course|plantillas?|templates?|ebook|gu[ií]a digital|membres[ií]a|newsletter|infoproducto)\b/i],
   ['canal_largo', /\b(documental|documentary|educativ|explicad|historia|curiosidades|an[aá]lisis|ensayo|tutorial)\b/i],
 ]
 
@@ -163,6 +167,8 @@ const SIGNALS: Array<[ProjectKind, RegExp]> = [
 export function kindOf(b: Pick<Brief, 'kind' | 'subject' | 'subjectName' | 'sourceTopic' | 'name'>): { kind: ProjectKind; inferred: boolean } {
   if (b.kind) return { kind: b.kind, inferred: false }
   const text = `${b.subjectName} ${b.sourceTopic} ${b.name}`
+  const music = SIGNALS[0][1].test(text)
+  if (!music && DIGITAL.test(text) && !PHYSICAL.test(text)) return { kind: 'digital', inferred: true }
   for (const [kind, re] of SIGNALS) if (re.test(text)) return { kind, inferred: true }
   if (b.subject === 'store' || b.subject === 'product') return { kind: 'ecommerce', inferred: true }
   return { kind: 'otro', inferred: true }

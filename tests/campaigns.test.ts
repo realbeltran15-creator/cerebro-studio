@@ -291,3 +291,76 @@ describe('quality fixes: organic budget 0, concentration, realistic goals, proje
     expect(paidShop.rules.map(r => r.then).join(' ')).toMatch(/Sube el presupuesto/)
   })
 })
+
+describe('validation fixes: views are not clicks, no zero rules, digital planner, organic costs, lo-fi paid stance, mixed rules', () => {
+  const now = Date.parse('2026-10-15T00:00:00Z')
+  const paidBrief = (o: Partial<Brief> = {}) => b({ subject: 'channel', subjectName: 'Canal', goal: 'views', countries: ['US'], platforms: ['google_ads'], totalBudget: 600, durationDays: 28, expectedMetric: 'views', expectedValue: 20000, kind: 'canal_largo', ...o })
+  it('views are a share of IMPRESSIONS (view rate), not clicks; subscribers stay a share of clicks', () => {
+    const v = buildStrategy(paidBrief(), now).scenarios!, base = v.scenarios[1]
+    const a = v.assumptions[0]
+    expect(a.basis).toBe('impresiones')
+    expect(Math.abs(base.results - Math.round(base.impressions * a.rate))).toBeLessThanOrEqual(2)
+    expect(base.results).toBeGreaterThan(base.clicks)               // more views than clicks, which clicks×conversion could never give
+    expect(v.note).toMatch(/visualizaciones = impresiones × tasa \(no son clics\)/)
+    const subs = buildStrategy(paidBrief({ goal: 'subscribers', expectedMetric: 'subscribers', expectedValue: 100 }), now).scenarios!
+    expect(subs.assumptions[0].basis).toBe('clics'); expect(subs.scenarios[1].results).toBeLessThan(subs.scenarios[1].clicks)
+    const eng = buildStrategy(paidBrief({ goal: 'engagement', expectedMetric: 'interactions', expectedValue: 500 }), now)
+    expect(eng.scenarios!.assumptions[0].basis).toBe('impresiones'); expect(eng.feasibility.state).not.toBe('no_comparable'); expect(eng.scenarios!.metricLabel).toBe('Interacciones')
+  })
+  it('the view rate is editable and drives the result', () => {
+    const lo = buildStrategy(paidBrief({ assumptions: { google_ads: { rate: 0.05 } } }), now).scenarios!.scenarios[1].results, hi = buildStrategy(paidBrief({ assumptions: { google_ads: { rate: 0.4 } } }), now).scenarios!.scenarios[1].results
+    expect(hi).toBeGreaterThan(lo * 5)
+  })
+  it('no rule, feasibility or report line refers to zero or divides by it', () => {
+    for (const expectedValue of [0, null, -5]) {
+      const s = buildStrategy(paidBrief({ expectedValue }), now), text = JSON.stringify([s.rules, s.feasibility, s.warnings]) + campaignReport(paidBrief({ expectedValue }))
+      expect(text).not.toMatch(/Infinity|NaN|undefined|× 0( |\.|$)|≤ 0( |\.|$)|\b0 EUR\b/)
+      expect(s.feasibility.state).toBe('sin_base')
+    }
+    const raw = JSON.parse(JSON.stringify({ ...paidBrief(), expectedValue: 0 }))
+    expect(sanitizeBrief(raw).expectedValue).toBeNull()
+    const zeroBudget = buildStrategy(paidBrief({ totalBudget: 0, platforms: ['google_ads'] }), now)
+    expect(JSON.stringify(zeroBudget.rules)).not.toMatch(/Infinity|NaN|\b0 EUR\b/)
+  })
+  it('«Planner digital» is a digital product, not e-commerce; physical shops still are', () => {
+    for (const name of ['Planner digital', 'Planner digital para estudiantes', 'Pack de plantillas Notion', 'Tienda de plantillas digitales', 'Curso de edición']) expect(buildStrategy(b({ subject: 'product', subjectName: name })).kind.id, name).toBe('digital')
+    for (const name of ['Mi tienda de velas', 'Tienda de ropa con envío']) expect(buildStrategy(b({ subject: 'store', subjectName: name })).kind.id, name).toBe('ecommerce')
+    expect(buildStrategy(b({ subject: 'product', subjectName: 'Planner digital', kind: 'ecommerce' })).kind).toMatchObject({ id: 'ecommerce', inferred: false })
+    expect(buildStrategy(b({ subject: 'channel', subjectName: 'Música lofi digital para estudiar' })).kind.id).toBe('lofi')
+  })
+  it('organic platforms never show a cost per result or cost KPI', () => {
+    const org = buildStrategy(b({ subject: 'store', subjectName: 'Mi tienda de velas', goal: 'sales', platforms: ['instagram_organic', 'tiktok_organic'], totalBudget: 0, countries: ['ES'] }), now)
+    expect(org.kpis.flatMap(k => k.kpis).join(' ')).not.toMatch(/coste|ROAS|CPA|CPM|CPC/i); expect(org.chosenKpis.join(' ')).not.toMatch(/coste|ROAS|CPA|CPM|CPC/i)
+    const mixed = buildStrategy(b({ subject: 'store', subjectName: 'Mi tienda de velas', goal: 'sales', platforms: ['instagram_organic', 'meta_ads'], totalBudget: 500, countries: ['ES'] }), now)
+    expect(mixed.kpis.find(k => /Instagram/.test(k.platform))!.kpis.join(' ')).not.toMatch(/coste|ROAS/i); expect(mixed.kpis.find(k => /Meta/.test(k.platform))!.kpis.join(' ')).toMatch(/Coste|ROAS/)
+    expect(campaignReport(b({ subject: 'channel', subjectName: 'x', platforms: ['youtube_organic'], totalBudget: 0 }))).not.toMatch(/Coste por resultado/)
+  })
+  it('lo-fi: the strategy that calls paid ads unprofitable never recommends Google Ads itself', () => {
+    const lofi = b({ subject: 'channel', subjectName: 'Lofi para estudiar', goal: 'views', countries: ['US'], totalBudget: 600, durationDays: 28 })
+    const s = buildStrategy(lofi, now)
+    expect(s.platforms.filter(p => p.chosen).every(p => p.kind === 'organic')).toBe(true); expect(s.mode).toBe('organic')
+    expect(s.platforms.find(p => p.id === 'google_ads')!.reasons.join(' ')).toMatch(/rara vez compensan.*no se sugiere/)
+    expect(s.budget.lines).toHaveLength(0)
+    const picked = buildStrategy({ ...lofi, platforms: ['youtube_organic', 'google_ads'] }, now)
+    expect(picked.warnings.join(' ')).toMatch(/no suelen compensar.*no más del 20 %/)
+    expect(buildStrategy({ ...lofi, kind: 'canal_largo' }, now).platforms.some(p => p.chosen && p.id === 'google_ads')).toBe(true)   // other kinds are unaffected
+  })
+  it('a mixed campaign has no duplicated rules, and each rule says whether it governs paid, organic or both', () => {
+    const s = buildStrategy(paidBrief({ platforms: ['youtube_organic', 'google_ads'], kind: 'canal_largo', totalBudget: 600 }), now)
+    expect(s.mode).toBe('mixed')
+    const key = (r: (typeof s.rules)[number]) => `${r.kind}|${r.when}`
+    expect(new Set(s.rules.map(key)).size).toBe(s.rules.length)
+    const words = (r: (typeof s.rules)[number]) => new Set(`${r.when} ${r.then}`.toLowerCase().split(/[^a-záéíóúñ0-9]+/).filter(w => w.length > 3))
+    for (const kind of ['detener', 'optimizar', 'ampliar'] as const) {
+      const rs = s.rules.filter(r => r.kind === kind)
+      for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) { const a = words(rs[i]), c = words(rs[j]); expect([...a].filter(w => c.has(w)).length / Math.min(a.size, c.size), `${kind}: «${rs[i].when}» vs «${rs[j].when}»`).toBeLessThan(0.5) }
+    }
+    expect(new Set(s.rules.map(r => r.scope))).toEqual(new Set(['pago', 'orgánico', 'ambos']))
+    expect(campaignReport(paidBrief({ platforms: ['youtube_organic', 'google_ads'], kind: 'canal_largo' }))).toMatch(/\*\*OPTIMIZAR\*\* \((pago|orgánico|pago y orgánico)\)/)
+  })
+  it('dedupeRules merges near-duplicates of different scope into «ambos»', async () => {
+    const { dedupeRules } = await import('@/lib/campaigns/strategy')
+    const out = dedupeRules([{ kind: 'optimizar', scope: 'pago', when: 'el CTR es bajo pero el porcentaje visto es bueno', then: 'cambia la miniatura y el título' }, { kind: 'optimizar', scope: 'orgánico', when: 'el CTR es bajo y el porcentaje visto es bueno', then: 'cambia título y miniatura' }])
+    expect(out).toHaveLength(1); expect(out[0].scope).toBe('ambos')
+  })
+})
