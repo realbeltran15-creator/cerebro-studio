@@ -1,11 +1,13 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
+import { campaignLink } from '@/lib/campaigns/link'
+import { saveAnalysis } from '@/lib/research/save'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { VERDICT } from './analysis-views'
 import type { NicheReco, Reco, RecoSection, RecoVideo } from '@/lib/research/recommendations'
 import { fmtCompact, fmtNumber } from '@/lib/research/format'
-import { isUniqueViolation } from '@/lib/opportunities'
 
 const FORMAT_NAME = { short: 'Short probable', brief: 'Corto', medium: 'Medio', long: 'Largo', live: 'Directo', unknown: 'Formato desconocido' } as const
 const dateEs = (iso: string) => (iso ? new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : 'sin fecha')
@@ -28,23 +30,17 @@ export function VideoTile({ v, reason }: { v: RecoVideo; reason?: string }) {
   </figure>
 }
 
+/** Saves the FULL analysis (same record and same id as the Nichos card, so saving from both places never duplicates). */
 function SaveNiche({ r }: { r: NicheReco }) {
   const supabase = getSupabaseBrowserClient()
-  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'exists' | 'error'>('idle')
   async function save() {
+    if (!r.analysis) return
     setState('saving')
-    try {
-      const { data: { user } } = await supabase.auth.getUser(); if (!user) throw new Error('sesión')
-      const sourceId = `reco:${r.key}`
-      const { data: ex } = await supabase.from('opportunities').select('id').eq('owner_id', user.id).eq('source_platform', 'research').eq('source_id', sourceId).limit(1)
-      if (!ex?.length) {
-        const { error } = await supabase.from('opportunities').insert({ owner_id: user.id, title: r.topic.slice(0, 180), source_platform: 'research', source_id: sourceId, query: r.topic, status: 'discovered', observed_metrics: { market: r.market, updatedAt: r.updatedAt, source: 'youtube_data_api' }, calculated_metrics: { indices: r.indices, verdict: r.verdict, reason: r.reason, rpmNote: r.rpmNote }, evidence: r.videos.map(v => ({ url: v.url, source: 'youtube_data_api', captured_at: v.fetchedAt, note: `${v.title} · ${v.channelTitle}` })) })
-        if (error && !isUniqueViolation(error)) throw error
-      }
-      setState('saved')
-    } catch { setState('error') }
+    try { setState(await saveAnalysis(supabase as never, r.analysis)) } catch { setState('error') }
   }
-  return <button type="button" className={state === 'saved' ? 'ghost' : undefined} disabled={state === 'saving' || state === 'saved'} onClick={() => void save()}>{state === 'saved' ? 'Guardada' : state === 'saving' ? 'Guardando…' : state === 'error' ? 'No se pudo guardar: reintentar' : 'Guardar para investigar'}</button>
+  const done = state === 'saved' || state === 'exists'
+  return <button type="button" className={done ? 'ghost' : undefined} disabled={state === 'saving' || done || !r.analysis} onClick={() => void save()}>{state === 'saved' ? 'Guardada con todos sus datos' : state === 'exists' ? 'Ya estaba guardada' : state === 'saving' ? 'Guardando…' : state === 'error' ? 'No se pudo guardar: reintentar' : 'Guardar para investigar después'}</button>
 }
 
 export function RecoCard({ r }: { r: Reco }) {
@@ -60,7 +56,7 @@ export function RecoCard({ r }: { r: Reco }) {
     {r.rpmNote && <p className="small"><span className="tag estimado">ESTIMADO</span> {r.rpmNote}</p>}
     {r.videos.length > 0 ? <div className="tileRow">{r.videos.map(v => <VideoTile key={v.videoId} v={v} />)}</div> : <p className="muted small">{r.examplesElsewhere ? 'Sus vídeos de ejemplo ya aparecen en otra recomendación (cada vídeo se muestra una sola vez).' : 'Sin vídeos de ejemplo disponibles (no hay muestra guardada de este análisis).'}</p>}
     <p className="muted small">Actualizado {dateEs(r.updatedAt)} · fuente YouTube Data API{r.confidence ? ` · confianza ${r.confidence}` : ''}</p>
-    {r.source === 'analysis' && <SaveNiche r={r} />}
+    {r.source === 'analysis' && <SaveNiche r={r} />}{r.analysis && <>{' '}<Link className="open" href={campaignLink({ topic: r.analysis.topic, region: r.analysis.region, language: r.analysis.language, verdict: r.analysis.verdict, demand: r.analysis.indices.demand, competition: r.analysis.indices.competition, opportunity: r.analysis.indices.opportunity, fetchedAt: r.analysis.fetchedAt })}>Planificar campaña</Link></>}
   </article>
 }
 

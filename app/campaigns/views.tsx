@@ -9,6 +9,7 @@ import { CURRENCIES, GOALS, METRICS, PLATFORMS, SUBJECTS } from '@/lib/campaigns
 import { NETWORKS, type Readiness } from '@/lib/campaigns/connections'
 import { suggestPlatforms, effectivePlatforms, assumptionFor, type Strategy } from '@/lib/campaigns/strategy'
 import type { Brief, PlatformId } from '@/lib/campaigns/types'
+import { PLAYBOOKS } from '@/lib/campaigns/playbooks'
 import { NumField, SelectField, TextField } from './fields'
 
 type P = { brief: Brief; set: (patch: Partial<Brief>) => void; strategy: Strategy }
@@ -23,6 +24,12 @@ export function BriefTab({ brief, set, strategy, projects }: P & { projects: Arr
   return <div>
     <p role="status" className="notice" style={{ margin: '0 0 14px' }}><b>{strategy.answered} de 9 preguntas respondidas.</b> Puedes dejar preguntas en blanco: la estrategia se calcula con lo que hay y te dice qué falta.</p>
     <TextField label="Nombre de la campaña" value={brief.name} onChange={name => set({ name })} placeholder="Ej.: Lanzamiento del canal en EE. UU." />
+    <div><label className="muted small" htmlFor="campaign-kind">Tipo de proyecto (cambia plataformas, formatos, indicadores y reglas)</label>
+      <select id="campaign-kind" value={brief.kind ?? ''} onChange={e => set({ kind: (e.target.value || null) as Brief['kind'] })}>
+        <option value="">Detectar automáticamente{brief.kind === null ? ` (ahora: ${strategy.kind.label})` : ''}</option>
+        {Object.values(PLAYBOOKS).map(k => <option key={k.id} value={k.id}>{k.label}</option>)}
+      </select>
+      <p className="muted small">{strategy.kind.blurb}{strategy.kind.inferred ? ' Inferido del nombre y del tema: cámbialo si no es correcto.' : ''}</p></div>
     {projects.length > 0 && <div><label className="muted small" htmlFor="campaign-project">Proyecto de Cerebro Studio (opcional): las piezas se preparan dentro de él</label>
       <select id="campaign-project" value={brief.projectId} onChange={e => set({ projectId: e.target.value })}><option value="">Sin proyecto</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>}
     {brief.source && <p className="notice" role="note"><b>Viene de Investigación.</b> {brief.source.summary}</p>}
@@ -57,6 +64,8 @@ export function StrategyTab({ strategy, brief, set }: P) {
   const toggle = (id: PlatformId) => set({ platforms: current.includes(id) ? current.filter(x => x !== id) : [...current, id] })
   return <div>
     {strategy.origin && <p className="notice" role="note"><b>Origen en Investigación:</b> {strategy.origin}</p>}
+    <p className="muted small"><b>Enfoque: {strategy.kind.label}.</b> {strategy.kind.blurb} <i>(criterio editorial)</i></p>
+    <Feasibility strategy={strategy} />
     <p>{strategy.summary}</p>
     {strategy.warnings.map(w => <p key={w} className="error" role="alert">⚠ {w}</p>)}
     <h3 className="sectionTitle">Plataformas y por qué</h3>
@@ -83,19 +92,23 @@ export function ContentTab({ strategy }: { strategy: Strategy }) {
   </div>
 }
 
-export function BudgetTab({ strategy, brief }: P) {
+export function BudgetTab({ strategy, brief, set }: P) {
   const b = strategy.budget, c = b.currency
   return <div>
     <p>Total <b>{money(b.total, c)}</b> · máximo diario <b>{money(brief.dailyCap, c)}</b> · duración <b>{b.days ?? '—'} días</b>{b.daily !== null && <> · gasto medio <b>{money(b.daily, c)}/día</b></>}</p>
     {b.warnings.map(w => <p key={w} className="error" role="alert">⚠ {w}</p>)}
+    {b.concentration.recommended && <section className="notice" role="note" aria-label="Concentración del presupuesto">
+      <b>{b.concentration.applied ? 'Presupuesto concentrado en una plataforma.' : 'Reparto mantenido por excepción.'}</b> <span className="small">{b.concentration.reason}</span>
+      <label className="msOpt"><input type="checkbox" checked={brief.keepSplit} onChange={e => set({ keepSplit: e.target.checked })} /> Mantener el reparto entre todas las plataformas elegidas (excepción: el informe lo registrará)</label>
+    </section>}
     {b.lines.length > 0 ? <>
       <h3 className="sectionTitle">Reparto por plataforma de pago</h3>
       <table className="dataTable" aria-label="Reparto del presupuesto"><thead><tr><th>Plataforma</th><th>Importe</th><th>% del total</th></tr></thead><tbody>
-        {b.lines.map(l => <tr key={l.platform}><td>{l.label}</td><td>{money(l.amount, c)}</td><td>{l.pct} %</td></tr>)}
+        {b.lines.map(l => <tr key={l.platform}><td>{l.label}{l.note && <div className="muted small">{l.note}</div>}</td><td>{money(l.amount, c)}</td><td>{l.pct} %</td></tr>)}
         <tr><td>Reserva</td><td>{money(b.reserve, c)}</td><td>10 %</td></tr></tbody></table>
       <h3 className="sectionTitle">Reparto por fase</h3>
       <table className="dataTable" aria-label="Presupuesto por fase"><thead><tr><th>Fase</th><th>Importe</th><th>%</th></tr></thead><tbody>{b.phases.map(p => <tr key={p.name}><td>{p.name}</td><td>{money(p.amount, c)}</td><td>{p.pct} %</td></tr>)}</tbody></table>
-    </> : <p className="muted">Sin reparto todavía: indica un presupuesto total y al menos una plataforma de pago.</p>}
+    </> : <p className="muted">{brief.totalBudget === 0 ? 'Campaña sin gasto en medios: la inversión es tiempo de producción y publicación. No se recomienda gastar.' : 'Sin reparto todavía: indica un presupuesto total y al menos una plataforma de pago.'}</p>}
     <h3 className="sectionTitle">Calendario de ejecución</h3>
     <ol className="calendar">{strategy.calendar.map(p => <li key={p.name}><b>{p.name}</b> <span className="muted small">{p.fromDay < 1 ? 'semana previa' : `día ${p.fromDay}${p.toDay !== p.fromDay ? `–${p.toDay}` : ''}`}{p.from ? ` · ${p.from}${p.to && p.to !== p.from ? ` → ${p.to}` : ''}` : ''}</span><ul className="small">{p.tasks.map(t => <li key={t}>{t}</li>)}</ul></li>)}</ol>
   </div>
@@ -113,6 +126,7 @@ export function ResultsTab({ strategy, brief, set }: P) {
     <ul>{strategy.kpis.map(k => <li key={k.platform}><b>{k.platform}:</b> {k.kpis.join(', ')}</li>)}</ul>
     <fieldset className="chips" aria-label="Indicadores a seguir"><legend>Indicadores a seguir (si no eliges ninguno, se siguen todos)</legend>{strategy.kpiOptions.map(k => <button key={k} type="button" className={`chip${brief.kpis.includes(k) ? ' active' : ''}`} aria-pressed={brief.kpis.includes(k)} onClick={() => set({ kpis: brief.kpis.includes(k) ? brief.kpis.filter(x => x !== k) : [...brief.kpis, k] })}>{k}</button>)}</fieldset>
     <h3 className="sectionTitle">Escenarios de resultados estimados</h3>
+    <Feasibility strategy={strategy} />
     {sc ? <>
       <p className="notice" role="note">Estimación con supuestos de ejemplo, <b>no con datos reales</b> de tus cuentas. Edítalos abajo con los de un piloto.</p>
       <table className="dataTable" aria-label="Escenarios"><thead><tr><th>Escenario</th><th>Gasto</th><th>Impresiones</th><th>Clics</th><th>{sc.metricLabel}</th><th>Coste por resultado</th><th>% del objetivo</th></tr></thead><tbody>
@@ -147,4 +161,11 @@ export function ConnectionsTab({ brief }: { brief: Brief }) {
         <a className="open" href={n.docs} target="_blank" rel="noreferrer">Documentación oficial</a>
       </article> })}</div>
   </div>
+}
+
+const FEAS_LABEL = { realista: 'Realista', ambicioso: 'Ambicioso', poco_realista: 'Poco realista', sin_base: 'Sin base', no_comparable: 'No comparable' } as const
+/** Goal against estimate: what you want versus what the budget buys under example assumptions. */
+export function Feasibility({ strategy }: { strategy: Strategy }) {
+  const f = strategy.feasibility
+  return <section className={f.state === 'poco_realista' || f.state === 'ambicioso' ? 'warnBox' : 'notice'} role="note" aria-label="Objetivo frente a estimación"><b>{FEAS_LABEL[f.state]}: {f.headline}.</b> <span className="small">{f.detail}</span></section>
 }

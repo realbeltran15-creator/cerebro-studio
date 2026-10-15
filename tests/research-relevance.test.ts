@@ -193,3 +193,39 @@ describe('recommendations: real thresholds, nothing from weak evidence', () => {
     expect(titles(hi, 'money')).toEqual(['finanzas personales']); expect(titles(recs([mk('unknown rpm', { confidence: 'media', niches: ['motor'], indices: { demand: 80 } })]), 'money')).toEqual([]); void lowRpm
   })
 })
+
+describe('saving keeps the whole analysis, from any card, without duplicates', () => {
+  const fakeDb = () => {
+    const rows: Array<Record<string, unknown>> = []
+    const q = (filters: Array<[string, unknown]> = []) => ({ eq: (k: string, v: unknown) => q([...filters, [k, v]]), limit: async () => ({ data: rows.filter(r => filters.every(([k, v]) => r[k] === v)).map(r => ({ id: r.source_id })), error: null }) })
+    return { rows, auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) }, from: () => ({ select: () => q(), insert: async (row: Record<string, unknown>) => { rows.push(row); return { error: null } } }) }
+  }
+  const analysis = () => analyzeTopic(samples('mortgage guide', 'GB', 'en', many(15, i => ({ title: `mortgage guide ${i}`, lang: 'en', ch: `s${i}` })), many(10, i => ({ title: `mortgage guide new ${i}`, lang: 'en', days: 4 + i, ch: `n${i}` }))), NOW)
+  it('stores indices, growth state, sample quality, format quality and the example videos with their thumbnails', async () => {
+    const { saveAnalysis } = await import('@/lib/research/save'), db = fakeDb(), a = analysis()
+    expect(await saveAnalysis(db as never, a)).toBe('saved')
+    const row = db.rows[0] as { calculated_metrics: Record<string, unknown>; observed_metrics: { snapshot: { videos: Array<{ thumbnailUrl: string | null }> } } }
+    expect(row.calculated_metrics).toMatchObject({ growth: { state: 'no_calculable' }, quality: { examined: 25 }, formatQuality: expect.any(Object), indices: { growth: null } })
+    expect(row.observed_metrics.snapshot.videos.length).toBeGreaterThan(0); expect(row.observed_metrics.snapshot.videos[0].thumbnailUrl).toMatch(/^https:\/\/i\.ytimg\.com\//)
+  })
+  it('saving the same analysis again (from the Nichos card or from a recommendation) does not create a second record', async () => {
+    const { saveAnalysis } = await import('@/lib/research/save'), db = fakeDb(), a = analysis()
+    expect(await saveAnalysis(db as never, a)).toBe('saved'); expect(await saveAnalysis(db as never, a)).toBe('exists'); expect(db.rows).toHaveLength(1)
+    const reco = buildRecommendations({ analyses: [{ ...a, confidence: 'media' }], charts: {}, filters: EMPTY_FILTERS }).sections.flatMap(s => s.items).find(i => i.kind === 'niche' && i.source === 'analysis')
+    expect(reco && reco.kind === 'niche' && reco.analysis).toBeTruthy()
+    if (reco && reco.kind === 'niche' && reco.analysis) expect(await saveAnalysis(db as never, reco.analysis)).toBe('exists')
+  })
+})
+
+describe('relevance is not over-strict: inflections, acronyms and ordinary queries pass', () => {
+  const ok = (q: string, t: string, region = 'ES', lang = 'es') => expect(judge(t, q, region, lang).relevant, `${q} :: ${t}`).toBe(true)
+  it('plural / gender / ending variants and acronym long forms match', () => {
+    ok('reformas baratas', 'Reforma de baño barata: antes y después con poco dinero'); ok('ia para negocios', 'Cómo usar la inteligencia artificial en tu negocio (IA para empresas)')
+    ok('coches eléctricos', 'Los mejores coches eléctricos de 2026: comparativa'); ok('crímenes reales', 'Crimen real: el caso que conmocionó a España')
+    ok('historical mysteries', 'Historical mystery: the mysteries we still ask about', 'US', 'en')
+  })
+  it('ordinary seed queries keep their natural videos', () => {
+    ok('cómo invertir desde cero', 'Cómo invertir en bolsa desde cero: guía para principiantes 2026'); ok('lofi para dormir', 'Música lofi para dormir profundamente | 3 horas')
+    ok('Aktien kaufen für Anfänger', 'Aktien kaufen für Anfänger – Schritt für Schritt erklärt', 'DE', 'de'); ok('cuidado de gatos', 'Cuidado de gatos: lo que todo dueño primerizo debe saber')
+  })
+})

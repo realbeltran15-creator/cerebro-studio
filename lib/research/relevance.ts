@@ -16,13 +16,24 @@ const words = (s: string) => fold(s).trim().split(' ').filter(Boolean)
 const STOP = new Set(('a an the of to in on for and or vs with without is are be do does did how what why when which who your you my our its it this that these those at by from as ' +
   'el la los las un una unos unas de del al en y o con sin por para es son como que cual cuales quien se su tu mi lo ' +
   'der die das ein eine einen und oder mit ohne fur für von zu im in ist sind wie was warum wer ' +
-  'le les des du et ou avec sans pour est sont comment que qui').split(' '))
+  'le les des du et ou avec sans pour est sont comment que qui ' +
+  'desde hasta sobre entre tras hacia muy mas más menos tambien también todo todos toda todas cada solo sin bien into over under about after before between more most very just only really ever best').split(' '))
 /** Words that describe the KIND of video, not its topic: a video about the topic does not have to contain them. */
 const MODIFIER = new Set(('explained explain explanation guide tutorial tutorials review reviews best top tips tricks beginners beginner basics basic introduction intro complete full ultimate easy simple quick new latest 2023 2024 2025 2026 2027 ' +
   'explicado explicacion guia tutorial reseña mejores mejor consejos principiantes basico basica completo completa facil rapido nuevo ' +
   'erklart erklärt einfach anleitung tipps anfanger anfänger grundlagen komplett beste').split(' '))
 /** Market qualifiers: they say WHERE, which the market filter handles, not what the video must contain. */
 const PLACE = new Set(('uk gb usa us u.s england britain british united kingdom states america american canada canadian australia australian aussie deutschland germany german schweiz suisse switzerland swiss espana españa spain spanish mexico chile argentina').split(' '))
+
+/** Short stem so that «reformas / reforma», «baratas / barata», «negocios / negocio», «mystery / mysteries» meet. */
+export const stem = (w: string) => { let r = w.replace(/y$/, 'i'); if (r.length >= 5) r = r.replace(/s$/, ''); if (r.length >= 5) r = r.replace(/(a|o|e)$/, ''); return r }
+/** Acronyms and their long forms: a video about «inteligencia artificial» is a video about «IA». */
+const SYNONYMS: Record<string, string[]> = { ia: ['inteligencia artificial', 'artificial intelligence', 'ai'], ai: ['artificial intelligence', 'inteligencia artificial', 'ia'], ki: ['kunstliche intelligenz', 'ai'], seo: ['search engine optimization', 'optimizacion web'], diy: ['hazlo tu mismo', 'do it yourself'] }
+/** Does the (folded, padded) text contain the term, its stem as a word prefix, or a known synonym? Short terms must match as whole words. */
+export function termHit(text: string, term: string): boolean {
+  const one = (t: string) => { const st = stem(t), st2 = t.replace(/(ies|y)$/, ''); return st.length >= 5 ? text.includes(` ${st}`) || (st2.length >= 5 && text.includes(` ${st2}`)) : text.includes(` ${t} `) || text.includes(` ${t}s `) || text.includes(` ${st} `) }
+  return one(term) || (SYNONYMS[term] ?? []).some(alt => (alt.includes(' ') ? text.includes(` ${alt}`) : one(alt)))
+}
 
 export type QueryProfile = { terms: string[]; niches: string[]; raw: string }
 export function queryProfile(query: string): QueryProfile {
@@ -134,7 +145,7 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
   const head = fold([v.title, ...(v.tags ?? [])].join(' ')), desc = fold(v.description ?? '')
   const n = q.terms.length
   let score = 0
-  for (const t of q.terms) { if (wordHit(head, t)) score += 1; else if (wordHit(desc, t)) score += 0.5 }
+  for (const t of q.terms) { if (termHit(head, t)) score += 1; else if (termHit(desc, t)) score += 0.5 }
   const coverage = n ? score / n : 1
   if (n && coverage < minCoverage(n)) return { ...base, relevant: false, reason: 'tema', detail: `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage }
   const nc = nicheConflict(v, q)

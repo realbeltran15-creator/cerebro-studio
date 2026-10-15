@@ -7,6 +7,8 @@ export type Subject = 'video' | 'channel' | 'product' | 'store' | 'project' | 'o
 export type Goal = 'awareness' | 'views' | 'subscribers' | 'traffic' | 'leads' | 'sales' | 'engagement'
 export type Mode = 'organic' | 'paid' | 'mixed'
 export type PlatformId = 'youtube_organic' | 'instagram_organic' | 'tiktok_organic' | 'google_ads' | 'meta_ads' | 'tiktok_ads'
+/** What kind of project is promoted; it changes platforms, formats, audiences, KPIs and rules. */
+export type ProjectKind = 'lofi' | 'shorts' | 'canal_largo' | 'ecommerce' | 'digital' | 'otro'
 export type Currency = 'EUR' | 'USD' | 'GBP' | 'CHF'
 export type ResultMetric = 'views' | 'clicks' | 'subscribers' | 'leads' | 'sales' | 'reach'
 
@@ -31,13 +33,17 @@ export type Brief = {
   source: { opportunityId: string; summary: string; language: string; fetchedAt: string } | null
   /** KPIs the user chose to track (empty = the suggested ones). */
   kpis: string[]
+  /** null = inferred from the subject and topic. */
+  kind: ProjectKind | null
+  /** true = keep the split across every chosen paid platform even when concentrating is recommended (an exception the report records). */
+  keepSplit: boolean
   /** Per-platform overrides of the example assumptions. */
   assumptions: Partial<Record<PlatformId, Partial<Assumption>>>
 }
 
 export const EMPTY_BRIEF: Brief = {
   name: '', subject: null, subjectName: '', subjectUrl: '', goal: null, countries: [], ageMin: null, ageMax: null, interests: '', audienceNotes: '',
-  platforms: [], totalBudget: null, dailyCap: null, durationDays: null, startDate: '', expectedMetric: null, expectedValue: null, currency: 'EUR', projectId: '', sourceTopic: '', source: null, kpis: [], assumptions: {},
+  platforms: [], totalBudget: null, dailyCap: null, durationDays: null, startDate: '', expectedMetric: null, expectedValue: null, currency: 'EUR', projectId: '', sourceTopic: '', source: null, kpis: [], kind: null, keepSplit: false, assumptions: {},
 }
 
 export type CampaignStatus = 'borrador' | 'lista' | 'archivada'

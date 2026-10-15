@@ -331,3 +331,7 @@ Al repetir la prueba, la API respondió 429 con el mensaje «Rate limit exceeded
 ## Campañas
 
 `/campaigns` es un constructor de campañas orgánicas, de pago y mixtas. Nueve preguntas (se pueden responder a medias) generan estrategia, plataformas justificadas, público, contenido y piezas vinculadas al Estudio, presupuesto por plataforma y fase, calendario, indicadores, escenarios con supuestos editables, reglas para detener/optimizar/ampliar e informe Markdown/JSON. Se guarda en el navegador (`localStorage`); la tabla `campaigns` está preparada en `supabase/migrations/20261015120000_campaigns.sql` y **no se ha aplicado**. Las conexiones con Google Ads, Meta Ads y TikTok Ads **no existen**: ver `docs/campaigns-ad-apis.md`. Desde un análisis de Investigación, «Planificar campaña» abre el constructor con el tema y el país ya rellenos.
+
+
+### Calidad de los datos de Investigación
+Cada resultado de YouTube se juzga antes de contar (`lib/research/relevance.ts`): tema, nicho, idioma del mercado, directos, anuncios y virales atípicos. El crecimiento es «No calculable» hasta que se miden dos ventanas comparables («Medir crecimiento», ≈ 102 unidades). Las recomendaciones usan umbrales explícitos y nunca salen de análisis de confianza baja. Detalle y pruebas: `docs/auditoria-resoluciones.md`.

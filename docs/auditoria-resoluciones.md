@@ -42,3 +42,26 @@ Un revisor de solo lectura revisó `1f1b029..53db55d`. Resultado y estado:
 | Cola y deduplicación solo valen dentro de una instancia de servidor | **limitación conocida**: en Vercel varias instancias podrían pasar el tope a la vez. Solución futura: comprobación en base de datos (requiere `research_cache` aplicada) | — |
 | Contador local con varias pestañas: gana la última escritura | **limitación conocida**; el servidor lo cubre si `research_cache` está aplicada | — |
 | Dos pestañas pisan la lista de campañas guardada | **limitación conocida** (almacén local); se resuelve con la tabla `campaigns` | — |
+
+## Calidad de datos (auditoría real del 2026-10-15)
+Los archivos `auditoria-investigacion.md`, `investigacion-datos-2026-10-15.csv` y las capturas **no llegaron al repositorio ni a esta sesión**: se corrigió con los ejemplos descritos en el encargo. Pendiente de contrastar con los originales.
+
+| Hallazgo | Causa estructural | Corrección | Prueba de regresión (`tests/research-relevance.test.ts`) |
+|---|---|---|---|
+| «ISA explained» devuelve contenido religioso indonesio | `search.list` es una búsqueda difusa (también por descripción y etiquetas); `regionCode`/`relevanceLanguage` solo sesgan el orden; ningún resultado se juzgaba antes de contar | Cada vídeo se juzga (`lib/research/relevance.ts`): idioma del mercado (declarado y detectado, gana la lectura segura del texto), cobertura de los términos del tema, conflicto de nicho (releído SIN las palabras de la consulta) y directos. Lo descartado se muestra con su motivo | «audit example 1» |
+| «first time buyer UK» incluye coches | Las palabras de la consulta daban por buena la categoría («first time buyer» es finanzas, pero «best first time buyer cars» es motor) | El nicho del vídeo se vuelve a leer sin los términos de la consulta; un dominio incompatible lo descarta (`nicho`) | «audit example 2» |
+| País e idioma | Se asumía que `regionCode` implica pertenencia | Idioma verificado; el país del canal (`channels.list`) se muestra como dato (cuántos canales declaran el país), no se usa para incluir/excluir | «country and language…» |
+| Demanda distorsionada | Anuncios, virales y resultados ajenos entraban en la mediana | Promociones y virales atípicos (Q3+3·IQR y >10× mediana) quedan fuera de la demanda; un vídeo con >50 % de las vistas baja la confianza; confianza baja ⇒ nunca «oportunidad» | «demand: ads, viral outliers…» |
+| Crecimiento incorrecto (recientes vs más vistos del año) | Muestras no comparables: ordenación y edad distintas | `growth` es **No calculable** por defecto (índice `null`, nunca 50). «Medir crecimiento» (+102 unidades) compara dos ventanas seguidas de igual duración con ≥ 8 vídeos relevantes en cada una; el alza solo se afirma con ×2 o más por el sesgo de edad | «growth: comparable windows…» |
+| Umbrales de recomendación | Se mostraban «los mejores de la lista» aunque fueran malos | Umbrales explícitos (`THRESHOLDS`) impresos en cada sección; nada con confianza baja; una sección puede quedar vacía | «recommendations: real thresholds…» |
+| Shorts / vídeos largos / directos | Duración ≤ 60 s = Short; `liveStreamingDetails` = directo | #shorts en título, etiquetas o descripción = Short confirmado; ≤ 60 s solo = «probable»; clips, tráileres y vídeo musical de ≤ 60 s no son Short; se cuentan confirmados / probables / no-Short | «formats: duration alone…» |
+| Guardado desde recomendaciones perdía datos y duplicaba | La tarjeta de recomendación guardaba un registro reducido con otro `source_id` | Guarda el análisis completo con el mismo id que la tarjeta de Nichos | «saving keeps the whole analysis…» |
+| Análisis antiguos reutilizados | Podían contener vídeos ajenos | Clave de caché `v2` y descarte local de análisis sin `quality`/`growth` | — |
+
+### Campañas
+| Hallazgo | Corrección | Prueba (`tests/campaigns.test.ts`) |
+|---|---|---|
+| Campaña orgánica con presupuesto 0 podía sugerir subir gasto | Reglas propias orgánicas (solo tiempo/cadencia); sin sugerencias de presupuesto; el informe dice «No se recomienda gastar» | «an organic campaign with budget 0 never recommends spending…» (6 tipos de proyecto) |
+| Se recomendaba concentrar pero el reparto no lo reflejaba | `shouldConcentrate` decide la sugerencia **y** el reparto; con concentración el 90 % va a la mejor plataforma y las demás quedan «en espera»; la excepción es explícita y queda en el informe | «a recommendation to concentrate is reflected in the split…» |
+| Objetivos poco realistas | `feasibilityOf`: realista / ambicioso / poco realista frente a los escenarios, con el presupuesto necesario y la explicación objetivo ≠ estimación | «unrealistic goals are detected…» |
+| Estrategia genérica | Playbooks por tipo (lo-fi, Shorts, canal largo, e-commerce, producto digital): plataformas, formatos, creatividades, KPI, avisos y reglas propias; detectado por nombre/tema y editable | «the project kind changes platforms…» |

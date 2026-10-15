@@ -58,8 +58,12 @@ describe('campaigns: budget, calendar, scenarios, rules', () => {
     const w = buildStrategy(b({ ...full, dailyCap: 10 })).warnings.join(' ')
     expect(w).toMatch(/90 días/); expect(w).toMatch(/33/)
   })
-  it('warns when a small daily cap is spread over several paid platforms', () => {
-    expect(buildStrategy(b({ ...full, dailyCap: 8 })).warnings.join(' ')).toMatch(/menos de 5 por plataforma/)
+  it('a small daily cap over several paid platforms puts the money on ONE platform and says why', () => {
+    const s2 = buildStrategy(b({ ...full, dailyCap: 8 }))
+    expect(s2.budget.concentration).toMatchObject({ recommended: true, applied: true })
+    expect(s2.warnings.join(' ')).toMatch(/menos de 5 EUR al día/)
+    const live = s2.budget.lines.filter(l => l.amount > 0); expect(live).toHaveLength(1); expect(live[0].amount).toBe(810)
+    expect(s2.budget.lines.find(l => l.amount === 0)!.note).toMatch(/En espera/)
   })
   it('the calendar covers the whole duration with real dates when there is a start date', () => {
     expect(s.calendar[1].from).toBe('2026-11-02'); expect(s.calendar.at(-1)!.toDay).toBe(28); expect(s.calendar[0].from).toBe('2026-10-26')
@@ -209,5 +213,81 @@ describe('review fixes: short campaigns, mismatched metrics, bad input', () => {
     const { setStatus } = await import('@/lib/campaigns/store')
     const c = create(full, '2026-10-01T00:00:00Z')
     expect(setStatus([c], c.id, 'lista', '2026-10-02T00:00:00Z')[0].updatedAt).toBe('2026-10-02T00:00:00Z')
+  })
+})
+
+
+describe('quality fixes: organic budget 0, concentration, realistic goals, project kinds', () => {
+  const organic = (extra: Partial<Brief> = {}) => buildStrategy(b({ subject: 'channel', subjectName: 'Canal lo-fi', goal: 'subscribers', countries: ['US'], platforms: ['youtube_organic', 'tiktok_organic'], totalBudget: 0, durationDays: 28, expectedMetric: 'subscribers', expectedValue: 500, ...extra }), Date.parse('2026-10-15T00:00:00Z'))
+  const everyText = (s: ReturnType<typeof organic>) => JSON.stringify([s.suggestions, s.warnings, s.rules, s.calendar, s.content, s.creatives, s.budget, s.feasibility, s.scenarioNote]).toLowerCase()
+  it('an organic campaign with budget 0 never recommends spending, raising the budget or scaling spend', () => {
+    const s = organic(); const t = everyText(s)
+    for (const bad of [/sube el presupuesto/, /subir el presupuesto/, /aumenta el (gasto|presupuesto)/, /invierte más/, /presupuesto diario máximo sugerido/, /piloto de aprendizaje/, /reinviert/]) expect(t, String(bad)).not.toMatch(bad)
+    expect(s.suggestions.join(' ')).toMatch(/No se recomienda gastar/); expect(s.rules.filter(r => r.kind === 'ampliar').every(r => !/presupuesto|gasto|€|eur/i.test(r.then))).toBe(true)
+    expect(s.budget.lines).toHaveLength(0); expect(s.budget.suggestedDailyCap).toBeNull(); expect(s.mode).toBe('organic')
+    expect(new Set(s.rules.map(r => r.kind))).toEqual(new Set(['detener', 'optimizar', 'ampliar']))
+    expect(campaignReport(b({ subject: 'channel', subjectName: 'x', platforms: ['youtube_organic'], totalBudget: 0 }))).toMatch(/No se recomienda gastar/)
+  })
+  it('the same holds for every project kind when the budget is 0', () => {
+    for (const kind of ['lofi', 'shorts', 'canal_largo', 'ecommerce', 'digital', 'otro'] as const) {
+      const t = everyText(organic({ kind, platforms: ['youtube_organic', 'instagram_organic'] }))
+      expect(t, kind).not.toMatch(/sube el presupuesto|subir el presupuesto|aumenta el gasto|invierte más|reinviert|duplica el anuncio/)
+    }
+  })
+  it('a recommendation to concentrate is reflected in the split, or the exception is recorded and justified', () => {
+    const two = b({ goal: 'traffic', subject: 'store', platforms: ['meta_ads', 'google_ads'], totalBudget: 100, durationDays: 14 })
+    const s = buildStrategy(two)
+    expect(s.budget.concentration).toMatchObject({ recommended: true, applied: true }); expect(s.budget.concentration.main).toBe('meta_ads')
+    expect(s.budget.lines.map(l => [l.platform, l.amount])).toEqual([['meta_ads', 90], ['google_ads', 0]]); expect(s.budget.reserve).toBe(10)
+    expect(s.scenarios!.scenarios[1].spend).toBe(90)
+    const kept = buildStrategy({ ...two, keepSplit: true })
+    expect(kept.budget.concentration).toMatchObject({ recommended: true, applied: false }); expect(kept.budget.lines.every(l => l.amount > 0)).toBe(true)
+    expect(kept.budget.concentration.exception).toMatch(/Excepción confirmada por ti/); expect(kept.warnings.join(' ')).toMatch(/Excepción confirmada por ti/)
+    expect(campaignReport({ ...two, keepSplit: true })).toMatch(/Excepción confirmada por ti/); expect(campaignReport(two)).toMatch(/\*\*Concentración:\*\*/)
+    expect(buildStrategy(b({ ...two, totalBudget: 900, dailyCap: 60 })).budget.concentration.recommended).toBe(false)
+    expect(buildStrategy(b({ ...two, totalBudget: 900, dailyCap: 8 })).budget.concentration.recommended).toBe(true)
+  })
+  it('the platform suggestion and the split agree: one paid platform when the money is thin', () => {
+    const t = b({ goal: 'sales', subject: 'store', totalBudget: 100 })
+    expect(suggestPlatforms(t).filter(p => p.endsWith('_ads'))).toHaveLength(1)
+    expect(suggestPlatforms({ ...t, totalBudget: 2000, dailyCap: 5 }).filter(p => p.endsWith('_ads'))).toHaveLength(1)
+    expect(suggestPlatforms({ ...t, totalBudget: 2000, dailyCap: 100 }).filter(p => p.endsWith('_ads'))).toHaveLength(2)
+  })
+  it('unrealistic goals are detected and the difference between goal and estimate is explained', () => {
+    const base = { ...full, expectedMetric: 'subscribers' as const }
+    const huge = buildStrategy({ ...base, expectedValue: 100000 }), ok = buildStrategy({ ...base, expectedValue: 10 }), mid = buildStrategy(b({ ...base, expectedValue: Math.round(buildStrategy(base).scenarios!.scenarios[2].results * 0.9) }))
+    expect(huge.feasibility.state).toBe('poco_realista'); expect(huge.feasibility.headline).toMatch(/muy por encima/); expect(huge.feasibility.budgetForGoal).toBeGreaterThan(900)
+    expect(huge.feasibility.detail).toMatch(/lo que quieres conseguir; los escenarios son lo que el presupuesto compra/)
+    expect(ok.feasibility.state).toBe('realista'); expect(mid.feasibility.state).toBe('ambicioso')
+    expect(campaignReport({ ...base, expectedValue: 100000 })).toMatch(/Poco realista/)
+  })
+  it('without a number or with other units there is no verdict, and organic goals say why', () => {
+    expect(buildStrategy(b({ goal: 'sales' })).feasibility.state).toBe('sin_base')
+    expect(buildStrategy({ ...full, goal: 'sales', expectedMetric: 'views', expectedValue: 100 }).feasibility.state).toBe('no_comparable')
+    expect(organic().feasibility.state).toBe('sin_base'); expect(organic().feasibility.detail).toMatch(/últimas 10 publicaciones/)
+  })
+  it('the project kind changes platforms, formats, creatives, KPIs and rules: lo-fi, Shorts and e-commerce are different plans', () => {
+    const mk = (o: Partial<Brief>) => buildStrategy(b({ goal: 'subscribers', totalBudget: 600, durationDays: 28, countries: ['US'], ...o }))
+    const lofi = mk({ subject: 'channel', subjectName: 'Lofi para estudiar', goal: 'views' }), shorts = mk({ subject: 'channel', subjectName: 'Curiosidades en Shorts' }), shop = mk({ subject: 'store', subjectName: 'Mi tienda de velas', goal: 'sales' })
+    expect([lofi.kind.id, shorts.kind.id, shop.kind.id]).toEqual(['lofi', 'shorts', 'ecommerce']); expect(lofi.kind.inferred).toBe(true)
+    expect(lofi.platforms[0].id).toBe('youtube_organic'); expect(shop.platforms.filter(p => p.chosen).some(p => p.id === 'meta_ads')).toBe(true)
+    expect(lofi.platforms.find(p => p.id === 'meta_ads')!.score).toBeLessThan(shop.platforms.find(p => p.id === 'meta_ads')!.score)
+    expect(lofi.content.map(c => c.item).join(' ')).toMatch(/Mixes de 1–3 horas/); expect(shorts.content.map(c => c.item).join(' ')).toMatch(/Serie de Shorts/); expect(shop.content.map(c => c.item).join(' ')).toMatch(/producto/)
+    expect(lofi.warnings.join(' ')).toMatch(/licencia/); expect(shop.warnings.join(' ')).toMatch(/margen por pedido/); expect(shorts.warnings.join(' ')).toMatch(/Short suele rendir mucho menos/)
+    expect(lofi.creatives.map(c => c.title).join(' ')).toMatch(/Escena visual en bucle/); expect(shop.creatives.map(c => c.title).join(' ')).toMatch(/Vídeo de producto en uso/)
+    expect(shop.chosenKpis.join(' ')).toMatch(/ROAS/); expect(lofi.chosenKpis.join(' ')).toMatch(/Tiempo de visualización/)
+    expect(shop.rules.map(r => r.when).join(' ')).toMatch(/margen por pedido/); expect(lofi.rules.map(r => r.when).join(' ')).toMatch(/mejor mix/)
+    expect(shop.calendar[0].tasks.join(' ')).toMatch(/seguimiento de conversiones/); expect(lofi.calendar[0].tasks.join(' ')).toMatch(/derechos de cada pista/)
+    expect(campaignReport(b({ subject: 'channel', subjectName: 'Lofi para estudiar' }))).toMatch(/## Enfoque: Canal lo-fi/)
+  })
+  it('the user can override the inferred kind', () => {
+    const s = buildStrategy(b({ subject: 'channel', subjectName: 'Lofi para estudiar', kind: 'canal_largo' }))
+    expect(s.kind).toMatchObject({ id: 'canal_largo', inferred: false })
+  })
+  it('paid rules that need money are only present when there is paid media', () => {
+    const orgShop = buildStrategy(b({ subject: 'store', kind: 'ecommerce', platforms: ['instagram_organic'], totalBudget: 0, goal: 'sales' }))
+    expect(orgShop.rules.map(r => r.then).join(' ')).not.toMatch(/Sube el presupuesto|duplica el anuncio/)
+    const paidShop = buildStrategy(b({ subject: 'store', kind: 'ecommerce', platforms: ['meta_ads'], totalBudget: 500, goal: 'sales' }))
+    expect(paidShop.rules.map(r => r.then).join(' ')).toMatch(/Sube el presupuesto/)
   })
 })

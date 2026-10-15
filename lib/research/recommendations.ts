@@ -17,7 +17,9 @@ export type RecoVideo = {
 }
 export type NicheReco = { kind: 'niche'; key: string; topic: string; market: string; verdict: Verdict | null; indices: TopicAnalysis['indices'] | null; confidence: string | null; reason: string; rpmNote: string | null; updatedAt: string; videos: RecoVideo[]; source: 'analysis' | 'chart'
   /** True when the analysis has example videos but all of them are already shown in another recommendation. */
-  examplesElsewhere: boolean }
+  examplesElsewhere: boolean
+  /** The full analysis behind the card, so saving keeps every number, the evidence and the examples (undefined for chart-based cards). */
+  analysis?: TopicAnalysis }
 export type VideoReco = { kind: 'video'; key: string; video: RecoVideo; reason: string }
 export type Reco = NicheReco | VideoReco
 export type RecoSection = { id: string; title: string; blurb: string; items: Reco[]; empty: string }
@@ -70,7 +72,7 @@ const rpmNote = (a: TopicAnalysis) => {
 
 function nicheReco(a: TopicAnalysis, reason: string, used: Set<string>, videosPerNiche: number, pref: Pref): NicheReco {
   const videos = pickVideos(a, used, videosPerNiche, pref)
-  return { kind: 'niche', key: `${a.topic}|${a.region}|${a.language}|${a.recentDays ?? 30}`, topic: a.topic, market: marketLabel(a.region, a.language), verdict: a.verdict, indices: a.indices, confidence: a.confidence, reason, rpmNote: rpmNote(a), updatedAt: a.fetchedAt, videos, source: 'analysis', examplesElsewhere: videos.length === 0 && a.topVideos.length > 0 }
+  return { kind: 'niche', key: `${a.topic}|${a.region}|${a.language}|${a.recentDays ?? 30}`, topic: a.topic, market: marketLabel(a.region, a.language), verdict: a.verdict, indices: a.indices, confidence: a.confidence, reason, rpmNote: rpmNote(a), updatedAt: a.fetchedAt, videos, source: 'analysis', examplesElsewhere: videos.length === 0 && a.topVideos.length > 0, analysis: a }
 }
 
 export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts: Record<string, YouTubeVideoResult[]>; filters: ResearchFilters; perSection?: number; videosPerNiche?: number }): { sections: RecoSection[]; internationalTerms: Array<{ term: string; regions: string[] }>; updatedAt: string | null } {

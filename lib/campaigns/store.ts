@@ -38,7 +38,7 @@ export function sanitizeBrief(raw: unknown): Brief {
     platforms: strs(r.platforms).filter((p): p is Brief['platforms'][number] => ['youtube_organic', 'instagram_organic', 'tiktok_organic', 'google_ads', 'meta_ads', 'tiktok_ads'].includes(p)),
     totalBudget: num(r.totalBudget), dailyCap: (() => { const n = num(r.dailyCap); return n !== null && n > 0 ? n : null })(), durationDays: (() => { const n = num(r.durationDays); return n !== null && n >= 1 && n <= 365 ? Math.round(n) : null })(), startDate: validDate(str(r.startDate, 10)),
     expectedMetric: oneOf(r.expectedMetric, ['views', 'clicks', 'subscribers', 'leads', 'sales', 'reach']), expectedValue: num(r.expectedValue), currency: oneOf(r.currency, ['EUR', 'USD', 'GBP', 'CHF']) ?? 'EUR',
-    projectId: str(r.projectId, 64), sourceTopic: str(r.sourceTopic, 200), source: sanitizeSource(r.source), kpis: strsLong(r.kpis), assumptions: ass,
+    projectId: str(r.projectId, 64), sourceTopic: str(r.sourceTopic, 200), source: sanitizeSource(r.source), kpis: strsLong(r.kpis), kind: oneOf(r.kind, ['lofi', 'shorts', 'canal_largo', 'ecommerce', 'digital', 'otro']), keepSplit: r.keepSplit === true, assumptions: ass,
   }
 }
 
