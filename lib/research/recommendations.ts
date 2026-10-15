@@ -37,7 +37,7 @@ export const THRESHOLDS = {
   demand: { demand: 40 },
   neglected: { demand: 50, competition: 55, supply: 60, opportunity: 55 },
   emerging: { demand: 35, growthIndex: 60, emergingTerms: 3, termVideos: 3 },
-  money: { demand: 35, rpmMid: 4 },
+  money: { demand: 35, rpmLow: 2 },
   lowcomp: { demand: 35, competition: 40 },
   formats: { demand: 35 },
 } as const
@@ -63,7 +63,8 @@ function pickVideos(a: TopicAnalysis, used: Set<string>, n: number, pref: Pref):
   return out
 }
 
-const rpmMid = (a: TopicAnalysis) => a.niches.reduce((m, n) => { const r = formatAdjusted(nicheRpm(n), 'long'); return r.status === 'estimado' ? Math.max(m, r.mid) : m }, 0)
+/** Conservative: ranks by the LOW end of the sector estimate, never the middle or the top. Niches without an estimate count as 0 (unknown). */
+const rpmLow = (a: TopicAnalysis) => a.niches.reduce((m, n) => { const r = formatAdjusted(nicheRpm(n), 'long'); return r.status === 'estimado' ? Math.max(m, r.low) : m }, 0)
 const rpmNote = (a: TopicAnalysis) => {
   const n = a.niches.find(x => nicheRpm(x).status === 'estimado'); if (!n) return null
   const r = formatAdjusted(nicheRpm(n), 'long')
@@ -135,7 +136,7 @@ export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts:
   const isEmerging = (a: TopicAnalysis) => a.indices.demand >= T.emerging.demand && ((a.growth.state === 'calculable' && (a.indices.growth ?? 0) >= T.emerging.growthIndex) || risingTerms(a).length >= T.emerging.emergingTerms)
   add('emerging', 'Nichos emergentes', `Demanda ≥ ${T.emerging.demand} y, o bien crecimiento medido entre ventanas comparables (índice ≥ ${T.emerging.growthIndex}), o al menos ${T.emerging.emergingTerms} frases que aparecen en ${T.emerging.termVideos}+ vídeos recientes y no en el top del año. Sin una de las dos pruebas no se recomienda.`, top(reliable.filter(isEmerging), a => (a.indices.growth ?? 0) * 10 + risingTerms(a).length, a => a.growth.state === 'calculable' ? `Crecimiento ${a.growth.label} (×${a.growth.ratio?.toFixed(2)}): ${a.growth.reason}` : `Crecimiento No calculable; frases al alza: ${risingTerms(a).slice(0, 4).map(t => `${t.term} (${t.videos} vídeos)`).join(', ')}. Es una señal léxica, no una medida de crecimiento.`), none)
   // 4. Monetisation potential (ESTIMATED).
-  add('money', 'Mayor potencial de monetización', `Demanda ≥ ${T.money.demand} y RPM de referencia ≥ $${T.money.rpmMid} por 1000 visitas (vídeo largo). El RPM es una ESTIMACIÓN de terceros, no el de ningún canal.`, top(reliable.filter(a => a.indices.demand >= T.money.demand && rpmMid(a) >= T.money.rpmMid), a => (a.niches.map(n => { const r = nicheRpm(n); return r.status === 'estimado' ? r.mid : 0 }).reduce((m, x) => Math.max(m, x), 0)) * 100 + a.indices.demand, a => `${rpmNote(a)}. Demanda ${a.indices.demand}/100.`), analyses.length ? 'Ningún análisis cae en un nicho con RPM de referencia dentro de los filtros.' : none)
+  add('money', 'Mayor potencial de monetización', `Demanda ≥ ${T.money.demand} y extremo bajo del RPM estimado del sector ≥ $${T.money.rpmLow} por 1000 visitas (vídeo largo). Es una ESTIMACIÓN de terceros, no el RPM de ningún canal ni un ingreso verificado; los nichos sin estimación no entran.`, top(reliable.filter(a => a.indices.demand >= T.money.demand && rpmLow(a) >= T.money.rpmLow), a => (a.niches.map(n => { const r = nicheRpm(n); return r.status === 'estimado' ? r.mid : 0 }).reduce((m, x) => Math.max(m, x), 0)) * 100 + a.indices.demand, a => `${rpmNote(a)}. Demanda ${a.indices.demand}/100.`), analyses.length ? 'Ningún análisis cae en un nicho con RPM de referencia dentro de los filtros.' : none)
   // 5. Lowest competition among niches that do have demand.
   add('lowcomp', 'Menor competencia', `Demanda ≥ ${T.lowcomp.demand} y competencia ≤ ${T.lowcomp.competition}: canales más pequeños y menos concentrados.`, top(reliable.filter(a => a.indices.demand >= T.lowcomp.demand && a.indices.competition <= T.lowcomp.competition), a => 100 - a.indices.competition, a => `Competencia ${a.indices.competition}/100 con demanda ${a.indices.demand}/100: ${a.reasons[2] ?? ''}`), none)
 
@@ -148,4 +149,34 @@ export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts:
   const sections = ORDER.map(id => built.get(id)!)
   const dates = [...analyses.map(a => a.fetchedAt), ...chartVideos.map(v => v.observed.fetchedAt)].sort()
   return { sections, internationalTerms: terms, updatedAt: dates.length ? dates[dates.length - 1] : null }
+}
+
+/**
+ * The one-glance answers a recommendation owes its reader. Everything comes from the analysis; where the data is not enough the answer
+ * says so instead of filling the gap.
+ */
+export type RecoBrief = { niche: string; market: string; demand: string; competition: string; why: string; data: string[]; uncertainty: string; channelType: string; formats: string; nextStep: string }
+
+export function recoBrief(a: TopicAnalysis): RecoBrief {
+  const s = a.stats, fo = formatOpportunity(a)
+  const level = (n: number) => (n >= 67 ? 'alta' : n >= 34 ? 'media' : 'baja')
+  const uncertain: string[] = []
+  if (a.confidence === 'baja') uncertain.push('la muestra relevante es pequeña o está contaminada')
+  if (a.growth.state !== 'calculable') uncertain.push('el crecimiento no se ha medido')
+  if (s && !s.sensitivity.stable) uncertain.push('la conclusión cambia con variaciones razonables de los pesos')
+  if (a.quality.uncertain > 0) uncertain.push(`${a.quality.uncertain} resultados dudosos quedaron fuera de las métricas`)
+  if (a.quality.languageUnverified > a.quality.kept / 2) uncertain.push('el idioma de más de la mitad de los vídeos no se pudo verificar')
+  const why = a.verdict === 'oportunidad' ? 'Hay demanda observable con oferta y competencia manejables.' : a.verdict === 'saturado' ? 'Hay demanda, pero la oferta o los canales dominantes lo hacen difícil: solo con un ángulo muy diferenciado.' : a.verdict === 'sin_demanda' ? 'Pocos vídeos y también poca demanda observable: la ausencia de vídeos no es una oportunidad.' : 'Señales mixtas: no hay base para apostar sin investigar más.'
+  const small = s?.smallWins
+  return {
+    niche: a.topic, market: marketLabel(a.region, a.language),
+    demand: `${level(a.indices.demand)} (${a.indices.demand}/100)${s ? ` · ${s.demandProfile.kind === 'insuficiente' ? 'tipo de demanda sin datos suficientes' : `demanda ${s.demandProfile.kind}`}` : ''}`,
+    competition: `${level(a.indices.competition)} (${a.indices.competition}/100)${s && s.entry.level !== 'sin datos' ? ` · entrada ${s.entry.level}` : ''}`,
+    why,
+    data: [`${a.sampleSizes.top + a.sampleSizes.recent} vídeos relevantes (de ${a.quality.examined} resultados)`, ...(small && small.share !== null ? [`${small.wins} de ${small.small} vídeos de canales pequeños superan sus suscriptores`] : []), `Subidas: ${a.evidence.find(e => e.label.startsWith('Subidas por semana'))?.value ?? '—'} por semana`],
+    uncertainty: uncertain.length ? `Ten en cuenta que ${uncertain.join('; ')}.` : 'Sin avisos especiales; sigue siendo una muestra de 25 vídeos por consulta, no un censo.',
+    channelType: s && small && small.share !== null && small.share >= 0.4 ? 'Canal nuevo o pequeño y especializado' : a.indices.competition > 55 ? 'Canal con propuesta muy diferenciada' : 'Canal temático con constancia',
+    formats: fo.recommended ? `${fo.recommended === 'short' ? 'Shorts' : 'Vídeo largo'} — ${fo.reason}` : 'Sin preferencia clara de formato',
+    nextStep: a.confidence === 'baja' ? 'Antes de nada, repite la búsqueda con palabras más concretas para ampliar la muestra relevante.' : a.growth.state !== 'calculable' ? 'Mide el crecimiento (+102 unidades) y revisa los vídeos de ejemplo.' : 'Revisa los vídeos de ejemplo y prueba un primer vídeo.',
+  }
 }

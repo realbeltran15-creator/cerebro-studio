@@ -22,7 +22,8 @@ Fecha: 2026-10-15 · Estado: **ninguna aplicada**. La base (`psbvqdaksrfrkxbewrl
 - Restricciones: estado inválido, unidades negativas, clave de caché duplicada por usuario y `brief` > 200 KB se rechazan.
 - Borrar un proyecto deja la campaña (`project_id` → null); borrar un usuario borra sus filas.
 - Índices y políticas presentes; RLS activo en ambas.
-- Reversión: los `*.down.sql` eliminan las tablas y no tocan `projects`.
+- **Funciones de coordinación** (`research_quota_day_start`, `research_reserve`, `research_lock`): reserva bajo tope (acepta hasta el tope y rechaza el resto sin dejar fila), liquidación, exclusividad de la concesión, toma de una concesión caducada, aislamiento por usuario, día de cuota = medianoche del Pacífico, sin permiso para `anon`; y **8 sesiones simultáneas** compiten por presupuesto y concesión sin pasarse (`CONCURRENCY CHECK PASSED`).
+- Reversión: los `*.down.sql` eliminan las tablas **y las tres funciones** y no tocan `projects`.
 Limitación: no es un Supabase completo (no se probó PostgREST ni Realtime), y el motor local es 16, no 17.
 
 ## Seguridad

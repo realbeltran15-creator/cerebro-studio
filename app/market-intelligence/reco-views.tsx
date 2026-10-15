@@ -6,7 +6,7 @@ import { campaignLink } from '@/lib/campaigns/link'
 import { saveAnalysis } from '@/lib/research/save'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { VERDICT } from './analysis-views'
-import type { NicheReco, Reco, RecoSection, RecoVideo } from '@/lib/research/recommendations'
+import { recoBrief, type NicheReco, type Reco, type RecoSection, type RecoVideo } from '@/lib/research/recommendations'
 import { fmtCompact, fmtNumber } from '@/lib/research/format'
 
 const FORMAT_NAME = { short: 'Short probable', brief: 'Corto', medium: 'Medio', long: 'Largo', live: 'Directo', unknown: 'Formato desconocido' } as const
@@ -43,6 +43,21 @@ function SaveNiche({ r }: { r: NicheReco }) {
   return <button type="button" className={done ? 'ghost' : undefined} disabled={state === 'saving' || done || !r.analysis} onClick={() => void save()}>{state === 'saved' ? 'Guardada con todos sus datos' : state === 'exists' ? 'Ya estaba guardada' : state === 'saving' ? 'Guardando…' : state === 'error' ? 'No se pudo guardar: reintentar' : 'Guardar para investigar después'}</button>
 }
 
+function RecoBriefView({ a }: { a: NonNullable<NicheReco['analysis']> }) {
+  const b = recoBrief(a)
+  return <details className="small" style={{ margin: '6px 0' }}><summary>Ficha: ¿merece la pena?</summary>
+    <dl style={{ margin: '6px 0 0', display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '2px 10px' }}>
+      <dt><b>Demanda</b></dt><dd style={{ margin: 0 }}>{b.demand}</dd>
+      <dt><b>Competencia</b></dt><dd style={{ margin: 0 }}>{b.competition}</dd>
+      <dt><b>Por qué</b></dt><dd style={{ margin: 0 }}>{b.why}</dd>
+      <dt><b>Datos</b></dt><dd style={{ margin: 0 }}>{b.data.join(' · ')}</dd>
+      <dt><b>Incertidumbre</b></dt><dd style={{ margin: 0 }}>{b.uncertainty}</dd>
+      <dt><b>Tipo de canal</b></dt><dd style={{ margin: 0 }}>{b.channelType}</dd>
+      <dt><b>Formato</b></dt><dd style={{ margin: 0 }}>{b.formats}</dd>
+      <dt><b>Siguiente paso</b></dt><dd style={{ margin: 0 }}>{b.nextStep}</dd>
+    </dl></details>
+}
+
 export function RecoCard({ r }: { r: Reco }) {
   if (r.kind === 'video') return <article className="recoCard" aria-label={`Recomendación: ${r.video.title}`}><VideoTile v={r.video} reason={r.reason} /></article>
   const v = r.verdict ? VERDICT[r.verdict] : null
@@ -55,6 +70,7 @@ export function RecoCard({ r }: { r: Reco }) {
     <p className="small"><b>Por qué:</b> {r.reason}</p>
     {r.rpmNote && <p className="small"><span className="tag estimado">ESTIMADO</span> {r.rpmNote}</p>}
     {r.videos.length > 0 ? <div className="tileRow">{r.videos.map(v => <VideoTile key={v.videoId} v={v} />)}</div> : <p className="muted small">{r.examplesElsewhere ? 'Sus vídeos de ejemplo ya aparecen en otra recomendación (cada vídeo se muestra una sola vez).' : 'Sin vídeos de ejemplo disponibles (no hay muestra guardada de este análisis).'}</p>}
+    {r.analysis && <RecoBriefView a={r.analysis} />}
     <p className="muted small">Actualizado {dateEs(r.updatedAt)} · fuente YouTube Data API{r.confidence ? ` · confianza ${r.confidence}` : ''}</p>
     {r.source === 'analysis' && <SaveNiche r={r} />}{r.analysis && <>{' '}<Link className="open" href={campaignLink({ topic: r.analysis.topic, region: r.analysis.region, language: r.analysis.language, verdict: r.analysis.verdict, demand: r.analysis.indices.demand, competition: r.analysis.indices.competition, opportunity: r.analysis.indices.opportunity, fetchedAt: r.analysis.fetchedAt })}>Planificar campaña</Link></>}
   </article>

@@ -58,3 +58,18 @@ describe('underserved niche detectors', () => {
     expect(opps.filter(o => o.strength !== 'a_verificar')).toEqual([])
   })
 })
+
+describe('recommendation brief answers the questions and never hides uncertainty', () => {
+  it('a thin analysis says so and tells the user to widen the search first', async () => {
+    const { recoBrief } = await import('@/lib/research/recommendations')
+    const thin = build('tiny topic', { top: () => ({}), recent: () => ({}), nTop: 6, nRecent: 3 })
+    const b = recoBrief(thin)
+    expect(b.uncertainty).toMatch(/muestra relevante es pequeña/); expect(b.nextStep).toMatch(/Antes de nada/)
+    for (const k of ['niche', 'market', 'demand', 'competition', 'why', 'uncertainty', 'channelType', 'formats', 'nextStep'] as const) expect(b[k], k).toBeTruthy()
+  })
+  it('a no-demand topic is never presented as an opportunity because supply is low', async () => {
+    const { recoBrief } = await import('@/lib/research/recommendations')
+    const a = build('nobody watches', { top: () => ({ views: 120, subs: 300 }), recent: () => ({ views: 20, days: 15 }), nRecent: 10 })
+    expect(recoBrief(a).why).toMatch(/ausencia de vídeos no es una oportunidad|Señales mixtas/)
+  })
+})
