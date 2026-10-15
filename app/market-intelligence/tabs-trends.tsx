@@ -1,5 +1,6 @@
 'use client'
 
+import { MarketComparisonPanel, OpportunitiesPanel } from './insight-panels'
 import { useEffect, useMemo, useState } from 'react'
 import { YouTubeResults } from '../components/youtube-results'
 import { RpmLine, RunStatus } from './analysis-views'
@@ -70,6 +71,7 @@ export function InternationalTab({ onSaved }: { onSaved: () => void }) {
       <p className="muted small" style={{ margin: '6px 0 10px' }}>Escribe un tema arriba («Tema a comparar») y pulsa «Aplicar y buscar»: se analiza en cada mercado de los filtros (cada uno cuesta una consulta de {UNITS.topic} unidades; las ya hechas salen de la caché) y se cargan las listas de tendencias que falten.</p>
       {best && same.length > 1 && <p className="notice" role="status">Mayor oportunidad calculada para «{best.topic}»: <b>{marketLabel(best.region, best.language)}</b> ({best.indices.opportunity}/100, confianza {best.confidence}). {best.headline}.</p>}
       {fa.notice}
+      {same.length > 1 && <MarketComparisonPanel rows={same} />}
       <Results list={same} onSaved={onSaved} empty={t ? 'Aún no hay análisis de este tema en los mercados elegidos: pulsa «Aplicar y buscar» arriba.' : 'Escribe un tema arriba y analiza los mercados elegidos.'} />
     </section>
   </>
@@ -135,6 +137,7 @@ export function DiscoverTab({ goTo }: { onSaved: () => void; goTo: (tab: string)
     {chartsError && <p className="error" role="alert">{chartsError}</p>}
     {list.length === 0 && <div className="notice" role="status"><p><b>Las recomendaciones por demanda, desatendidos, emergentes, monetización, competencia y formato necesitan analizar nichos.</b> Aún no hay análisis: <button type="button" className="ghost" onClick={() => goTo('niches')}>Ir a Nichos</button> (el botón de buscar muestra el coste y siempre pide confirmación si es alto).</p></div>}
     {fa.notice}
+    {list.length > 0 && <OpportunitiesPanel list={fa.rows} />}
     {reco.sections.map(sec => <RecoSectionView key={sec.id} s={sec}>
       {sec.id === 'international' && reco.internationalTerms.length > 0 && <div className="legend" style={{ margin: '4px 0 10px' }} aria-label="Términos compartidos"><span className="muted small">Términos en varios países <span className="tag calculado">calculado</span>:</span>{reco.internationalTerms.map(t => <span key={t.term} className="pill" title={t.regions.map(countryName).join(', ')}>{t.term} · {t.regions.length} países</span>)}</div>}
       {sec.id === 'international' && <p className="small" style={{ marginBottom: 8 }}><button type="button" className="ghost" onClick={() => goTo('international')}>Ver la comparación completa por país</button></p>}

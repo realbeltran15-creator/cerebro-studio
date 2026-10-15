@@ -1,5 +1,6 @@
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { stopwords } from '@/lib/radar'
+import { concentration, demandProfile, entryDifficulty, medianInterval, opportunityOf, sensitivity, smallChannelWins, verdictOf, type Concentration, type DemandProfile, type Entry, type SmallWins, type Sensitivity, type Verdict } from './statistics'
 import { inferFormat, nichesOf, type Confidence } from './taxonomy'
 import { assessVideo, expectedLanguages, queryProfile, viralOutliers, type Assessment, type ExclusionReason, type SampleQuality, type VideoStatus } from './relevance'
 export type { SampleQuality } from './relevance'
@@ -15,7 +16,7 @@ export type { SampleQuality } from './relevance'
 export type Sample = { videos: YouTubeVideoResult[]; approxTotal: number | null }
 export type TopicSamples = { topic: string; region: string | null; language: string | null; top: Sample; recent: Sample; /** Window of the "recent" sample, in days. */ recentDays?: number; fetchedAt: string; units: number }
 
-export type Verdict = 'oportunidad' | 'saturado' | 'sin_demanda' | 'mixto'
+export type { Verdict } from './statistics'
 export type Evidence = { label: string; value: string; kind: 'observado' | 'calculado' | 'inferido' }
 
 /** One video of the raw search, with the verdict it got and why: nothing the engine looked at is hidden from the user. */
@@ -64,6 +65,8 @@ export type TopicAnalysis = {
   formatQuality: { shortConfirmed: number; shortProbable: number; clipsNotShort: number }
   niches: string[]
   terms: Term[]; emerging: Term[]; questions: Array<{ text: string; videoId: string; views: number | null }>
+  /** Statistical reading of the sample. Optional: analyses saved before it existed do not have it. */
+  stats?: { concentration: Concentration; smallWins: SmallWins; demandProfile: DemandProfile; entry: Entry; sensitivity: Sensitivity; demandInterval: { lo: number; hi: number } | null }
   sampleSizes: { top: number; recent: number }
   approxTotals: { top: number | null; recent: number | null }
   topVideos: YouTubeVideoResult[]
@@ -183,11 +186,6 @@ export function growthFrom(recent: { n: number; medianVpd: number | null }, prev
   return { ...base, previous, state: 'calculable', ratio, label, reason: `Vistas por día (mediana): ${Math.round(recent.medianVpd)} en los últimos ${windowDays} días frente a ${Math.round(previous.medianVpd)} en los ${windowDays} anteriores (×${ratio.toFixed(2)}). Los vídeos más antiguos tuvieron más tiempo para acumular vistas, por eso solo se habla de alza con ×${EVIDENCE.growthUp} o más y de baja con ×${EVIDENCE.growthDown} o menos.` }
 }
 const growthIndex = (g: GrowthResult) => (g.state === 'calculable' && g.ratio ? Math.round(clamp(50 + 40 * Math.log2(Math.max(g.ratio, 0.05) / 1.5))) : null)
-const opportunityOf = (demand: number, competition: number, supply: number, growth: number | null) => {
-  const raw = growth === null ? (0.45 * demand + 0.25 * (100 - competition) + 0.2 * (100 - supply)) / 0.9 : 0.45 * demand + 0.25 * (100 - competition) + 0.2 * (100 - supply) + 0.1 * growth
-  return Math.round(demand < 25 ? Math.min(raw, 20) : raw)
-}
-
 export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   // Relevance first: the raw search is fuzzy. What survives is unique, on-topic, in the market's language and not on air.
   const c = clean(s)
@@ -246,12 +244,16 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   if (oneVideoShare > EVIDENCE.topVideoShare && top.length >= 5) lowReasons.push(`un solo vídeo reúne el ${Math.round(oneVideoShare * 100)} % de las vistas de la muestra`)
   const confidence: Confidence = lowReasons.length ? 'baja' : enough ? 'media' : 'baja'
 
-  const verdictRaw: Verdict = demand < 25 ? 'sin_demanda'
-    : demand >= 50 && competition <= 55 && supply <= 60 ? 'oportunidad'
-    : demand >= 50 && (competition > 70 || supply > 75) ? 'saturado' : 'mixto'
+  const verdictRaw: Verdict = verdictOf(demand, competition, supply)
   // Thin or contaminated evidence never earns the label «oportunidad».
   const verdict: Verdict = confidence === 'baja' && verdictRaw === 'oportunidad' ? 'mixto' : verdictRaw
   const opportunity = opportunityOf(demand, competition, supply, growthIdx)
+  const conc = concentration(top.map(v => ({ channelId: v.channelId, views: v.observed.views })))
+  const small = smallChannelWins(top.map(v => ({ subs: v.observed.channelSubscribers, views: v.observed.views })))
+  const profile = demandProfile({ topVpd, recentVpd: recentCohort.medianVpd, oneVideoShare, outliers: quality.outliers, relevantTop: top.length, relevantRecent: recent.length })
+  const entry = entryDifficulty({ competition, supply, concentration: conc, smallWins: small })
+  const sens = sensitivity({ demand, competition, supply, growth: growthIdx })
+  const statistical = { concentration: conc, smallWins: small, demandProfile: profile, entry, sensitivity: sens, demandInterval: medianInterval(topVpdAll) }
 
   const confidenceNote = `Muestra de ${top.length} vídeos relevantes entre los más vistos y ${recent.length} entre los recientes (de ${quality.examined} resultados de YouTube; ${quality.kept} sirven; YouTube no permite contar todos los vídeos ni creadores).${lowReasons.length ? ` Confianza baja: ${lowReasons.join('; ')}.` : ''} ${subsKnown.length}/${top.length} canales con suscriptores visibles. Con una sola fuente la confianza nunca pasa de «media».`
 
@@ -271,6 +273,9 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     { label: 'Canales distintos entre los vídeos recientes', value: `${recentChannels} de ${recent.length}`, kind: 'observado' },
     { label: 'Suscriptores del canal mediano de los más vistos', value: medianSubs === null ? 'sin datos' : k(Math.round(medianSubs)), kind: 'observado' },
     { label: 'Canales de ≥ 100 000 suscriptores en el top 10', value: `${big} de ${top10.length}`, kind: 'observado' },
+    { label: 'Reparto de vistas entre canales (HHI 0–10 000 / los 3 mayores)', value: conc.hhi === null ? 'sin datos suficientes' : `${conc.hhi} (${conc.level}) / ${Math.round(conc.top3 * 100)} %`, kind: 'calculado' },
+    { label: 'Vídeos de canales pequeños (< 20 000 suscriptores) que superan sus suscriptores', value: small.share === null ? 'pocos canales pequeños en la muestra' : `${small.wins} de ${small.small}`, kind: 'calculado' },
+    { label: 'Tipo de demanda', value: profile.kind === 'insuficiente' ? 'sin datos suficientes' : profile.kind, kind: 'inferido' },
     { label: 'Cuota de vistas del canal dominante (muestra)', value: `${Math.round(topShare * 100)} %`, kind: 'calculado' },
     { label: 'Shorts: confirmados con #shorts / probables solo por duración / clips cortos que no son Shorts', value: `${fq.shortConfirmed} / ${fq.shortProbable} / ${fq.clipsNotShort}`, kind: 'inferido' },
     { label: 'Crecimiento (ventanas comparables)', value: growth.state === 'calculable' ? growth.label! : 'No calculable', kind: 'calculado' },
@@ -294,7 +299,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const isShortProper = (v: YouTubeVideoResult) => { const f = inferFormat(v); return f.format === 'short' }
   return {
     topic: s.topic, region: s.region, language: s.language, fetchedAt: s.fetchedAt, units: s.units, recentDays: WINDOW,
-    indices: { demand, supply, competition, growth: growthIdx, opportunity }, growth, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence, quality,
+    indices: { demand, supply, competition, growth: growthIdx, opportunity }, stats: statistical, growth, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence, quality,
     byFormat: { short: stats(top, recent, isShortProper), long: stats(top, recent, isLong) }, formatQuality: fq,
     niches, terms: extractTerms(both), emerging: emergingTerms(top, recent), questions: extractQuestions(both),
     sampleSizes: { top: top.length, recent: recent.length }, approxTotals: { top: s.top.approxTotal, recent: s.recent.approxTotal },
@@ -318,7 +323,7 @@ export function applyGrowth(a: TopicAnalysis, previous: Sample, now = Date.now()
   const pct = growth.state === 'calculable' && growth.ratio ? Math.round((growth.ratio - 1) * 100) : null
   const reasons = a.reasons.map(r => (r.startsWith('Crecimiento:') ? `Crecimiento: ${growth.state === 'calculable' ? growth.label : 'No calculable'}. ${growth.reason}` : r))
   const evidence = a.evidence.map(e => (e.label.startsWith('Crecimiento') ? { ...e, value: growth.state === 'calculable' ? `${growth.label} (×${growth.ratio!.toFixed(2)})` : 'No calculable' } : e))
-  return { ...a, growth, growthPct: pct, indices: { ...a.indices, growth: growthIdx, opportunity: opportunityOf(a.indices.demand, a.indices.competition, a.indices.supply, growthIdx) }, reasons, evidence }
+  return { ...a, growth, growthPct: pct, ...(a.stats ? { stats: { ...a.stats, sensitivity: sensitivity({ demand: a.indices.demand, competition: a.indices.competition, supply: a.indices.supply, growth: growthIdx }) } } : {}), indices: { ...a.indices, growth: growthIdx, opportunity: opportunityOf(a.indices.demand, a.indices.competition, a.indices.supply, growthIdx) }, reasons, evidence }
 }
 
 /** Where the topic is popular but little is published in a format: H "oportunidades por formato". */
