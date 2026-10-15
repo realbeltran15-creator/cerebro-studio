@@ -60,7 +60,7 @@ export type YouTubeVideoResult = {
 }
 
 export class YouTubeApiError extends Error {
-  constructor(message: string, readonly status: number) { super(message) }
+  constructor(message: string, readonly status: number, readonly reason?: string) { super(message) }
 }
 
 export function youtubeConfigured() {
@@ -89,12 +89,12 @@ async function call<T>(path: string, params: Record<string, string>, key: string
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: { errors?: Array<{ reason?: string }> } } | null
     const reason = body?.error?.errors?.[0]?.reason
-    const message = reason === 'quotaExceeded' || reason === 'dailyLimitExceeded'
-      ? 'Se ha agotado la cuota diaria de YouTube Data API.'
+    const message = reason === 'quotaExceeded' || reason === 'dailyLimitExceeded' || reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded'
+      ? 'Se ha agotado la cuota o el límite de búsquedas de YouTube Data API.'
       : response.status === 400 && reason === 'keyInvalid' ? 'YouTube rechazó la clave API.'
       : response.status === 403 ? 'YouTube denegó el acceso: revisa que YouTube Data API v3 esté habilitada para la clave.'
       : `YouTube Data API respondió ${response.status}.`
-    throw new YouTubeApiError(message, response.status)
+    throw new YouTubeApiError(message, response.status, reason)
   }
   return response.json() as Promise<T>
 }

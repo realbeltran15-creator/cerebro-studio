@@ -1,5 +1,6 @@
 'use client'
 
+import { QuotaNote } from './insight-panels'
 import { useEffect, useMemo, useState } from 'react'
 import { MultiSelect } from '../components/multi-select'
 import { useResearch } from './research-context'
@@ -168,7 +169,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
     {hasWork && <div className="searchPlan" aria-label="Qué hará el botón">
       <p className="small"><b>Se buscará:</b> {plan.summary}{plan.auto ? ' — ideas propuestas por Cerebro Studio a partir de tus nichos (cámbialas escribiendo tus temas)' : ''}.</p>
       <p className="small"><b>Coste previsto:</b> {plan.message}</p>
-      {usage && <p className="muted small">Hoy has usado {fmtNumber(usage.usedToday)} de {fmtNumber(usage.cap)} unidades de Investigación{usage.persistent ? '' : ' (contador en memoria: aplica la migración research_cache para que sea exacto y compartido)'}.</p>}
+      {usage && <QuotaNote usage={usage} />}
       {needsConfirm && <label className="msOpt"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> Entiendo que esto gastará {fmtNumber(plan.units)} unidades de cuota</label>}
     </div>}
     {!hasWork && (tab === 'niches' || tab === 'keywords' || tab === 'competition') && <p className="muted small" style={{ marginTop: 8 }}>{tab === 'keywords' ? 'Escribe una palabra clave para poder buscar.' : tab === 'competition' ? 'Escribe qué quieres buscar para poder lanzar la búsqueda.' : 'Elige mercados y nichos y escribe temas (o déjalo vacío para recibir ideas).'}</p>}

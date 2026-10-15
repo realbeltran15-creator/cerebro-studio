@@ -1,5 +1,6 @@
 'use client'
 
+import { QuotaNote } from './insight-panels'
 import { useMemo, useState } from 'react'
 import { useResearch } from './research-context'
 import { budgetPlan, needsConfirm, planGuided, reportCsv, reportMarkdown, jobKey } from '@/lib/research/guided'
@@ -25,7 +26,7 @@ export function GuidedPanel() {
   const jobs = useMemo(() => guided?.jobs ?? [], [guided])
   const cap = usage?.cap ?? 6000
   const rd = guided?.recentDays ?? recentDays
-  const bp = useMemo(() => budgetPlan({ jobs, done: analyses, recentDays: rd, remainingToday: usage?.remaining ?? cap, dailyCap: cap }), [jobs, analyses, rd, usage, cap])
+  const bp = useMemo(() => budgetPlan({ jobs, done: analyses, recentDays: rd, remainingToday: usage?.remaining ?? cap, remainingSearches: usage?.searchesRemaining, dailyCap: cap }), [jobs, analyses, rd, usage, cap])
   const perMarketRows = useMemo(() => {
     const by = new Map<string, { label: string; planned: number; done: number }>()
     for (const j of jobs) { const e = by.get(j.market.label) ?? { label: j.market.label, planned: 0, done: 0 }; e.planned++; if (analyses[jobKey(j, rd)]) e.done++; by.set(j.market.label, e) }
@@ -52,7 +53,7 @@ export function GuidedPanel() {
       <div className="tableScroll"><table className="dataTable" aria-label="Progreso del plan"><thead><tr><th>Mercado</th><th>Planificados</th><th>Hechos</th><th>Pendientes</th></tr></thead>
         <tbody>{perMarketRows.map(r => <tr key={r.label}><td>{r.label}</td><td>{r.planned}</td><td>{r.done}</td><td>{r.planned - r.done}</td></tr>)}</tbody></table></div>
       <p className="small" style={{ marginTop: 8 }}>{bp.message}</p>
-      {usage && <p className="muted small">Hoy has usado {fmtNumber(usage.usedToday)} de {fmtNumber(usage.cap)} unidades de Investigación.</p>}
+      {usage && <QuotaNote usage={usage} />}
       {bp.pending > 0 && bp.todayJobs === 0 && <p className="warnBox" role="status">Hoy no queda presupuesto para otro análisis: el plan continúa mañana (se guarda en este navegador).</p>}
       {confirmNeeded && <label className="msOpt"><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> Entiendo que esto gastará {fmtNumber(bp.todayUnits)} unidades de cuota hoy</label>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>

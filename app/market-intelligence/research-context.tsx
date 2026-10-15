@@ -4,14 +4,15 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { EMPTY_FILTERS, durationParam, loadPresets, planTopicBatch, savePresets, addPreset, sanitizeFilters, sameFilters, validateFilters, type ActiveChip, type Plan, type Preset, type ResearchFilters } from '@/lib/research/filters'
 import { analysisKey, isFresh, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
 import { jobKey, type Job } from '@/lib/research/guided'
-import { quotaDayStart } from '@/lib/research/cache'
-import { addUnits, effectiveUsage, emptyLedger, parseLedger, type Ledger } from '@/lib/research/ledger'
+import { quotaDayKey } from '@/lib/research/cache'
+import { addUnits, effectiveUsage, emptyLedger, ledgerHeader, parseLedger, type Ledger, type ServerUsage } from '@/lib/research/ledger'
+import { LEDGER_HEADER } from '@/lib/research/guard-header'
 import { UNITS } from '@/lib/research/filters'
 import type { Queries, SearchPlan } from '@/lib/research/search-plan'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 
-type Usage = { usedToday: number; cap: number; remaining: number; persistent: boolean } | null
+type Usage = ReturnType<typeof effectiveUsage> | null
 type Progress = { done: number; total: number; current: string } | null
 
 export type RunSummary = { at: string; ok: number; failed: string[]; total: number; units: number }
@@ -70,15 +71,20 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const [charts, setCharts] = useState<Record<string, YouTubeVideoResult[]>>({})
   const [chartsBusy, setChartsBusy] = useState(false)
   const [chartsError, setChartsError] = useState('')
-  const [serverUsage, setUsage] = useState<Usage>(null)
+  const [serverUsage, setServerUsage] = useState<ServerUsage | null>(null)
+  /** Records the figures the server reports; the day is a calendar label, never a timestamp. */
+  const takeServer = useCallback((u: ServerUsage | null | undefined) => { if (!u) return; const next = { ...u, day: quotaDayKey() }; serverRef.current = next; setServerUsage(next) }, [])
   const [ledger, setLedger] = useState<Ledger>(() => emptyLedger())
   const ledgerRef = useRef<Ledger>(ledger)
   /** Latest server figures, read inside long loops where React state would be stale. */
-  const serverRef = useRef<{ usedToday: number; cap: number; persistent: boolean; day: number } | null>(null)
+  const serverRef = useRef<ServerUsage | null>(null)
   const remainingNow = useCallback(() => effectiveUsage(serverRef.current, ledgerRef.current).remaining, [])
+  const searchesLeft = useCallback(() => effectiveUsage(serverRef.current, ledgerRef.current).searchesRemaining, [])
+  /** Every paid request carries this browser's own tally, so a server that forgot the day (cold start, no table) never resets it. */
+  const paidFetch = useCallback((url: string) => fetch(url, { cache: 'no-store', headers: { [LEDGER_HEADER]: ledgerHeader(ledgerRef.current) } }), [])
   const usage = useMemo<Usage>(() => (serverUsage || ledger.units ? effectiveUsage(serverUsage, ledger) : null), [serverUsage, ledger])
   /** Records units this browser asked YouTube for and returns the new ledger. */
-  const spend = useCallback((units: number) => { const next = addUnits(ledgerRef.current, units); ledgerRef.current = next; setLedger(next); try { store()?.setItem(LEDGER, JSON.stringify(next)) } catch { /* private mode */ } return next }, [])
+  const spend = useCallback((units: number, searches = 0) => { const next = addUnits(ledgerRef.current, units, Date.now(), searches); ledgerRef.current = next; setLedger(next); try { store()?.setItem(LEDGER, JSON.stringify(next)) } catch { /* private mode */ } return next }, [])
   const [progress, setProgress] = useState<Progress>(null)
   const [error, setError] = useState('')
   const [presets, setPresets] = useState<Preset[]>([])
@@ -116,15 +122,15 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   }, [analyses, charts, guided, hydrated])
 
   const refreshUsage = useCallback(async () => {
-    try { const r = await fetch('/api/research/usage', { cache: 'no-store' }); if (r.ok) { const u = await r.json() as Usage; if (u) serverRef.current = { usedToday: u.usedToday, cap: u.cap, persistent: u.persistent, day: quotaDayStart() }; setUsage(u) } } catch { /* offline */ }
-  }, [])
+    try { const r = await paidFetch('/api/research/usage'); if (r.ok) takeServer(await r.json() as ServerUsage) } catch { /* offline */ }
+  }, [paidFetch, takeServer])
   useEffect(() => { void refreshUsage() }, [refreshUsage])
 
   const markets = useMemo(() => marketsFromFilters(filters), [filters])
   const recentDays = recentDaysFrom(filters.periodDays)
   const plan = useCallback((topics: string[], ms: Market[] = markets) => {
     const cached = topics.flatMap(t => ms.map(m => analysisKey(t, m.region, m.language, recentDays))).filter(k => analyses[k] && isFresh(analyses[k])).length
-    return planTopicBatch({ topics: topics.length, regions: ms.length, cachedCombos: cached, remainingToday: usage?.remaining ?? effectiveUsage(null, ledger).remaining })
+    return planTopicBatch({ topics: topics.length, regions: ms.length, cachedCombos: cached, remainingToday: usage?.remaining ?? effectiveUsage(null, ledger).remaining, remainingSearches: usage?.searchesRemaining ?? effectiveUsage(null, ledger).searchesRemaining })
   }, [analyses, markets, usage, ledger, recentDays])
 
   const runJobs = useCallback(async (all: Job[], opts: { recentDays: number; maxJobs?: number; refresh?: boolean }) => {
@@ -136,37 +142,36 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       if (stop.current) break
       const { topic, market: m } = jobs[i]
       // Without budget only the server cache (free) may answer: ask for it first and stop only when it has nothing.
-      const broke = remainingNow() < UNITS.topic
+      const broke = remainingNow() < UNITS.topic || searchesLeft() < 2
       try {
         const p = new URLSearchParams({ q: topic, days: String(opts.recentDays) }); if (m.region) p.set('region', m.region); if (m.language) p.set('lang', m.language); if (opts.refresh && !broke) p.set('refresh', '1'); if (broke) p.set('cacheOnly', '1')
-        const r = await fetch(`/api/research/topic?${p}`, { cache: 'no-store' })
-        const j = await r.json() as { analysis?: TopicAnalysis; cached?: boolean; error?: string; usage?: { usedToday: number; cap: number; persistent: boolean } }
+        const r = await paidFetch(`/api/research/topic?${p}`)
+        const j = await r.json() as { analysis?: TopicAnalysis; cached?: boolean; error?: string; usage?: ServerUsage }
         if (broke && r.ok && !j.analysis) { setError(`Presupuesto de hoy agotado en este navegador (${effectiveUsage(serverRef.current, ledgerRef.current).usedToday} de ${effectiveUsage(serverRef.current, ledgerRef.current).cap} unidades). Quedan ${jobs.length - i} consulta${jobs.length - i === 1 ? '' : 's'} para mañana.`); break }
         if (!r.ok || !j.analysis) { failed.push(`${topic} · ${m.label}: ${r.status === 409 ? 'otra ventana o dispositivo la está consultando ahora mismo (no se ha gastado cuota); pulsa «Reintentar lo que falló» en unos segundos' : j.error ?? 'error'}`); if (r.status === 429 || r.status === 503) { setError(j.error ?? 'No se pudo consultar YouTube.'); break } continue }
-        setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: j.analysis! })); ok++; if (!j.cached) { units += j.analysis!.units; spend(j.analysis!.units) }
-        if (j.usage) serverRef.current = { ...j.usage, day: quotaDayStart() }
-        if (j.usage) setUsage({ usedToday: j.usage.usedToday, cap: j.usage.cap, remaining: Math.max(j.usage.cap - j.usage.usedToday, 0), persistent: j.usage.persistent })
+        setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: j.analysis! })); ok++; if (!j.cached) { units += j.analysis!.units; spend(j.analysis!.units, Math.round(j.analysis!.units / UNITS.search)) }
+        takeServer(j.usage)
       } catch (e) { failed.push(`${topic} · ${m.label}: ${e instanceof Error ? e.message : 'error'}`) }
     }
     setProgress(null)
     if (failed.length) setError(e => e || failed.slice(0, 3).join(' · '))
     setLastRun({ at: new Date().toISOString(), ok, failed, total: jobs.length, units })
     return { ok, failed }
-  }, [analyses, spend, remainingNow])
+  }, [analyses, spend, remainingNow, searchesLeft, paidFetch, takeServer])
 
   const measureGrowth = useCallback(async (a: TopicAnalysis) => {
-    if (remainingNow() < UNITS.search) { setError('No queda presupuesto de hoy para medir el crecimiento (102 unidades).'); return }
+    if (remainingNow() < UNITS.search || searchesLeft() < 1) { setError('No queda presupuesto de hoy para medir el crecimiento (102 unidades y 1 búsqueda).'); return }
     setGrowthBusy(true); setError('')
     try {
       const p = new URLSearchParams({ q: a.topic, days: String(a.recentDays), growth: '1' }); if (a.region) p.set('region', a.region); if (a.language) p.set('lang', a.language)
-      const r = await fetch(`/api/research/topic?${p}`, { cache: 'no-store' })
-      const j = await r.json() as { analysis?: TopicAnalysis; error?: string; usage?: { usedToday: number; cap: number; persistent: boolean } }
+      const r = await paidFetch(`/api/research/topic?${p}`)
+      const j = await r.json() as { analysis?: TopicAnalysis; error?: string; usage?: ServerUsage }
       if (!r.ok || !j.analysis) { setError(j.error ?? 'No se pudo medir el crecimiento.'); return }
-      spend(UNITS.search)
+      spend(UNITS.search, 1)
       setAnalyses(all => ({ ...all, [analysisKey(a.topic, a.region, a.language, a.recentDays)]: j.analysis! }))
-      if (j.usage) { serverRef.current = { ...j.usage, day: quotaDayStart() }; setUsage({ usedToday: j.usage.usedToday, cap: j.usage.cap, remaining: Math.max(j.usage.cap - j.usage.usedToday, 0), persistent: j.usage.persistent }) }
+      takeServer(j.usage)
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo medir el crecimiento.') } finally { setGrowthBusy(false) }
-  }, [spend, remainingNow])
+  }, [spend, remainingNow, searchesLeft, paidFetch, takeServer])
 
   const run = useCallback((topics: string[], ms: Market[] = markets, opts: { refresh?: boolean } = {}) =>
     runJobs(topics.flatMap(topic => ms.map(market => ({ topic, market }))), { recentDays, refresh: opts.refresh }), [runJobs, markets, recentDays])
@@ -175,15 +180,15 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     setSearch(s => ({ ...s, busy: true, error: '', done: '' }))
     const out: Array<{ region: string; videos: YouTubeVideoResult[] }> = [], failed: string[] = []
     for (const m of ms) {
-      if (remainingNow() < UNITS.search) { failed.push(`${m.label}: presupuesto de hoy agotado`); break }
+      if (remainingNow() < UNITS.search || searchesLeft() < 1) { failed.push(`${m.label}: presupuesto de hoy agotado`); break }
       try {
         const params = new URLSearchParams({ q, order, max: '25' })
         if (m.region) params.set('region', m.region); if (m.language) params.set('lang', m.language); if (f.periodDays) params.set('days', String(f.periodDays))
         const d = durationParam(f.formats); if (d) params.set('duration', d)
-        const response = await fetch(`/api/research/youtube?${params}`, { cache: 'no-store' })
+        const response = await paidFetch(`/api/research/youtube?${params}`)
         const json = await response.json() as { results?: YouTubeVideoResult[]; error?: string }
         if (!response.ok) { failed.push(`${m.label}: ${json.error ?? 'error'}`); if (response.status === 503 || response.status === 429) break; continue }
-        spend(UNITS.search)
+        spend(UNITS.search, 1)
         out.push({ region: m.region ?? m.label, videos: json.results ?? [] })
       } catch (e) { failed.push(`${m.label}: ${e instanceof Error ? e.message : 'error'}`) }
     }
@@ -191,7 +196,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       error: failed.length ? `falló en ${failed.length} mercado${failed.length === 1 ? '' : 's'} — ${failed.slice(0, 2).join(' · ')}` : '',
       done: failed.length ? '' : `Resultados actualizados: ${out.reduce((t, c) => t + c.videos.length, 0)} vídeos de ${out.length} mercado${out.length === 1 ? '' : 's'}.` })
     void refreshUsage()
-  }, [refreshUsage, spend, remainingNow])
+  }, [refreshUsage, spend, remainingNow, searchesLeft, paidFetch])
 
   const loadCharts = useCallback(async (regions: string[]) => {
     setChartsBusy(true); setChartsError('')
@@ -199,13 +204,13 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       for (const r of regions) {
         if (charts[r]) continue
         if (remainingNow() < 2) { setChartsError('Presupuesto de hoy agotado.'); break }
-        const res = await fetch(`/api/research/trending?region=${r}&snapshot=0`, { cache: 'no-store' })
+        const res = await paidFetch(`/api/research/trending?region=${r}&snapshot=0`)
         const j = await res.json() as { results?: YouTubeVideoResult[]; error?: string }
         if (!res.ok) { setChartsError(j.error ?? 'No se pudo consultar YouTube.'); if (res.status === 503) break; continue }
         spend(UNITS.trending); setCharts(c => ({ ...c, [r]: j.results ?? [] }))
       }
     } catch (e) { setChartsError(e instanceof Error ? e.message : 'No se pudo consultar YouTube.') } finally { setChartsBusy(false) }
-  }, [charts, spend, remainingNow])
+  }, [charts, spend, remainingNow, paidFetch])
 
   const runPlan = useCallback(async (p: SearchPlan) => {
     setLastPlan(p)

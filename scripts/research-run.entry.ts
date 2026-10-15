@@ -22,7 +22,7 @@ const recentDays = recentDaysFrom(arg('days') ? Number(arg('days')) : null)
 const dir = path.resolve(arg('dir', '.research') as string), out = path.resolve(arg('out', 'research-output') as string)
 const file = path.join(dir, 'progress.json')
 
-type Row = { payload: TopicAnalysis; fetchedAt: string; units: number }
+type Row = { payload: TopicAnalysis; fetchedAt: string; units: number; searches?: number }
 type State = { rows: Record<string, Row & { key: string }>; created: string }
 const state: State = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { rows: {}, created: new Date().toISOString() }
 const save = () => { mkdirSync(dir, { recursive: true }); writeFileSync(file, JSON.stringify(state)) }
@@ -31,17 +31,20 @@ const save = () => { mkdirSync(dir, { recursive: true }); writeFileSync(file, JS
 const store: CacheStore = {
   persistent: true,
   async get<T>(key: string, now = Date.now()): Promise<CacheHit<T> | null> { const r = state.rows[key]; return r && now - Date.parse(r.fetchedAt) < 7 * 86400000 ? { payload: r.payload as unknown as T, fetchedAt: r.fetchedAt, units: r.units } : null },
-  async put(key, _kind, payload, units, _ttl, now = Date.now()) { state.rows[key] = { key, payload: payload as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units }; save() },
+  async put(key, _kind, payload, units, _ttl, now = Date.now(), searches = 0) { state.rows[key] = { key, payload: payload as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units, searches }; save() },
+  async searchesSince(since: number) { return Object.values(state.rows).filter(r => Date.parse(r.fetchedAt) >= since).reduce((t, r) => t + (r.searches ?? 0), 0) },
   async unitsSince(since: number) { return Object.values(state.rows).filter(r => Date.parse(r.fetchedAt) >= since).reduce((t, r) => t + r.units, 0) },
   // One process, one file: nothing runs concurrently here, so a plain check-then-write is already atomic.
   atomic: true,
   async delete(key) { delete state.rows[key]; save() },
-  async reserve(key, units, cap, _ttl, now = Date.now()) {
-    const used = Object.values(state.rows).filter(r => Date.parse(r.fetchedAt) >= quotaDayStart(now)).reduce((t, r) => t + r.units, 0)
-    if (used + units > cap) return { ok: false as const, reason: 'budget' as const, used }
-    state.rows[key] = { key, payload: {} as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units }; save(); return { ok: true as const, used: used + units }
+  async reserve(key, units, cap, _ttl, now = Date.now(), searches) {
+    const day = Object.values(state.rows).filter(r => Date.parse(r.fetchedAt) >= quotaDayStart(now))
+    const used = day.reduce((t, r) => t + r.units, 0), usedSearches = day.reduce((t, r) => t + (r.searches ?? 0), 0)
+    if (used + units > cap) return { ok: false as const, reason: 'budget' as const, used, usedSearches }
+    if (searches && usedSearches + searches.need > searches.cap) return { ok: false as const, reason: 'search_budget' as const, used, usedSearches }
+    state.rows[key] = { key, payload: {} as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units, searches: searches?.need ?? 0 }; save(); return { ok: true as const, used: used + units, usedSearches: usedSearches + (searches?.need ?? 0) }
   },
-  async settle(key, actual, now = Date.now()) { state.rows[key] = { key, payload: {} as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units: Math.round(actual) }; save() },
+  async settle(key, actual, now = Date.now(), actualSearches = 0) { state.rows[key] = { key, payload: {} as TopicAnalysis, fetchedAt: new Date(now).toISOString(), units: Math.round(actual), searches: Math.round(actualSearches) }; save() },
   async release(key) { delete state.rows[key]; save() },
   async lock() { return true },
   async unlock() { /* nothing to release */ },

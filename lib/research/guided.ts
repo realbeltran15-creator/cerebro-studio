@@ -30,14 +30,15 @@ export const pendingJobs = (jobs: Job[], done: Record<string, unknown>, recentDa
 export type BudgetPlan = { totalUnits: number; pending: number; doneCount: number; todayJobs: number; todayUnits: number; daysNeeded: number; message: string }
 
 /** How much of a queue fits in what is left of today's budget, and how many days the whole queue needs at the daily cap. */
-export function budgetPlan(opts: { jobs: Job[]; done: Record<string, unknown>; recentDays: number; remainingToday: number; dailyCap: number }): BudgetPlan {
+export function budgetPlan(opts: { jobs: Job[]; done: Record<string, unknown>; recentDays: number; remainingToday: number; dailyCap: number; /** Searches left today (a limit separate from the units); omitted = not limiting. */ remainingSearches?: number }): BudgetPlan {
   const pending = pendingJobs(opts.jobs, opts.done, opts.recentDays).length
   const totalUnits = pending * UNITS.topic
-  const todayJobs = Math.min(pending, Math.max(Math.floor(opts.remainingToday / UNITS.topic), 0))
+  const bySearches = opts.remainingSearches === undefined ? Infinity : Math.max(Math.floor(opts.remainingSearches / 2), 0)
+  const todayJobs = Math.min(pending, Math.max(Math.floor(opts.remainingToday / UNITS.topic), 0), bySearches)
   const daysNeeded = pending === 0 ? 0 : Math.ceil(totalUnits / Math.max(opts.dailyCap, UNITS.topic))
   const doneCount = opts.jobs.length - pending
   const message = pending === 0 ? `Plan completo: ${doneCount} de ${opts.jobs.length} análisis hechos.`
-    : `${pending} análisis pendientes × ${UNITS.topic} = ${fmtNumber(totalUnits)} unidades. Hoy caben ${todayJobs} (${fmtNumber(todayJobs * UNITS.topic)} unidades); con un tope de ${fmtNumber(opts.dailyCap)} al día hacen falta ${daysNeeded} día${daysNeeded === 1 ? '' : 's'}.`
+    : `${pending} análisis pendientes × ${UNITS.topic} = ${fmtNumber(totalUnits)} unidades. Hoy caben ${todayJobs} (${fmtNumber(todayJobs * UNITS.topic)} unidades); con un tope de ${fmtNumber(opts.dailyCap)} al día hacen falta ${daysNeeded} día${daysNeeded === 1 ? '' : 's'}.${bySearches < Math.floor(opts.remainingToday / UNITS.topic) ? ' Hoy manda el límite de búsquedas de YouTube, no el de unidades.' : ''}`
   return { totalUnits, pending, doneCount, todayJobs, todayUnits: todayJobs * UNITS.topic, daysNeeded, message }
 }
 export const needsConfirm = (units: number) => units > CONFIRM_ABOVE

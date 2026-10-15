@@ -74,3 +74,18 @@ export function MarketComparisonPanel({ rows }: { rows: TopicAnalysis[] }) {
     </details>
   </section>
 }
+
+type QuotaUsage = { usedToday: number; cap: number; searchesToday: number; searchCap: number; persistent: boolean; exhausted: boolean }
+
+/**
+ * Today's consumption against BOTH YouTube limits, worded as what this app has counted and not as what YouTube still has: other applications
+ * sharing the same Google Cloud project spend from the same pools and cannot be seen from here.
+ */
+export function QuotaNote({ usage }: { usage: QuotaUsage }) {
+  const f = (n: number) => n.toLocaleString('es-ES')
+  return <div className="muted small" aria-label="Consumo de hoy">
+    <p style={{ margin: 0 }}>Esta aplicación ha usado hoy <b>{f(usage.usedToday)}</b> de las <b>{f(usage.cap)}</b> unidades que se permite y <b>{f(usage.searchesToday)}</b> de sus <b>{f(usage.searchCap)}</b> búsquedas (YouTube limita por separado las unidades y el número de búsquedas).</p>
+    {usage.exhausted && <p className="error" role="alert" style={{ margin: '4px 0 0' }}>YouTube ha informado de que la cuota de hoy está agotada: no se lanzan más búsquedas hasta mañana.</p>}
+    <p style={{ margin: '4px 0 0' }}>Es una cuenta de esta aplicación, no la cifra oficial: si otras aplicaciones usan la misma clave de YouTube, su consumo no se ve aquí y puede quedar menos de lo que parece. Comprueba la consola de Google Cloud.{usage.persistent ? '' : ' Además el contador está solo en memoria (falta la migración research_cache): se apoya en el de este navegador.'}</p>
+  </div>
+}

@@ -77,6 +77,11 @@ do $$ declare r jsonb; got boolean; begin
   -- settling = the row becomes a usage line with the real units; releasing = delete
   update public.research_cache set kind = 'usage', units = 50 where cache_key = 'v2|reserve|t1';
   r := public.research_reserve('v2|reserve|t3', 102, 600, 600); if not (r->>'ok')::boolean or (r->>'used')::int <> 458 + 102 then raise exception 'settled units not counted: %', r; end if;
+  -- the SEARCH limit is independent of the unit limit: units to spare, but only one search left
+  r := public.research_reserve('v2|reserve|s1', 1, 100000, 600, 2, 3); if not (r->>'ok')::boolean then raise exception 'search reserve 1 wrong: %', r; end if;
+  r := public.research_reserve('v2|reserve|s2', 1, 100000, 600, 2, 3); if (r->>'ok')::boolean or r->>'reason' <> 'search_budget' then raise exception 'search limit must refuse independently of units: %', r; end if;
+  if (select count(*) from public.research_cache where cache_key = 'v2|reserve|s2') <> 0 then raise exception 'a refused search reservation must not leave a row'; end if;
+  delete from public.research_cache where cache_key = 'v2|reserve|s1';
   got := public.research_lock('topic:x', 60); if not got then raise exception 'first lock must succeed'; end if;
   got := public.research_lock('topic:x', 60); if got then raise exception 'second lock must fail while the lease is held'; end if;
   update public.research_cache set expires_at = now() - interval '1 second' where cache_key = 'topic:x';

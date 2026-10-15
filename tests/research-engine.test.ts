@@ -754,10 +754,10 @@ describe('review fixes: every paid call is counted, midnight rollover, cache hit
     expect(await store.unitsSince(NOW - 1000)).toBe(102)
   })
   it('a ledger or server figure from yesterday does not block today', async () => {
-    const { effectiveUsage } = await import('@/lib/research/ledger'), { quotaDayStart } = await import('@/lib/research/cache')
-    const today = quotaDayStart(NOW), yesterday = today - 86400000
-    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: yesterday }, { day: yesterday, units: 5900 }, 6000, NOW).remaining).toBe(6000)
-    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: today }, { day: today, units: 100 }, 6000, NOW).remaining).toBe(100)
+    const { effectiveUsage } = await import('@/lib/research/ledger'), { quotaDayKey } = await import('@/lib/research/cache')
+    const today = quotaDayKey(NOW), yesterday = quotaDayKey(NOW - 86400000)
+    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: yesterday }, { day: yesterday, units: 5900, searches: 0 }, 6000, NOW).remaining).toBe(6000)
+    expect(effectiveUsage({ usedToday: 5900, cap: 6000, persistent: true, day: today }, { day: today, units: 100, searches: 0 }, 6000, NOW).remaining).toBe(100)
   })
   it('generic label words only exclude channels inside the Music category', async () => {
     const { isNeglectedNiche } = await import('@/lib/research/discovery')
@@ -774,7 +774,7 @@ describe('research_cache persistence: what survives a redeploy, how duplicates a
   /** A fake of the table with the same constraints as the migration: unique (owner_id, cache_key), RLS-style owner scoping. */
   const table = () => {
     const clockState = { t: NOW }, clock = () => clockState.t
-    type Row = { owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; fetched_at: string; expires_at: string }
+    type Row = { owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; searches?: number; fetched_at: string; expires_at: string }
     const rows: Row[] = []
     const from = () => {
       let filters: Array<(r: Row) => boolean> = [], op: 'select' | 'delete' | 'update' = 'select', patch: Partial<Row> = {}
@@ -799,11 +799,13 @@ describe('research_cache persistence: what survives a redeploy, how duplicates a
     const rpc = async (fn: string, a: Record<string, unknown>) => {
       const uid = 'u1', nowMs = clock()
       if (fn === 'research_reserve') {
-        const day = new Date(quotaDayStart(nowMs)).toISOString(), used = rows.filter(r => r.owner_id === uid && r.fetched_at >= day).reduce((t, r) => t + r.units, 0)
-        if (used + (a.p_units as number) > (a.p_cap as number)) return { data: { ok: false, reason: 'budget', used }, error: null }
-        const i = rows.findIndex(r => r.cache_key === a.p_key); const row = { owner_id: uid, cache_key: a.p_key as string, kind: 'reserve', payload: {}, units: a.p_units as number, fetched_at: new Date(nowMs).toISOString(), expires_at: new Date(nowMs + (a.p_ttl_seconds as number) * 1000).toISOString() }
+        const day = new Date(quotaDayStart(nowMs)).toISOString(), mine = rows.filter(r => r.owner_id === uid && r.fetched_at >= day)
+        const used = mine.reduce((t, r) => t + r.units, 0), usedS = mine.reduce((t, r) => t + (r.searches ?? 0), 0), ps = (a.p_searches as number) ?? 0
+        if (used + (a.p_units as number) > (a.p_cap as number)) return { data: { ok: false, reason: 'budget', used, used_searches: usedS }, error: null }
+        if (usedS + ps > ((a.p_search_cap as number) ?? 1e6)) return { data: { ok: false, reason: 'search_budget', used, used_searches: usedS }, error: null }
+        const i = rows.findIndex(r => r.cache_key === a.p_key); const row = { owner_id: uid, cache_key: a.p_key as string, kind: 'reserve', payload: {}, units: a.p_units as number, searches: ps, fetched_at: new Date(nowMs).toISOString(), expires_at: new Date(nowMs + (a.p_ttl_seconds as number) * 1000).toISOString() }
         if (i >= 0) rows[i] = row; else rows.push(row)
-        return { data: { ok: true, used: used + (a.p_units as number) }, error: null }
+        return { data: { ok: true, used: used + (a.p_units as number), used_searches: usedS + ps }, error: null }
       }
       if (fn === 'research_lock') {
         const i = rows.findIndex(r => r.cache_key === a.p_key)
@@ -896,7 +898,7 @@ describe('quota day = Pacific midnight (how YouTube resets its quota), not UTC m
 
 
 describe('coordination across server instances (two stores over one table, database functions available)', () => {
-  type Row = { owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; fetched_at: string; expires_at: string }
+  type Row = { owner_id: string; cache_key: string; kind: string; payload: unknown; units: number; searches?: number; fetched_at: string; expires_at: string }
   // Re-uses the table fake defined above through a small local copy of its contract.
   const setup = async () => {
     const { SupabaseCacheStore } = await import('@/lib/research/cache')
@@ -912,7 +914,7 @@ describe('coordination across server instances (two stores over one table, datab
       },
       ...(withFns ? { rpc: async (fn: string, a: Record<string, unknown>) => {
         const day = new Date(quotaDayStart(NOW)).toISOString()
-        if (fn === 'research_reserve') { const used = rows.filter(r => r.fetched_at >= day).reduce((t, r) => t + r.units, 0); if (used + (a.p_units as number) > (a.p_cap as number)) return { data: { ok: false, reason: 'budget', used }, error: null }; rows.push({ owner_id: 'u1', cache_key: a.p_key as string, kind: 'reserve', payload: {}, units: a.p_units as number, fetched_at: new Date(clock.t).toISOString(), expires_at: new Date(clock.t + 600000).toISOString() }); return { data: { ok: true, used: used + (a.p_units as number) }, error: null } }
+        if (fn === 'research_reserve') { const mine = rows.filter(r => r.fetched_at >= day), used = mine.reduce((t, r) => t + r.units, 0), usedS = mine.reduce((t, r) => t + ((r as Row & { searches?: number }).searches ?? 0), 0), ps = (a.p_searches as number) ?? 0; if (used + (a.p_units as number) > (a.p_cap as number)) return { data: { ok: false, reason: 'budget', used, used_searches: usedS }, error: null }; if (usedS + ps > ((a.p_search_cap as number) ?? 1e6)) return { data: { ok: false, reason: 'search_budget', used, used_searches: usedS }, error: null }; rows.push({ owner_id: 'u1', cache_key: a.p_key as string, kind: 'reserve', payload: {}, units: a.p_units as number, searches: ps, fetched_at: new Date(clock.t).toISOString(), expires_at: new Date(clock.t + 600000).toISOString() } as Row); return { data: { ok: true, used: used + (a.p_units as number), used_searches: usedS + ps }, error: null } }
         if (fn === 'research_lock') { const i = rows.findIndex(r => r.cache_key === a.p_key); if (i >= 0 && Date.parse(rows[i].expires_at) > clock.t) return { data: false, error: null }; const row = { owner_id: 'u1', cache_key: a.p_key as string, kind: 'lock', payload: {}, units: 0, fetched_at: new Date(NOW).toISOString(), expires_at: new Date(clock.t + (a.p_ttl_seconds as number) * 1000).toISOString() }; if (i >= 0) rows[i] = row; else rows.push(row); return { data: true, error: null } }
         return { data: null, error: { code: '42883', message: 'missing' } }
       } } : {}),

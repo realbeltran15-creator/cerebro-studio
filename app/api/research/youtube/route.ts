@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { openStore, recordUsage, quotaDayStart } from '@/lib/research/cache'
-import { dailyCap } from '@/lib/research/sample'
+import { openGuardedStore, quotaErrorResponse } from '@/lib/research/guard'
+import { isQuotaExceeded, lockForToday, reserveSpend } from '@/lib/research/quota'
 import { UNITS } from '@/lib/research/filters'
 import { searchYouTubeVideos, youtubeConfigured, YouTubeApiError, type YouTubeSearchOrder } from '@/lib/providers/youtube-data'
 
@@ -28,11 +28,12 @@ export async function GET(request: Request) {
   const category = params.get('category')?.trim() ?? ''
   const max = Number(params.get('max'))
 
+  let spend: Awaited<ReturnType<typeof reserveSpend>> | null = null, store: Awaited<ReturnType<typeof openGuardedStore>> | null = null, spent = 0
   try {
-    // Same daily budget as the analyses: a free-text search costs about 102 units and is counted with them.
-    const store = await openStore(supabase as never, user.id)
-    const used = await store.unitsSince(quotaDayStart()), cap = dailyCap()
-    if (used + UNITS.search > cap) return NextResponse.json({ error: `Presupuesto diario de Investigación agotado: ${used} de ${cap} unidades usadas hoy. Vuelve mañana.`, budget: { used, cap }, configured: true }, { status: 429 })
+    // Same two daily limits as the analyses (units AND search.list calls), reserved atomically before the call. If the counter cannot be
+    // read, nothing is searched.
+    store = await openGuardedStore(supabase, user.id, request)
+    spend = await reserveSpend(store, 'search', UNITS.search, 1)
     const results = await searchYouTubeVideos({
       query,
       order: order && orders.has(order) ? order : 'relevance',
@@ -43,11 +44,15 @@ export async function GET(request: Request) {
       maxResults: Number.isInteger(max) && max >= 1 && max <= 25 ? max : undefined,
       publishedWithinDays: Number.isInteger(days) && days > 0 && days <= 3650 ? days : undefined,
     })
-    await recordUsage(store, 'search', UNITS.search)
+    spent = UNITS.search
     return NextResponse.json({ configured: true, results }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
+    // A rejected request (4xx) is not charged; anything that may have reached the search engine is counted.
+    if (!(error instanceof YouTubeApiError && error.status >= 400 && error.status < 500)) spent = spent || UNITS.search
+    if (store && isQuotaExceeded(error)) await lockForToday(store)
+    const quota = quotaErrorResponse(error); if (quota) return quota
     // Provider errors are reported as 502 so the client never confuses them with its own auth state.
     console.error('YouTube research failure', { status: error instanceof YouTubeApiError ? error.status : null, details: error instanceof Error ? error.message : 'unknown' })
     return NextResponse.json({ error: error instanceof YouTubeApiError ? error.message : 'No se pudo consultar YouTube.', configured: true }, { status: 502 })
-  }
+  } finally { if (spend) await spend.settle(spent, spent > 0 ? 1 : 0).catch(() => undefined) }
 }

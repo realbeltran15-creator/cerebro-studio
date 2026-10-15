@@ -164,7 +164,7 @@ export const DEFAULT_DAILY_CAP = 6000
 
 export type Plan = { units: number; fresh: number; cached: number; level: 'free' | 'ok' | 'confirm' | 'blocked'; message: string }
 
-export function planTopicBatch(opts: { topics: number; regions: number; cachedCombos: number; remainingToday: number }): Plan {
+export function planTopicBatch(opts: { topics: number; regions: number; cachedCombos: number; remainingToday: number; remainingSearches?: number }): Plan {
   const combos = Math.max(opts.topics, 0) * Math.max(opts.regions, 1)
   const cached = Math.min(opts.cachedCombos, combos), fresh = combos - cached
   const units = fresh * UNITS.topic
@@ -172,6 +172,7 @@ export function planTopicBatch(opts: { topics: number; regions: number; cachedCo
   const base = `${fresh} consulta${fresh === 1 ? '' : 's'} nueva${fresh === 1 ? '' : 's'} × ${UNITS.topic} = ${units} unidades${cached ? ` (${cached} en caché, gratis)` : ''}.`
   if (units > MAX_BATCH_UNITS) return { units, fresh, cached, level: 'blocked', message: `${base} Es demasiado para una sola vez (máximo ${MAX_BATCH_UNITS}). Reduce países o temas.` }
   if (units > opts.remainingToday) return { units, fresh, cached, level: 'blocked', message: `${base} Te quedan ${Math.max(opts.remainingToday, 0)} unidades del presupuesto de hoy.` }
+  if (opts.remainingSearches !== undefined && fresh * 2 > opts.remainingSearches) return { units, fresh, cached, level: 'blocked', message: `${base} Necesita ${fresh * 2} búsquedas y hoy te quedan ${Math.max(opts.remainingSearches, 0)} (YouTube limita las búsquedas aparte de las unidades).` }
   if (units > CONFIRM_ABOVE) return { units, fresh, cached, level: 'confirm', message: `${base} Es bastante cuota: confirma para continuar.` }
   return { units, fresh, cached, level: 'ok', message: base }
 }

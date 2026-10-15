@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { youtubeConfigured, YouTubeApiError } from '@/lib/providers/youtube-data'
-import { openStore } from '@/lib/research/cache'
-import { BudgetError, InProgressError, getGrowth, getTopicAnalysis } from '@/lib/research/sample'
+import { openGuardedStore, quotaErrorResponse } from '@/lib/research/guard'
+import { InProgressError, getGrowth, getTopicAnalysis } from '@/lib/research/sample'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   if (region && !/^[A-Z]{2}$/.test(region)) return NextResponse.json({ error: 'País no válido.' }, { status: 400 })
   if (lang && !/^[a-z]{2}$/.test(lang)) return NextResponse.json({ error: 'Idioma no válido.' }, { status: 400 })
   try {
-    const store = await openStore(supabase as never, user.id)
+    const store = await openGuardedStore(supabase, user.id, request)
     if (p.get('growth') === '1') {
       const grown = await getGrowth({ topic, region, language: lang, recentDays: Number.isFinite(days) && days > 0 ? days : undefined }, { store, owner: user.id })
       return NextResponse.json({ configured: true, ...grown }, { headers: { 'Cache-Control': 'no-store' } })
@@ -30,7 +30,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ configured: true, ...result }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof InProgressError) return NextResponse.json({ error: error.message, retry: true, configured: true }, { status: 409 })
-    if (error instanceof BudgetError) return NextResponse.json({ error: error.message, budget: { used: error.used, cap: error.cap }, configured: true }, { status: 429 })
+    const quota = quotaErrorResponse(error); if (quota) return quota
     console.error('Topic analysis failure', { status: error instanceof YouTubeApiError ? error.status : null, details: error instanceof Error ? error.message : 'unknown' })
     return NextResponse.json({ error: error instanceof YouTubeApiError ? error.message : 'No se pudo analizar el tema.', configured: true }, { status: 502 })
   }

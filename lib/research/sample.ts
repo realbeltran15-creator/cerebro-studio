@@ -1,16 +1,17 @@
 import { searchYouTubeVideosMeta, type YouTubeSearchInput, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { analyzeTopic, applyGrowth, type Sample, type TopicAnalysis, type TopicSamples } from './topic-analysis'
 import { cacheKey, DEFAULT_TTL_MS, quotaDayStart, type CacheStore } from './cache'
+import { BudgetError, isQuotaExceeded, lockForToday, quotaLimits, reserveSpend } from './quota'
 import { DEFAULT_DAILY_CAP, UNITS } from './filters'
 
-export class BudgetError extends Error { constructor(message: string, readonly used: number, readonly cap: number) { super(message) } }
+export { BudgetError } from './quota'
 
 export type SearchFn = (input: YouTubeSearchInput) => Promise<{ videos: YouTubeVideoResult[]; approxTotal: number | null }>
 
 export type TopicRequest = { topic: string; region: string | null; language: string | null; /** Window of the "recent" sample (7–365 days, default 30). */ recentDays?: number; refresh?: boolean; /** Return only what is already cached; never call YouTube. */ cacheOnly?: boolean }
 export type TopicResult = { analysis: TopicAnalysis | null; cached: boolean; usage: { usedToday: number; cap: number; persistent: boolean } }
 
-export const dailyCap = (env: Record<string, string | undefined> = process.env) => { const n = Number(env.RESEARCH_DAILY_UNIT_CAP); return Number.isInteger(n) && n >= 200 && n <= 10000 ? n : DEFAULT_DAILY_CAP }
+export const dailyCap = (env: Record<string, string | undefined> = process.env) => quotaLimits(env).unitCap
 
 /**
  * One topic in one market = two samples (most viewed of the last year, newest of the last month), about 204 quota units.
@@ -74,26 +75,28 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicR
     const partialKey = cacheKey('partial', [topic, req.region, req.language, 'top'])
     const partial = req.refresh ? null : await deps.store.get<Sample>(partialKey, now())
     const need = partial ? UNITS.topic / 2 : UNITS.topic
-    // Reserve the budget BEFORE spending it (check and reservation are one atomic step), then settle with what was really spent.
-    const reservation = `v2|reserve|${key}|${now()}|${Math.random().toString(36).slice(2, 8)}`
-    const r = await deps.store.reserve(reservation, need, cap, RESERVE_TTL_MS, now())
-    if (!r.ok) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${r.used} de ${cap} unidades usadas o reservadas hoy. Vuelve mañana o repite búsquedas ya guardadas (son gratis).`, r.used, cap)
-    let spent = 0
+    // Reserve BOTH daily limits (quota units and search.list calls) BEFORE spending, in one atomic step, then settle with what was really spent.
+    const needSearches = partial ? 1 : 2
+    const spend = await reserveSpend(deps.store, `topic|${key}`, need, needSearches, now(), { ...quotaLimits(), ...(deps.cap !== undefined ? { unitCap: deps.cap } : {}) })
+    let spent = 0, searchesDone = 0
     try {
       const common = { query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25 }
       let top: Sample
       if (partial) top = partial.payload
-      else { top = await search({ ...common, order: 'viewCount', publishedWithinDays: 365 }); spent += UNITS.topic / 2; await deps.store.put(partialKey, 'partial', top, 0, PARTIAL_TTL_MS, now()).catch(() => undefined) }
-      const recent = await search({ ...common, order: 'date', publishedWithinDays: recentDays }); spent += UNITS.topic / 2
+      else { top = await search({ ...common, order: 'viewCount', publishedWithinDays: 365 }); spent += UNITS.topic / 2; searchesDone++; await deps.store.put(partialKey, 'partial', top, 0, PARTIAL_TTL_MS, now()).catch(() => undefined) }
+      const recent = await search({ ...common, order: 'date', publishedWithinDays: recentDays }); spent += UNITS.topic / 2; searchesDone++
       const samples: TopicSamples = { topic, region: req.region, language: req.language, top, recent, recentDays, fetchedAt: new Date(now()).toISOString(), units: UNITS.topic }
       const analysis = analyzeTopic(samples, now())
       // The quota is already spent: if the cache write fails, still return the analysis instead of throwing it away.
       try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()); await deps.store.delete(partialKey).catch(() => undefined) } catch (e) { console.error('Could not cache topic analysis', e instanceof Error ? e.message : e) }
-      return result(analysis, false, r.used - need + spent)
+      return result(analysis, false, spend.used - need + spent)
+    } catch (e) {
+      // YouTube says the quota is spent although our counters had room: other applications share the project. Lock both limits for today.
+      if (isQuotaExceeded(e)) await lockForToday(deps.store, now())
+      throw e
     } finally {
       // Whatever happened, what reached YouTube is counted; a reservation that spent nothing is released.
-      if (spent > 0) await deps.store.settle(reservation, spent, now()).catch(e => console.error('Could not settle quota reservation', e instanceof Error ? e.message : e))
-      else await deps.store.release(reservation).catch(() => undefined)
+      await spend.settle(spent, searchesDone).catch(e => console.error('Could not settle quota reservation', e instanceof Error ? e.message : e))
     }
   } finally { await deps.store.unlock(`topic:${key}`).catch(() => undefined) }
 }
@@ -116,9 +119,7 @@ export function getGrowth(req: { topic: string; region: string | null; language:
     const lockKey = `growth:${key}`
     if (!(await deps.store.lock(lockKey, LEASE_MS, now()))) throw new InProgressError('Otra medición del crecimiento de este tema sigue en marcha. Vuelve a intentarlo en unos segundos: no se ha gastado cuota.')
     try {
-      const reservation = `v2|reserve|growth|${key}|${now()}|${Math.random().toString(36).slice(2, 8)}`
-      const r = await deps.store.reserve(reservation, UNITS.search, cap, RESERVE_TTL_MS, now())
-      if (!r.ok) throw new BudgetError(`Presupuesto diario de Investigación agotado: ${r.used} de ${cap} unidades usadas o reservadas hoy.`, r.used, cap)
+      const spend = await reserveSpend(deps.store, `growth|${key}`, UNITS.search, 1, now(), { ...quotaLimits(), ...(deps.cap !== undefined ? { unitCap: deps.cap } : {}) })
       let spent = 0
       try {
         const previous = await search({ query: topic, regionCode: req.region ?? undefined, language: req.language ?? undefined, maxResults: 25, order: 'date', publishedWithinDays: recentDays * 2, publishedBeforeDays: recentDays })
@@ -126,7 +127,7 @@ export function getGrowth(req: { topic: string; region: string | null; language:
         const analysis = applyGrowth(hit.payload, previous, now())
         try { await deps.store.put(key, 'topic', analysis, 0, DEFAULT_TTL_MS, now()) } catch (e) { console.error('Could not cache growth', e instanceof Error ? e.message : e) }
         return { analysis, cached: false, usage: await usage() }
-      } finally { if (spent > 0) await deps.store.settle(reservation, spent, now()).catch(() => undefined); else await deps.store.release(reservation).catch(() => undefined) }
+      } catch (e) { if (isQuotaExceeded(e)) await lockForToday(deps.store, now()); throw e } finally { await spend.settle(spent, spent > 0 ? 1 : 0).catch(() => undefined) }
     } finally { await deps.store.unlock(lockKey).catch(() => undefined) }
   })
 }

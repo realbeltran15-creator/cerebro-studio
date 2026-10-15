@@ -33,10 +33,12 @@ SQL
 chmod 644 "$DIR/race_setup.sql"
 run "cd $DIR && $P -d r -f race_setup.sql"
 for i in 1 2 3 4 5 6 7 8; do
-  run "$P -d r -At -c \"set role authenticated; set request.jwt.claim.sub='00000000-0000-0000-0000-00000000000a'; select 'R:' || (public.research_reserve('race|$i', 102, 300, 600)->>'ok'); select 'L:' || public.research_lock('race-lease', 60)\"" >> "$DIR/race.txt" &
+  run "$P -d r -At -c \"set role authenticated; set request.jwt.claim.sub='00000000-0000-0000-0000-00000000000a'; select 'R:' || (public.research_reserve('race|$i', 102, 300, 600)->>'ok'); select 'L:' || public.research_lock('race-lease', 60); select 'S:' || (public.research_reserve('sr|$i', 1, 100000, 600, 2, 5)->>'ok')\"" >> "$DIR/race.txt" &
 done
 wait
 RESERVED=$(grep -c '^R:true' "$DIR/race.txt" || true); LEASES=$(grep -c '^L:true' "$DIR/race.txt" || true)
+SEARCHES=$(grep -c '^S:true' "$DIR/race.txt" || true)
+echo "race (search limit, units to spare): accepted=$SEARCHES (expected 2 for 2 searches each under a limit of 5)"
 echo "race: reservations accepted=$RESERVED (expected 2 for cap 300 / 102 units), leases won=$LEASES (expected 1)"
-[ "$RESERVED" = "2" ] && [ "$LEASES" = "1" ]
+[ "$RESERVED" = "2" ] && [ "$LEASES" = "1" ] && [ "$SEARCHES" = "2" ]
 echo "CONCURRENCY CHECK PASSED"
