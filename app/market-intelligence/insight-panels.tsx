@@ -1,5 +1,6 @@
 'use client'
 
+import { shortCountry } from '@/lib/research/geo'
 import { Thumb } from '../components/thumb'
 import { confidenceLabel } from '@/lib/research/labels'
 import { useMemo } from 'react'
@@ -26,6 +27,16 @@ export function HowItIsCalculated({ a }: { a: TopicAnalysis }) {
       {s.demandInterval && <li><b>Rango de las vistas diarias típicas:</b> entre {Math.round(s.demandInterval.lo).toLocaleString('es-ES')} y {Math.round(s.demandInterval.hi).toLocaleString('es-ES')} (intervalo del ~95 % para la mediana de esta muestra).</li>}
       <li><b>Sensibilidad:</b> {s.sensitivity.note}</li>
     </ul> : <p className="small muted">Este análisis se guardó antes de existir la lectura estadística: vuelve a analizarlo si quieres verla.</p>}
+    {a.geo && a.geo.requested && <>
+      <p className="small" style={{ margin: '8px 0 2px' }}><b>De qué país es lo que ves</b> (cuatro cosas distintas)</p>
+      <ul className="small" style={{ margin: '0 0 0 16px' }}>
+        <li><b>País pedido:</b> {shortCountry(a.geo.requested)}. Solo orienta la búsqueda de YouTube hacia ese país.</li>
+        <li><b>País declarado del canal:</b> {a.geo.channel.known ? `${a.geo.channel.known} de ${a.sampleSizes.top + a.sampleSizes.recent} canales lo declaran; ${a.geo.channel.inMarket} son de ${shortCountry(a.geo.requested)}${a.geo.channel.others.length ? `, el resto de ${a.geo.channel.others.slice(0, 3).map(o => `${shortCountry(o.country)} (${o.n})`).join(', ')}` : ''}` : 'ningún canal de la muestra lo declara'}. No sustituye a la audiencia.</li>
+        <li><b>País del contenido:</b> {a.geo.content.withCues ? `${a.geo.content.withCues} vídeos hablan de un país concreto (leyes, impuestos, productos); ${a.geo.content.inMarket} del pedido${a.geo.content.others.length ? `, el resto de ${a.geo.content.others.slice(0, 3).map(o => `${shortCountry(o.country)} (${o.n})`).join(', ')}` : ''}${a.geo.setAside ? `. Se apartaron ${a.geo.setAside} por hablar de otro país` : ''}` : 'ningún vídeo da pistas de país en su texto'}.</li>
+        <li><b>País de los espectadores:</b> no se puede saber con la API pública.</li>
+      </ul>
+      <ul className="small muted" style={{ margin: '4px 0 0 16px' }}>{a.geo.limits.map(l => <li key={l}>{l}</li>)}</ul>
+    </>}
     <p className="small" style={{ margin: '8px 0 2px' }}><b>Cómo se construyen las puntuaciones</b></p>
     <ul className="small muted" style={{ margin: '0 0 0 16px' }}>{methodLines().map(l => <li key={l}>{l}</li>)}</ul>
   </details>

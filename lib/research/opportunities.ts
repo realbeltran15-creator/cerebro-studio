@@ -1,3 +1,4 @@
+import { GEO_LEVEL_LABEL } from './geo'
 import { compareMarkets, countryInfo } from './markets-info'
 import { marketLabel } from './markets'
 import type { TopicAnalysis } from './topic-analysis'
@@ -115,6 +116,7 @@ export function detectOpportunities(analyses: TopicAnalysis[], now = Date.now())
     const cmp = compareMarkets(cols); if (!cmp) continue
     const best = [...group].sort((x, y) => y.indices.opportunity - x.indices.opportunity)[0], worst = [...group].sort((x, y) => x.indices.opportunity - y.indices.opportunity)[0]
     if (best === worst || best.indices.opportunity - worst.indices.opportunity < 15 || best.indices.demand < 45) continue
+    if ([best, worst].some(x => x.geo?.level === 'contradictoria')) continue   // the results of one market are mostly from another country: no cross-country claim
     const sameLang = best.language === worst.language
     const pair = cmp.pairs.find(p => (p.a === label(best) && p.b === label(worst)) || (p.b === label(best) && p.a === label(worst)))
     if (!pair || pair.level === 'no_comparable') continue
@@ -124,6 +126,16 @@ export function detectOpportunities(analyses: TopicAnalysis[], now = Date.now())
       evidence: [{ label: 'Comparación', value: pair.reasons.join(' ') }, { label: `${label(best)}: demanda / oferta / competencia`, value: `${best.indices.demand} / ${best.indices.supply} / ${best.indices.competition}` }, { label: `${label(worst)}: demanda / oferta / competencia`, value: `${worst.indices.demand} / ${worst.indices.supply} / ${worst.indices.competition}` }, ...videoEvidence(best, () => true, 2), ...(info ? [{ label: 'Vocabulario local a usar (nota editorial)', value: info.terminology.map(t => t.terms.join(', ')).join(' · ') }] : [])],
       uncertainty: 'Son muestras distintas de 25 vídeos, no audiencias: el país de la búsqueda no prueba dónde viven los espectadores. Si el tema no existe igual en ambos países, la diferencia puede ser de vocabulario, no de oportunidad.',
       nextStep: sameLang ? 'Adapta el vocabulario local y verifica con una búsqueda adicional en ese país.' : 'Prueba un vídeo en ese idioma con terminología propia, no traducida literalmente.' })
+  }
+  // Geography: an opportunity found in an analysis whose results do not clearly belong to the requested market is weaker, and says so.
+  const geoOf = new Map(analyses.map(a => [`${a.topic}|${a.region ?? ''}|${a.language ?? ''}`, a.geo]))
+  const down: Record<OppStrength, OppStrength> = { fuerte: 'moderada', moderada: 'indicio', indicio: 'indicio', a_verificar: 'a_verificar' }
+  for (const o of out) {
+    const a = analyses.find(x => x.topic === o.topic && marketLabel(x.region, x.language) === o.market); const g = a?.geo ?? geoOf.get('')
+    if (!g || !g.requested || g.level === 'media') continue
+    o.strength = down[o.strength]
+    o.uncertainty += ` Geografía: ${g.statement}`
+    o.evidence.push({ label: 'Confianza geográfica', value: `${GEO_LEVEL_LABEL[g.level]}. La audiencia real no se puede medir con la API pública.` })
   }
   const order: Record<OppStrength, number> = { fuerte: 0, moderada: 1, indicio: 2, a_verificar: 3 }
   return out.sort((x, y) => order[x.strength] - order[y.strength] || y.demand - x.demand)

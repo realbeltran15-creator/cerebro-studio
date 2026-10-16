@@ -20,7 +20,8 @@ const cosine = (a: Vec, b: Vec) => { let d = 0; const [s, l] = a.size < b.size ?
 const centroid = (vs: Vec[], skip?: Vec) => { const c: Vec = new Map(); let n = 0; for (const v of vs) { if (v === skip) continue; n++; for (const [k, x] of v) c.set(k, (c.get(k) ?? 0) + x) } return { c: norm(c), n } }
 
 export function resolveDoubtful(all: YouTubeVideoResult[], verdicts: Map<string, Assessment>, queryTerms: string[]): Map<string, Assessment> {
-  const doubtful = all.filter(v => verdicts.get(v.videoId)?.status === 'dudoso')
+  // Videos set aside because their content is about another country are not a question of meaning: similarity never promotes them.
+  const doubtful = all.filter(v => verdicts.get(v.videoId)?.status === 'dudoso' && !verdicts.get(v.videoId)!.detail.startsWith('habla de'))
   if (!doubtful.length) return verdicts
   const skip = new Set(queryTerms.flatMap(t => fold(t).split(' ')))
   const docs = new Map(all.map(v => [v.videoId, words(v, skip)]))

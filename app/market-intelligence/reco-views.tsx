@@ -7,6 +7,7 @@ import { saveAnalysis } from '@/lib/research/save'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { VERDICT } from './analysis-views'
 import { recoBrief, type NicheReco, type Reco, type RecoSection, type RecoVideo } from '@/lib/research/recommendations'
+import { GEO_LEVEL_LABEL, shortCountry } from '@/lib/research/geo'
 import { Thumb } from '../components/thumb'
 import { languageLabel } from '@/lib/research/labels'
 import { fmtCompact, fmtNumber } from '@/lib/research/format'
@@ -72,6 +73,7 @@ export function RecoCard({ r }: { r: Reco }) {
     <p className="small"><b>Por qué:</b> {r.reason}</p>
     {r.rpmNote && <p className="small"><span className="tag estimado">ESTIMADO</span> {r.rpmNote}</p>}
     {r.videos.length > 0 ? <div className="tileRow">{r.videos.map(v => <VideoTile key={v.videoId} v={v} />)}</div> : <p className="muted small">{r.examplesElsewhere ? 'Sus vídeos de ejemplo ya aparecen en otra recomendación (cada vídeo se muestra una sola vez).' : 'Sin vídeos de ejemplo disponibles (no hay muestra guardada de este análisis).'}</p>}
+    {r.analysis?.geo?.requested && <p className="small muted">Orientada a {shortCountry(r.analysis.geo.requested)} · {GEO_LEVEL_LABEL[r.analysis.geo.level]}. {r.analysis.geo.level === 'media' ? 'No es demanda local verificada.' : 'No la presentes como demanda local.'}</p>}
     {r.analysis && <RecoBriefView a={r.analysis} />}
     <p className="muted small">Actualizado {dateEs(r.updatedAt)} · fuente YouTube Data API{r.confidence ? ` · confianza ${r.confidence}` : ''}</p>
     {r.source === 'analysis' && <SaveNiche r={r} />}{r.analysis && <>{' '}<Link className="open" href={campaignLink({ topic: r.analysis.topic, region: r.analysis.region, language: r.analysis.language, verdict: r.analysis.verdict, demand: r.analysis.indices.demand, competition: r.analysis.indices.competition, opportunity: r.analysis.indices.opportunity, fetchedAt: r.analysis.fetchedAt })}>Planificar campaña</Link></>}

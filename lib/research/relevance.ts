@@ -1,3 +1,5 @@
+import { fold } from './text'
+import { geoOf, shortCountry } from './geo'
 import { financeCues } from './lexicon'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { nichesOf, wordHit } from './taxonomy'
@@ -10,7 +12,7 @@ import { nichesOf, wordHit } from './taxonomy'
  * is judged here BEFORE it can influence an index, and every exclusion keeps its reason so the screen can show it.
  */
 
-export const fold = (s: string) => ` ${s.toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}#+]+/gu, ' ').replace(/\s+/g, ' ').trim()} `
+export { fold }
 const words = (s: string) => fold(s).trim().split(' ').filter(Boolean)
 
 // ---------- Query understanding ----------
@@ -248,7 +250,14 @@ function nicheEvidence(v: YouTubeVideoResult, q: QueryProfile): { own: string[];
   return { own, foreign, conflict: !!q.niches.length && !supports && foreign.length > 0 }
 }
 
-export type AssessOptions = { /** Require positive evidence of the intended topic, not just the absence of a contradiction (used when the sample itself is ambiguous). */ strict?: boolean }
+export type AssessOptions = { /** Market the search was oriented to: a video whose own content is about ANOTHER country is set aside as doubtful. */ region?: string | null; /** Require positive evidence of the intended topic, not just the absence of a contradiction (used when the sample itself is ambiguous). */ strict?: boolean }
+
+/** Doubtful because the video's OWN text is about another country than the market asked for (never because of the channel's declared country). */
+function otherCountry(v: YouTubeVideoResult, region: string | null | undefined): string | null {
+  if (!region) return null
+  const g = geoOf(v, region)
+  return g.verdict === 'otro_pais' && g.contentCountry ? `habla de ${shortCountry(g.contentCountry)} (${g.cues.slice(0, 3).join(', ')}), no del mercado pedido (${shortCountry(region)})` : null
+}
 
 export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: string[], opts: AssessOptions = {}): Assessment {
   const lang = languageCheck(v, expected), pk = promoKind(v), promo = pk !== null
@@ -283,12 +292,14 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
     if (best && best.hits.length === ev.intended.length && best.hits.length > 0) return out('dudoso', 'contexto', `significado ambiguo: tantas pistas de ${q.ambiguity.intended.label} (${ev.intended.slice(0, 3).join(', ')}) como de ${best.sense.label} (${best.hits.slice(0, 3).join(', ')})`, coverage, ev.intended)
     const ne = nicheEvidence(v, q)
     if (ne.conflict) return out('descartado', 'nicho', `fuera de las palabras del tema, el vídeo trata de ${ne.foreign.join(', ')} y el tema es de ${q.niches.join(', ')}`, coverage)
+    const g1 = otherCountry(v, opts.region); if (g1) return out('dudoso', 'contexto', g1, coverage)
     return out('aceptado', null, `confirmado por: ${ev.intended.slice(0, 4).join(', ')}`, coverage, ev.intended)
   }
 
   const ne = nicheEvidence(v, q)
   if (ne.conflict) return out('descartado', 'nicho', `fuera de las palabras del tema, el vídeo trata de ${ne.foreign.join(', ')} y el tema es de ${q.niches.join(', ')}`, coverage)
   if (opts.strict && q.niches.length && !ne.own.some(x => q.niches.includes(x))) return out('dudoso', 'contexto', `el tema es de ${q.niches.join(', ')} y nada en el vídeo, salvo las palabras de la consulta, lo confirma`, coverage)
+  const g2 = otherCountry(v, opts.region); if (g2) return out('dudoso', 'contexto', g2, coverage)
   return out('aceptado', null, '', coverage)
 }
 

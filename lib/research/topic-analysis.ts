@@ -1,5 +1,6 @@
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { stopwords } from '@/lib/radar'
+import { GEO_LEVEL_LABEL, shortCountry, summarizeGeo, type GeoSummary } from './geo'
 import { resolveDoubtful } from './semantic'
 import { concentration, demandProfile, entryDifficulty, medianInterval, opportunityOf, sensitivity, smallChannelWins, verdictOf, type Concentration, type DemandProfile, type Entry, type SmallWins, type Sensitivity, type Verdict } from './statistics'
 import { inferFormat, nichesOf, type Confidence } from './taxonomy'
@@ -52,7 +53,7 @@ export type GrowthResult = {
  * handling). An analysis from an older engine is kept and shown, but never mixed into recommendations, opportunities or comparisons, and it
  * is never served from the cache: it is re-analysed instead.
  */
-export const ENGINE_VERSION = 3
+export const ENGINE_VERSION = 4
 export const isCurrentEngine = (a: { engineVersion?: number }) => a.engineVersion === ENGINE_VERSION
 
 export type TopicAnalysis = {
@@ -76,6 +77,8 @@ export type TopicAnalysis = {
   formatQuality: { shortConfirmed: number; shortProbable: number; clipsNotShort: number }
   niches: string[]
   terms: Term[]; emerging: Term[]; questions: Array<{ text: string; videoId: string; views: number | null }>
+  /** Where the results point geographically, in four separate senses (requested / channel / content / audience). Optional on older analyses. */
+  geo?: GeoSummary
   /** Statistical reading of the sample. Optional: analyses saved before it existed do not have it. */
   stats?: { concentration: Concentration; smallWins: SmallWins; demandProfile: DemandProfile; entry: Entry; sensitivity: Sensitivity; demandInterval: { lo: number; hi: number } | null }
   sampleSizes: { top: number; recent: number }
@@ -154,12 +157,12 @@ function clean(s: TopicSamples): { top: YouTubeVideoResult[]; recent: YouTubeVid
   const q = queryProfile(s.topic), expected = expectedLanguages(s.region, s.language)
   const all = (() => { const u = new Set<string>(); return [...s.top.videos, ...s.recent.videos].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)) })()
   // Pass 1: is the SAMPLE itself ambiguous? (a share of the results that passed the topic words point to other domains or meanings)
-  const first = new Map(all.map(v => [v.videoId, assessVideo(v, q, expected)]))
+  const first = new Map(all.map(v => [v.videoId, assessVideo(v, q, expected, { region: s.region })]))
   const onTopic = all.filter(v => { const a = first.get(v.videoId)!; return a.reason !== 'idioma' && a.reason !== 'directo' && a.reason !== 'tema' })
   const wrongMeaning = onTopic.filter(v => ['nicho', 'sentido'].includes(first.get(v.videoId)!.reason ?? '')).length
   const ambiguousSample = !!q.niches.length && onTopic.length >= 8 && wrongMeaning / onTopic.length >= 0.2
   // Pass 2: when ambiguous, every video must positively confirm the intended meaning.
-  const judged = ambiguousSample ? new Map(all.map(v => [v.videoId, assessVideo(v, q, expected, { strict: true })])) : first
+  const judged = ambiguousSample ? new Map(all.map(v => [v.videoId, assessVideo(v, q, expected, { strict: true, region: s.region })])) : first
   // Videos the word rules could not decide are compared, locally and for free, with the ones whose meaning was confirmed.
   const verdicts = resolveDoubtful(all, judged, q.terms)
   const excluded: Record<ExclusionReason, number> = { tema: 0, nicho: 0, idioma: 0, directo: 0, sentido: 0, contexto: 0 }
@@ -204,6 +207,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const c = clean(s)
   const top = c.top, recent = c.recent, promo = c.promoTop
   const both = (() => { const u = new Set<string>(); return [...top, ...recent].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)) })()
+  const geo = summarizeGeo(both, s.region, [...c.verdicts.values()].filter(a => a.status === 'dudoso' && a.detail.startsWith('habla de')).length, shortCountry)
 
   // Demand: views/day of the on-topic most-viewed videos. Promotions and viral outliers are shown but never set the number.
   const topCand = top.filter(v => !promo.has(v.videoId) && num(v.calculated.viewsPerDay))
@@ -257,6 +261,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const enough = top.length >= 20 && recent.length >= 10 && subsKnown.length / Math.max(top.length, 1) >= 0.7
   const keptShare = quality.examined ? quality.kept / quality.examined : 0
   const lowReasons: string[] = []
+  if (geo.level === 'contradictoria') lowReasons.push(`la mayoría de las pistas geográficas apuntan a otros países (${geo.content.others.concat(geo.channel.others).slice(0, 2).map(o => shortCountry(o.country)).join(' y ')}), no al mercado pedido`)
   if (top.length < EVIDENCE.minTop || recent.length < EVIDENCE.minRecent) lowReasons.push(`solo ${top.length} vídeos relevantes entre los más vistos y ${recent.length} entre los recientes`)
   if (quality.examined >= 10 && keptShare < EVIDENCE.minKeptShare) lowReasons.push(`más de la mitad de los resultados de YouTube (${quality.examined - quality.kept} de ${quality.examined}) no eran del tema o del mercado`)
   if (quality.examined >= 10 && quality.uncertain / quality.examined >= 0.3) lowReasons.push(`${quality.uncertain} de ${quality.examined} resultados son dudosos: nada confirma que traten del significado buscado`)
@@ -286,6 +291,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     ...(quality.outliers ? [{ label: 'Vídeos virales atípicos (fuera de la demanda)', value: String(quality.outliers), kind: 'calculado' as const }] : []),
     { label: 'Idioma sin verificar entre los que sirven', value: `${quality.languageUnverified} de ${quality.kept}`, kind: 'inferido' },
     ...(s.region ? [{ label: `Canales que declaran ${s.region} como país`, value: quality.channelCountryKnown ? `${quality.channelInMarket} de ${quality.channelCountryKnown} que declaran país` : 'ninguno declara país', kind: 'observado' as const }] : []),
+    ...(s.region ? [{ label: 'Confianza geográfica (contenido del vídeo y país declarado del canal; la audiencia no se puede medir)', value: `${GEO_LEVEL_LABEL[geo.level]}${geo.inMarketShare === null ? '' : ` · ${Math.round(geo.inMarketShare * 100)} % de las pistas apuntan a ${shortCountry(s.region)}`}${geo.setAside ? ` · ${geo.setAside} vídeo${geo.setAside === 1 ? '' : 's'} apartado${geo.setAside === 1 ? '' : 's'} por hablar de otro país` : ''}`, kind: 'inferido' as const }] : []),
     { label: 'Vistas por día (mediana, vídeos relevantes más vistos del último año)', value: topVpd === null ? 'sin datos' : k(Math.round(topVpd)), kind: 'calculado' },
     { label: `Vistas por día (mediana, vídeos relevantes de los últimos ${WINDOW} días con ≥ 3 días)`, value: recentCohort.medianVpd === null ? 'sin datos' : k(Math.round(recentCohort.medianVpd)), kind: 'calculado' },
     { label: `Subidas por semana (${inSpan.length} vídeos relevantes en una ventana de ${Math.round(spanDays)} días${strayAges.size ? `; ${strayAges.size} resultado${strayAges.size === 1 ? '' : 's'} antiguo${strayAges.size === 1 ? '' : 's'} fuera de la ventana` : ''})`, value: String(uploadsPerWeek), kind: 'calculado' },
@@ -306,6 +312,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   else reasons.push(`Demanda ${demand}/100: los vídeos relevantes más vistos del año ganan ${topVpd === null ? '—' : k(Math.round(topVpd))} vistas/día (mediana, sin anuncios ni virales atípicos).`)
   reasons.push(`Oferta ${supply}/100: ${uploadsPerWeek} vídeos nuevos por semana en la muestra y ${recentChannels} canales distintos entre ${recent.length} recientes.`)
   reasons.push(`Competencia ${competition}/100: canal mediano con ${medianSubs === null ? '—' : k(Math.round(medianSubs))} suscriptores y ${big} de ${top10.length} del top 10 con ≥ 100 000.`)
+  reasons.push(`Mercado: ${geo.statement}`)
   reasons.push(`Crecimiento: ${growth.state === 'calculable' ? growth.label : 'No calculable'}. ${growth.reason}`)
 
   const headline = confidence === 'baja' && verdictRaw === 'oportunidad' ? 'Parece prometedor, pero la muestra relevante es insuficiente para llamarlo oportunidad'
@@ -319,7 +326,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   return {
     engineVersion: ENGINE_VERSION,
     topic: s.topic, region: s.region, language: s.language, fetchedAt: s.fetchedAt, units: s.units, recentDays: WINDOW,
-    indices: { demand, supply, competition, growth: growthIdx, opportunity }, stats: statistical, growth, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence, quality,
+    indices: { demand, supply, competition, growth: growthIdx, opportunity }, geo, stats: statistical, growth, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence, quality,
     byFormat: { short: stats(top, recent, isShortProper), long: stats(top, recent, isLong) }, formatQuality: fq,
     niches, terms: extractTerms(both), emerging: emergingTerms(top, recent), questions: extractQuestions(both),
     sampleSizes: { top: top.length, recent: recent.length }, approxTotals: { top: s.top.approxTotal, recent: s.recent.approxTotal },
@@ -335,8 +342,8 @@ export function applyGrowth(a: TopicAnalysis, previous: Sample, now = Date.now()
   const q = queryProfile(a.topic), expected = expectedLanguages(a.region, a.language)
   const seen = new Set<string>()
   const strict = !!a.quality?.ambiguousSample
-  const relevant = previous.videos.filter(v => { if (seen.has(v.videoId)) return false; seen.add(v.videoId); return assessVideo(v, q, expected, { strict }).relevant })
-  const promo = new Set(relevant.filter(v => assessVideo(v, q, expected, { strict }).promo).map(v => v.videoId))
+  const relevant = previous.videos.filter(v => { if (seen.has(v.videoId)) return false; seen.add(v.videoId); return assessVideo(v, q, expected, { strict, region: a.region }).relevant })
+  const promo = new Set(relevant.filter(v => assessVideo(v, q, expected, { strict, region: a.region }).promo).map(v => v.videoId))
   const prev = cohort(relevant, promo, now)
   const growth = growthFrom(a.growth.recent, { n: prev.n, medianVpd: prev.medianVpd }, a.recentDays)
   const growthIdx = growthIndex(growth)

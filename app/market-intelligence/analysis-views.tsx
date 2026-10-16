@@ -11,6 +11,7 @@ import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization
 import { fmtNumber } from '@/lib/research/format'
 import { UNITS } from '@/lib/research/filters'
 import { confidenceLabel, indexText } from '@/lib/research/labels'
+import { GEO_LEVEL_LABEL } from '@/lib/research/geo'
 import { HowItIsCalculated } from './insight-panels'
 import { SampleInspector } from './sample-inspector'
 import { nicheLabel } from '@/lib/research/taxonomy'
@@ -56,6 +57,7 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
       <h3>{a.topic}</h3><span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><span className="pill">{marketLabel(a.region, a.language)}</span><span className={`pill ${v.cls}`}>{v.label}</span></span>
     </div>
     <p className="muted small">{a.sampleSizes.top} + {a.sampleSizes.recent} vídeos en la muestra (recientes = últimos {a.recentDays ?? 30} días) · actualizado {dateEs(a.fetchedAt)}</p>
+    {a.geo && a.geo.requested && <p className="small" aria-label="Confianza geográfica"><span className={`pill ${a.geo.level === 'media' ? 'info' : 'warn'}`}>{GEO_LEVEL_LABEL[a.geo.level]}</span> {a.geo.statement}</p>}
     <p style={{ margin: '8px 0' }}><b>{a.headline}.</b></p>
     <div style={{ display: 'grid', gap: 8 }}>{(Object.keys(INDEX_LABEL) as Array<keyof typeof INDEX_LABEL>).map(k => <IndexBar key={k} name={k} value={a.indices[k]} />)}</div>
     <ul className="small" style={{ margin: '10px 0 0 16px' }}>{a.reasons.map(r => <li key={r}>{r}</li>)}</ul>
