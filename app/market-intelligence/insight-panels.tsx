@@ -1,5 +1,7 @@
 'use client'
 
+import { Thumb } from '../components/thumb'
+import { confidenceLabel } from '@/lib/research/labels'
 import { useMemo } from 'react'
 import { OPP_TITLES, detectOpportunities, type Opportunity } from '@/lib/research/opportunities'
 import { compareMarkets } from '@/lib/research/markets-info'
@@ -35,7 +37,7 @@ function OppCard({ o }: { o: Opportunity }) {
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'space-between' }}><h4 style={{ margin: 0 }}>{OPP_TITLES[o.kind]} · {o.topic}</h4><span style={{ display: 'flex', gap: 6 }}><span className="pill">{o.market}</span><span className={`pill ${st.cls}`}>{st.label}</span></span></div>
     <p style={{ margin: '6px 0' }}><b>{o.claim}</b></p>
     <p className="small muted">Demanda {o.demand} · Competencia {o.competition} · Oferta {o.supply} (de 100)</p>
-    <ul className="small" style={{ margin: '6px 0 0 16px' }}>{o.evidence.map((e, i) => <li key={`${e.label}${i}`}>{e.thumbnailUrl && e.url ? <a href={e.url} target="_blank" rel="noreferrer" style={{ marginRight: 6 }}><img src={e.thumbnailUrl} alt="" width={64} height={36} loading="lazy" style={{ verticalAlign: 'middle', borderRadius: 4 }} /></a> : null}<b>{e.label}:</b> {e.url ? <a href={e.url} target="_blank" rel="noreferrer">{e.value}</a> : e.value}</li>)}</ul>
+    <ul className="small" style={{ margin: '6px 0 0 16px' }}>{o.evidence.map((e, i) => <li key={`${e.label}${i}`}>{e.videoId && e.url ? <a href={e.url} target="_blank" rel="noreferrer" style={{ marginRight: 6 }}><Thumb videoId={e.videoId} src={e.thumbnailUrl} width={64} height={36} style={{ verticalAlign: 'middle', borderRadius: 4 }} /></a> : null}<b>{e.label}:</b> {e.url ? <a href={e.url} target="_blank" rel="noreferrer">{e.value}</a> : e.value}</li>)}</ul>
     <p className="small" style={{ marginTop: 6 }}><b>Qué podría fallar:</b> {o.uncertainty}</p>
     <p className="small"><b>Tipo de canal:</b> {o.channelType} <b>Formatos:</b> {o.formats.join(', ')}.</p>
     <p className="small"><b>Siguiente paso:</b> {o.nextStep}</p>
@@ -65,7 +67,7 @@ export function MarketComparisonPanel({ rows }: { rows: TopicAnalysis[] }) {
   return <section className="panel" aria-label="Comparación entre mercados" style={{ marginTop: 14 }}>
     <h3>Comparación entre mercados: «{cmp.topic}»</h3>
     <div style={{ overflowX: 'auto' }}><table className="dataTable"><thead><tr><th>Mercado</th><th>Demanda</th><th>Competencia</th><th>Oferta</th><th>Oportunidad</th><th>Crecimiento</th><th>Vídeos relevantes</th><th>Confianza</th></tr></thead>
-      <tbody>{cmp.columns.map(c => <tr key={c.key}><td>{c.label}</td><td>{c.demand}</td><td>{c.competition}</td><td>{c.supply}</td><td>{c.opportunity}</td><td>{c.growth}</td><td>{c.relevantVideos}</td><td>{c.confidence}</td></tr>)}</tbody></table></div>
+      <tbody>{cmp.columns.map(c => <tr key={c.key}><td>{c.label}</td><td>{c.demand}</td><td>{c.competition}</td><td>{c.supply}</td><td>{c.opportunity}</td><td>{c.growth}</td><td>{c.relevantVideos}</td><td>{confidenceLabel(c.confidence)}</td></tr>)}</tbody></table></div>
     <ul className="small" style={{ margin: '8px 0 0 16px' }}>{cmp.findings.map(f => <li key={f}>{f}</li>)}</ul>
     <details style={{ marginTop: 6 }}><summary className="small">¿Se pueden comparar estos mercados?</summary>
       <ul className="small" style={{ margin: '6px 0 0 16px' }}>{cmp.pairs.map(p => <li key={p.a + p.b}><b>{p.a} ↔ {p.b}: {LEVEL_TXT[p.level]}.</b> {p.reasons.join(' ')}</li>)}</ul>

@@ -38,6 +38,9 @@ export function FilterPanel({ tab }: { tab: TabId }) {
   const logic = (g: keyof typeof f.logic) => (l: 'any' | 'all') => setDraft({ ...f, logic: { ...f.logic, [g]: l } })
   const chips = useMemo(() => describeActive(forTab(tab, applied), NAMES), [applied, tab])
   const keptElsewhere = useMemo(() => describeActive(applied, NAMES).length - chips.length, [applied, chips])
+  // Steps are numbered in the order they are SHOWN: a tab that hides one never leaves a gap or repeats a number.
+  const visible: Record<string, boolean> = { where: has('countries') || has('languages'), what: tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international', filters: has('niches') || has('formats') || has('contentTypes'), traits: has('period') || has('rpm') }
+  const step = (k: string) => Object.entries(visible).filter(([, v]) => v).map(([key]) => key).indexOf(k) + 1
   const plan = useMemo(() => searchPlanFor(tab, f, queries, { analyses, charts, remainingToday: usage?.remaining ?? 6000 }), [tab, f, queries, analyses, charts, usage])
   const typed = tab === 'keywords' ? parseTopics(queries.keywords, 3) : tab === 'niches' ? parseTopics(queries.niches) : []
   const busy = Boolean(progress) || chartsBusy || search.busy
@@ -77,7 +80,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
     </div>
 
     {open && <>
-      {(has('countries') || has('languages')) && <fieldset className="filterStep"><legend>1 · Dónde investigar</legend><div className="filterGrid">
+      {(has('countries') || has('languages')) && <fieldset className="filterStep"><legend>{step('where')} · Dónde investigar</legend><div className="filterGrid">
         {has('countries') && <div>
           <MultiSelect label="Países" options={countryOptions} value={f.countries} onChange={countries => { set({ countries }); setNotice('') }} max={MAX_COUNTRIES} logic={f.logic.countries} onLogic={logic('countries')} explanation={GROUP_SEMANTICS.countries.explanation} />
           <div className="legend" style={{ marginTop: 6 }} aria-label="Añadir un continente">{CONTINENTS.map(([id, l]) => <button key={id} type="button" className="pill" onClick={() => addContinent(id)} title={`Añadir los países de ${l}`}>+ {l}</button>)}</div>
@@ -87,7 +90,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         {has('languages') && f.languages.length > 0 && <label className="msOpt"><input type="checkbox" checked={f.includeUndeclaredLanguage} onChange={e => set({ includeUndeclaredLanguage: e.target.checked })} /> Incluir vídeos sin idioma declarado (YouTube solo lo informa en una parte de los vídeos)</label>}
       </div><p className="muted small">País = donde YouTube muestra el vídeo, no donde viven los espectadores. Idioma = el que declaró quien subió el vídeo (a veces falta).</p></fieldset>}
 
-      {(tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international') && <fieldset className="filterStep"><legend>2 · Qué quieres buscar</legend>
+      {(tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international') && <fieldset className="filterStep"><legend>{step('what')} · Qué quieres buscar</legend>
         {tab === 'niches' && <div>
           <label className="muted small" htmlFor="topics">Temas o subnichos (opcional: uno por línea o separados por comas, hasta 6)</label>
           <textarea id="topics" rows={2} value={queries.niches} onChange={e => setQueries({ niches: e.target.value })} placeholder="Déjalo vacío y se probarán ideas de los nichos elegidos, en el idioma de cada mercado" style={{ width: '100%' }} />
@@ -100,13 +103,13 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         {tab === 'international' && <div><label className="muted small" htmlFor="tc">Tema a comparar en cada mercado (opcional)</label><input id="tc" aria-label="Tema a comparar" value={queries.international} onChange={e => setQueries({ international: e.target.value })} placeholder="inteligencia artificial para negocios" maxLength={120} /></div>}
       </fieldset>}
 
-      {(has('niches') || has('formats') || has('contentTypes')) && <fieldset className="filterStep"><legend>3 · Qué filtros aplicar</legend><div className="filterGrid">
+      {(has('niches') || has('formats') || has('contentTypes')) && <fieldset className="filterStep"><legend>{step('filters')} · Qué filtros aplicar</legend><div className="filterGrid">
         {has('niches') && <MultiSelect label="Nichos" options={NICHES.map(x => [x.id, x.label])} value={f.niches} onChange={niches => set({ niches })} logic={f.logic.niches} onLogic={logic('niches')} explanation={GROUP_SEMANTICS.niches.explanation} />}
         {has('formats') && <MultiSelect label="Formatos" options={FORMAT_OPTIONS as Array<[string, string]>} value={f.formats} onChange={formats => set({ formats })} logic={f.logic.formats} onLogic={logic('formats')} allEnabled={false} explanation={GROUP_SEMANTICS.formats.explanation} />}
         {has('contentTypes') && <MultiSelect label="Tipos de contenido" options={CONTENT_TYPE_OPTIONS} value={f.contentTypes} onChange={contentTypes => set({ contentTypes })} logic={f.logic.contentTypes} onLogic={logic('contentTypes')} explanation={GROUP_SEMANTICS.contentTypes.explanation} />}
       </div><p className="muted small">Nicho y formato son <b>inferidos</b> (palabras, etiquetas, categoría y duración): YouTube no los confirma.</p></fieldset>}
 
-      {(has('period') || has('rpm')) && <fieldset className="filterStep"><legend>4 · Qué características</legend><div className="filterGrid">
+      {(has('period') || has('rpm')) && <fieldset className="filterStep"><legend>{step('traits')} · Qué características</legend><div className="filterGrid">
         {has('period') && <div>
           <label className="muted small" htmlFor="rf-period">Periodo</label>
           <select id="rf-period" value={f.periodDays === null ? '' : String(f.periodDays)} onChange={e => set({ periodDays: e.target.value ? Number(e.target.value) : null })}>

@@ -48,6 +48,8 @@ type Ctx = {
   run: (topics: string[], markets?: Market[], opts?: { refresh?: boolean }) => Promise<{ ok: number; failed: string[] }>
   /** Adds the previous window to an analysis and calculates growth (≈ 102 units). */
   measureGrowth: (a: TopicAnalysis) => Promise<void>; growthBusy: boolean
+  /** Clears the one-off notices (errors, «resultados actualizados», retry button) when the person moves to another section. */
+  resetNotices: () => void
   progress: Progress; error: string; cancel: () => void; clearAnalyses: () => void
   /** Official most-popular charts already fetched (2 quota units each), by country. */
   charts: Record<string, YouTubeVideoResult[]>; loadCharts: (regions: string[]) => Promise<void>; chartsBusy: boolean; chartsError: string
@@ -235,8 +237,16 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const removeChip = useCallback((chip: ActiveChip) => { setApplied(f => chip.remove(f)); setDraft(f => chip.remove(f)); setLastRun(null) }, [])
   const persistPresets = (list: Preset[]) => { setPresets(list); savePresets(store(), list) }
   const value: Ctx = {
-    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses: current, legacy, charts, loadCharts, chartsBusy, chartsError, list: Object.values(current), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
+    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses: current, legacy, charts, loadCharts, chartsBusy, chartsError, list: Object.values(current), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, resetNotices: () => { setError(''); setChartsError(''); setLastRun(null); setLastPlan(null); setSearch(x => (x.error || x.done ? { ...x, error: '', done: '' } : x)) }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
     presets, savePreset: name => persistPresets(addPreset(presets, name, draft)), applyPreset: id => { const p = presets.find(x => x.id === id); if (p) { const f = sanitizeFilters(p.filters); setDraft(f); setApplied(f); setLastRun(null) } }, deletePreset: id => persistPresets(presets.filter(p => p.id !== id)),
   }
   return <C.Provider value={value}>{children}</C.Provider>
+}
+
+/** Placed inside the provider: whenever `tab` changes the previous section's notices are dropped, so an error never follows the person around. */
+export function ResetNoticesOnTab({ tab }: { tab: string }) {
+  const { resetNotices } = useResearch()
+  const first = useRef(true)
+  useEffect(() => { if (first.current) { first.current = false; return } resetNotices() }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
 }

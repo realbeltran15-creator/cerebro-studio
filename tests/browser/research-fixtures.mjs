@@ -11,7 +11,8 @@ export const charts = {
 }
 
 const slug = t => String(t).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)
-export const ana = (topic, region, language, verdict, i, extra = {}) => ({ topic, region, language, fetchedAt: new Date().toISOString(), units: 204, indices: { demand: i.d, supply: i.s, competition: i.c, growth: i.g, opportunity: i.o }, growthPct: 12, growth: { state: 'calculable', reason: 'Vistas por día (mediana) fijas del mock.', windowDays: 30, recent: { n: 12, medianVpd: 900 }, previous: { n: 12, medianVpd: 450 }, ratio: 2, label: 'al alza (posible)' },
+// engineVersion must equal ENGINE_VERSION in lib/research/topic-analysis.ts: analyses of an older engine are kept apart by the app.
+export const ana = (topic, region, language, verdict, i, extra = {}) => ({ engineVersion: 3, topic, region, language, fetchedAt: new Date().toISOString(), units: 204, indices: { demand: i.d, supply: i.s, competition: i.c, growth: i.g, opportunity: i.o }, growthPct: 12, growth: { state: 'calculable', reason: 'Vistas por día (mediana) fijas del mock.', windowDays: 30, recent: { n: 12, medianVpd: 900 }, previous: { n: 12, medianVpd: 450 }, ratio: 2, label: 'al alza (posible)' },
   quality: { examined: 40, kept: 32, excluded: { tema: 3, nicho: 2, idioma: 2, directo: 0, sentido: 1, contexto: 0 }, uncertain: 1, ambiguousSample: false, promo: 1, outliers: 0, languageUnverified: 5, channelInMarket: 6, channelCountryKnown: 12 }, formatQuality: { shortConfirmed: 1, shortProbable: 0, clipsNotShort: 0 },
   sample: [
     { videoId: 's1', url: 'https://www.youtube.com/watch?v=s1', title: 'Cash ISA explained: savings', channelTitle: 'Money Channel', views: 120000, publishedAt: '2026-08-01T00:00:00Z', durationSeconds: 600, inTop: true, inRecent: false, status: 'aceptado', reason: null, detail: 'confirmado por: savings, cash isa', language: 'en', languageVerdict: 'coincide', promo: false, outlier: false, format: 'medium', live: null },
@@ -42,7 +43,7 @@ export async function installResearchRoutes(page, state = { mode: 'ok', requests
     const url = new URL(route.request().url()); state.requests.push(url.pathname + url.search)
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
     if (state.mode === 'down') return json({ error: 'YouTube Data API no está configurada. Añade YOUTUBE_API_KEY en las variables del servidor.', configured: false }, 503)
-    if (url.pathname.endsWith('/usage')) return json({ usedToday: state.used, cap: 6000, remaining: Math.max(6000 - state.used, 0), persistent: true })
+    if (url.pathname.endsWith('/usage')) return json({ usedToday: state.used, cap: 6000, remaining: Math.max(6000 - state.used, 0), persistent: true, searchesToday: Math.round(state.used / 102), searchCap: 60, exhausted: false, verified: false })
     if (url.pathname.endsWith('/trending')) return json({ configured: true, results: charts[url.searchParams.get('region')] ?? [] })
     if (url.pathname.endsWith('/topic')) {
       if (state.mode === 'budget') return json({ error: 'Presupuesto diario de Investigación agotado: 6000 de 6000 unidades usadas hoy.', budget: { used: 6000, cap: 6000 }, configured: true }, 429)
@@ -51,7 +52,7 @@ export async function installResearchRoutes(page, state = { mode: 'ok', requests
       const t = base.byRegion?.[region] ?? base
       const extra = { recentDays: Number(url.searchParams.get('days')) || 30, ...(region === 'AU' ? { sampleSizes: { top: 9, recent: 3 }, confidence: 'baja' } : {}), ...(base.niches ? { niches: base.niches } : {}) }
       state.used += 204
-      return json({ configured: true, analysis: ana(q, region, lang, t.v, t.i, extra), cached: false, usage: { usedToday: state.used, cap: 6000, persistent: true } })
+      return json({ configured: true, analysis: ana(q, region, lang, t.v, t.i, extra), cached: false, usage: { usedToday: state.used, cap: 6000, persistent: true, searchesToday: Math.round(state.used / 102), searchCap: 60, exhausted: false } })
     }
     return json({ configured: true, results: [] })
   })

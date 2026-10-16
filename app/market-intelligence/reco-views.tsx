@@ -7,6 +7,8 @@ import { saveAnalysis } from '@/lib/research/save'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { VERDICT } from './analysis-views'
 import { recoBrief, type NicheReco, type Reco, type RecoSection, type RecoVideo } from '@/lib/research/recommendations'
+import { Thumb } from '../components/thumb'
+import { languageLabel } from '@/lib/research/labels'
 import { fmtCompact, fmtNumber } from '@/lib/research/format'
 
 const FORMAT_NAME = { short: 'Short probable', brief: 'Corto', medium: 'Medio', long: 'Largo', live: 'Directo', unknown: 'Formato desconocido' } as const
@@ -17,14 +19,14 @@ const duration = (s: number | null) => (s === null ? '' : s >= 3600 ? `${Math.fl
 export function VideoTile({ v, reason }: { v: RecoVideo; reason?: string }) {
   return <figure className="videoTile" aria-label={`Vídeo: ${v.title}`}>
     <a href={v.url} target="_blank" rel="noopener noreferrer" className="thumb" aria-label={`Abrir en YouTube: ${v.title}`}>
-      {v.thumbnailUrl ? <img src={v.thumbnailUrl} alt="" loading="lazy" width={320} height={180} /> : <span className="thumbMissing">Sin miniatura</span>}
+      <Thumb videoId={v.videoId} src={v.thumbnailUrl} />
       {v.durationSeconds !== null && <span className="thumbDur">{duration(v.durationSeconds)}</span>}
     </a>
     <figcaption>
       <a href={v.url} target="_blank" rel="noopener noreferrer"><b>{v.title}</b></a>
       <span className="muted small">{v.channelTitle}{v.subscribers !== null ? ` · ${fmtCompact(v.subscribers)} suscriptores` : ''}</span>
       <span className="muted small">{v.views !== null ? `${fmtNumber(v.views)} visualizaciones` : 'visualizaciones desconocidas'} · {dateEs(v.publishedAt)}</span>
-      <span className="muted small">{v.market}{v.language ? ` · ${v.language}` : ''} · {FORMAT_NAME[v.format.format]} <span className="tag inferido" title={v.format.reason}>inferido</span></span>
+      <span className="muted small">{v.market}{v.language ? ` · ${languageLabel(v.language)}` : ''} · {FORMAT_NAME[v.format.format]} <span className="tag inferido" title={v.format.reason}>inferido</span></span>
       {reason && <span className="small">{reason}</span>}
     </figcaption>
   </figure>

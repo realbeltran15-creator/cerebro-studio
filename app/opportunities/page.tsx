@@ -1,5 +1,6 @@
 'use client'
 
+import { languageLabel, regionLabel, sourceLabel } from '@/lib/research/labels'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -88,7 +89,7 @@ export default function OpportunitiesPage() {
       <div className="field-row" style={{ marginBottom: 16 }}>
         <label htmlFor="opp-q">Buscar<input id="opp-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Tema, consulta, mercado, observación…" /></label>
         <label htmlFor="opp-status">Estado<select id="opp-status" value={status} onChange={e => setStatus(e.target.value)}><option value="">Todos</option>{Object.entries(statuses).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-        <label htmlFor="opp-source">Fuente<select id="opp-source" value={source} onChange={e => setSource(e.target.value)}><option value="">Todas</option>{sources.map(s => <option key={s}>{s}</option>)}</select></label>
+        <label htmlFor="opp-source">Fuente<select id="opp-source" value={source} onChange={e => setSource(e.target.value)}><option value="">Todas</option>{sources.map(s => <option key={s} value={s}>{sourceLabel(s)}</option>)}</select></label>
         <label htmlFor="opp-sort">Orden<select id="opp-sort" value={sort} onChange={e => setSort(e.target.value as typeof sort)}><option value="new">Más recientes</option><option value="old">Más antiguas</option><option value="title">Título A–Z</option><option value="viewsPerDay">Más vistas/día</option><option value="viewsToSubscribers">Mayor ratio vistas/suscriptores</option><option value="growth">Más crecimiento reciente</option></select></label>
       </div>
       <p className="muted small" style={{ marginBottom: 12 }}>{visible.length} de {items.length} · Las métricas solo aparecen cuando son datos observados con fuente; nada se estima aquí.</p>
@@ -107,7 +108,7 @@ export default function OpportunitiesPage() {
             const history = viewsHistory(o.observed_metrics)
             return (
               <article key={o.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <small>{o.source_platform} · {o.region || 'Global'} · {o.language || '—'} · {new Date(o.created_at).toLocaleDateString()}</small>
+                <small>{sourceLabel(o.source_platform)} · {regionLabel(o.region)} · {languageLabel(o.language)} · {new Date(o.created_at).toLocaleDateString()}</small>
                 <h3>{o.title}</h3>
                 {o.query && <p>Consulta: {o.query}</p>}
                 {notesOf(o).map((n, i) => <p key={i}>Observación: {n}</p>)}

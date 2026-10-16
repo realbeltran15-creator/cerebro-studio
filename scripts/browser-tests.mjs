@@ -601,7 +601,8 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   // Entering: cheap and automatic; nothing expensive.
   await page.getByText('Corto viral de gatos').first().waitFor({ timeout: 20000 })
   check('research: entering loads only the cheap official chart of one country', requests.filter(r => r.includes('/trending')).length === 1 && requests.every(r => !r.includes('/topic') && !r.includes('/youtube?')), requests)
-  check('research: the seven sections (the Comparador was folded into Nichos) are in the navigation, above the filters', (await page.getByRole('tab').count()) === 7 && (await page.getByRole('tab', { name: 'Comparador' }).count()) === 0 && /1 · Qué quieres investigar/.test(await body()))
+  check('research: the seven sections (the Comparador was folded into Nichos) are in the navigation, above the filters', (await page.getByRole('tab').count()) === 7 && (await page.getByRole('tab', { name: 'Comparador' }).count()) === 0 && /Qué quieres investigar/.test(await body()) && !/1 · Qué quieres investigar/.test(await body()))
+  { const legends = await page.locator('legend').allInnerTexts(); const nums = legends.map(l => /^(\d) · /.exec(l)?.[1]).filter(Boolean).map(Number); check('research: filter steps are numbered 1..n without repeats or gaps', nums.length > 0 && nums.every((n, i) => n === i + 1), JSON.stringify(legends)) }
   check('research: the button starts disabled with "Sin filtros"', await go().isDisabled() && (await page.getByText('Sin filtros', { exact: true }).count()) >= 1)
   check('research: discovery names its market, shows the nine recommendation sections, and says analyses are missing instead of inventing them', /Recomendaciones para España/.test(await body()) && (await page.locator('details.recoSection').count()) === 9 && (await page.getByText(/necesitan analizar nichos/).count()) === 1)
   const thumbHrefs = await page.locator('.recoSection .thumb').evaluateAll(els => els.map(e => e.getAttribute('href')))
@@ -776,6 +777,9 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await go().click()
   await page.getByRole('alert').getByText(/Consulta fallida/).first().waitFor({ timeout: 10000 }).catch(() => {})
   check('research: a failed search is reported as failed with the reason and offers a retry', (await page.getByRole('alert').getByText(/Consulta fallida: .*YOUTUBE_API_KEY/).count()) >= 1 && (await page.getByRole('button', { name: 'Reintentar lo que falló' }).count()) >= 1)
+  // The failure notice belongs to the section where it happened: changing section drops it.
+  await tab('Palabras clave').click()
+  check('research: a failure notice does not follow the person to another section', (await page.getByRole('alert').getByText(/Consulta fallida/).count()) === 0 && (await page.getByRole('button', { name: 'Reintentar lo que falló' }).count()) === 0)
   state.mode = 'ok'
 
   // Budget error.
@@ -835,7 +839,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const pending1 = await pend()
   check('research: after a reload the guided plan and its finished analyses are still there', rows2.length === 6 && rows2.reduce((t, r) => t + Number(r.split('\t')[2]), 0) === doneNow && pending1 === 120 - doneNow, { rows2, pending1, doneNow })
   state.used = 0; await page.evaluate(() => localStorage.removeItem('cerebro.research.ledger')); await page.reload(); await page.getByRole('tab').first().waitFor({ timeout: 20000 }); await page.addStyleTag({ content: css }); await tab('Nichos').click()
-  await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/Hoy has usado 0 de/).waitFor({ timeout: 10000 }).catch(async e => { console.log('DEBUG', await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/Hoy has usado/).allInnerTexts(), await page.evaluate(() => localStorage.getItem('cerebro.research.ledger'))); throw e })
+  await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/ha usado hoy 0 de las/).waitFor({ timeout: 10000 }).catch(async e => { console.log('DEBUG', await page.getByRole('region', { name: 'Investigación guiada' }).getByText(/Hoy has usado/).allInnerTexts(), await page.evaluate(() => localStorage.getItem('cerebro.research.ledger'))); throw e })
   await guided2.getByRole('checkbox', { name: /gastará/ }).check()
   await guided2.getByRole('button', { name: /Ejecutar lo que cabe hoy \(29 análisis/ }).click()
   await guided2.getByText(new RegExp(`${pending1 - 29} análisis pendientes`)).waitFor({ timeout: 90000 })

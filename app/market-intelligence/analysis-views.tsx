@@ -10,6 +10,7 @@ import { formatOpportunity, type TopicAnalysis, type Verdict } from '@/lib/resea
 import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization'
 import { fmtNumber } from '@/lib/research/format'
 import { UNITS } from '@/lib/research/filters'
+import { confidenceLabel, indexText } from '@/lib/research/labels'
 import { HowItIsCalculated } from './insight-panels'
 import { SampleInspector } from './sample-inspector'
 import { nicheLabel } from '@/lib/research/taxonomy'
@@ -22,7 +23,7 @@ export const VERDICT: Record<Verdict, { label: string; cls: string }> = {
 export const INDEX_LABEL = { demand: 'Demanda', supply: 'Oferta', competition: 'Competencia', growth: 'Crecimiento', opportunity: 'Oportunidad' } as const
 const INDEX_HELP: Record<keyof typeof INDEX_LABEL, string> = {
   demand: 'Vistas por día de los vídeos del tema (escala logarítmica).', supply: 'Cuánto se publica y por cuántos canales distintos.',
-  competition: 'Tamaño y concentración de los canales que dominan.', growth: 'Compara dos ventanas seguidas de la misma duración (50 = estable). Sin ellas: No calculable.', opportunity: 'Combina demanda alta con poca competencia y oferta; sin demanda nunca pasa de 20.',
+  competition: 'Tamaño y concentración de los canales que dominan.', growth: 'Compara dos ventanas seguidas de la misma duración. Sin ellas: No calculable (no se inventa un valor neutro).', opportunity: 'Combina demanda alta con poca competencia y oferta; sin demanda nunca pasa de 20.',
 }
 const dateEs = (iso: string) => new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
 
@@ -85,7 +86,7 @@ export function ViewToggle({ value, onChange }: { value: 'cards' | 'table' | 'ch
 
 export function AnalysisTable({ list }: { list: TopicAnalysis[] }) {
   return <div className="tableScroll"><table className="dataTable"><thead><tr><th>Tema</th><th>Mercado</th><th>Veredicto</th><th>Demanda</th><th>Oferta</th><th>Competencia</th><th>Crecim.</th><th>Oportunidad</th><th>Confianza</th></tr></thead>
-    <tbody>{list.map(a => <tr key={`${a.topic}|${a.region}|${a.language}`}><td>{a.topic}</td><td>{marketLabel(a.region, a.language)}</td><td>{VERDICT[a.verdict].label}</td><td>{a.indices.demand}</td><td>{a.indices.supply}</td><td>{a.indices.competition}</td><td>{a.indices.growth}</td><td><b>{a.indices.opportunity}</b></td><td>{a.confidence}</td></tr>)}</tbody></table></div>
+    <tbody>{list.map(a => <tr key={`${a.topic}|${a.region}|${a.language}`}><td>{a.topic}</td><td>{marketLabel(a.region, a.language)}</td><td>{VERDICT[a.verdict].label}</td><td>{a.indices.demand}</td><td>{a.indices.supply}</td><td>{a.indices.competition}</td><td>{indexText(a.indices.growth)}</td><td><b>{a.indices.opportunity}</b></td><td>{confidenceLabel(a.confidence)}</td></tr>)}</tbody></table></div>
 }
 
 /** Simple SVG bars: one per analysis, for the chosen index. No chart library needed. */

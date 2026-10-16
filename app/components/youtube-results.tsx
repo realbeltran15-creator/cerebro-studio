@@ -1,5 +1,6 @@
 'use client'
 
+import { Thumb } from './thumb'
 import { isUniqueViolation } from '@/lib/opportunities'
 import { useEffect, useState, type ReactNode } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
@@ -68,7 +69,7 @@ export function YouTubeResults({ results, context, onSaved, extra }: { results: 
     {notice && <p className="notice" role="status" style={{ marginTop: 12 }}>{notice}</p>}
     <p className="authNote" style={{ marginTop: 12 }}>Observado = dato de la API en el momento de la consulta. Calculado = derivado de esos datos; no es una predicción.</p>
     <div className="grid" style={{ marginTop: 10 }}>{results.map(v => <article key={v.videoId}>
-      {v.thumbnailUrl && <img src={v.thumbnailUrl} alt="" style={{ width: '100%', height: 'auto', borderRadius: 8 }} loading="lazy" />}
+      <Thumb videoId={v.videoId} src={v.thumbnailUrl} style={{ width: '100%', height: 'auto', borderRadius: 8 }} />
       <h3 style={{ marginTop: 8 }}><a href={v.url} target="_blank" rel="noopener noreferrer">{v.title}</a></h3>
       {extra?.(v)}
       <p className="muted small">{v.channelTitle} · {v.publishedAt ? new Date(v.publishedAt).toLocaleDateString() : 'sin fecha'} · {fmtDuration(v.observed.durationSeconds)}</p>

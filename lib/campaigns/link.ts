@@ -1,3 +1,4 @@
+import { currencyForCountries } from './currency'
 import { EMPTY_BRIEF, type Brief } from './types'
 
 /**
@@ -29,7 +30,7 @@ export function briefFromLink(search: string): Partial<Brief> | null {
   const at = safe(p.get('at'), 40)
   return {
     ...EMPTY_BRIEF, name: `Canal sobre ${topic}`.slice(0, 120), subject: 'channel', subjectName: topic, sourceTopic: topic, goal: 'subscribers',
-    countries: /^[A-Z]{2}$/.test(country) ? [country] : [], projectId: safe(p.get('project'), 64),
+    countries: /^[A-Z]{2}$/.test(country) ? [country] : [], ...(currencyForCountries(/^[A-Z]{2}$/.test(country) ? [country] : []) ? { currency: currencyForCountries([country])! } : {}), projectId: safe(p.get('project'), 64),
     source: { opportunityId: safe(p.get('opp'), 64), summary: `Tema «${topic}»${parts.length ? `: ${parts.join(', ')}` : ''}. Son índices calculados por Cerebro Studio sobre una muestra de YouTube, no resultados garantizados.`, language: /^[a-z]{2}$/.test(lang) ? lang : '', fetchedAt: Number.isFinite(Date.parse(at)) ? at : '' },
   }
 }

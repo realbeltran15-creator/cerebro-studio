@@ -63,12 +63,12 @@ function pickVideos(a: TopicAnalysis, used: Set<string>, n: number, pref: Pref):
   return out
 }
 
-/** Conservative: ranks by the LOW end of the sector estimate, never the middle or the top. Niches without an estimate count as 0 (unknown). */
-const rpmLow = (a: TopicAnalysis) => a.niches.reduce((m, n) => { const r = formatAdjusted(nicheRpm(n), 'long'); return r.status === 'estimado' ? Math.max(m, r.low) : m }, 0)
+/** Conservative: ranks by the LOW end of the sector estimate, never the middle or the top. Niches without an estimate, or whose figure is only borrowed from another niche (confidence «muy baja»), count as 0 (unknown). */
+const rpmLow = (a: TopicAnalysis) => a.niches.reduce((m, n) => { const r = formatAdjusted(nicheRpm(n), 'long'); return r.status === 'estimado' && r.confidence !== 'muy baja' ? Math.max(m, r.low) : m }, 0)
 const rpmNote = (a: TopicAnalysis) => {
   const n = a.niches.find(x => nicheRpm(x).status === 'estimado'); if (!n) return null
   const r = formatAdjusted(nicheRpm(n), 'long')
-  return r.status === 'estimado' ? `RPM ESTIMADO ${nicheLabel(n)}: $${r.low}–$${r.high} por 1000 visitas (confianza ${r.confidence})` : null
+  return r.status === 'estimado' ? `RPM ESTIMADO ${nicheLabel(n)}: $${r.low}–$${r.high} por 1000 visitas (confianza ${r.confidence}${r.confidence === 'muy baja' ? '; cifra prestada de otro nicho, referencia muy débil: no sirve para comparar' : ''})` : null
 }
 
 function nicheReco(a: TopicAnalysis, reason: string, used: Set<string>, videosPerNiche: number, pref: Pref): NicheReco {
@@ -136,7 +136,7 @@ export function buildRecommendations(input: { analyses: TopicAnalysis[]; charts:
   const isEmerging = (a: TopicAnalysis) => a.indices.demand >= T.emerging.demand && ((a.growth.state === 'calculable' && (a.indices.growth ?? 0) >= T.emerging.growthIndex) || risingTerms(a).length >= T.emerging.emergingTerms)
   add('emerging', 'Nichos emergentes', `Demanda ≥ ${T.emerging.demand} y, o bien crecimiento medido entre ventanas comparables (índice ≥ ${T.emerging.growthIndex}), o al menos ${T.emerging.emergingTerms} frases que aparecen en ${T.emerging.termVideos}+ vídeos recientes y no en el top del año. Sin una de las dos pruebas no se recomienda.`, top(reliable.filter(isEmerging), a => (a.indices.growth ?? 0) * 10 + risingTerms(a).length, a => a.growth.state === 'calculable' ? `Crecimiento ${a.growth.label} (×${a.growth.ratio?.toFixed(2)}): ${a.growth.reason}` : `Crecimiento No calculable; frases al alza: ${risingTerms(a).slice(0, 4).map(t => `${t.term} (${t.videos} vídeos)`).join(', ')}. Es una señal léxica, no una medida de crecimiento.`), none)
   // 4. Monetisation potential (ESTIMATED).
-  add('money', 'Mayor potencial de monetización', `Demanda ≥ ${T.money.demand} y extremo bajo del RPM estimado del sector ≥ $${T.money.rpmLow} por 1000 visitas (vídeo largo). Es una ESTIMACIÓN de terceros, no el RPM de ningún canal ni un ingreso verificado; los nichos sin estimación no entran.`, top(reliable.filter(a => a.indices.demand >= T.money.demand && rpmLow(a) >= T.money.rpmLow), a => (a.niches.map(n => { const r = nicheRpm(n); return r.status === 'estimado' ? r.mid : 0 }).reduce((m, x) => Math.max(m, x), 0)) * 100 + a.indices.demand, a => `${rpmNote(a)}. Demanda ${a.indices.demand}/100.`), analyses.length ? 'Ningún análisis cae en un nicho con RPM de referencia dentro de los filtros.' : none)
+  add('money', 'Mayor potencial de monetización', `Demanda ≥ ${T.money.demand} y extremo bajo del RPM estimado del sector ≥ $${T.money.rpmLow} por 1000 visitas (vídeo largo). Es una ESTIMACIÓN de terceros, no el RPM de ningún canal ni un ingreso verificado; los nichos sin estimación propia (o con una cifra prestada de otro nicho) no entran.`, top(reliable.filter(a => a.indices.demand >= T.money.demand && rpmLow(a) >= T.money.rpmLow), a => (a.niches.map(n => { const r = nicheRpm(n); return r.status === 'estimado' ? r.mid : 0 }).reduce((m, x) => Math.max(m, x), 0)) * 100 + a.indices.demand, a => `${rpmNote(a)}. Demanda ${a.indices.demand}/100.`), analyses.length ? 'Ningún análisis cae en un nicho con RPM de referencia dentro de los filtros.' : none)
   // 5. Lowest competition among niches that do have demand.
   add('lowcomp', 'Menor competencia', `Demanda ≥ ${T.lowcomp.demand} y competencia ≤ ${T.lowcomp.competition}: canales más pequeños y menos concentrados.`, top(reliable.filter(a => a.indices.demand >= T.lowcomp.demand && a.indices.competition <= T.lowcomp.competition), a => 100 - a.indices.competition, a => `Competencia ${a.indices.competition}/100 con demanda ${a.indices.demand}/100: ${a.reasons[2] ?? ''}`), none)
 

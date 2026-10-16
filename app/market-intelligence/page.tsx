@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { StudioShell } from '../components/studio-shell'
 import { YouTubeResearch } from './youtube-research'
 import { ChannelResearch } from './channel-analysis'
-import { ResearchProvider } from './research-context'
+import { ResearchProvider, ResetNoticesOnTab } from './research-context'
 import { FilterPanel } from './filter-panel'
 import { KeywordsTab, NichesTab } from './tabs-analysis'
 import { DiscoverTab, InternationalTab, MonetizationTab } from './tabs-trends'
@@ -43,10 +43,11 @@ export default function MarketIntelligencePage() {
   return <StudioShell title="Investigación" eyebrow="INTELIGENCIA DE MERCADO" actions={<Link className="buttonLink ghost" href="/youtube">Explorar YouTube</Link>}>
     <p className="connectionStatus">{message}</p>
     {authenticated === false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated === true ? <ResearchProvider>
-      <p className="muted small" style={{ margin: '0 0 4px' }}>1 · Qué quieres investigar</p>
+      <p className="muted small" style={{ margin: '0 0 4px' }}>Qué quieres investigar</p>
       <div className="researchTabs" role="tablist" aria-label="Secciones de Investigación">
         {TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}
       </div>
+      <ResetNoticesOnTab tab={tab} />
       <FilterPanel tab={tab} />
       {tab === 'discover' && <DiscoverTab onSaved={() => void load()} goTo={setTab} />}
       {tab === 'niches' && <NichesTab onSaved={() => void load()} />}

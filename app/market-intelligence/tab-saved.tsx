@@ -1,5 +1,6 @@
 'use client'
 
+import { Thumb } from '../components/thumb'
 import { ENGINE_VERSION } from '@/lib/research/topic-analysis'
 import { FormEvent, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
@@ -69,7 +70,7 @@ function SavedDetail({ item }: { item: Opportunity }) {
     {calc.indices && <p className="muted">Demanda {calc.indices.demand} · Oferta {calc.indices.supply} · Competencia {calc.indices.competition} · Crecimiento {calc.indices.growth ?? 'No calculable'} · Oportunidad {calc.indices.opportunity} (0–100){calc.verdict ? ` · ${calc.verdict}` : ''}{calc.confidence ? ` · confianza ${calc.confidence}` : ''}</p>}
     {snap?.fetchedAt && <p className="muted">Consultado el {new Date(snap.fetchedAt).toLocaleDateString('es-ES')}{snap.recentDays ? ` · ventana de recientes ${snap.recentDays} días` : ''}{snap.units ? ` · ${snap.units} unidades de cuota` : ''}</p>}
     {snap?.videos && snap.videos.length > 0 && <div className="recoGrid">{snap.videos.slice(0, 4).map(v => <a key={v.videoId} href={v.url} target="_blank" rel="noreferrer" className="videoTile">
-      {v.thumbnailUrl && /* eslint-disable-next-line @next/next/no-img-element */ <img className="thumb" src={v.thumbnailUrl} alt={`Miniatura de ${v.title}`} loading="lazy" />}
+      <Thumb className="thumb" videoId={v.videoId} src={v.thumbnailUrl} />
       <span>{v.title}</span><span className="muted">{v.channelTitle}</span>
     </a>)}</div>}
   </div>

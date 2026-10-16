@@ -12,7 +12,7 @@ export const GOALS: Array<[Goal, string, string]> = [
 ]
 export const METRICS: Array<[ResultMetric, string]> = [['reach', 'Alcance'], ['views', 'Visualizaciones'], ['interactions', 'Interacciones'], ['clicks', 'Clics'], ['subscribers', 'Suscriptores'], ['leads', 'Contactos'], ['sales', 'Ventas']]
 export const GOAL_METRIC: Record<Goal, ResultMetric> = { awareness: 'reach', views: 'views', subscribers: 'subscribers', traffic: 'clicks', leads: 'leads', sales: 'sales', engagement: 'interactions' }
-export const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF'] as const
+export const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'CAD', 'AUD'] as const
 
 export type PlatformInfo = {
   id: PlatformId; label: string; kind: 'organic' | 'paid'; network: 'youtube' | 'meta' | 'tiktok'

@@ -9,7 +9,7 @@ export type Mode = 'organic' | 'paid' | 'mixed'
 export type PlatformId = 'youtube_organic' | 'instagram_organic' | 'tiktok_organic' | 'google_ads' | 'meta_ads' | 'tiktok_ads'
 /** What kind of project is promoted; it changes platforms, formats, audiences, KPIs and rules. */
 export type ProjectKind = 'lofi' | 'shorts' | 'canal_largo' | 'ecommerce' | 'digital' | 'otro'
-export type Currency = 'EUR' | 'USD' | 'GBP' | 'CHF'
+export type Currency = 'EUR' | 'USD' | 'GBP' | 'CHF' | 'CAD' | 'AUD'
 export type ResultMetric = 'views' | 'clicks' | 'subscribers' | 'leads' | 'sales' | 'reach' | 'interactions'
 
 /** Editable cost assumptions for one paid platform. They are EDITORIAL examples, never measured results. */
@@ -27,6 +27,8 @@ export type Brief = {
   /** 8 */ durationDays: number | null; startDate: string
   /** 9 */ expectedMetric: ResultMetric | null; expectedValue: number | null
   currency: Currency
+  /** true = the person picked the currency: it is no longer changed when the countries change. */
+  currencyChosen: boolean
   /** Optional links to the rest of Cerebro Studio. */
   projectId: string; sourceTopic: string
   /** Where the idea came from (Investigación): kept so the plan and the report can cite the evidence, never re-computed here. */
@@ -43,7 +45,7 @@ export type Brief = {
 
 export const EMPTY_BRIEF: Brief = {
   name: '', subject: null, subjectName: '', subjectUrl: '', goal: null, countries: [], ageMin: null, ageMax: null, interests: '', audienceNotes: '',
-  platforms: [], totalBudget: null, dailyCap: null, durationDays: null, startDate: '', expectedMetric: null, expectedValue: null, currency: 'EUR', projectId: '', sourceTopic: '', source: null, kpis: [], kind: null, keepSplit: false, assumptions: {},
+  platforms: [], totalBudget: null, dailyCap: null, durationDays: null, startDate: '', expectedMetric: null, expectedValue: null, currency: 'EUR', currencyChosen: false, projectId: '', sourceTopic: '', source: null, kpis: [], kind: null, keepSplit: false, assumptions: {},
 }
 
 export type CampaignStatus = 'borrador' | 'lista' | 'archivada'

@@ -1,5 +1,6 @@
 'use client'
 
+import { languageLabel, regionLabel, sourceLabel } from '@/lib/research/labels'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { FormEvent, useCallback, useEffect, useState } from 'react'
@@ -136,7 +137,7 @@ export default function ProjectWorkspace() {
               const notes = Array.isArray(o.evidence) ? o.evidence.flatMap(ev => ev && typeof ev === 'object' && !Array.isArray(ev) && typeof ev.note === 'string' && ev.note.trim() ? [ev.note] : []) : []
               return (
                 <div className="listItem" key={o.id} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-                  <div><b>{o.title}</b><span>{o.source_platform}{o.query ? ` · ${o.query}` : ''}{o.region ? ` · ${o.region}` : ''}{o.language ? ` · ${o.language}` : ''}</span></div>
+                  <div><b>{o.title}</b><span>{sourceLabel(o.source_platform)}{o.query ? ` · ${o.query}` : ''}{o.region ? ` · ${regionLabel(o.region)}` : ''}{o.language ? ` · ${languageLabel(o.language)}` : ''}</span></div>
                   {notes.map((n, i) => <p key={i} className="muted small">Observación: {n}</p>)}
                   {o.source_id && /^https?:\/\//.test(o.source_id) && <a className="open" href={o.source_id} target="_blank" rel="noopener noreferrer">Fuente original ↗</a>}
                 </div>

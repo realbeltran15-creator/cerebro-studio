@@ -197,7 +197,7 @@ async function enrich(items: VideoItem[], key: string): Promise<YouTubeVideoResu
       channelId: v.snippet?.channelId ?? '',
       channelTitle: v.snippet?.channelTitle ?? '',
       publishedAt,
-      thumbnailUrl: thumbs.medium?.url ?? thumbs.default?.url ?? null,
+      thumbnailUrl: thumbs.medium?.url ?? thumbs.high?.url ?? thumbs.standard?.url ?? thumbs.default?.url ?? (v.id ? `https://i.ytimg.com/vi/${v.id}/mqdefault.jpg` : null),
       categoryId: v.snippet?.categoryId ?? null,
       description: (v.snippet?.description ?? '').slice(0, 300),
       channelCountry: countries.get(v.snippet?.channelId ?? '') ?? null,

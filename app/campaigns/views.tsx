@@ -1,5 +1,6 @@
 'use client'
 
+import { CURRENCY_NAME, currencyForCountries, currencyMismatch } from '@/lib/campaigns/currency'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { MultiSelect } from '../components/multi-select'
@@ -39,7 +40,7 @@ export function BriefTab({ brief, set, strategy, projects }: P & { projects: Arr
         <TextField label="Enlace (opcional)" value={brief.subjectUrl} onChange={subjectUrl => set({ subjectUrl })} placeholder="https://…" /></Question>
       <Question q={strategy.questions[1]}><SelectField label="Objetivo principal" value={brief.goal} onChange={goal => set({ goal })} options={GOALS.map(g => [g[0], g[1]] as [typeof g[0], string])} empty="Elige…" />
         {brief.goal && <p className="muted small">{GOALS.find(g => g[0] === brief.goal)?.[2]}</p>}</Question>
-      <Question q={strategy.questions[2]}><MultiSelect label="Países o regiones" options={COUNTRIES.map(c => [c.code, c.name] as [string, string])} value={brief.countries} onChange={countries => set({ countries })} /></Question>
+      <Question q={strategy.questions[2]}><MultiSelect label="Países o regiones" options={COUNTRIES.map(c => [c.code, c.name] as [string, string])} value={brief.countries} onChange={countries => { const c = currencyForCountries(countries); set(!brief.currencyChosen && c ? { countries, currency: c } : { countries }) }} /></Question>
       <Question q={strategy.questions[3]}><div className="campaignRow"><NumField label="Edad mínima" value={brief.ageMin} onChange={ageMin => set({ ageMin })} min={13} max={65} /><NumField label="Edad máxima" value={brief.ageMax} onChange={ageMax => set({ ageMax })} min={13} max={65} /></div>
         <TextField label="Intereses (separados por comas)" value={brief.interests} onChange={interests => set({ interests })} placeholder="ciencia, curiosidades, divulgación" />
         <TextField label="Quién es y qué problema tiene" value={brief.audienceNotes} onChange={audienceNotes => set({ audienceNotes })} multiline /></Question>
@@ -47,7 +48,8 @@ export function BriefTab({ brief, set, strategy, projects }: P & { projects: Arr
         onClick={() => set({ platforms: brief.platforms.includes(p.id) ? brief.platforms.filter(x => x !== p.id) : [...brief.platforms, p.id] })}>{p.label}</button>)}</fieldset>
         <button type="button" className="ghost" onClick={() => set({ platforms: suggestPlatforms(brief) })}>Usar plataformas sugeridas</button>
         <p className="muted small">Tipo de campaña: <b>{strategy.mode === 'mixed' ? 'mixta' : strategy.mode === 'paid' ? 'de pago' : strategy.mode === 'organic' ? 'orgánica' : 'sin definir'}</b>{brief.platforms.length === 0 && ' (según las sugeridas)'}</p></Question>
-      <Question q={strategy.questions[5]}><SelectField label="Moneda" value={brief.currency} onChange={c => set({ currency: c ?? 'EUR' })} options={CURRENCIES.map(c => [c, c] as [typeof c, string])} empty="EUR" />
+      <Question q={strategy.questions[5]}><SelectField label="Moneda" value={brief.currency} onChange={c => set({ currency: c ?? 'EUR', currencyChosen: true })} options={CURRENCIES.map(c => [c, c] as [typeof c, string])} empty="EUR" />
+        {(() => { const m = currencyMismatch(brief.countries, brief.currency), s = currencyForCountries(brief.countries); return m ? <p className="warnBox" role="status">Los países elegidos usan {CURRENCY_NAME[m]} ({m}) y el presupuesto está en {brief.currency}. Si es intencionado, déjalo; si no, <button type="button" className="ghost" onClick={() => set({ currency: m, currencyChosen: true })}>usa {m}</button>.</p> : s && !brief.currencyChosen ? <p className="muted small">Moneda propuesta por el país elegido: {CURRENCY_NAME[s]} ({s}). Cámbiala si presupuestas en otra.</p> : null })()}
         <NumField label="Presupuesto total" value={brief.totalBudget} onChange={totalBudget => set({ totalBudget })} suffix={brief.currency} step={10} /></Question>
       <Question q={strategy.questions[6]}><NumField label="Presupuesto diario máximo" value={brief.dailyCap} onChange={dailyCap => set({ dailyCap: dailyCap === null || dailyCap > 0 ? dailyCap : null })} min={0.01} suffix={brief.currency} step={1} /></Question>
       <Question q={strategy.questions[7]}><NumField label="Duración (días)" value={brief.durationDays} onChange={durationDays => set({ durationDays: durationDays === null ? null : Math.round(durationDays) })} min={1} max={365} />

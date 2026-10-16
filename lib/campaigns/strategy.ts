@@ -1,3 +1,4 @@
+import { currencyMismatch } from './currency'
 import { COUNTRIES } from '@/lib/research/discovery'
 import { COUNTRY_TIER, DEFAULT_ASSUMPTIONS, DEFAULT_INTERACTION_RATE, DEFAULT_VIEW_RATE, GOALS, GOAL_CONVERSION, GOAL_METRIC, IMPRESSION_BASED, PLATFORMS, SUBJECTS, TIER_FACTOR, METRICS, modeOf, platformInfo } from './catalog'
 import { startOfUtcDay } from '@/lib/research/cache'
@@ -127,6 +128,8 @@ const sameMetric = (b: Brief) => !!b.goal && !!b.expectedMetric && GOAL_METRIC[b
 
 function budgetOf(b: Brief, platforms: PlatformId[], days: number | null): BudgetPlan {
   const cur = b.currency, warnings: string[] = []
+  const mismatch = currencyMismatch(b.countries, b.currency)
+  if (mismatch) warnings.push(`El presupuesto está en ${b.currency} pero los países elegidos usan ${mismatch}: comprueba que es intencionado.`)
   const paid = platforms.filter(p => platformInfo(p).kind === 'paid')
   const scores = new Map(rankPlatforms(b).map(p => [p.id, Math.max(p.score, 1)]))
   const total = b.totalBudget
