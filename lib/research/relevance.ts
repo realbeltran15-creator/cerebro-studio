@@ -1,3 +1,4 @@
+import { financeCues } from './lexicon'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { nichesOf, wordHit } from './taxonomy'
 
@@ -9,7 +10,7 @@ import { nichesOf, wordHit } from './taxonomy'
  * is judged here BEFORE it can influence an index, and every exclusion keeps its reason so the screen can show it.
  */
 
-export const fold = (s: string) => ` ${s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}#+]+/gu, ' ').replace(/\s+/g, ' ').trim()} `
+export const fold = (s: string) => ` ${s.toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}#+]+/gu, ' ').replace(/\s+/g, ' ').trim()} `
 const words = (s: string) => fold(s).trim().split(' ').filter(Boolean)
 
 // ---------- Query understanding ----------
@@ -28,7 +29,7 @@ const PLACE = new Set(('uk gb usa us u.s england britain british united kingdom 
 /** Short stem so that «reformas / reforma», «baratas / barata», «negocios / negocio», «mystery / mysteries» meet. */
 export const stem = (w: string) => { let r = w.replace(/y$/, 'i'); if (r.length >= 5) r = r.replace(/s$/, ''); if (r.length >= 5) r = r.replace(/(a|o|e)$/, ''); return r }
 /** Acronyms and their long forms: a video about «inteligencia artificial» is a video about «IA». */
-const SYNONYMS: Record<string, string[]> = { ia: ['inteligencia artificial', 'artificial intelligence', 'ai'], ai: ['artificial intelligence', 'inteligencia artificial', 'ia'], ki: ['kunstliche intelligenz', 'ai'], seo: ['search engine optimization', 'optimizacion web'], diy: ['hazlo tu mismo', 'do it yourself'] }
+const SYNONYMS: Record<string, string[]> = { etf: ['etfs', 'indexfonds', 'indexfondsen', 'index fund', 'index funds', 'exchange traded fund', 'exchange traded funds', 'fondo indexado', 'fondos indexados', 'fonds indiciel', 'fonds indiciels', 'fondo indicizzato', 'fondi indicizzati', 'fundos de indice'], sparplan: ['sparplane', 'sparplaene', 'sparrate', 'sparraten', 'ansparen', 'monatlich investieren', 'monatlich sparen', 'dauerauftrag', 'durchschnittskosteneffekt', 'cost average', 'plan de ahorro', 'plan de inversion periodica', 'plan d epargne', 'piano di accumulo', 'plano de poupanca', 'dca'], ia: ['inteligencia artificial', 'artificial intelligence', 'ai'], ai: ['artificial intelligence', 'inteligencia artificial', 'ia'], ki: ['kunstliche intelligenz', 'ai'], seo: ['search engine optimization', 'optimizacion web'], diy: ['hazlo tu mismo', 'do it yourself'] }
 /** Does the (folded, padded) text contain the term, its stem as a word prefix, or a known synonym? Short terms must match as whole words. */
 export function termHit(text: string, term: string): boolean {
   const one = (t: string) => { const st = stem(t), st2 = t.replace(/(ies|y)$/, ''); return st.length >= 5 ? text.includes(` ${st}`) || (st2.length >= 5 && text.includes(` ${st2}`)) : text.includes(` ${t} `) || text.includes(` ${t}s `) || text.includes(` ${st} `) }
@@ -101,10 +102,10 @@ const AMBIGUOUS_TERMS = new Set(Object.keys(SENSES))
 
 const phraseHit = (text: string, w: string) => (w.includes(' ') ? text.includes(` ${w}`) : w.length >= 7 ? text.includes(` ${w}`) : text.includes(` ${w} `) || text.includes(` ${w}s `))
 export type SenseEvidence = { intended: string[]; competing: Array<{ sense: Sense; hits: string[] }> }
-export function senseEvidence(video: Pick<YouTubeVideoResult, 'title' | 'tags' | 'description' | 'channelTitle'>, term: string): SenseEvidence {
+export function senseEvidence(video: Pick<YouTubeVideoResult, 'title' | 'tags' | 'description' | 'channelTitle'>, term: string, langs: Array<string | null | undefined> = []): SenseEvidence {
   const raw = [video.title, ...(video.tags ?? []), video.description ?? '', video.channelTitle].join(' ')
   const text = fold(raw), senses = SENSES[term] ?? []
-  const hits = (s: Sense) => { const h = s.words.filter(w => phraseHit(text, fold(w).trim())); if (s.intended && /[£€$]\s?\d/.test(raw)) h.push('importe en dinero'); return h }
+  const hits = (s: Sense) => { const h = s.words.filter(w => phraseHit(text, fold(w).trim())); if (s.intended && /[£€$]\s?\d/.test(raw)) h.push('importe en dinero'); if (s.intended && s.niche === 'finanzas') h.push(...financeCues(text, langs).filter(c => !h.includes(c))); return h }
   return { intended: hits(senses.find(x => x.intended)!), competing: senses.filter(x => !x.intended).map(sense => ({ sense, hits: hits(sense) })) }
 }
 
@@ -260,12 +261,23 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
   let score = 0
   const phrase = phraseCoverage(head, desc, q.terms)
   for (const t of q.terms) { if (termHit(head, t)) score += 1; else if (termHit(desc, t)) score += 0.5; if (phrase.has(t)) score = score - (termHit(head, t) ? 1 : termHit(desc, t) ? 0.5 : 0) + Math.max(phrase.get(t)!, termHit(head, t) ? 1 : termHit(desc, t) ? 0.5 : 0) }
+  // The meaning cues are read in the language the video is in (German «Sparplan», French «épargne»…), not only in English.
+  const ev0 = q.ambiguity ? senseEvidence(v, q.ambiguity.term, [lang.language, lang.declared, ...expected]) : null
+  // Domain credit: a video that names the ambiguous term itself AND is clearly about the intended domain (2+ distinct cues in its language) covers
+  // the other topic words only half, instead of nothing: «Welcher ETF ist der beste?» is a German ETF video even though it never says «Sparplan».
+  if (q.ambiguity && ev0 && n > 1 && ev0.intended.length >= 1 && ev0.competing.every(c => c.hits.length === 0)) {
+    const amb = q.ambiguity.term, ambHit = termHit(head, amb), others = q.terms.filter(t => t !== amb)
+    const hitOthers = others.filter(t => termHit(head, t) || termHit(desc, t) || phrase.has(t))
+    // Either the ambiguous word is there and some other topic words are missing, or the specific words are there and the ambiguous one is missing.
+    if (ambHit) score += (others.length - hitOthers.length) * 0.5
+    else if (hitOthers.length === others.length && new Set(ev0.intended).size >= 2) score += 0.5
+  }
   const coverage = n ? score / n : 1
   if (n && coverage < minCoverage(n)) return out('descartado', 'tema', `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage)
 
   // Which meaning of an ambiguous term does the video use? Decided by what the video itself says, and the words are quoted.
   if (q.ambiguity) {
-    const ev = senseEvidence(v, q.ambiguity.term), best = [...ev.competing].sort((x, y) => y.hits.length - x.hits.length)[0]
+    const ev = ev0!, best = [...ev.competing].sort((x, y) => y.hits.length - x.hits.length)[0]
     if (best && best.hits.length > ev.intended.length) return out('descartado', 'sentido', `«${q.ambiguity.term.toUpperCase()}» aquí es ${best.sense.label} (palabras: ${best.hits.slice(0, 4).join(', ')})`, coverage, best.hits)
     if (ev.intended.length === 0) return out('dudoso', 'contexto', `nada en el título, etiquetas, descripción o canal confirma que «${q.ambiguity.term.toUpperCase()}» sea ${q.ambiguity.intended.label}`, coverage)
     if (best && best.hits.length === ev.intended.length && best.hits.length > 0) return out('dudoso', 'contexto', `significado ambiguo: tantas pistas de ${q.ambiguity.intended.label} (${ev.intended.slice(0, 3).join(', ')}) como de ${best.sense.label} (${best.hits.slice(0, 3).join(', ')})`, coverage, ev.intended)
