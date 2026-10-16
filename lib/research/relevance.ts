@@ -32,7 +32,33 @@ const SYNONYMS: Record<string, string[]> = { ia: ['inteligencia artificial', 'ar
 /** Does the (folded, padded) text contain the term, its stem as a word prefix, or a known synonym? Short terms must match as whole words. */
 export function termHit(text: string, term: string): boolean {
   const one = (t: string) => { const st = stem(t), st2 = t.replace(/(ies|y)$/, ''); return st.length >= 5 ? text.includes(` ${st}`) || (st2.length >= 5 && text.includes(` ${st2}`)) : text.includes(` ${t} `) || text.includes(` ${t}s `) || text.includes(` ${st} `) }
-  return one(term) || (SYNONYMS[term] ?? []).some(alt => (alt.includes(' ') ? text.includes(` ${alt}`) : one(alt)))
+  return one(term) || inHashtag(text, term) || (SYNONYMS[term] ?? []).some(alt => (alt.includes(' ') ? text.includes(` ${alt}`) : one(alt) || inHashtag(text, alt)))
+}
+
+/** Hashtags glue words together («#datoscuriosos» = «datos curiosos»): a topic word of 4+ letters inside a hashtag counts as present. */
+function inHashtag(text: string, term: string): boolean {
+  if (!text.includes('#') || term.length < 4 || term.includes(' ')) return false
+  const t = (stem(term).length >= 4 ? stem(term) : term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`#[^ ]*${t}`).test(text)
+}
+
+/**
+ * Concepts people say in several ways. A query like «first time buyer» is one idea, not three words: «Buying your first home», «first-time
+ * homebuyer», «first home buyer» (Australia) and «getting on the property ladder» are the same subject without sharing the words. When all
+ * the `match` terms are in the query, any phrase in `alts` counts as covering ALL of them. Typed by hand, extended when the audits show a gap.
+ */
+const PHRASES: Array<{ match: string[]; alts: string[] }> = [
+  { match: ['first', 'time', 'buyer'], alts: ['first time home buyer', 'first time homebuyer', 'first home buyer', 'first time house buyer', 'first time buying', 'first time buyers', 'first home', 'first house', 'first flat', 'first property', 'buying your first', 'buying my first', 'buying a first', 'buy your first', 'buy a first', 'buy my first', 'bought my first', 'bought our first', 'buying our first', 'property ladder', 'first timer', 'first timers', 'first time purchase', 'help to buy', 'lifetime isa for a first', 'stamp duty for first', 'mortgage for first', 'deposit for first', 'eerste woning', 'erste wohnung', 'erstes haus', 'primera vivienda', 'primera casa', 'primo acquisto', 'première maison', 'premier achat'] },
+  { match: ['first', 'home'], alts: ['first time buyer', 'first home buyer', 'homebuyer', 'property ladder', 'first house', 'first property'] },
+]
+const phraseCoverage = (head: string, desc: string, terms: string[]) => {
+  const out = new Map<string, number>()
+  for (const ph of PHRASES) {
+    if (!ph.match.every(m => terms.includes(m))) continue
+    const inHead = ph.alts.some(a => head.includes(` ${a}`)), inDesc = !inHead && ph.alts.some(a => desc.includes(` ${a}`))
+    if (inHead || inDesc) for (const m of ph.match) out.set(m, Math.max(out.get(m) ?? 0, inHead ? 1 : 0.5))
+  }
+  return out
 }
 
 // ---------- Ambiguous terms: which MEANING does the query intend? ----------
@@ -101,10 +127,10 @@ export function queryProfile(query: string): QueryProfile {
 // ---------- Language ----------
 const LANG_WORDS: Record<string, string> = {
   en: 'the and of to in is for with that this you are on it be as at your what how why from have not but can will about all we they there their new best first time',
-  es: 'el la los las de que en y un una es por con para como mas pero sus del al se no lo le su este esta muy todo hay ser cuando donde porque sobre',
+  es: 'el la los las de que en y un una es por con para como mas pero sus del al se no lo le su este esta muy todo hay ser cuando donde porque sobre esto estos estas eso esos ese ella ellos mira asi aqui tambien cada todos todas nunca siempre antes despues hacer hace tiene tienen puede pueden mejor sin entre hasta desde quien cual cuanto datos cosas sabias sabes curiosos curiosas secreto mundo',
   de: 'der die das und ist nicht mit ein eine zu den von fur für auf im dem des sich auch wie was wir sie sind bei nach oder aber wird kann',
   fr: 'le la les de des et est un une que pour dans pas sur avec qui au ce son sont plus comment vous nous mais cette tout fait',
-  pt: 'o a os as de que e do da em um uma para com nao não por mais como mas dos das se ao seu sua muito foi quando tudo voce você',
+  pt: 'o a os as de que e do da em um uma para com nao não por mais como mas dos das se ao seu sua muito foi quando tudo voce você isso essa esse estes esses tambem sao ate ainda sempre depois fazer faz tem pode podem melhor sem onde quem qual quanto fatos coisas sabia sabe segredo mundo',
   it: 'il lo la gli le di che e un una per con non sono come piu più dei delle del della nel nella anche questo questa tutto quando',
   nl: 'de het een en van is dat niet met voor op te zijn ook maar als dan wat hoe naar bij nog wordt uit',
   id: 'yang dan di untuk dengan ini itu dari adalah apa tidak ke pada akan juga saya kita kamu anda atau oleh dalam sebagai karena cara bisa ada',
@@ -117,10 +143,19 @@ const SCRIPTS: Array<[string, RegExp]> = [['ar', /[؀-ۿ]/g], ['he', /[֐-׿]/g]
 export type DetectedLanguage = { lang: string | null; confidence: number }
 /** Cheap language guess from a title (+ tags/description): script first, then function-word frequency. Returns null when it cannot tell. */
 export function detectLanguage(text: string): DetectedLanguage {
+  const raw = text.toLowerCase()
   for (const [lang, re] of SCRIPTS) { const m = text.match(re); if (m && m.length >= 3) return { lang, confidence: 0.95 } }
-  const ws = words(text).filter(w => w.length <= 12)
-  if (ws.length < 3) return { lang: null, confidence: 0 }
-  const scores = Object.entries(LANG_SETS).map(([lang, set]) => [lang, ws.filter(w => set.has(w)).length] as const).sort((a, b) => b[1] - a[1])
+  const allWords = words(text), ws = allWords.filter(w => w.length <= 12)
+  if (allWords.length < 3) return { lang: null, confidence: 0 }
+  // Spanish and Portuguese share many function words (de, que, como, para, por, mas…): count only the words that belong to one of them, and let the
+  // letters that exist in one but not the other (ñ ¿ ¡ for Spanish, ã õ for Portuguese) weigh in. Accents are gone from `ws`, so they come from the raw text.
+  const LANG_SETS_BOTH_IBERIAN = (w: string) => LANG_SETS.es.has(w) && LANG_SETS.pt.has(w)
+  const SHARED_IBERIAN = new Set(['de', 'que', 'como', 'para', 'por', 'mas', 'con', 'se', 'no', 'em', 'o', 'a', 'e'])
+  const cue = (lang: string) => (lang === 'es' ? (raw.match(/[ñ¿¡]/g)?.length ?? 0) : lang === 'pt' ? (raw.match(/[ãõ]/g)?.length ?? 0) : 0) * 2
+  // Hashtags glue words together («#datoscuriosos»): a word of the language (5+ letters, not shared) inside a hashtag counts once.
+  const tagHint = (_lang: string, set: Set<string>) => allWords.some(w => w.startsWith('#') && [...set].some(x => x.length >= 5 && !SHARED_IBERIAN.has(x) && w.includes(x))) ? 1 : 0
+  const own = (lang: string, set: Set<string>) => tagHint(lang, set) + ws.filter(w => set.has(w) && !((lang === 'es' || lang === 'pt') && SHARED_IBERIAN.has(w)) && !(LANG_SETS_BOTH_IBERIAN(w) && (lang === 'es' || lang === 'pt'))).length + cue(lang)
+  const scores = Object.entries(LANG_SETS).map(([lang, set]) => [lang, own(lang, set) + ((lang === 'es' || lang === 'pt') ? ws.filter(w => set.has(w) && SHARED_IBERIAN.has(w)).length * 0.5 : ws.filter(w => set.has(w)).length * 0)] as const).sort((a, b) => b[1] - a[1])
   const [best, second] = scores
   if (best[1] < 2 || best[1] === second[1]) return { lang: null, confidence: 0 }
   return { lang: best[0], confidence: Math.min(0.95, 0.5 + (best[1] - second[1]) / ws.length * 1.5 + best[1] * 0.05) }
@@ -148,8 +183,24 @@ export function languageCheck(v: Pick<YouTubeVideoResult, 'title' | 'tags' | 'de
 }
 
 // ---------- Promotions and attention outliers ----------
-const PROMO = /(^|[\s(\[|])(#ad|#sponsored|sponsored|sponsorizado|patrocinado|patrocinada|publicidad|werbung|advertisement|advert|paid partnership|official (music )?video|official trailer|teaser trailer|tv spot|commercial)([\s)\]|:.,!-]|$)/i
-export const isPromo = (v: Pick<YouTubeVideoResult, 'title'>) => PROMO.test(v.title)
+// A clear ad (the video IS the advertisement) vs a sponsored video (an organic video with a disclosed sponsor). Both stay out of the DEMAND
+// figure because paid reach is not interest; neither is thrown away from the sample, and ordinary reviews are never touched.
+const AD_TITLE = /(^|[\s(\[|])(#ad|#advert|#anuncio|#publi|#publicidad|#sponsored|#werbung|official (music )?video|official (tv )?(ad|advert|commercial|spot|tvc)|official trailer|teaser( trailer)?|tv spot|tv commercial|commercial|werbespot|spot (tv|publicitario)|anuncio oficial|publicidad|werbung|advertisement|advert)([\s)\]|:.,!-]|$)/i
+const AD_TAG = /^(#?ad|#?ads|#?advert|#?advertisement|#?sponsored|#?publi|#?anuncio|#?commercial|#?tvc)$/i
+const NEGATED = /\b(not|no|isn'?t|without|sin|ohne)\s+(a\s+)?(sponsored|sponsor|ad|paid|patrocinad\w*|publicidad|werbung)\b/i
+const DISCLOSURE = /(this (video|episode) is (sponsored|brought to you)|sponsored by|paid (promotion|partnership)|includes paid promotion|in partnership with|patrocinado por|este v[ií]deo (est[aá] )?patrocinado|incluye promoci[oó]n pagada|colaboraci[oó]n pagada|publicidad:|bezahlte partnerschaft|enthält werbung|gifted by|enviado por la marca|promoción pagada)/i
+const SPONSOR_TITLE = /(^|[\s(\[|])(sponsored|sponsorizado|patrocinado|patrocinada|paid partnership|sponsored by|patrocinado por)([\s)\]|:.,!-]|$)/i
+export type PromoKind = 'anuncio' | 'patrocinado'
+export function promoKind(v: Pick<YouTubeVideoResult, 'title'> & Partial<Pick<YouTubeVideoResult, 'tags' | 'description'>>): { kind: PromoKind; why: string } | null {
+  const title = v.title ?? '', desc = (v.description ?? '').slice(0, 400)
+  if (NEGATED.test(title) || NEGATED.test(desc.slice(0, 120))) return null     // «honest review, not sponsored»
+  const t = AD_TITLE.exec(title); if (t) return { kind: 'anuncio', why: `el título lo declara («${t[2].toLowerCase()}»)` }
+  const tag = (v.tags ?? []).find(x => AD_TAG.test(x.trim())); if (tag) return { kind: 'anuncio', why: `etiqueta «${tag}»` }
+  const st = SPONSOR_TITLE.exec(title); if (st) return { kind: 'patrocinado', why: `el título lo declara («${st[2].toLowerCase()}»)` }
+  const d = DISCLOSURE.exec(desc); if (d) return { kind: 'patrocinado', why: `la descripción declara «${d[1].toLowerCase()}»` }
+  return null
+}
+export const isPromo = (v: Pick<YouTubeVideoResult, 'title'> & Partial<Pick<YouTubeVideoResult, 'tags' | 'description'>>) => promoKind(v) !== null
 
 const quantile = (sorted: number[], q: number) => { const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i); return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo) }
 export const median = (xs: number[]) => (xs.length ? quantile([...xs].sort((a, b) => a - b), 0.5) : null)
@@ -171,7 +222,7 @@ export function viralOutliers(values: number[]): Set<number> {
  */
 export type ExclusionReason = 'tema' | 'nicho' | 'idioma' | 'directo' | 'sentido' | 'contexto'
 export type VideoStatus = 'aceptado' | 'dudoso' | 'descartado'
-export type Assessment = { relevant: boolean; status: VideoStatus; reason: ExclusionReason | null; detail: string; coverage: number; language: LanguageCheck; promo: boolean; /** Words that confirmed (or contradicted) the meaning. */ evidence: string[] }
+export type Assessment = { relevant: boolean; status: VideoStatus; reason: ExclusionReason | null; detail: string; coverage: number; language: LanguageCheck; promo: boolean; /** Why it is flagged as an ad or sponsored video (null when it is not). */ promoWhy: string | null; /** Words that confirmed (or contradicted) the meaning. */ evidence: string[] }
 
 /** Minimum share of the topic terms a video must show (title/tags count fully, description half). */
 export const minCoverage = (n: number) => (n <= 2 ? 0.75 : n === 3 ? 0.67 : 0.6)
@@ -199,15 +250,16 @@ function nicheEvidence(v: YouTubeVideoResult, q: QueryProfile): { own: string[];
 export type AssessOptions = { /** Require positive evidence of the intended topic, not just the absence of a contradiction (used when the sample itself is ambiguous). */ strict?: boolean }
 
 export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: string[], opts: AssessOptions = {}): Assessment {
-  const lang = languageCheck(v, expected), promo = isPromo(v)
-  const out = (status: VideoStatus, reason: ExclusionReason | null, detail: string, coverage: number, evidence: string[] = []): Assessment => ({ relevant: status === 'aceptado', status, reason, detail, coverage, language: lang, promo, evidence })
+  const lang = languageCheck(v, expected), pk = promoKind(v), promo = pk !== null
+  const out = (status: VideoStatus, reason: ExclusionReason | null, detail: string, coverage: number, evidence: string[] = []): Assessment => ({ relevant: status === 'aceptado', status, reason, detail, coverage, language: lang, promo, promoWhy: pk ? `${pk.kind === 'anuncio' ? 'Anuncio' : 'Vídeo patrocinado'}: ${pk.why}` : null, evidence })
   if (v.live === 'live' || v.live === 'upcoming') return out('descartado', 'directo', 'directo en emisión o programado', 0)
   // Language first: a video in another language cannot satisfy the topic words of this market, and that is the clearer reason to show.
   if (lang.verdict === 'no_coincide') return out('descartado', 'idioma', `idioma ${lang.language} (${lang.source}) fuera del mercado (${expected.join(', ')})`, 0)
   const head = fold([v.title, ...(v.tags ?? [])].join(' ')), desc = fold(v.description ?? '')
   const n = q.terms.length
   let score = 0
-  for (const t of q.terms) { if (termHit(head, t)) score += 1; else if (termHit(desc, t)) score += 0.5 }
+  const phrase = phraseCoverage(head, desc, q.terms)
+  for (const t of q.terms) { if (termHit(head, t)) score += 1; else if (termHit(desc, t)) score += 0.5; if (phrase.has(t)) score = score - (termHit(head, t) ? 1 : termHit(desc, t) ? 0.5 : 0) + Math.max(phrase.get(t)!, termHit(head, t) ? 1 : termHit(desc, t) ? 0.5 : 0) }
   const coverage = n ? score / n : 1
   if (n && coverage < minCoverage(n)) return out('descartado', 'tema', `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage)
 

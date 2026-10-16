@@ -27,7 +27,7 @@ export type SampleVideo = {
   inTop: boolean; inRecent: boolean
   status: VideoStatus; reason: ExclusionReason | null; detail: string
   language: string | null; languageVerdict: 'coincide' | 'no_coincide' | 'sin_verificar'
-  promo: boolean; outlier: boolean; format: string; live: string | null
+  promo: boolean; /** Why it counts as an ad or a sponsored video. */ promoWhy?: string | null; outlier: boolean; format: string; live: string | null
 }
 
 export type FormatStats = { count: number; recentCount: number; medianViewsPerDay: number | null }
@@ -194,7 +194,6 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const c = clean(s)
   const top = c.top, recent = c.recent, promo = c.promoTop
   const both = (() => { const u = new Set<string>(); return [...top, ...recent].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)) })()
-  const rawRecentLen = new Set(s.recent.videos.map(v => v.videoId)).size
 
   // Demand: views/day of the on-topic most-viewed videos. Promotions and viral outliers are shown but never set the number.
   const topCand = top.filter(v => !promo.has(v.videoId) && num(v.calculated.viewsPerDay))
@@ -207,15 +206,22 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const oneVideoShare = topTotal ? Math.max(0, ...topViews) / topTotal : 0
   recentCohort.outlierIds.forEach(id => outlierIds.add(id))
   const quality: SampleQuality = { ...c.quality, outliers: topOut.size + recentCohort.outliers }
-  const sample: SampleVideo[] = (() => { const u = new Set<string>(); return [...s.top.videos, ...s.recent.videos].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)).map(v => { const a = c.verdicts.get(v.videoId)!; return { videoId: v.videoId, url: v.url, title: v.title.slice(0, 140), channelTitle: v.channelTitle.slice(0, 60), views: v.observed.views, publishedAt: v.publishedAt, durationSeconds: v.observed.durationSeconds, inTop: c.inTop.has(v.videoId), inRecent: c.inRecent.has(v.videoId), status: a.status, reason: a.reason, detail: a.detail.slice(0, 200), language: a.language.language, languageVerdict: a.language.verdict, promo: a.promo, outlier: outlierIds.has(v.videoId), format: inferFormat(v).format, live: v.live ?? null } }) })()
+  const sample: SampleVideo[] = (() => { const u = new Set<string>(); return [...s.top.videos, ...s.recent.videos].filter(v => !u.has(v.videoId) && !!u.add(v.videoId)).map(v => { const a = c.verdicts.get(v.videoId)!; return { videoId: v.videoId, url: v.url, title: v.title.slice(0, 140), channelTitle: v.channelTitle.slice(0, 60), views: v.observed.views, publishedAt: v.publishedAt, durationSeconds: v.observed.durationSeconds, inTop: c.inTop.has(v.videoId), inRecent: c.inRecent.has(v.videoId), status: a.status, reason: a.reason, detail: a.detail.slice(0, 200), language: a.language.language, languageVerdict: a.language.verdict, promo: a.promo, promoWhy: a.promoWhy, outlier: outlierIds.has(v.videoId), format: inferFormat(v).format, live: v.live ?? null } }) })()
 
   // Supply: how much is being published and by how many different channels (on-topic videos only).
+  // The rate is measured over ONE consistent window: the span of the RAW newest-first sample (what the search returned, relevant or not),
+  // never the age of the oldest video that happened to survive the relevance filter, and a stray old result cannot stretch it.
   const WINDOW = s.recentDays ?? 30
-  const ages = recent.map(v => ageDays(v, now)).filter(num)
-  const oldest = ages.length ? Math.max(...ages) : null
+  const rawIds = new Set<string>(), rawAges: number[] = []
+  for (const v of s.recent.videos) if (!rawIds.has(v.videoId)) { rawIds.add(v.videoId); const a = ageDays(v, now); if (a !== null) rawAges.push(a) }
+  rawAges.sort((x, y) => x - y)
+  const strayAges = viralOutliers(rawAges)                                   // e.g. a month-old result among videos from the last 3 days
+  const denseAges = rawAges.filter((_, i) => !strayAges.has(i))
+  const rawRecentLen = rawIds.size
   const full = rawRecentLen >= 25
-  const spanDays = oldest === null ? WINDOW : full ? Math.max(oldest, 1) : WINDOW
-  const uploadsPerWeek = recent.length ? Math.round((recent.filter(v => (ageDays(v, now) ?? 99) <= WINDOW).length / (Math.min(spanDays, WINDOW) / 7)) * 10) / 10 : 0
+  const spanDays = full && denseAges.length ? Math.min(Math.max(denseAges[denseAges.length - 1], 1), WINDOW) : WINDOW
+  const inSpan = recent.filter(v => (ageDays(v, now) ?? 99) <= spanDays)
+  const uploadsPerWeek = inSpan.length ? Math.round((inSpan.length / (spanDays / 7)) * 10) / 10 : 0
   const recentChannels = new Set(recent.map(v => v.channelId).filter(Boolean)).size
   const supply = Math.round(0.6 * logScore(uploadsPerWeek, 100) + 0.4 * clamp((recentChannels / 25) * 100))
 
@@ -272,7 +278,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     ...(s.region ? [{ label: `Canales que declaran ${s.region} como país`, value: quality.channelCountryKnown ? `${quality.channelInMarket} de ${quality.channelCountryKnown} que declaran país` : 'ninguno declara país', kind: 'observado' as const }] : []),
     { label: 'Vistas por día (mediana, vídeos relevantes más vistos del último año)', value: topVpd === null ? 'sin datos' : k(Math.round(topVpd)), kind: 'calculado' },
     { label: `Vistas por día (mediana, vídeos relevantes de los últimos ${WINDOW} días con ≥ 3 días)`, value: recentCohort.medianVpd === null ? 'sin datos' : k(Math.round(recentCohort.medianVpd)), kind: 'calculado' },
-    { label: `Subidas por semana en los últimos ${WINDOW} días (muestra)`, value: String(uploadsPerWeek), kind: 'calculado' },
+    { label: `Subidas por semana (${inSpan.length} vídeos relevantes en una ventana de ${Math.round(spanDays)} días${strayAges.size ? `; ${strayAges.size} resultado${strayAges.size === 1 ? '' : 's'} antiguo${strayAges.size === 1 ? '' : 's'} fuera de la ventana` : ''})`, value: String(uploadsPerWeek), kind: 'calculado' },
     { label: 'Canales distintos entre los vídeos recientes', value: `${recentChannels} de ${recent.length}`, kind: 'observado' },
     { label: 'Suscriptores del canal mediano de los más vistos', value: medianSubs === null ? 'sin datos' : k(Math.round(medianSubs)), kind: 'observado' },
     { label: 'Canales de ≥ 100 000 suscriptores en el top 10', value: `${big} de ${top10.length}`, kind: 'observado' },

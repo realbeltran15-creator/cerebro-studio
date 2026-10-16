@@ -30,7 +30,7 @@ export function SampleInspector({ a }: { a: TopicAnalysis }) {
         <thead><tr><th>Estado</th><th>Vídeo</th><th>Canal</th><th>Vistas</th><th>Muestra</th><th>Motivo</th></tr></thead>
         <tbody>{shown.map(v => <tr key={v.videoId}>
           <td><span className={`pill ${v.status === 'aceptado' ? 'ok' : v.status === 'dudoso' ? 'warn' : 'bad'}`}>{STATUS[v.status]}</span></td>
-          <td><a className="open" href={v.url} target="_blank" rel="noreferrer">{v.title || '(sin título)'}</a>{(v.promo || v.outlier) && <div className="muted">{v.promo ? 'Posible anuncio (fuera de la demanda). ' : ''}{v.outlier ? 'Viral atípico (fuera de la demanda).' : ''}</div>}</td>
+          <td><a className="open" href={v.url} target="_blank" rel="noreferrer">{v.title || '(sin título)'}</a>{(v.promo || v.outlier) && <div className="muted">{v.promo ? `${v.promoWhy ?? 'Posible anuncio'} (fuera de la demanda). ` : ''}{v.outlier ? 'Viral atípico (fuera de la demanda).' : ''}</div>}</td>
           <td>{v.channelTitle}</td><td>{v.views === null ? '—' : fmtNumber(v.views)}</td><td>{WHICH(v)}</td>
           <td>{v.reason ? <><b>{REASON[v.reason]}</b><div className="muted">{v.detail}</div></> : <span className="muted">Cuenta en las métricas{v.detail ? `: ${v.detail}` : ''}{v.languageVerdict === 'sin_verificar' ? ' · idioma sin verificar' : ''}</span>}</td>
         </tr>)}</tbody>
