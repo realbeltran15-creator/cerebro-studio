@@ -1,6 +1,7 @@
 import { searchYouTubeVideosMeta, type YouTubeSearchInput, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { analyzeTopic, applyGrowth, type Sample, type TopicAnalysis, type TopicSamples } from './topic-analysis'
+import { analyzeTopic, applyGrowth, isCurrentEngine, type Sample, type TopicAnalysis, type TopicSamples } from './topic-analysis'
 import { cacheKey, DEFAULT_TTL_MS, quotaDayStart, type CacheStore } from './cache'
+import { isExhausted } from './cache'
 import { BudgetError, isQuotaExceeded, lockForToday, quotaLimits, reserveSpend } from './quota'
 import { DEFAULT_DAILY_CAP, UNITS } from './filters'
 
@@ -9,7 +10,8 @@ export { BudgetError } from './quota'
 export type SearchFn = (input: YouTubeSearchInput) => Promise<{ videos: YouTubeVideoResult[]; approxTotal: number | null }>
 
 export type TopicRequest = { topic: string; region: string | null; language: string | null; /** Window of the "recent" sample (7–365 days, default 30). */ recentDays?: number; refresh?: boolean; /** Return only what is already cached; never call YouTube. */ cacheOnly?: boolean }
-export type TopicResult = { analysis: TopicAnalysis | null; cached: boolean; usage: { usedToday: number; cap: number; persistent: boolean } }
+export class NoBaseAnalysisError extends Error {}
+export type TopicResult = { analysis: TopicAnalysis | null; cached: boolean; usage: { usedToday: number; cap: number; persistent: boolean; searchesToday: number; searchCap: number; exhausted: boolean } }
 
 export const dailyCap = (env: Record<string, string | undefined> = process.env) => quotaLimits(env).unitCap
 
@@ -38,6 +40,11 @@ export function getTopicAnalysis(req: TopicRequest, deps: Deps & { /** Who is as
   return p
 }
 
+const usageOf = async (store: CacheStore, cap: number, now: number, extra = 0) => {
+  const since = quotaDayStart(now), limits = quotaLimits()
+  return { usedToday: (await store.unitsSince(since)) + extra, cap, persistent: store.persistent, searchesToday: await store.searchesSince(since), searchCap: limits.searchCap, exhausted: await isExhausted(store, now) }
+}
+
 /** Another server instance is running this very research: the caller should retry shortly instead of paying for it twice. */
 export class InProgressError extends Error { constructor(message: string) { super(message) } }
 
@@ -58,10 +65,10 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicR
   const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
   const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
   const used = () => deps.store.unitsSince(quotaDayStart(now()))
-  const result = async (analysis: TopicAnalysis, cached: boolean, usedToday?: number): Promise<TopicResult> => ({ analysis, cached, usage: { usedToday: usedToday ?? await used(), cap, persistent: deps.store.persistent } })
+  const result = async (analysis: TopicAnalysis, cached: boolean, usedToday?: number): Promise<TopicResult> => ({ analysis, cached, usage: usedToday === undefined ? await usageOf(deps.store, cap, now()) : { ...(await usageOf(deps.store, cap, now())), usedToday } })
 
   if (!req.refresh) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return result(hit.payload, true) }
-  if (req.cacheOnly) return { analysis: null, cached: false, usage: { usedToday: await used(), cap, persistent: deps.store.persistent } }
+  if (req.cacheOnly) return { analysis: null, cached: false, usage: await usageOf(deps.store, cap, now()) }
 
   // Exclusive lease across ALL server instances: two instances never run the same research at once. The loser waits for the winner's result.
   if (!(await deps.store.lock(`topic:${key}`, LEASE_MS, now()))) {
@@ -105,16 +112,28 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicR
  * Measures growth for an analysis already in the cache: one more search for the PREVIOUS window (same length, adjacent, newest first),
  * judged by the same relevance rules (~102 units). Without a cached analysis there is nothing to compare, so it refuses.
  */
-export function getGrowth(req: { topic: string; region: string | null; language: string | null; recentDays?: number }, deps: Deps & { owner?: string }): Promise<TopicResult> {
+/** A client-supplied analysis is accepted only if it is the same research, from the current engine, with the numbers growth needs. */
+export function usableAnalysis(a: unknown, req: { topic: string; region: string | null; language: string | null; recentDays: number }): a is TopicAnalysis {
+  const x = a as Partial<TopicAnalysis> | null
+  return !!x && typeof x === 'object' && isCurrentEngine(x) && typeof x.topic === 'string' && x.topic.trim().toLowerCase() === req.topic.trim().toLowerCase()
+    && (x.region ?? null) === req.region && (x.language ?? null) === req.language && x.recentDays === req.recentDays
+    && !!x.growth && typeof x.growth.recent?.n === 'number' && !!x.indices && typeof x.indices.demand === 'number' && typeof x.indices.competition === 'number' && typeof x.indices.supply === 'number'
+    && Array.isArray(x.reasons) && Array.isArray(x.evidence)
+}
+
+export function getGrowth(req: { topic: string; region: string | null; language: string | null; recentDays?: number; /** The analysis the browser already holds (it may live only there: the server cache can be another instance's memory). */ analysis?: unknown }, deps: Deps & { owner?: string }): Promise<TopicResult> {
   const owner = deps.owner ?? 'anonymous'
   return serial(owner, async () => {
-    const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta, cap = deps.cap ?? dailyCap()
+    const now = deps.now ?? Date.now, search = deps.search ?? searchYouTubeVideosMeta
     const topic = req.topic.trim().replace(/\s+/g, ' ')
     const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
     const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
-    const hit = await deps.store.get<TopicAnalysis>(key, now())
-    if (!hit) throw new Error('Primero hay que analizar el tema: no hay ninguna ventana reciente con la que comparar.')
-    const usage = async (extra = 0) => ({ usedToday: (await deps.store.unitsSince(quotaDayStart(now()))) + extra, cap, persistent: deps.store.persistent })
+    const cached = await deps.store.get<TopicAnalysis>(key, now())
+    const supplied = usableAnalysis(req.analysis, { topic, region: req.region, language: req.language, recentDays }) ? req.analysis : null
+    const hit = cached ? { payload: cached.payload } : supplied ? { payload: supplied } : null
+    if (!hit) throw new NoBaseAnalysisError('No hay un análisis actual de este tema con el que comparar (puede venir de una versión anterior del motor). Vuelve a analizarlo primero.')
+    const cap = deps.cap ?? dailyCap()
+    const usage = (extra = 0) => usageOf(deps.store, cap, now(), extra)
     if (hit.payload.growth?.state === 'calculable' || hit.payload.growth?.previous) return { analysis: hit.payload, cached: true, usage: await usage() }
     const lockKey = `growth:${key}`
     if (!(await deps.store.lock(lockKey, LEASE_MS, now()))) throw new InProgressError('Otra medición del crecimiento de este tema sigue en marcha. Vuelve a intentarlo en unos segundos: no se ha gastado cuota.')

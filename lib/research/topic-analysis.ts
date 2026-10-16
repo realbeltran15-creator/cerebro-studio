@@ -47,7 +47,17 @@ export type GrowthResult = {
   label?: 'al alza (posible)' | 'estable o no concluyente' | 'a la baja'
 }
 
+/**
+ * Version of the engine that produced an analysis. Raised whenever a change alters what an analysis means (relevance rules, formulas, window
+ * handling). An analysis from an older engine is kept and shown, but never mixed into recommendations, opportunities or comparisons, and it
+ * is never served from the cache: it is re-analysed instead.
+ */
+export const ENGINE_VERSION = 3
+export const isCurrentEngine = (a: { engineVersion?: number }) => a.engineVersion === ENGINE_VERSION
+
 export type TopicAnalysis = {
+  /** Engine version that made this analysis (absent on analyses saved before versions existed). */
+  engineVersion?: number
   topic: string; region: string | null; language: string | null; fetchedAt: string; units: number; recentDays: number
   /** growth is null when it cannot be calculated: it never defaults to a neutral number. */
   indices: { demand: number; supply: number; competition: number; growth: number | null; opportunity: number }
@@ -307,6 +317,7 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const niches = [...new Set(both.flatMap(v => nichesOf(v).map(n => n.niche)))]
   const isShortProper = (v: YouTubeVideoResult) => { const f = inferFormat(v); return f.format === 'short' }
   return {
+    engineVersion: ENGINE_VERSION,
     topic: s.topic, region: s.region, language: s.language, fetchedAt: s.fetchedAt, units: s.units, recentDays: WINDOW,
     indices: { demand, supply, competition, growth: growthIdx, opportunity }, stats: statistical, growth, growthPct, verdict, headline, reasons, confidence, confidenceNote, evidence, quality,
     byFormat: { short: stats(top, recent, isShortProper), long: stats(top, recent, isLong) }, formatQuality: fq,

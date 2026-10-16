@@ -1,6 +1,6 @@
 'use client'
 
-import { MarketComparisonPanel, OpportunitiesPanel } from './insight-panels'
+import { LegacyPanel, MarketComparisonPanel, OpportunitiesPanel } from './insight-panels'
 import { useEffect, useMemo, useState } from 'react'
 import { YouTubeResults } from '../components/youtube-results'
 import { RpmLine, RunStatus } from './analysis-views'
@@ -119,7 +119,7 @@ export function MonetizationTab() {
 
 /** Visual recommendations: nine sections built from the analyses and official charts already fetched, each with real videos and thumbnails. */
 export function DiscoverTab({ goTo }: { onSaved: () => void; goTo: (tab: string) => void }) {
-  const { filters, charts, loadCharts, chartsBusy, chartsError, list } = useResearch()
+  const { filters, charts, loadCharts, chartsBusy, chartsError, list, legacy, runJobs } = useResearch()
   // The home country is fixed when the tab opens: choosing countries in the filters must never trigger a query by itself.
   const [home] = useState(() => { try { const h = window.localStorage.getItem('cerebro.homeRegion'); return h && COUNTRIES.some(c => c.code === h) ? h : 'ES' } catch { return 'ES' } })
   useEffect(() => { if (!charts[home] && !chartsBusy) void loadCharts([home]) }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -138,6 +138,7 @@ export function DiscoverTab({ goTo }: { onSaved: () => void; goTo: (tab: string)
     {list.length === 0 && <div className="notice" role="status"><p><b>Las recomendaciones por demanda, desatendidos, emergentes, monetización, competencia y formato necesitan analizar nichos.</b> Aún no hay análisis: <button type="button" className="ghost" onClick={() => goTo('niches')}>Ir a Nichos</button> (el botón de buscar muestra el coste y siempre pide confirmación si es alto).</p></div>}
     {fa.notice}
     {list.length > 0 && <OpportunitiesPanel list={fa.rows} />}
+    <LegacyPanel legacy={legacy} onRedo={a => void runJobs([{ topic: a.topic, market: { region: a.region, language: a.language, label: marketLabel(a.region, a.language) } }], { recentDays: a.recentDays, refresh: true })} />
     {reco.sections.map(sec => <RecoSectionView key={sec.id} s={sec}>
       {sec.id === 'international' && reco.internationalTerms.length > 0 && <div className="legend" style={{ margin: '4px 0 10px' }} aria-label="Términos compartidos"><span className="muted small">Términos en varios países <span className="tag calculado">calculado</span>:</span>{reco.internationalTerms.map(t => <span key={t.term} className="pill" title={t.regions.map(countryName).join(', ')}>{t.term} · {t.regions.length} países</span>)}</div>}
       {sec.id === 'international' && <p className="small" style={{ marginBottom: 8 }}><button type="button" className="ghost" onClick={() => goTo('international')}>Ver la comparación completa por país</button></p>}

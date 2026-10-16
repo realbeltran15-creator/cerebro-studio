@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { analyzeTopic, emergingTerms, extractQuestions, extractTerms, formatOpportunity, logScore, type TopicSamples } from '@/lib/research/topic-analysis'
+import { ENGINE_VERSION, analyzeTopic, emergingTerms, extractQuestions, extractTerms, formatOpportunity, logScore, type TopicSamples } from '@/lib/research/topic-analysis'
 import { contentTypesOf, inferFormat, nichesOf } from '@/lib/research/taxonomy'
 import { COUNTRY_RPM, SHORTS_FACTOR, formatAdjusted, nicheRpm, passesRpmFilter, revenueScenarios } from '@/lib/research/monetization'
 import { EMPTY_FILTERS, NO_METRICS, activeCount, estimateRevenue, effectiveLogic, filterVideos, mergeRegions, planTopicBatch, addPreset, loadPresets, savePresets, sanitizeFilters, type ResearchFilters, type SeenVideo } from '@/lib/research/filters'
@@ -476,11 +476,11 @@ describe('the single search button: what it will do and what it costs', () => {
     const p = searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), base)
     expect(p).toMatchObject({ kind: 'analysis', fresh: 4, units: 816, level: 'confirm', auto: false })
     expect(planLabel(p)).toBe('Aplicar y buscar (816 unidades)')
-    const cached = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date().toISOString() } as never }
+    const cached = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date().toISOString(), engineVersion: ENGINE_VERSION } as never }
     expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: cached })).toMatchObject({ fresh: 3, cached: 1, units: 612 })
     const stale = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date(Date.now() - 9 * 86400000).toISOString() } as never }
     expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: stale })).toMatchObject({ fresh: 4, cached: 0 })
-    const free = searchPlanFor('niches', f(), q({ niches: 'tema' }), { ...base, analyses: { [jobKey({ topic: 'tema', market: marketsFromFilters({ countries: [], languages: [] })[0] }, 30)]: { fetchedAt: new Date().toISOString() } as never } })
+    const free = searchPlanFor('niches', f(), q({ niches: 'tema' }), { ...base, analyses: { [jobKey({ topic: 'tema', market: marketsFromFilters({ countries: [], languages: [] })[0] }, 30)]: { fetchedAt: new Date().toISOString(), engineVersion: ENGINE_VERSION } as never } })
     expect(free).toMatchObject({ units: 0, level: 'free' }); expect(planLabel(free)).toBe('Aplicar y mostrar (en caché)')
   })
   it('Nichos with nothing typed proposes ideas per market in each language (and says they are proposals)', () => {
@@ -717,9 +717,9 @@ describe('structural fixes: clean samples, one fetch per topic, honest counters,
   })
   it('analyses older than the cache lifetime are not treated as free', async () => {
     const { isFresh } = await import('@/lib/research/markets')
-    expect(isFresh({ fetchedAt: new Date(NOW - 6 * 86400000).toISOString() }, NOW)).toBe(true)
-    expect(isFresh({ fetchedAt: new Date(NOW - 8 * 86400000).toISOString() }, NOW)).toBe(false)
-    expect(isFresh({ fetchedAt: 'garbage' }, NOW)).toBe(false)
+    expect(isFresh({ fetchedAt: new Date(NOW - 6 * 86400000).toISOString(), engineVersion: ENGINE_VERSION }, NOW)).toBe(true)
+    expect(isFresh({ fetchedAt: new Date(NOW - 8 * 86400000).toISOString(), engineVersion: ENGINE_VERSION }, NOW)).toBe(false)
+    expect(isFresh({ fetchedAt: 'garbage', engineVersion: ENGINE_VERSION }, NOW)).toBe(false)
   })
 })
 
@@ -941,7 +941,7 @@ describe('coordination across server instances (two stores over one table, datab
   })
   it('an instance that cannot get the lease and sees no result gives up without spending anything', async () => {
     const { rows, instance } = await setup(); const { InProgressError } = await import('@/lib/research/sample')
-    const holder = instance(); await holder.lock('topic:v2|topic|tema|us|en|30', 120000, NOW)
+    const holder = instance(); await holder.lock('topic:v3|topic|tema|us|en|30', 120000, NOW)
     slowOk.mockClear()
     await expect(getTopicAnalysis({ topic: 'tema', region: 'US', language: 'en' }, { store: instance(), search: slowOk, owner: 'B', now: () => NOW, pollMs: 5, waitMs: 40 })).rejects.toBeInstanceOf(InProgressError)
     expect(slowOk).not.toHaveBeenCalled(); expect(rows.reduce((t, r) => t + r.units, 0)).toBe(0)

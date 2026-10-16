@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { EMPTY_FILTERS, durationParam, loadPresets, planTopicBatch, savePresets, addPreset, sanitizeFilters, sameFilters, validateFilters, type ActiveChip, type Plan, type Preset, type ResearchFilters } from '@/lib/research/filters'
+import { isCurrentEngine } from '@/lib/research/topic-analysis'
 import { analysisKey, isFresh, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
 import { jobKey, type Job } from '@/lib/research/guided'
 import { quotaDayKey } from '@/lib/research/cache'
@@ -32,13 +33,16 @@ type Ctx = {
   /** What the user typed in each section: shared with the panel so the apply button knows what to search. */
   queries: Queries; setQueries: (q: Partial<Queries>) => void
   /** Runs one analysis per (topic, market) job. `maxJobs` stops early (e.g. at today's budget); jobs already analysed are skipped. */
-  runJobs: (jobs: Job[], opts: { recentDays: number; maxJobs?: number }) => Promise<{ ok: number; failed: string[] }>
+  runJobs: (jobs: Job[], opts: { recentDays: number; maxJobs?: number; refresh?: boolean }) => Promise<{ ok: number; failed: string[] }>
   /** Executes what a SearchPlan says (charts, analyses, search) and remembers it so a failed run can be retried. */
   runPlan: (p: SearchPlan) => Promise<void>; lastPlan: SearchPlan | null
   guided: GuidedPlan | null; setGuided: (g: GuidedPlan | null) => void
   search: SearchState; runSearch: (q: string, order: string, markets: Market[], f: ResearchFilters) => Promise<void>
   markets: Market[]
+  /** Analyses made by the CURRENT engine: the only ones that feed recommendations, opportunities, comparisons and the plan. */
   analyses: Record<string, TopicAnalysis>; list: TopicAnalysis[]
+  /** Analyses made by an older engine: kept and shown apart, never mixed in; re-analysing replaces them. */
+  legacy: TopicAnalysis[]
   usage: Usage; refreshUsage: () => Promise<void>
   plan: (topics: string[], markets?: Market[]) => Plan
   run: (topics: string[], markets?: Market[], opts?: { refresh?: boolean }) => Promise<{ ok: number; failed: string[] }>
@@ -94,6 +98,8 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const [search, setSearch] = useState<SearchState>({ videos: [], ranFor: null, busy: false, error: '', done: '' })
   const [hydrated, setHydrated] = useState(false)
   const [growthBusy, setGrowthBusy] = useState(false)
+  const current = useMemo(() => Object.fromEntries(Object.entries(analyses).filter(([, a]) => isCurrentEngine(a))), [analyses])
+  const legacy = useMemo(() => Object.values(analyses).filter(a => !isCurrentEngine(a)), [analyses])
   const stop = useRef(false)
 
   useEffect(() => {
@@ -163,12 +169,15 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     if (remainingNow() < UNITS.search || searchesLeft() < 1) { setError('No queda presupuesto de hoy para medir el crecimiento (102 unidades y 1 búsqueda).'); return }
     setGrowthBusy(true); setError('')
     try {
-      const p = new URLSearchParams({ q: a.topic, days: String(a.recentDays), growth: '1' }); if (a.region) p.set('region', a.region); if (a.language) p.set('lang', a.language)
-      const r = await paidFetch(`/api/research/topic?${p}`)
-      const j = await r.json() as { analysis?: TopicAnalysis; error?: string; usage?: ServerUsage }
-      if (!r.ok || !j.analysis) { setError(j.error ?? 'No se pudo medir el crecimiento.'); return }
+      // The analysis travels with the request: it may exist only in this browser (the server cache can be another instance, or empty after a deploy).
+      const { sample: _sample, topVideos: _top, ...slim } = a
+      const r = await fetch('/api/research/topic', { method: 'POST', cache: 'no-store', headers: { 'content-type': 'application/json', [LEDGER_HEADER]: ledgerHeader(ledgerRef.current) }, body: JSON.stringify({ topic: a.topic, region: a.region, lang: a.language, days: a.recentDays, analysis: slim }) })
+      const j = await r.json() as { analysis?: TopicAnalysis; error?: string; needsAnalysis?: boolean; usage?: ServerUsage }
+      if (!r.ok || !j.analysis) { setError(j.needsAnalysis ? `${j.error} (usa «Actualizar» en este tema).` : j.error ?? 'No se pudo medir el crecimiento.'); return }
       spend(UNITS.search, 1)
-      setAnalyses(all => ({ ...all, [analysisKey(a.topic, a.region, a.language, a.recentDays)]: j.analysis! }))
+      // Keep the local sample and example videos; take only what growth changed.
+      const g = j.analysis
+      setAnalyses(all => { const k = analysisKey(a.topic, a.region, a.language, a.recentDays); const cur = all[k] ?? a; return { ...all, [k]: { ...cur, growth: g.growth, growthPct: g.growthPct, indices: g.indices, stats: g.stats, reasons: g.reasons, evidence: g.evidence } } })
       takeServer(j.usage)
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo medir el crecimiento.') } finally { setGrowthBusy(false) }
   }, [spend, remainingNow, searchesLeft, paidFetch, takeServer])
@@ -226,7 +235,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const removeChip = useCallback((chip: ActiveChip) => { setApplied(f => chip.remove(f)); setDraft(f => chip.remove(f)); setLastRun(null) }, [])
   const persistPresets = (list: Preset[]) => { setPresets(list); savePresets(store(), list) }
   const value: Ctx = {
-    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses, charts, loadCharts, chartsBusy, chartsError, list: Object.values(analyses), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
+    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses: current, legacy, charts, loadCharts, chartsBusy, chartsError, list: Object.values(current), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
     presets, savePreset: name => persistPresets(addPreset(presets, name, draft)), applyPreset: id => { const p = presets.find(x => x.id === id); if (p) { const f = sanitizeFilters(p.filters); setDraft(f); setApplied(f); setLastRun(null) } }, deletePreset: id => persistPresets(presets.filter(p => p.id !== id)),
   }
   return <C.Provider value={value}>{children}</C.Provider>

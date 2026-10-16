@@ -1,6 +1,6 @@
 import { COUNTRIES, LANGUAGES } from './discovery'
 import type { ResearchFilters } from './filters'
-import type { TopicAnalysis } from './topic-analysis'
+import { isCurrentEngine, type TopicAnalysis } from './topic-analysis'
 
 /** A market is where a topic is looked at: a country (YouTube regionCode) and/or a language (relevanceLanguage). */
 export type Market = { region: string | null; language: string | null; label: string }
@@ -32,4 +32,5 @@ export const recentDaysFrom = (periodDays: number | null) => (periodDays === nul
 
 /** An analysis younger than the cache lifetime (7 days) is still free to reuse; an older one is shown with its date but a new query would spend quota. */
 export const ANALYSIS_TTL_MS = 7 * 86400000
-export const isFresh = (a: Pick<TopicAnalysis, 'fetchedAt'>, now = Date.now()) => { const t = Date.parse(a.fetchedAt); return Number.isFinite(t) && now - t < ANALYSIS_TTL_MS }
+/** Fresh = young enough AND made by the current engine: an analysis from an older engine is never reused, it is re-analysed. */
+export const isFresh = (a: Pick<TopicAnalysis, 'fetchedAt' | 'engineVersion'>, now = Date.now()) => { if (!isCurrentEngine(a)) return false; const t = Date.parse(a.fetchedAt); return Number.isFinite(t) && now - t < ANALYSIS_TTL_MS }

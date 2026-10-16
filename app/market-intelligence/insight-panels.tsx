@@ -89,3 +89,13 @@ export function QuotaNote({ usage }: { usage: QuotaUsage }) {
     <p style={{ margin: '4px 0 0' }}>Es una cuenta de esta aplicación, no la cifra oficial: si otras aplicaciones usan la misma clave de YouTube, su consumo no se ve aquí y puede quedar menos de lo que parece. Comprueba la consola de Google Cloud.{usage.persistent ? '' : ' Además el contador está solo en memoria (falta la migración research_cache): se apoya en el de este navegador.'}</p>
   </div>
 }
+
+/** Analyses made by an older version of the engine: still readable, never mixed with the current ones. */
+export function LegacyPanel({ legacy, onRedo }: { legacy: TopicAnalysis[]; onRedo: (a: TopicAnalysis) => void }) {
+  if (!legacy.length) return null
+  return <details className="panel" style={{ marginTop: 14 }} aria-label="Análisis de versiones anteriores">
+    <summary><b>Análisis de una versión anterior del motor ({legacy.length})</b></summary>
+    <p className="muted small" style={{ margin: '6px 0' }}>Se hicieron con reglas más antiguas (por ejemplo, sin la comprobación de significado o de idioma) y pueden incluir vídeos que hoy se descartarían. Siguen aquí para que no pierdas lo que pagaste, pero <b>no entran</b> en recomendaciones, huecos ni comparaciones. Volver a analizarlos cuesta cuota (≈ 204 unidades cada uno) y los sustituye.</p>
+    <ul className="small" style={{ margin: '0 0 0 16px' }}>{legacy.map(a => <li key={`${a.topic}|${a.region}|${a.language}|${a.recentDays}`}>{a.topic} · {marketLabel(a.region, a.language)} · {new Date(a.fetchedAt).toLocaleDateString('es-ES')} · oportunidad {a.indices.opportunity}/100 (cálculo antiguo) <button type="button" className="ghost" onClick={() => onRedo(a)}>Volver a analizar</button></li>)}</ul>
+  </details>
+}

@@ -19,7 +19,7 @@ export async function saveAnalysis(db: Db, a: TopicAnalysis): Promise<'saved' | 
     owner_id: user.id, title: a.topic.slice(0, 180), source_platform: 'research', source_id: sourceId, query: a.topic, region: a.region, language: a.language, status: 'discovered',
     observed_metrics: {
       // Everything needed to reopen the analysis later, not just the headline numbers: window, units spent, the examples with their official thumbnails.
-      snapshot: { topic: a.topic, region: a.region, language: a.language, recentDays: a.recentDays ?? 30, units: a.units, fetchedAt: a.fetchedAt,
+      snapshot: { engineVersion: a.engineVersion ?? null, topic: a.topic, region: a.region, language: a.language, recentDays: a.recentDays ?? 30, units: a.units, fetchedAt: a.fetchedAt,
         // Every video the search returned and what was decided about it (compact), so the judgement can be reviewed after the browser forgets it.
         sample: (a.sample ?? []).map(v => [v.videoId, v.status, v.reason, v.title, v.channelTitle, v.views, v.inTop, v.inRecent]),
         videos: a.topVideos.map(v => ({ videoId: v.videoId, url: v.url, title: v.title, channelTitle: v.channelTitle, thumbnailUrl: v.thumbnailUrl, publishedAt: v.publishedAt, views: v.observed.views, subscribers: v.observed.channelSubscribers, durationSeconds: v.observed.durationSeconds, live: v.live ?? null })) },

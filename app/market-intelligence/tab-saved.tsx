@@ -1,5 +1,6 @@
 'use client'
 
+import { ENGINE_VERSION } from '@/lib/research/topic-analysis'
 import { FormEvent, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import Link from 'next/link'
@@ -54,7 +55,7 @@ export function SavedTab({ items, onChanged }: { items: Opportunity[]; onChanged
   </section>
 }
 
-type Snap = { fetchedAt?: string; recentDays?: number; units?: number; videos?: Array<{ videoId: string; url: string; title: string; channelTitle: string; thumbnailUrl: string | null; views: number | null }> }
+type Snap = { engineVersion?: number | null; fetchedAt?: string; recentDays?: number; units?: number; videos?: Array<{ videoId: string; url: string; title: string; channelTitle: string; thumbnailUrl: string | null; views: number | null }> }
 type Calc = { verdict?: string; confidence?: string; indices?: { demand: number; supply: number; competition: number; growth: number | null; opportunity: number } }
 
 /** What was saved with the opportunity: verdict, indices, confidence, date and the example videos with their official thumbnails. */
@@ -64,6 +65,7 @@ function SavedDetail({ item }: { item: Opportunity }) {
   const link = campaignLink({ topic: item.query || item.title, region: item.region, language: item.language, verdict: calc.verdict ?? null, demand: calc.indices?.demand ?? null, competition: calc.indices?.competition ?? null, opportunity: calc.indices?.opportunity ?? null, fetchedAt: snap?.fetchedAt ?? null, opportunityId: item.id })
   return <div className="small">
     <p><Link className="open" href={link}>Planificar campaña con esta oportunidad</Link></p>
+    {snap && snap.engineVersion !== ENGINE_VERSION && <p className="warnBox" role="status">Guardado con una versión anterior del motor: sus números pueden incluir vídeos que hoy se descartarían (otro idioma, otro significado, anuncios). Se conserva tal cual; vuelve a analizar el tema para obtener una lectura actual.</p>}
     {calc.indices && <p className="muted">Demanda {calc.indices.demand} · Oferta {calc.indices.supply} · Competencia {calc.indices.competition} · Crecimiento {calc.indices.growth ?? 'No calculable'} · Oportunidad {calc.indices.opportunity} (0–100){calc.verdict ? ` · ${calc.verdict}` : ''}{calc.confidence ? ` · confianza ${calc.confidence}` : ''}</p>}
     {snap?.fetchedAt && <p className="muted">Consultado el {new Date(snap.fetchedAt).toLocaleDateString('es-ES')}{snap.recentDays ? ` · ventana de recientes ${snap.recentDays} días` : ''}{snap.units ? ` · ${snap.units} unidades de cuota` : ''}</p>}
     {snap?.videos && snap.videos.length > 0 && <div className="recoGrid">{snap.videos.slice(0, 4).map(v => <a key={v.videoId} href={v.url} target="_blank" rel="noreferrer" className="videoTile">
