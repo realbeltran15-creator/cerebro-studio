@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { EMPTY_FILTERS, durationParam, loadPresets, planTopicBatch, savePresets, addPreset, sanitizeFilters, sameFilters, validateFilters, type ActiveChip, type Plan, type Preset, type ResearchFilters } from '@/lib/research/filters'
-import { isCurrentEngine } from '@/lib/research/topic-analysis'
+import { growthStatus, isCurrentEngine } from '@/lib/research/topic-analysis'
 import { analysisKey, isFresh, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
 import { jobKey, type Job } from '@/lib/research/guided'
 import { quotaDayKey } from '@/lib/research/cache'
@@ -168,6 +168,8 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   }, [analyses, spend, remainingNow, searchesLeft, paidFetch, takeServer])
 
   const measureGrowth = useCallback(async (a: TopicAnalysis) => {
+    // Already measured and still valid: nothing to ask YouTube (the screen does not offer the button, this is the last guard).
+    if (growthStatus(a).kind === 'vigente' || growthStatus(a).kind === 'medido_no_calculable') return
     if (remainingNow() < UNITS.search || searchesLeft() < 1) { setError('No queda presupuesto de hoy para medir el crecimiento (102 unidades y 1 búsqueda).'); return }
     setGrowthBusy(true); setError('')
     try {

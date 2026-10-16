@@ -481,7 +481,7 @@ describe('the single search button: what it will do and what it costs', () => {
     const stale = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date(Date.now() - 9 * 86400000).toISOString() } as never }
     expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: stale })).toMatchObject({ fresh: 4, cached: 0 })
     const free = searchPlanFor('niches', f(), q({ niches: 'tema' }), { ...base, analyses: { [jobKey({ topic: 'tema', market: marketsFromFilters({ countries: [], languages: [] })[0] }, 30)]: { fetchedAt: new Date().toISOString(), engineVersion: ENGINE_VERSION } as never } })
-    expect(free).toMatchObject({ units: 0, level: 'free' }); expect(planLabel(free)).toBe('Aplicar y mostrar (en caché)')
+    expect(free).toMatchObject({ units: 0, level: 'free' }); expect(planLabel(free)).toBe('Aplicar y mostrar (ya guardado, gratis)')
   })
   it('Nichos with nothing typed proposes ideas per market in each language (and says they are proposals)', () => {
     const p = searchPlanFor('niches', f({ countries: ['US', 'DE'], niches: ['ia'] }), q({ perMarket: 2 }), base)

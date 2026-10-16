@@ -11,6 +11,7 @@ import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization
 import { fmtNumber } from '@/lib/research/format'
 import { UNITS } from '@/lib/research/filters'
 import { confidenceLabel, indexText } from '@/lib/research/labels'
+import { GrowthControl } from './insight-panels'
 import { GEO_LEVEL_LABEL } from '@/lib/research/geo'
 import { HowItIsCalculated } from './insight-panels'
 import { SampleInspector } from './sample-inspector'
@@ -61,7 +62,7 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
     <p style={{ margin: '8px 0' }}><b>{a.headline}.</b></p>
     <div style={{ display: 'grid', gap: 8 }}>{(Object.keys(INDEX_LABEL) as Array<keyof typeof INDEX_LABEL>).map(k => <IndexBar key={k} name={k} value={a.indices[k]} />)}</div>
     <ul className="small" style={{ margin: '10px 0 0 16px' }}>{a.reasons.map(r => <li key={r}>{r}</li>)}</ul>
-    {a.growth.state === 'no_calculable' && <p className="small" style={{ marginTop: 8 }}><button type="button" className="ghost" disabled={growthBusy} onClick={() => void measureGrowth(a)}>{growthBusy ? 'Midiendo…' : `Medir crecimiento (+${UNITS.search} unidades)`}</button> <span className="muted">Compara los últimos {a.recentDays} días con los {a.recentDays} anteriores.</span></p>}
+    <GrowthControl a={a} busy={growthBusy} onMeasure={() => void measureGrowth(a)} />
     {a.quality && <p className="small muted" style={{ marginTop: 8 }}>Calidad de la muestra: {a.quality.kept} de {a.quality.examined} resultados cuentan; {a.quality.excluded.tema + a.quality.excluded.nicho + a.quality.excluded.sentido} son de otro tema o significado, {a.quality.excluded.idioma} de otro idioma, {a.quality.excluded.directo} directos y {a.quality.uncertain} dudosos. Fuera de la demanda: {a.quality.promo} posibles anuncios y {a.quality.outliers} virales atípicos. Idioma sin verificar: {a.quality.languageUnverified}.{a.region && a.quality.channelCountryKnown ? ` Canales con país ${a.region}: ${a.quality.channelInMarket} de ${a.quality.channelCountryKnown} que declaran país (el país de búsqueda no garantiza el del vídeo).` : ''}</p>}
     <SampleInspector a={a} />
     <HowItIsCalculated a={a} />
@@ -121,7 +122,7 @@ export function RunStatus() {
   return <div aria-label="Estado de la consulta">
     {(progress || chartsBusy || search.busy) && <p className="notice" role="status">En ejecución{progress ? `: ${progress.done + 1} de ${progress.total} — ${progress.current}` : search.busy ? ': buscando vídeos…' : ': cargando tendencias…'}</p>}
     {!progress && lastRun && !failedNow && lastRun.ok > 0 && <p className="notice" role="status">Resultados actualizados: {lastRun.ok} análisis nuevo{lastRun.ok === 1 ? '' : 's'}{lastRun.units ? ` (${fmtNumber(lastRun.units)} unidades)` : ''}. Están más abajo.</p>}
-    {!progress && lastRun && lastRun.total === 0 && <p className="muted small" role="status">No había nada nuevo que consultar: ya estaba todo en caché.</p>}
+    {!progress && lastRun && lastRun.total === 0 && <p className="muted small" role="status">No había nada nuevo que consultar: ya estaba todo guardado de antes.</p>}
     {search.done && <p className="notice" role="status">{search.done}</p>}
     {anyError && <p className="error" role="alert">Consulta fallida: {anyError}</p>}
     {!progress && !search.busy && (failedNow || anyError) && lastPlan && <button type="button" className="ghost" onClick={() => void runPlan(lastPlan)}>Reintentar lo que falló</button>}

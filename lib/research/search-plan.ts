@@ -48,8 +48,8 @@ export function searchPlanFor(tab: TabId, draft: ResearchFilters, q: Queries, c:
     if (jobs.length === 0 && chartUnits === 0) return base
     const level = jobs.length || chartUnits ? planTopicBatch({ topics: Math.ceil(units / UNITS.topic) || 0, regions: 1, cachedCombos: 0, remainingToday: c.remainingToday }).level : 'free'
     const lvl: Plan['level'] = units === 0 ? 'free' : level === 'free' ? 'ok' : level
-    const parts = [jobs.length ? `${a.fresh} análisis nuevo${a.fresh === 1 ? '' : 's'} × ${UNITS.topic} = ${a.fresh * UNITS.topic} unidades${a.cached ? ` (${a.cached} en caché, gratis)` : ''}` : '', chartUnits ? `${regionsPending.length} lista${regionsPending.length === 1 ? '' : 's'} de tendencias × ${UNITS.trending} = ${chartUnits} unidades` : ''].filter(Boolean)
-    const msg = lvl === 'free' ? 'Todo está en caché: no gasta cuota.' : `${parts.join(' + ')}. Total ${units} unidades.${lvl === 'confirm' ? ' Es bastante cuota: confirma para continuar.' : lvl === 'blocked' ? (units > c.remainingToday ? ` Te quedan ${Math.max(c.remainingToday, 0)} unidades del presupuesto de hoy.` : ' Es demasiado para una sola vez: reduce temas o países.') : ''}`
+    const parts = [jobs.length ? `${a.fresh} análisis nuevo${a.fresh === 1 ? '' : 's'} × ${UNITS.topic} = ${a.fresh * UNITS.topic} unidades${a.cached ? ` (${a.cached} ya guardado${a.cached === 1 ? '' : 's'}, gratis)` : ''}` : '', chartUnits ? `${regionsPending.length} lista${regionsPending.length === 1 ? '' : 's'} de tendencias × ${UNITS.trending} = ${chartUnits} unidades` : ''].filter(Boolean)
+    const msg = lvl === 'free' ? 'Todo está ya guardado de búsquedas anteriores: no gasta cuota.' : `${parts.join(' + ')}. Total ${units} unidades.${lvl === 'confirm' ? ' Es bastante cuota: confirma para continuar.' : lvl === 'blocked' ? (units > c.remainingToday ? ` Te quedan ${Math.max(c.remainingToday, 0)} unidades del presupuesto de hoy.` : ' Es demasiado para una sola vez: reduce temas o países.') : ''}`
     return { ...base, kind: chartUnits && jobs.length ? 'multi' : chartUnits ? 'charts' : 'analysis', jobs, chartRegions: tab === 'international' ? regionsPending : [], fresh: a.fresh, cached: a.cached, units, level: lvl, message: msg, auto, summary: jobs.length ? summaryOf(jobs, auto) : `listas oficiales de ${regionsPending.length} país(es)` }
   }
   if (tab === 'competition') {
@@ -69,5 +69,5 @@ export function searchPlanFor(tab: TabId, draft: ResearchFilters, q: Queries, c:
 export const planLabel = (p: SearchPlan) =>
   p.kind === 'none' ? 'Aplicar filtros'
   : p.kind === 'charts' ? `Aplicar y cargar tendencias de ${p.chartRegions.length} país${p.chartRegions.length === 1 ? '' : 'es'} (${p.units} unidades)`
-  : p.units === 0 ? 'Aplicar y mostrar (en caché)'
+  : p.units === 0 ? 'Aplicar y mostrar (ya guardado, gratis)'
   : `Aplicar y buscar (${p.units.toLocaleString('es-ES', { useGrouping: true })} unidades)`

@@ -46,6 +46,17 @@ export type GrowthResult = {
   previous?: { n: number; medianVpd: number | null }
   ratio?: number | null
   label?: 'al alza (posible)' | 'estable o no concluyente' | 'a la baja'
+  /** When the previous window was measured (absent = never measured). */
+  measuredAt?: string
+}
+
+/** Growth state for the screen: never measured, measured and valid, or measured but not calculable. A measurement stays valid as long as the analysis does (7 days). */
+export function growthStatus(a: Pick<TopicAnalysis, 'growth' | 'fetchedAt'>, now = Date.now()): { kind: 'sin_medir' | 'vigente' | 'medido_no_calculable' | 'caducado'; measuredAt: string | null } {
+  const g = a.growth, measured = !!g.previous || !!g.measuredAt
+  if (!measured) return { kind: 'sin_medir', measuredAt: null }
+  const at = g.measuredAt ?? a.fetchedAt, t = Date.parse(at)
+  if (!Number.isFinite(t) || now - t >= 7 * 86400000) return { kind: 'caducado', measuredAt: at }
+  return { kind: g.state === 'calculable' ? 'vigente' : 'medido_no_calculable', measuredAt: at }
 }
 
 /**
@@ -345,7 +356,7 @@ export function applyGrowth(a: TopicAnalysis, previous: Sample, now = Date.now()
   const relevant = previous.videos.filter(v => { if (seen.has(v.videoId)) return false; seen.add(v.videoId); return assessVideo(v, q, expected, { strict, region: a.region }).relevant })
   const promo = new Set(relevant.filter(v => assessVideo(v, q, expected, { strict, region: a.region }).promo).map(v => v.videoId))
   const prev = cohort(relevant, promo, now)
-  const growth = growthFrom(a.growth.recent, { n: prev.n, medianVpd: prev.medianVpd }, a.recentDays)
+  const growth = { ...growthFrom(a.growth.recent, { n: prev.n, medianVpd: prev.medianVpd }, a.recentDays), measuredAt: new Date(now).toISOString() }
   const growthIdx = growthIndex(growth)
   const pct = growth.state === 'calculable' && growth.ratio ? Math.round((growth.ratio - 1) * 100) : null
   const reasons = a.reasons.map(r => (r.startsWith('Crecimiento:') ? `Crecimiento: ${growth.state === 'calculable' ? growth.label : 'No calculable'}. ${growth.reason}` : r))

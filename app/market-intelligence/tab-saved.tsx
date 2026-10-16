@@ -1,5 +1,6 @@
 'use client'
 
+import { languageLabel, regionLabel, sourceLabel, statusLabel } from '@/lib/research/labels'
 import { Thumb } from '../components/thumb'
 import { ENGINE_VERSION } from '@/lib/research/topic-analysis'
 import { FormEvent, useState } from 'react'
@@ -37,21 +38,21 @@ export function SavedTab({ items, onChanged }: { items: Opportunity[]; onChanged
     <p className="muted small">Los análisis guardados conservan lo observado, lo calculado y la evidencia por separado. Esta pantalla no afirma viralidad ni publica contenido.</p>
     <div className="projectList">{items.length === 0 ? <p className="emptyState">No hay oportunidades todavía.</p> : items.map(item => <article key={item.id}>
       <h3>{item.title}</h3>
-      <p>{item.region || 'Mercado sin definir'} · {item.language || 'Idioma sin definir'} · {item.status}</p>
-      <p>Fuente: {item.source_platform}{item.query ? ` · ${item.query}` : ''}</p>
+      <p>{item.region ? regionLabel(item.region) : 'Mercado sin definir'} · {item.language ? languageLabel(item.language) : 'Idioma sin definir'} · {statusLabel(item.status)}</p>
+      <p>Origen: {sourceLabel(item.source_platform)}{item.query ? ` · ${item.query}` : ''}</p>
       <SavedDetail item={item} />
     </article>)}</div>
     <h3 className="sectionTitle">Registro manual</h3>
     <form className="marketForm" onSubmit={add}>
       <input required value={title} onChange={e => setTitle(e.target.value)} placeholder="Oportunidad o tema" />
       <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Consulta de origen" />
-      <input value={region} onChange={e => setRegion(e.target.value)} placeholder="Mercado, ej. DE" />
-      <input value={language} onChange={e => setLanguage(e.target.value)} placeholder="Idioma, ej. de" />
+      <input value={region} onChange={e => setRegion(e.target.value)} placeholder="País, ej. DE (Alemania)" />
+      <input value={language} onChange={e => setLanguage(e.target.value)} placeholder="Idioma, ej. de (alemán)" />
       <button disabled={busy}>{busy ? 'Guardando…' : '+ Registrar oportunidad'}</button>
     </form>
     {error && <p className="error" role="alert">{error}</p>}
     <h3 className="sectionTitle">Análisis de esta sesión ({list.length})</h3>
-    <p className="muted small">Los análisis de pago se conservan en este navegador (y en la caché del servidor una semana) para no repetirlos. Borrarlos aquí no devuelve cuota.</p>
+    <p className="muted small">Los análisis que ya has hecho (cada uno gastó cuota de YouTube) se guardan en este navegador, y una copia en el servidor durante una semana, para que no tengas que repetirlos. Olvidarlos aquí no te devuelve la cuota gastada.</p>
     <button type="button" className="ghost" disabled={list.length === 0} onClick={clearAnalyses}>Olvidar análisis de esta sesión</button>
   </section>
 }

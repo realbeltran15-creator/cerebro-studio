@@ -1,6 +1,6 @@
 'use client'
 
-import { QuotaNote } from './insight-panels'
+import { CostBadge, CostLegend, QuotaExplainer, QuotaNote } from './insight-panels'
 import { useEffect, useMemo, useState } from 'react'
 import { MultiSelect } from '../components/multi-select'
 import { useResearch } from './research-context'
@@ -74,13 +74,15 @@ export function FilterPanel({ tab }: { tab: TabId }) {
       <button type="button" className="ghost" aria-expanded={open} onClick={toggle}>{open ? 'Ocultar opciones' : 'Mostrar opciones'}</button>
     </div>
     <p className="muted small" style={{ margin: '4px 0 8px' }}>{TAB_SCOPE[tab]}</p>
+    <CostLegend />
+    <QuotaExplainer />
     <div aria-label="Filtros activos" style={{ marginBottom: 8 }}>
       {chips.length === 0 ? <p className="muted small">Sin filtros activos en este apartado: se muestra todo.</p> : <div className="legend">{chips.map(c => <button key={c.id} type="button" className="pill info" aria-label={`Quitar ${c.group}: ${c.label}`} onClick={() => removeChip(c)}>{c.group}: {c.label} ✕</button>)}</div>}
       {keptElsewhere > 0 && <p className="muted small">Se conservan {keptElsewhere} filtro{keptElsewhere === 1 ? '' : 's'} que este apartado no usa; vuelven a aplicarse en los apartados donde sí cuentan.</p>}
     </div>
 
     {open && <>
-      {(has('countries') || has('languages')) && <fieldset className="filterStep"><legend>{step('where')} · Dónde investigar</legend><div className="filterGrid">
+      {(has('countries') || has('languages')) && <fieldset className="filterStep"><legend>{step('where')} · Dónde investigar <CostBadge kind="cost">decide qué mercados se buscan</CostBadge></legend><div className="filterGrid">
         {has('countries') && <div>
           <MultiSelect label="Países" options={countryOptions} value={f.countries} onChange={countries => { set({ countries }); setNotice('') }} max={MAX_COUNTRIES} logic={f.logic.countries} onLogic={logic('countries')} explanation={GROUP_SEMANTICS.countries.explanation} />
           <div className="legend" style={{ marginTop: 6 }} aria-label="Añadir un continente">{CONTINENTS.map(([id, l]) => <button key={id} type="button" className="pill" onClick={() => addContinent(id)} title={`Añadir los países de ${l}`}>+ {l}</button>)}</div>
@@ -90,7 +92,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         {has('languages') && f.languages.length > 0 && <label className="msOpt"><input type="checkbox" checked={f.includeUndeclaredLanguage} onChange={e => set({ includeUndeclaredLanguage: e.target.checked })} /> Incluir vídeos sin idioma declarado (YouTube solo lo informa en una parte de los vídeos)</label>}
       </div><p className="muted small">País = donde YouTube muestra el vídeo, no donde viven los espectadores. Idioma = el que declaró quien subió el vídeo (a veces falta).</p></fieldset>}
 
-      {(tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international') && <fieldset className="filterStep"><legend>{step('what')} · Qué quieres buscar</legend>
+      {(tab === 'niches' || tab === 'keywords' || tab === 'competition' || tab === 'international') && <fieldset className="filterStep"><legend>{step('what')} · Qué quieres buscar <CostBadge kind="cost">cada tema nuevo es una búsqueda</CostBadge></legend>
         {tab === 'niches' && <div>
           <label className="muted small" htmlFor="topics">Temas o subnichos (opcional: uno por línea o separados por comas, hasta 6)</label>
           <textarea id="topics" rows={2} value={queries.niches} onChange={e => setQueries({ niches: e.target.value })} placeholder="Déjalo vacío y se probarán ideas de los nichos elegidos, en el idioma de cada mercado" style={{ width: '100%' }} />
@@ -103,7 +105,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         {tab === 'international' && <div><label className="muted small" htmlFor="tc">Tema a comparar en cada mercado (opcional)</label><input id="tc" aria-label="Tema a comparar" value={queries.international} onChange={e => setQueries({ international: e.target.value })} placeholder="inteligencia artificial para negocios" maxLength={120} /></div>}
       </fieldset>}
 
-      {(has('niches') || has('formats') || has('contentTypes')) && <fieldset className="filterStep"><legend>{step('filters')} · Qué filtros aplicar</legend><div className="filterGrid">
+      {(has('niches') || has('formats') || has('contentTypes')) && <fieldset className="filterStep"><legend>{step('filters')} · Qué filtros aplicar <CostBadge kind="free">reordenan lo que ya tienes</CostBadge></legend><div className="filterGrid">
         {has('niches') && <MultiSelect label="Nichos" options={NICHES.map(x => [x.id, x.label])} value={f.niches} onChange={niches => set({ niches })} logic={f.logic.niches} onLogic={logic('niches')} explanation={GROUP_SEMANTICS.niches.explanation} />}
         {has('formats') && <MultiSelect label="Formatos" options={FORMAT_OPTIONS as Array<[string, string]>} value={f.formats} onChange={formats => set({ formats })} logic={f.logic.formats} onLogic={logic('formats')} allEnabled={false} explanation={GROUP_SEMANTICS.formats.explanation} />}
         {has('contentTypes') && <MultiSelect label="Tipos de contenido" options={CONTENT_TYPE_OPTIONS} value={f.contentTypes} onChange={contentTypes => set({ contentTypes })} logic={f.logic.contentTypes} onLogic={logic('contentTypes')} explanation={GROUP_SEMANTICS.contentTypes.explanation} />}
@@ -111,14 +113,14 @@ export function FilterPanel({ tab }: { tab: TabId }) {
 
       {(has('period') || has('rpm')) && <fieldset className="filterStep"><legend>{step('traits')} · Qué características</legend><div className="filterGrid">
         {has('period') && <div>
-          <label className="muted small" htmlFor="rf-period">Periodo</label>
+          <label className="muted small" htmlFor="rf-period">Periodo <CostBadge kind="cost">cambiarlo repite la búsqueda</CostBadge></label>
           <select id="rf-period" value={f.periodDays === null ? '' : String(f.periodDays)} onChange={e => set({ periodDays: e.target.value ? Number(e.target.value) : null })}>
             <option value="">Por defecto (30 días)</option><option value="7">Última semana</option><option value="30">Últimos 30 días</option><option value="90">Últimos 90 días</option><option value="365">Último año</option>
           </select>
           <p className="muted small">En vídeos: solo los publicados en ese periodo. En análisis: ventana de «recientes».</p>
         </div>}
         {has('rpm') && <div>
-          <label className="muted small" htmlFor="rf-rpm-min">RPM estimado (USD por 1000 visitas)</label>
+          <label className="muted small" htmlFor="rf-rpm-min">RPM estimado (USD por 1000 visitas) <CostBadge kind="free" /></label>
           <div style={{ display: 'flex', gap: 6 }}>
             <input id="rf-rpm-min" type="number" min={0} step="0.5" inputMode="decimal" placeholder="Mín." value={f.rpm.min ?? ''} onChange={rpm('min')} aria-label="RPM estimado mínimo" />
             <input type="number" min={0} step="0.5" inputMode="decimal" placeholder="Máx." value={f.rpm.max ?? ''} onChange={rpm('max')} aria-label="RPM estimado máximo" />
@@ -128,7 +130,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         </div>}
       </div>
       {has('analysis') && <details open={false}>
-        <summary><b>Resultado del análisis</b> <span className="muted small">demanda, oferta, competencia, crecimiento, clasificación</span></summary>
+        <summary><b>Resultado del análisis</b> <CostBadge kind="free" /> <span className="muted small">demanda, oferta, competencia, crecimiento, clasificación</span></summary>
         <div className="filterGrid" style={{ marginTop: 10 }}>
           <Range label="Demanda (mín. 0–100)" a={f.analysis.minDemand} onA={v => ana({ minDemand: v })} />
           <Range label="Oferta (máx. 0–100)" a={f.analysis.maxSupply} onA={v => ana({ maxSupply: v })} />
@@ -141,7 +143,7 @@ export function FilterPanel({ tab }: { tab: TabId }) {
         <p className="muted small" style={{ marginTop: 8 }}>Son los índices que calcula Cerebro Studio con la muestra de YouTube (0–100): filtran los <b>análisis ya hechos</b>, no cambian qué se consulta. Un «nicho desatendido» típico: demanda ≥ 50, competencia ≤ 55 y oferta ≤ 60.</p>
       </details>}
       {has('advanced') && <details>
-        <summary><b>Filtros avanzados</b> <span className="muted small">rendimiento, canal, duración, texto y dinero estimado</span></summary>
+        <summary><b>Filtros avanzados</b> <CostBadge kind="free" /> <span className="muted small">rendimiento, canal, duración, texto y dinero estimado</span></summary>
         <div className="filterGrid" style={{ marginTop: 10 }}>
           <Range label="Visualizaciones" a={f.metrics.minViews} b={f.metrics.maxViews} onA={v => met({ minViews: v })} onB={v => met({ maxViews: v })} />
           <Range label="Vistas por día (mín.)" a={f.metrics.minViewsPerDay} onA={v => met({ minViewsPerDay: v })} />

@@ -1,6 +1,6 @@
 'use client'
 
-import { languageLabel, regionLabel, sourceLabel } from '@/lib/research/labels'
+import { statusLabel, languageLabel, regionLabel, sourceLabel } from '@/lib/research/labels'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'

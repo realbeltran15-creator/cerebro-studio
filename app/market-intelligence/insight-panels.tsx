@@ -8,7 +8,8 @@ import { OPP_TITLES, detectOpportunities, type Opportunity } from '@/lib/researc
 import { compareMarkets } from '@/lib/research/markets-info'
 import { marketLabel } from '@/lib/research/markets'
 import { methodLines } from '@/lib/research/statistics'
-import type { TopicAnalysis } from '@/lib/research/topic-analysis'
+import { growthStatus, type TopicAnalysis } from '@/lib/research/topic-analysis'
+import { UNITS } from '@/lib/research/filters'
 
 const STRENGTH: Record<Opportunity['strength'], { label: string; cls: string }> = {
   fuerte: { label: 'Señal fuerte', cls: 'good' }, moderada: { label: 'Señal moderada', cls: '' }, indicio: { label: 'Solo un indicio', cls: 'warn' }, a_verificar: { label: 'A verificar: no es una oportunidad', cls: 'warn' },
@@ -99,7 +100,7 @@ export function QuotaNote({ usage }: { usage: QuotaUsage }) {
   return <div className="muted small" aria-label="Consumo de hoy">
     <p style={{ margin: 0 }}>Esta aplicación ha usado hoy <b>{f(usage.usedToday)}</b> de las <b>{f(usage.cap)}</b> unidades que se permite y <b>{f(usage.searchesToday)}</b> de sus <b>{f(usage.searchCap)}</b> búsquedas (YouTube limita por separado las unidades y el número de búsquedas).</p>
     {usage.exhausted && <p className="error" role="alert" style={{ margin: '4px 0 0' }}>YouTube ha informado de que la cuota de hoy está agotada: no se lanzan más búsquedas hasta mañana.</p>}
-    <p style={{ margin: '4px 0 0' }}>Es una cuenta de esta aplicación, no la cifra oficial: si otras aplicaciones usan la misma clave de YouTube, su consumo no se ve aquí y puede quedar menos de lo que parece. Comprueba la consola de Google Cloud.{usage.persistent ? '' : ' Además el contador está solo en memoria (falta la migración research_cache): se apoya en el de este navegador.'}</p>
+    <p style={{ margin: '4px 0 0' }}>Es una cuenta de esta aplicación, no la cifra oficial: si otras aplicaciones usan la misma clave de YouTube, su consumo no se ve aquí y puede quedar menos de lo que parece. Comprueba la consola de Google Cloud.{usage.persistent ? '' : ' El servidor aún no guarda el conteo de forma permanente, así que se apoya también en el de este navegador y puede reiniciarse si el servidor se reinicia.'}</p>
   </div>
 }
 
@@ -111,4 +112,42 @@ export function LegacyPanel({ legacy, onRedo }: { legacy: TopicAnalysis[]; onRed
     <p className="muted small" style={{ margin: '6px 0' }}>Se hicieron con reglas más antiguas (por ejemplo, sin la comprobación de significado o de idioma) y pueden incluir vídeos que hoy se descartarían. Siguen aquí para que no pierdas lo que pagaste, pero <b>no entran</b> en recomendaciones, huecos ni comparaciones. Volver a analizarlos cuesta cuota (≈ 204 unidades cada uno) y los sustituye.</p>
     <ul className="small" style={{ margin: '0 0 0 16px' }}>{legacy.map(a => <li key={`${a.topic}|${a.region}|${a.language}|${a.recentDays}`}>{a.topic} · {marketLabel(a.region, a.language)} · {new Date(a.fetchedAt).toLocaleDateString('es-ES')} · oportunidad {a.indices.opportunity}/100 (cálculo antiguo) <button type="button" className="ghost" onClick={() => onRedo(a)}>Volver a analizar</button></li>)}</ul>
   </details>
+}
+
+/** Marks a control as free (it only reorganises what is already on screen) or as one that asks YouTube for something new and spends quota. */
+export function CostBadge({ kind, children }: { kind: 'free' | 'cost'; children?: React.ReactNode }) {
+  return <span className={`pill ${kind === 'free' ? 'ok' : 'warn'}`} title={kind === 'free' ? 'No consulta YouTube: no gasta cuota' : 'Puede hacer una búsqueda nueva en YouTube y gastar cuota'}>{kind === 'free' ? 'Gratis' : 'Gasta cuota'}{children ? ` · ${children}` : ''}</span>
+}
+
+export function CostLegend() {
+  return <p className="small" style={{ margin: '4px 0 8px' }} aria-label="Qué es gratis y qué gasta cuota">
+    <CostBadge kind="free">filtra y reordena lo que ya tienes</CostBadge>{' '}
+    <CostBadge kind="cost">hace una búsqueda nueva en YouTube</CostBadge>
+  </p>
+}
+
+/** The quota in plain words: a technical allowance of work, not money. */
+export function QuotaExplainer() {
+  return <details className="small" style={{ margin: '4px 0 8px' }}>
+    <summary>¿Qué son las «unidades» de YouTube y cuánto cuestan?</summary>
+    <ul style={{ margin: '6px 0 0 16px' }}>
+      <li><b>No son dinero.</b> YouTube da a cada proyecto un cupo diario de «unidades» (10.000 al día por defecto): una medida técnica de cuánto trabajo le pides. Con ese cupo normal no se paga nada.</li>
+      <li><b>Cuánto gasta cada cosa:</b> una búsqueda, unas 100 unidades; analizar un tema en un mercado son 2 búsquedas (≈ 204); medir el crecimiento, 1 búsqueda (≈ 102); cargar las tendencias de un país, 2.</li>
+      <li><b>Hay un segundo límite aparte:</b> YouTube también limita cuántas búsquedas se pueden hacer al día. Puede acabarse uno aunque sobre el otro.</li>
+      <li><b>Cuando se acaba</b>, YouTube no responde hasta el día siguiente (medianoche, hora del Pacífico). Ampliar el cupo hay que pedírselo a Google; no ocurre solo ni se cobra solo.</li>
+      <li><b>Esta aplicación no cobra por unidad.</b> Investigación no usa modelos de IA de pago: lo que gasta es solo cupo de YouTube.</li>
+      <li><b>Es gratis:</b> volver a ver análisis ya hechos, cambiar filtros, ordenar, exportar y guardar.</li>
+    </ul>
+  </details>
+}
+
+/** Growth: says whether it was already measured and never offers a second, identical measurement (it would cost quota and change nothing). */
+export function GrowthControl({ a, busy, onMeasure }: { a: TopicAnalysis; busy: boolean; onMeasure: () => void }) {
+  const st = growthStatus(a), when = st.measuredAt ? new Date(st.measuredAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : ''
+  if (st.kind === 'vigente') return <p className="small" style={{ marginTop: 8 }} aria-label="Crecimiento medido"><CostBadge kind="free">ya medido el {when}</CostBadge> <span className="muted">Resultado: {a.growth.label ?? 'calculado'}. No hace falta repetirlo: una segunda medición daría lo mismo y gastaría cuota.</span></p>
+  if (st.kind === 'medido_no_calculable') return <p className="small" style={{ marginTop: 8 }} aria-label="Crecimiento medido sin resultado"><CostBadge kind="free">medido el {when}, sin resultado</CostBadge> <span className="muted">{a.growth.reason} Repetirlo ahora no cambiaría nada; inténtalo más adelante, cuando haya más vídeos, con un análisis nuevo.</span></p>
+  return <p className="small" style={{ marginTop: 8 }}>
+    <button type="button" className="ghost" disabled={busy} onClick={onMeasure}>{busy ? 'Midiendo…' : `Medir crecimiento (≈ ${UNITS.search} unidades, 1 búsqueda)`}</button>{' '}
+    <span className="muted">{st.kind === 'caducado' ? `La medición del ${when} ya caducó. ` : ''}Compara los últimos {a.recentDays} días con los {a.recentDays} anteriores. Es la única forma de saber si el tema crece; sin ella el crecimiento sale «No calculable».</span>
+  </p>
 }

@@ -602,6 +602,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByText('Corto viral de gatos').first().waitFor({ timeout: 20000 })
   check('research: entering loads only the cheap official chart of one country', requests.filter(r => r.includes('/trending')).length === 1 && requests.every(r => !r.includes('/topic') && !r.includes('/youtube?')), requests)
   check('research: the seven sections (the Comparador was folded into Nichos) are in the navigation, above the filters', (await page.getByRole('tab').count()) === 7 && (await page.getByRole('tab', { name: 'Comparador' }).count()) === 0 && /Qué quieres investigar/.test(await body()) && !/1 · Qué quieres investigar/.test(await body()))
+  check('research: the panel separates what is free from what spends quota, and explains the units', (await page.getByText('Gasta cuota').count()) >= 1 && (await page.getByText('Gratis').count()) >= 1 && (await page.getByText(/¿Qué son las «unidades» de YouTube/).count()) === 1)
   { const legends = await page.locator('legend').allInnerTexts(); const nums = legends.map(l => /^(\d) · /.exec(l)?.[1]).filter(Boolean).map(Number); check('research: filter steps are numbered 1..n without repeats or gaps', nums.length > 0 && nums.every((n, i) => n === i + 1), JSON.stringify(legends)) }
   check('research: the button starts disabled with "Sin filtros"', await go().isDisabled() && (await page.getByText('Sin filtros', { exact: true }).count()) >= 1)
   check('research: discovery names its market, shows the nine recommendation sections, and says analyses are missing instead of inventing them', /Recomendaciones para España/.test(await body()) && (await page.locator('details.recoSection').count()) === 9 && (await page.getByText(/necesitan analizar nichos/).count()) === 1)
@@ -687,9 +688,9 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByRole('button', { name: 'Tarjetas' }).click()
   const again = requests.length
   await page.getByLabel(/Temas o subnichos/).fill('historia medieval')
-  check('research: repeating an analysed topic is free and the button says it will show cached results', (await page.getByText(/Todo está en caché: no gasta cuota/).count()) === 1 && (await go().innerText()).includes('Aplicar y mostrar (en caché)'))
+  check('research: repeating an analysed topic is free and the button says it will show cached results', (await page.getByText(/Todo está ya guardado de búsquedas anteriores: no gasta cuota/).count()) === 1 && (await go().innerText()).includes('Aplicar y mostrar (ya guardado, gratis)'))
   await go().click()
-  check('research: showing cached results makes no request and says nothing new was fetched', requests.length === again && (await page.getByText(/ya estaba todo en caché/).count()) === 1)
+  check('research: showing cached results makes no request and says nothing new was fetched', requests.length === again && (await page.getByText(/ya estaba todo guardado de antes/).count()) === 1)
   await page.getByLabel('Periodo').selectOption('90')
   check('research: changing the period makes the same topic a new paid analysis with that window', (await page.getByText(/1 análisis nuevo × 204 = 204 unidades/).count()) === 1)
   await go().click()
@@ -727,7 +728,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await tab('Palabras clave').click()
   check('research: keywords state plainly that there are no search volumes and which sources are missing', (await page.getByText(/no hay volúmenes de búsqueda/).count()) === 1 && (await page.getByText(/Google Trends/).count()) >= 1)
   await page.getByLabel('Palabra clave (hasta 3)').fill('historia medieval')
-  check('research: for keywords the button is a search button with the cached cost', (await go().innerText()).includes('Aplicar y mostrar (en caché)'))
+  check('research: for keywords the button is a search button with the cached cost', (await go().innerText()).includes('Aplicar y mostrar (ya guardado, gratis)'))
   await go().click()
   await page.getByLabel('Ver resultados de').selectOption({ index: 0 })
   check('research: related phrases, questions and emerging terms come with source and date', (await page.getByRole('cell', { name: 'historia medieval' }).count()) >= 1 && (await page.getByText('¿Por qué cayó el imperio?').count()) >= 1 && (await page.getByText(/Fuente: YouTube Data API/).count()) >= 1)

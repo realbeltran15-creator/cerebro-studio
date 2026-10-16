@@ -134,7 +134,7 @@ export function getGrowth(req: { topic: string; region: string | null; language:
     if (!hit) throw new NoBaseAnalysisError('No hay un análisis actual de este tema con el que comparar (puede venir de una versión anterior del motor). Vuelve a analizarlo primero.')
     const cap = deps.cap ?? dailyCap()
     const usage = (extra = 0) => usageOf(deps.store, cap, now(), extra)
-    if (hit.payload.growth?.state === 'calculable' || hit.payload.growth?.previous) return { analysis: hit.payload, cached: true, usage: await usage() }
+    if (hit.payload.growth?.state === 'calculable' || hit.payload.growth?.previous || hit.payload.growth?.measuredAt) return { analysis: hit.payload, cached: true, usage: await usage() }
     const lockKey = `growth:${key}`
     if (!(await deps.store.lock(lockKey, LEASE_MS, now()))) throw new InProgressError('Otra medición del crecimiento de este tema sigue en marcha. Vuelve a intentarlo en unos segundos: no se ha gastado cuota.')
     try {
