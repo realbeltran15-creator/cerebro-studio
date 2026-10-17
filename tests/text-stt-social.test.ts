@@ -143,6 +143,22 @@ describe('social OAuth and publishing guards', () => {
     await expect(publishSocialJob(db as never, 'u', 'j')).rejects.toThrow(/approval is required/)
     expect(fetchMock).not.toHaveBeenCalled()
   })
+  it('refuses a forged approval (record present, no server seal) or a payload changed after approving', async () => {
+    process.env.TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
+    const { approvalSeal } = await import('@/lib/publication/seal')
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock)
+    const approval = { owner_id: 'u', action_type: 'publish', entity_id: 'tiktok:k', status: 'approved' }
+    const run = async (job: Record<string, unknown>) => {
+      const chain = (data: unknown) => { const q: Record<string, unknown> = {}; for (const f of ['select', 'eq', 'in', 'order', 'limit']) q[f] = () => q; q.maybeSingle = async () => ({ data }); return q }
+      const db = { from: (t: string) => chain(t === 'publication_jobs' ? job : t === 'approvals' ? approval : t === 'assets' ? { storage_path: 'u/p/v.mp4' } : null) }
+      return publishSocialJob(db as never, 'u', 'j')
+    }
+    const job = { id: 'j', owner_id: 'u', project_id: 'p', platform: 'tiktok', status: 'approved', idempotency_key: 'k', payload: { videoAssetId: 'v', privacyLevel: 'SELF_ONLY' }, result: null as Record<string, unknown> | null }
+    await expect(run(job)).rejects.toThrow(/no corresponde al contenido actual/)
+    job.result = { approvalSeal: approvalSeal({ ownerId: 'u', jobId: 'j', platform: 'tiktok', idempotencyKey: 'k', payload: job.payload, videoStoragePath: 'u/p/v.mp4' }) }
+    await expect(run({ ...job, payload: { videoAssetId: 'v', privacyLevel: 'PUBLIC_TO_EVERYONE' } })).rejects.toThrow(/no corresponde al contenido actual/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
   it('refuses jobs that are not approved', async () => {
     const job = { id: 'j', owner_id: 'u', project_id: 'p', platform: 'instagram', status: 'draft', idempotency_key: 'k', payload: { videoAssetId: 'v' }, result: null }
     const q: Record<string, unknown> = {}; for (const f of ['select', 'eq']) q[f] = () => q; q.maybeSingle = async () => ({ data: job })

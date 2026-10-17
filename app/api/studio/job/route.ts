@@ -5,6 +5,7 @@ import { pollGeneration, type JobRef } from '@/lib/providers/adapters'
 import type { FalJob } from '@/lib/providers/fal-queue'
 import { persistGeneratedAsset } from '@/lib/providers/persist'
 import { decryptJson } from '@/lib/security/tokens'
+import { markJob } from '@/lib/providers/job-ledger'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -27,7 +28,8 @@ export async function POST(request: Request) {
   let t: Token
   try { t = decryptJson<Token>(body?.token ?? '') } catch { return NextResponse.json({ error: 'Trabajo no válido.' }, { status: 400 }) }
   if ((t.v !== 1 && t.v !== 2) || t.ownerId !== user.id) return NextResponse.json({ error: 'Trabajo no válido.' }, { status: 403 })
-  if (Date.now() - t.createdAt > MAX_AGE_MS) return NextResponse.json({ state: 'expired', error: 'El trabajo es demasiado antiguo; el proveedor puede haber borrado el resultado.' }, { status: 410 })
+  const ledger = (state: 'done' | 'failed' | 'expired', extra: { assetIds?: string[]; error?: string } = {}) => markJob(supabase, user.id, body!.token!, state, extra).catch(() => undefined)
+  if (Date.now() - t.createdAt > MAX_AGE_MS) { await ledger('expired'); return NextResponse.json({ state: 'expired', error: 'El trabajo es demasiado antiguo; el proveedor puede haber borrado el resultado.' }, { status: 410 }) }
   const model = modelById(t.modelId)
   if (!model) return NextResponse.json({ error: 'Modelo desconocido.' }, { status: 400 })
   const job: JobRef = t.v === 1 ? { provider: 'fal', fal: t.job } : t.job
@@ -35,7 +37,7 @@ export async function POST(request: Request) {
   let result
   try { result = await pollGeneration(model, job) }
   catch (error) { return NextResponse.json({ state: 'unknown', error: error instanceof Error ? error.message : 'No se pudo consultar el proveedor; se volverá a intentar.' }) }
-  if (result.state === 'failed') return NextResponse.json(result, { status: 502 })
+  if (result.state === 'failed') { await ledger('failed', { error: String((result as { error?: unknown }).error ?? '').slice(0, 300) }); return NextResponse.json(result, { status: 502 }) }
   if (result.state !== 'done') return NextResponse.json(result)
   const outputs = result.media
 
@@ -55,5 +57,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ state: 'failed', error: 'Se generó, pero no se pudo guardar en la Biblioteca. No repitas la generación; vuelve a comprobar en un momento.', assets }, { status: 500 })
     }
   }
+  await ledger('done', { assetIds: assets.map(a => String((a as { id: unknown }).id)) })
   return NextResponse.json({ state: 'done', assets })
 }

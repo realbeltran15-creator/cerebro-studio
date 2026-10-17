@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { approvalKeyFor, validatePayload, type PublicationJob } from '@/lib/publication/youtube'
 
+import { approvalStillValid, sealFor } from '@/lib/publication/approval'
+import { sealConfigured } from '@/lib/publication/seal'
+
 export const dynamic = 'force-dynamic'
 
 /** Records the owner's explicit approval for one publication job. Does not publish anything. */
@@ -16,7 +19,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ job
   const { data } = await supabase.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result').eq('id', jobId).eq('owner_id', user.id).maybeSingle()
   const job = data as PublicationJob | null
   if (!job || job.platform !== 'youtube') return NextResponse.json({ error: 'Trabajo no encontrado.' }, { status: 404 })
-  if (!['draft', 'awaiting_approval'].includes(job.status)) return NextResponse.json({ error: 'Este trabajo ya fue aprobado o publicado.' }, { status: 409 })
+  if (!sealConfigured()) return NextResponse.json({ error: 'El servidor no tiene configurada la clave de sellado de aprobaciones (PUBLICATION_SEAL_KEY o TOKEN_ENCRYPTION_KEY).' }, { status: 503 })
+  // An approved job whose seal no longer matches (content changed, or approved before the seal existed) can be approved again.
+  const reapproval = job.status === 'approved' && !(await approvalStillValid(supabase, job))
+  if (!['draft', 'awaiting_approval'].includes(job.status) && !reapproval) return NextResponse.json({ error: 'Este trabajo ya fue aprobado o publicado.' }, { status: 409 })
   const problem = validatePayload(job.payload)
   if (problem) return NextResponse.json({ error: problem }, { status: 400 })
 
@@ -36,7 +42,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ job
     risk_summary: (body.riskSummary ?? '').slice(0, 1000) || null, decided_at: now,
   }, { onConflict: 'owner_id,action_type,entity_type,entity_id,status' })
   if (approvalError) return NextResponse.json({ error: approvalError.message }, { status: 500 })
-  const { error } = await supabase.from('publication_jobs').update({ status: 'approved', approved_at: now, approved_by: user.id, updated_at: now }).eq('id', job.id).eq('owner_id', user.id)
+  // The seal is computed here, server-side, over exactly what the owner approved; the publish step verifies it.
+  const seal = await sealFor(supabase, job)
+  const { error } = await supabase.from('publication_jobs').update({ status: 'approved', approved_at: now, approved_by: user.id, updated_at: now, result: { ...(job.result ?? {}), ...seal } }).eq('id', job.id).eq('owner_id', user.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ approved: true })
 }

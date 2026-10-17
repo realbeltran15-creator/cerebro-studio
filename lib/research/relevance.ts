@@ -271,7 +271,7 @@ type DomainRule = {
 const AI_MARKERS = new Set(['ai', 'ia', 'artificial', 'intelligence', 'inteligencia', 'intelligenz', 'inteligência', 'chatgpt', 'gpt', 'llm'])
 const GENERIC_TOOL_WORDS = new Set(['tools', 'tool', 'apps', 'app', 'software', 'platforms', 'platform', 'assistants', 'assistant', 'chatbots', 'chatbot', 'programs', 'websites', 'sites', 'herramientas', 'herramienta', 'aplicaciones', 'ferramentas', 'werkzeuge', 'outils', 'strumenti', 'gratis', 'free', 'gratuitas', 'gratuitos', 'artificial', 'intelligence', 'inteligencia', 'intelligenz', 'inteligência', 'para', 'les', 'fur', 'fuer', 'pour', 'per'])
 const aiToolsApplies = (terms: string[]) => terms.some(t => AI_MARKERS.has(t)) && terms.every(t => AI_MARKERS.has(t) || GENERIC_TOOL_WORDS.has(t))
-const AI_NAMES = ['chatgpt', 'chat gpt', 'gpt 4', 'gpt 5', 'gpt4', 'gpt5', 'openai', 'claude', 'anthropic', 'gemini', 'copilot', 'perplexity', 'midjourney', 'deepseek', 'grok', 'llama', 'mistral', 'stable diffusion', 'dall e', 'sora', 'runway', 'elevenlabs', 'suno', 'notebooklm', 'notebook lm', 'cursor', 'canva ai', 'notion ai', 'leonardo ai', 'firefly', 'kling', 'veo', 'heygen', 'synthesia', 'jasper', 'copy ai', 'poe', 'character ai', 'meta ai', 'bard', 'bing chat', 'github copilot', 'langchain', 'zapier', 'make com']
+const AI_NAMES = ['chatgpt', 'chat gpt', 'gpt 4', 'gpt 5', 'gpt4', 'gpt5', 'openai', 'claude', 'anthropic', 'gemini', 'copilot', 'perplexity', 'midjourney', 'deepseek', 'grok', 'llama', 'mistral', 'stable diffusion', 'dall e', 'sora', 'runway', 'elevenlabs', 'suno', 'notebooklm', 'notebook lm', 'ai studio', 'google ai studio', 'ai agent builder', 'cursor', 'canva ai', 'notion ai', 'leonardo ai', 'firefly', 'kling', 'veo', 'heygen', 'synthesia', 'jasper', 'copy ai', 'poe', 'character ai', 'meta ai', 'bard', 'bing chat', 'github copilot', 'langchain', 'zapier', 'make com']
 const AI_GENERIC_CUES = ['ai', 'a i', 'artificial intelligence', 'llm', 'chatbot', 'chatbots', 'prompt', 'prompts', 'prompting', 'generative', 'machine learning', 'ai tool', 'ai tools', 'ai agent', 'ai agents', 'ai assistant', 'ai assistants', 'gpt', 'neural', 'text to image', 'text to video', 'image generator', 'video generator', 'ai art', 'ai video', 'ai image', 'ai coding', 'vibe coding', 'no code', 'automation', 'automate']
 const DOMAIN_RULES: DomainRule[] = [{
   id: 'vivienda', label: 'compra de vivienda', match: ['first', 'time', 'buyer'],
@@ -333,7 +333,10 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
   // Domain credit for phrases that define a domain (housing for «first time buyer»): a video with housing words in its TITLE, no rival product, and at
   // least one of the query words (or a synonym) is on the topic even if it does not repeat the whole phrase.
   const dom0 = domainOf(v, q)
-  if (dom0 && score > 0 && dom0.titleCues.length >= 1 && dom0.rivals.length === 0 && n && score / n < minCoverage(n)) score = Math.max(score, n * minCoverage(n))
+  // Only cues that are NOT the query's own words are independent evidence: in «AI tools for beginners» the word «ai» is both a query term and an
+  // AI cue, so «Earning money with AI!» would otherwise credit itself (regression of engine 6). Housing cues never coincide with «first time buyer».
+  const independentTitleCues = dom0 ? dom0.titleCues.filter(c => !q.terms.includes(fold(c).trim())) : []
+  if (dom0 && score > 0 && independentTitleCues.length >= 1 && dom0.rivals.length === 0 && n && score / n < minCoverage(n)) score = Math.max(score, n * minCoverage(n))
   // A tool named in the title covers the generic words of an «AI tools» topic: «Claude tutorial for beginners» is on topic whichever brand it names.
   if (dom0?.named && dom0.rivals.length === 0 && n) score = Math.max(score, n)
   const coverage = n ? score / n : 1

@@ -124,6 +124,18 @@ export default function StudioPage() {
   // ---------- Load ----------
   useEffect(() => {
     setJobs(loadJobs())
+    // Queued generations are also recorded on the server: recover the ones this browser does not know about (closed tab, cleared
+    // storage, another device), so a paid result is never left behind.
+    fetch('/api/studio/jobs', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then((d: { jobs?: Array<{ id: string; token?: string; modelId: string; label: string; modality: string; prompt: string; estimateUsd: number; createdAt: string; state: string }> } | null) => {
+      const server = (d?.jobs ?? []).filter(j => j.state === 'pending' && j.token)
+      if (!server.length) return
+      setJobs(list => {
+        const known = new Set(list.map(x => x.token).filter(Boolean))
+        const recovered: Job[] = server.filter(j => !known.has(j.token)).map(j => ({ key: j.id, modelId: j.modelId, label: j.label, modality: (j.modality in modalityLabels ? j.modality : 'image') as Modality, prompt: j.prompt, estimateUsd: j.estimateUsd, startedAt: Date.parse(j.createdAt) || Date.now(), state: 'queued', token: j.token }))
+        if (recovered.length) setNotice(`Se recuperaron ${recovered.length} generación${recovered.length === 1 ? '' : 'es'} en curso registrada${recovered.length === 1 ? '' : 's'} en el servidor.`)
+        return [...recovered, ...list]
+      })
+    }).catch(() => undefined)
     try { const v = normalizeStrategy(localStorage.getItem(STRATEGY_KEY)); if (v) setStrategy(v); const q = Number(localStorage.getItem(`${STRATEGY_KEY}.quality`)); if (q >= 1 && q <= 5) setMinQuality(q) } catch { /* private mode */ }
     const params = new URLSearchParams(window.location.search)
     const m = params.get('tab') as Modality | null
@@ -313,10 +325,10 @@ export default function StudioPage() {
       selection: strategy === 'manual' ? 'manual' : `${strategy}:q${minQuality}`, confirmedEstimateUsd: estimate,
     }
     const r = await fetch('/api/studio/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    const j = await r.json().catch(() => ({})) as { error?: string; assets?: Asset[]; job?: { token: string }; recommendation?: Suggestion }
+    const j = await r.json().catch(() => ({})) as { error?: string; assets?: Asset[]; job?: { token: string; recoverable?: boolean }; recommendation?: Suggestion }
     if (j.recommendation) setSuggestion(j.recommendation)
     if (!r.ok && r.status !== 202) { setJobs(list => list.map(x => x.key === key ? { ...x, state: 'failed', error: j.error ?? 'Error' } : x)); setError(j.error ?? 'No se pudo generar.'); return }
-    if (j.job) { setJobs(list => list.map(x => x.key === key ? { ...x, state: 'queued', token: j.job!.token } : x)); setNotice(`${model.label}: trabajo enviado. Puedes seguir trabajando; se guardará solo al terminar.`); return }
+    if (j.job) { setJobs(list => list.map(x => x.key === key ? { ...x, state: 'queued', token: j.job!.token } : x)); setNotice(j.job.recoverable === false ? `${model.label}: trabajo enviado, pero no se pudo registrar en el servidor. No cierres esta pestaña hasta que termine.` : `${model.label}: trabajo enviado. Puedes seguir trabajando o cerrar la página; el resultado se recupera y se guarda al terminar.`); return }
     const ids = (j.assets ?? []).map(a => a.id)
     setJobs(list => list.map(x => x.key === key ? { ...x, state: 'done', assetIds: ids } : x))
     if (ids[0]) showResult(ids[0])

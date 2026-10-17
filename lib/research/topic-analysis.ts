@@ -66,7 +66,7 @@ export function growthStatus(a: Pick<TopicAnalysis, 'growth' | 'fetchedAt'>, now
  * handling). An analysis from an older engine is kept and shown, but never mixed into recommendations, opportunities or comparisons, and it
  * is never served from the cache: it is re-analysed instead.
  */
-export const ENGINE_VERSION = 6
+export const ENGINE_VERSION = 7
 export const isCurrentEngine = (a: { engineVersion?: number }) => a.engineVersion === ENGINE_VERSION
 
 /** Supply split into what is merely published and what actually competes (has traction). */

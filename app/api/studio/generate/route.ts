@@ -12,6 +12,8 @@ import { recommendAlternatives } from '@/lib/providers/router'
 import { persistGeneratedAsset } from '@/lib/providers/persist'
 import { encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
 import { thumbnailPrompt, validThumbnail } from '@/lib/providers/thumbnail-prompt'
+import { capViolation, spendCaps, spendStatus } from '@/lib/providers/spend'
+import { listJobs, recordJob } from '@/lib/providers/job-ledger'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -59,6 +61,20 @@ export async function POST(request: Request) {
   // A paid generation must carry the estimate the user confirmed; a bigger one is refused.
   if ((model.tier === 'paid' || model.confirm) && !(typeof body?.confirmedEstimateUsd === 'number' && body.confirmedEstimateUsd + 1e-6 >= estimateUsd)) {
     return NextResponse.json({ error: 'Falta confirmar el coste estimado antes de generar.' }, { status: 409 })
+  }
+
+  // Server-side spending cap (daily and monthly, USD). Checked before anything is sent to a paid provider.
+  if (model.tier === 'paid' && estimateUsd > 0) {
+    const since = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString()
+    const [{ data: spentAssets, error: spendError }, pendingJobs] = await Promise.all([
+      supabase.from('assets').select('id,asset_type,project_id,source_provider,license_status,provenance,created_at').eq('owner_id', user.id).gte('created_at', since).limit(5000),
+      listJobs(supabase, user.id).catch(() => null),
+    ])
+    // Fail closed: if what was spent cannot be read, a paid generation is not sent.
+    if (spendError || pendingJobs === null) return NextResponse.json({ error: 'No se pudo comprobar el gasto acumulado; no se ha enviado nada. Inténtalo de nuevo en un momento.' }, { status: 503 })
+    const status = spendStatus(spentAssets ?? [], pendingJobs.filter(j => j.state === 'pending').map(j => ({ createdAt: j.createdAt, estimateUsd: j.estimateUsd, tier: j.tier })), spendCaps(process.env))
+    const violation = capViolation(status, estimateUsd)
+    if (violation) return NextResponse.json({ error: violation, spend: status }, { status: 402 })
   }
 
   const { data: project } = await supabase.from('projects').select('id').eq('id', projectId).eq('owner_id', user.id).maybeSingle()
@@ -136,7 +152,15 @@ export async function POST(request: Request) {
 
   if (result.kind === 'job') {
     const token = encryptJson({ v: 2, ownerId: user.id, projectId, modelId: model.id, job: result.job, trace, createdAt: Date.now() })
-    return NextResponse.json({ job: { token, requestId: result.externalId, modelId: model.id, estimateUsd } }, { status: 202 })
+    // Recorded server-side so the result can be recovered from any page or device even if this browser is closed.
+    let recoverable = true
+    try {
+      await recordJob(supabase, user.id, { id: requestId, token, modelId: model.id, label: model.label, modality: model.modality, prompt: prompt.slice(0, 200), projectId, estimateUsd, tier: model.tier, createdAt: new Date().toISOString() })
+    } catch (error) {
+      recoverable = false
+      console.error('Studio job ledger write failed', { requestId, details: error instanceof Error ? error.message : 'unknown' })
+    }
+    return NextResponse.json({ job: { token, requestId: result.externalId, modelId: model.id, estimateUsd, recoverable } }, { status: 202 })
   }
   try {
     const assets = []

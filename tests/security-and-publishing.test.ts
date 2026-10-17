@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { decryptJson, encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
 import { authUrl } from '@/lib/oauth/google'
 import { publishJob } from '@/lib/publication/youtube'
+import { approvalSeal, canonicalJson, verifyApprovalSeal } from '@/lib/publication/seal'
 
 beforeEach(() => {
   process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64')
@@ -53,7 +54,7 @@ function fakeDb(state: { job: Record<string, any>; approval: Record<string, any>
         if (table === 'publication_jobs') return { data: state.job, error: null }
         if (table === 'approvals') return { data: state.approval, error: null }
         if (table === 'channel_connections') return { data: state.connection ? [state.connection] : [], error: null }
-        if (table === 'assets') return { data: { asset_type: q.filters.id === 'thumb' ? 'thumbnail' : 'video', storage_path: 'u1/p1/renders/vid.webm', provenance: { mimeType: 'video/webm' } }, error: null }
+        if (table === 'assets') return { data: { asset_type: q.filters.id === 'thumb' ? 'thumbnail' : 'video', storage_path: (globalThis as any).__videoPath ?? VIDEO_PATH, provenance: { mimeType: 'video/webm' } }, error: null }
         return { data: null, error: null }
       }
       const chain: any = new Proxy({}, { get(_, p) {
@@ -67,9 +68,17 @@ function fakeDb(state: { job: Record<string, any>; approval: Record<string, any>
   } as any
 }
 
+const VIDEO_PATH = 'u1/p1/renders/vid.webm'
+/** What the approve route stores: a seal over exactly the approved content (computed with the test's server key). */
+function sealed(job: Record<string, any>, path = VIDEO_PATH) {
+  return { approvalSeal: approvalSeal({ ownerId: job.owner_id, jobId: job.id, platform: job.platform, idempotencyKey: job.idempotency_key, payload: job.payload, videoStoragePath: path }) }
+}
+
 function state() {
+  const job = { id: 'j1', owner_id: 'u1', project_id: 'p1', platform: 'youtube', status: 'approved', idempotency_key: 'k1', payload: { title: 'Mi vídeo', videoAssetId: 'vid', privacyStatus: 'private' }, result: null } as Record<string, any>
+  job.result = sealed(job)
   return {
-    job: { id: 'j1', owner_id: 'u1', project_id: 'p1', platform: 'youtube', status: 'approved', idempotency_key: 'k1', payload: { title: 'Mi vídeo', videoAssetId: 'vid', privacyStatus: 'private' }, result: null } as Record<string, any>,
+    job,
     approval: { owner_id: 'u1', action_type: 'publish', entity_id: 'youtube:k1', status: 'approved' } as Record<string, any> | null,
     connection: { id: 'c1', owner_id: 'u1', external_account_id: 'ch', external_account_name: 'Canal', status: 'connected', scopes: ['https://www.googleapis.com/auth/youtube.upload'],
       token_ciphertext: encryptJson({ access_token: 'AT', refresh_token: 'RT', expires_at: Date.now() + 3600e3, scope: '', token_type: 'Bearer' }) } as Record<string, any> | null,
@@ -115,5 +124,51 @@ describe('YouTube publishing gate', () => {
     const again = await publishJob(fakeDb(s), 'u1', 'j1')
     expect(again.alreadyPublished).toBe(true)
     expect(uploads).toBe(1)
+  })
+
+  it('refuses an approval written directly to the database (no server seal)', async () => {
+    const s = state(); s.job.result = null   // approvals row + status 'approved' forged through RLS, no seal
+    await expect(publishJob(fakeDb(s), 'u1', 'j1')).rejects.toThrow(/no corresponde al contenido actual/)
+    expect(uploads).toBe(0)
+  })
+
+  it('refuses when the payload was changed after approving (e.g. private → public)', async () => {
+    const s = state(); s.job.payload = { ...s.job.payload, privacyStatus: 'public' }
+    await expect(publishJob(fakeDb(s), 'u1', 'j1')).rejects.toThrow(/no corresponde al contenido actual/)
+    expect(uploads).toBe(0)
+  })
+
+  it('refuses when the file behind the approved asset was swapped', async () => {
+    const s = state(); (globalThis as any).__videoPath = 'u1/p1/renders/other.webm'
+    try { await expect(publishJob(fakeDb(s), 'u1', 'j1')).rejects.toThrow(/no corresponde al contenido actual/) } finally { delete (globalThis as any).__videoPath }
+    expect(uploads).toBe(0)
+  })
+
+  it('a failed upload keeps the seal so the owner can retry the same approved content', async () => {
+    const s = state()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })))
+    await expect(publishJob(fakeDb(s), 'u1', 'j1')).rejects.toThrow()
+    expect(s.job.status).toBe('approved')
+    expect(s.job.result.approvalSeal).toBeTruthy()
+    expect(s.job.result.lastError).toBeTruthy()
+  })
+})
+
+describe('approval seal', () => {
+  const base = { ownerId: 'u', jobId: 'j', platform: 'youtube', idempotencyKey: 'k', payload: { b: 1, a: [1, { y: 2, x: 1 }] }, videoStoragePath: 'p' }
+  it('is stable regardless of key order and changes with any field', () => {
+    expect(canonicalJson({ b: 1, a: 2 })).toBe(canonicalJson({ a: 2, b: 1 }))
+    const seal = approvalSeal(base)
+    expect(verifyApprovalSeal({ ...base, payload: { a: [1, { x: 1, y: 2 }], b: 1 } }, seal)).toBe(true)
+    for (const changed of [{ ownerId: 'v' }, { jobId: 'j2' }, { platform: 'tiktok' }, { idempotencyKey: 'k2' }, { videoStoragePath: 'q' }, { payload: { b: 2, a: [1, { y: 2, x: 1 }] } }]) {
+      expect(verifyApprovalSeal({ ...base, ...changed }, seal)).toBe(false)
+    }
+  })
+  it('cannot be produced without the server key', () => {
+    const seal = approvalSeal(base)
+    process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64')
+    expect(verifyApprovalSeal(base, seal)).toBe(false)
+    expect(verifyApprovalSeal(base, 'v1.forged')).toBe(false)
+    expect(verifyApprovalSeal(base, undefined)).toBe(false)
   })
 })

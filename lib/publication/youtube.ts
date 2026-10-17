@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { accessTokenFor, hasScope, SCOPES, youtubeConnection } from '@/lib/oauth/google'
 import { downloadObject } from '@/lib/storage/server'
 import { assertPublicationApproved, publicationApprovalKey, type ApprovalRecord } from './guard'
+import { approvalStillValid, STALE_APPROVAL_MESSAGE } from './approval'
 
 /**
  * Uploads an approved publication job to the owner's YouTube channel. Server-only.
@@ -76,6 +77,10 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
   const guardRecord: ApprovalRecord | null = record ? { owner_id: record.owner_id, action_type: record.action_type, action_key: record.entity_id, status: record.status } : null
   assertPublicationApproved({ ownerId, platform: 'youtube', projectId: job.project_id, idempotencyKey: job.idempotency_key! }, guardRecord)
 
+  // Second, server-only gate: the approval must be sealed by the approve route over exactly this content (see seal.ts). A row
+  // written directly through RLS, or a payload/video changed after approving, does not carry a valid seal.
+  if (!(await approvalStillValid(db, job))) throw new PublishError(STALE_APPROVAL_MESSAGE, 403)
+
   const problem = validatePayload(job.payload)
   if (problem) throw new PublishError(problem)
   const connection = await youtubeConnection(db, ownerId)
@@ -104,7 +109,7 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
     const uploaded = await upload.json().catch(() => ({})) as { id?: string; error?: { message?: string } }
     if (!upload.ok || !uploaded.id) throw new PublishError(uploaded.error?.message ?? `La subida falló (${upload.status}).`, 502)
 
-    const result: Record<string, unknown> = { videoId: uploaded.id, url: `https://www.youtube.com/watch?v=${uploaded.id}`, privacyStatus: metadata.status.privacyStatus, publishedAt: new Date().toISOString() }
+    const result: Record<string, unknown> = { ...(job.result ?? {}), lastError: undefined, failedAt: undefined, videoId: uploaded.id, url: `https://www.youtube.com/watch?v=${uploaded.id}`, privacyStatus: metadata.status.privacyStatus, publishedAt: new Date().toISOString() }
     if (job.payload.thumbnailAssetId) {
       try {
         const thumb = await download(db, ownerId, job.payload.thumbnailAssetId, ['thumbnail', 'image'])
@@ -117,7 +122,7 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
   } catch (error) {
     const message = error instanceof Error ? error.message : 'La publicación falló.'
     // Back to approved so the owner can retry after fixing the cause; the approval stays valid for this job only.
-    await db.from('publication_jobs').update({ status: 'approved', result: { lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
+    await db.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     throw error
   }
 }

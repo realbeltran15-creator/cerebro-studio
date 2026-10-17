@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { socialAccessToken, socialConnection, SOCIAL_SCOPES, type SocialPlatform } from '@/lib/oauth/social'
 import { downloadObject, signedReadUrl } from '@/lib/storage/server'
 import { assertPublicationApproved, publicationApprovalKey, type ApprovalRecord } from './guard'
+import { approvalStillValid, STALE_APPROVAL_MESSAGE } from './approval'
 
 /**
  * Publishes an APPROVED job to Instagram (Reels) or TikTok (Direct Post). Server-only.
@@ -179,6 +180,9 @@ export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobI
   const record = approval as { owner_id: string; action_type: string; entity_id: string; status: string } | null
   const guardRecord: ApprovalRecord | null = record ? { owner_id: record.owner_id, action_type: record.action_type, action_key: record.entity_id, status: record.status } : null
   assertPublicationApproved({ ownerId, platform, projectId: job.project_id, idempotencyKey: job.idempotency_key! }, guardRecord)
+
+  // Server-only seal over exactly what was approved (see seal.ts): blocks forged approvals and payloads changed afterwards.
+  if (!(await approvalStillValid(db, job))) throw new SocialPublishError(STALE_APPROVAL_MESSAGE, 403)
 
   const problem = validateSocialPayload(platform, job.payload)
   if (problem) throw new SocialPublishError(problem)

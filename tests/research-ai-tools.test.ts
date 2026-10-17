@@ -37,3 +37,14 @@ describe('AI tools: ChatGPT, Claude, Gemini and equivalents are AI tools', () =>
     expect(judge('Copilot seat adjustment in a Cessna for beginners')).not.toBe('aceptado')
   })
 })
+
+describe('engine 7: the word «AI» alone is not evidence of an «AI tools» video (R-1)', () => {
+  const q = queryProfile('AI tools for beginners')
+  const v = (title: string) => ({ videoId: 'x', title, description: '', tags: [], channelTitle: 'C', publishedAt: new Date().toISOString(), observed: {}, defaultAudioLanguage: 'en' }) as never
+  it.each(['Earning money with Ai !', 'What is AI? explained', 'AI will change everything'])('rejects «%s»', title => {
+    expect(assessVideo(v(title), q, ['en'], { region: 'US' }).status).toBe('descartado')
+  })
+  it.each(['FULL Claude Tutorial for Beginners in 2026! (Become a PRO!)', 'The Ultimate Beginner’s Guide to Claude AI', 'Google AI Studio Tutorial for Beginners 2026', '5 FREE AI Tools You Should Start Using Today', 'How to use ChatGPT for beginners'])('keeps «%s»', title => {
+    expect(assessVideo(v(title), q, ['en'], { region: 'US' }).status).toBe('aceptado')
+  })
+})
