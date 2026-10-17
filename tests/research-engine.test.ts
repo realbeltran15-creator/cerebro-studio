@@ -475,7 +475,7 @@ describe('the single search button: what it will do and what it costs', () => {
   it('Nichos with typed topics = topics × markets; cached ones are free; the label carries the cost', () => {
     const p = searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), base)
     expect(p).toMatchObject({ kind: 'analysis', fresh: 4, units: 816, level: 'confirm', auto: false })
-    expect(planLabel(p)).toBe('Aplicar y buscar (816 unidades)')
+    expect(planLabel(p)).toBe('Aplicar y buscar (816 unidades · 8 búsquedas)')
     const cached = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date().toISOString(), engineVersion: ENGINE_VERSION } as never }
     expect(searchPlanFor('niches', f({ countries: ['US', 'DE'] }), q({ niches: 'historia medieval, huerto en casa' }), { ...base, analyses: cached })).toMatchObject({ fresh: 3, cached: 1, units: 612 })
     const stale = { [jobKey(p.jobs[0], 30)]: { fetchedAt: new Date(Date.now() - 9 * 86400000).toISOString() } as never }
@@ -500,7 +500,7 @@ describe('the single search button: what it will do and what it costs', () => {
   })
   it('Descubrir and Tendencias load only the charts that are missing, at 2 units per country', () => {
     const p = searchPlanFor('discover', f({ countries: ['US', 'DE', 'AU'] }), q(), { ...base, charts: { DE: [] } })
-    expect(p).toMatchObject({ kind: 'charts', units: 4, chartRegions: ['US', 'AU'] }); expect(planLabel(p)).toBe('Aplicar y cargar tendencias de 2 países (4 unidades)')
+    expect(p).toMatchObject({ kind: 'charts', units: 4, chartRegions: ['US', 'AU'] }); expect(planLabel(p)).toBe('Aplicar y cargar tendencias de 2 países (4 unidades · 0 búsquedas)')
     expect(searchPlanFor('discover', f({ countries: ['DE'] }), q(), { ...base, charts: { DE: [] } }).kind).toBe('none')
   })
   it('Tendencias internacionales combines charts and a topic analysis in one cost', () => {

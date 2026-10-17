@@ -25,7 +25,7 @@ export const VERDICT: Record<Verdict, { label: string; cls: string }> = {
 export const INDEX_LABEL = { demand: 'Demanda', supply: 'Oferta', competition: 'Competencia', growth: 'Crecimiento', opportunity: 'Oportunidad' } as const
 const INDEX_HELP: Record<keyof typeof INDEX_LABEL, string> = {
   demand: 'Vistas por día de los vídeos del tema (escala logarítmica).', supply: 'Cuánto se publica y por cuántos canales distintos.',
-  competition: 'Tamaño y concentración de los canales que dominan.', growth: 'Compara dos ventanas seguidas de la misma duración. Sin ellas: No calculable (no se inventa un valor neutro).', opportunity: 'Combina demanda alta con poca competencia y oferta; sin demanda nunca pasa de 20.',
+  competition: 'Tamaño y concentración de los canales que dominan.', growth: 'Solo se afirma una subida cuando los vídeos más recientes ya superan en visualizaciones totales a los anteriores pese a haber tenido menos tiempo. En otro caso: No calculable (no se inventa un valor neutro ni se compara vistas por día entre edades distintas).', opportunity: 'Combina demanda alta con poca competencia y oferta; sin demanda nunca pasa de 20.',
 }
 const dateEs = (iso: string) => new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
 

@@ -31,7 +31,7 @@ const PLACE = new Set(('uk gb usa us u.s england britain british united kingdom 
 /** Short stem so that «reformas / reforma», «baratas / barata», «negocios / negocio», «mystery / mysteries» meet. */
 export const stem = (w: string) => { let r = w.replace(/y$/, 'i'); if (r.length >= 5) r = r.replace(/s$/, ''); if (r.length >= 5) r = r.replace(/(a|o|e)$/, ''); return r }
 /** Acronyms and their long forms: a video about «inteligencia artificial» is a video about «IA». */
-const SYNONYMS: Record<string, string[]> = { etf: ['etfs', 'indexfonds', 'indexfondsen', 'index fund', 'index funds', 'exchange traded fund', 'exchange traded funds', 'fondo indexado', 'fondos indexados', 'fonds indiciel', 'fonds indiciels', 'fondo indicizzato', 'fondi indicizzati', 'fundos de indice'], sparplan: ['sparplane', 'sparplaene', 'sparrate', 'sparraten', 'ansparen', 'monatlich investieren', 'monatlich sparen', 'dauerauftrag', 'durchschnittskosteneffekt', 'cost average', 'plan de ahorro', 'plan de inversion periodica', 'plan d epargne', 'piano di accumulo', 'plano de poupanca', 'dca'], ia: ['inteligencia artificial', 'artificial intelligence', 'ai'], ai: ['artificial intelligence', 'inteligencia artificial', 'ia'], ki: ['kunstliche intelligenz', 'ai'], seo: ['search engine optimization', 'optimizacion web'], diy: ['hazlo tu mismo', 'do it yourself'] }
+const SYNONYMS: Record<string, string[]> = { buyer: ['buyers', 'homebuyer', 'homebuyers', 'buying', 'buy', 'purchasing'], etf: ['etfs', 'indexfonds', 'indexfondsen', 'index fund', 'index funds', 'exchange traded fund', 'exchange traded funds', 'fondo indexado', 'fondos indexados', 'fonds indiciel', 'fonds indiciels', 'fondo indicizzato', 'fondi indicizzati', 'fundos de indice'], sparplan: ['sparplane', 'sparplaene', 'sparrate', 'sparraten', 'ansparen', 'monatlich investieren', 'monatlich sparen', 'dauerauftrag', 'durchschnittskosteneffekt', 'cost average', 'plan de ahorro', 'plan de inversion periodica', 'plan d epargne', 'piano di accumulo', 'plano de poupanca', 'dca'], ia: ['inteligencia artificial', 'artificial intelligence', 'ai'], ai: ['artificial intelligence', 'inteligencia artificial', 'ia'], ki: ['kunstliche intelligenz', 'ai'], seo: ['search engine optimization', 'optimizacion web'], diy: ['hazlo tu mismo', 'do it yourself'] }
 /** Does the (folded, padded) text contain the term, its stem as a word prefix, or a known synonym? Short terms must match as whole words. */
 export function termHit(text: string, term: string): boolean {
   const one = (t: string) => { const st = stem(t), st2 = t.replace(/(ies|y)$/, ''); return st.length >= 5 ? text.includes(` ${st}`) || (st2.length >= 5 && text.includes(` ${st2}`)) : text.includes(` ${t} `) || text.includes(` ${t}s `) || text.includes(` ${st} `) }
@@ -51,7 +51,7 @@ function inHashtag(text: string, term: string): boolean {
  * the `match` terms are in the query, any phrase in `alts` counts as covering ALL of them. Typed by hand, extended when the audits show a gap.
  */
 const PHRASES: Array<{ match: string[]; alts: string[] }> = [
-  { match: ['first', 'time', 'buyer'], alts: ['first time home buyer', 'first time homebuyer', 'first home buyer', 'first time house buyer', 'first time buying', 'first time buyers', 'first home', 'first house', 'first flat', 'first property', 'buying your first', 'buying my first', 'buying a first', 'buy your first', 'buy a first', 'buy my first', 'bought my first', 'bought our first', 'buying our first', 'property ladder', 'first timer', 'first timers', 'first time purchase', 'help to buy', 'lifetime isa for a first', 'stamp duty for first', 'mortgage for first', 'deposit for first', 'eerste woning', 'erste wohnung', 'erstes haus', 'primera vivienda', 'primera casa', 'primo acquisto', 'première maison', 'premier achat'] },
+  { match: ['first', 'time', 'buyer'], alts: ['for the first time', 'buying a house', 'buy a house', 'buying a home', 'buy a home', 'buying an apartment', 'buy an apartment', 'buying a condo', 'buying a flat', 'buy a flat', 'home buying', 'house buying', 'homebuying', 'home buyer', 'homebuyer', 'homebuyers', 'house hunting', 'purchasing a home', 'purchase a home', 'buying property', 'first time purchaser', 'ftb', 'moving house', 'first time home buyer', 'first time homebuyer', 'first home buyer', 'first time house buyer', 'first time buying', 'first time buyers', 'first home', 'first house', 'first flat', 'first property', 'buying your first', 'buying my first', 'buying a first', 'buy your first', 'buy a first', 'buy my first', 'bought my first', 'bought our first', 'buying our first', 'property ladder', 'first timer', 'first timers', 'first time purchase', 'help to buy', 'lifetime isa for a first', 'stamp duty for first', 'mortgage for first', 'deposit for first', 'eerste woning', 'erste wohnung', 'erstes haus', 'primera vivienda', 'primera casa', 'primo acquisto', 'première maison', 'premier achat'] },
   { match: ['first', 'home'], alts: ['first time buyer', 'first home buyer', 'homebuyer', 'property ladder', 'first house', 'first property'] },
 ]
 const phraseCoverage = (head: string, desc: string, terms: string[]) => {
@@ -252,6 +252,32 @@ function nicheEvidence(v: YouTubeVideoResult, q: QueryProfile): { own: string[];
 
 export type AssessOptions = { /** Market the search was oriented to: a video whose own content is about ANOTHER country is set aside as doubtful. */ region?: string | null; /** Require positive evidence of the intended topic, not just the absence of a contradiction (used when the sample itself is ambiguous). */ strict?: boolean }
 
+// ---------- Phrases that define a DOMAIN ----------
+/**
+ * «first time buyer» does not say what is being bought. Without help, a video about a first car, a first watch or a first puppy shares all the
+ * query words, while a house video that mentions «pet rent» in its description looks like it is about animals. For such phrases the DOMAIN is
+ * decided by positive evidence: housing words (US and UK) confirm it, words of the usual rivals (cars, watches, phones, pets, crypto…) in the
+ * title or tags reject it, and a video with no housing words at all is only «doubtful». Incidental words elsewhere in the text cannot overrule it.
+ */
+type DomainRule = { id: string; label: string; match: string[]; cues: string[]; rivals: string[] }
+const DOMAIN_RULES: DomainRule[] = [{
+  id: 'vivienda', label: 'compra de vivienda', match: ['first', 'time', 'buyer'],
+  cues: ['home', 'homes', 'house', 'houses', 'housing', 'homebuyer', 'homebuyers', 'home buyer', 'home buyers', 'homeowner', 'homeowners', 'homeownership', 'home ownership', 'property', 'properties', 'real estate', 'realtor', 'realtors', 'estate agent', 'mortgage', 'mortgages', 'remortgage', 'down payment', 'deposit', 'closing costs', 'closing cost', 'pre approval', 'preapproval', 'pre approved', 'preapproved', 'escrow', 'appraisal', 'home inspection', 'fha', 'fha loan', 'va loan', 'usda', 'conventional loan', 'home loan', 'lender', 'lenders', 'refinance', 'home equity', 'hoa', 'condo', 'condos', 'townhouse', 'townhome', 'apartment', 'flat', 'starter home', 'house hunting', 'open house', 'listing', 'listings', 'housing market', 'house prices', 'house price', 'rent vs buy', 'renting vs buying', 'stamp duty', 'help to buy', 'shared ownership', 'lifetime isa', 'conveyancing', 'solicitor', 'rightmove', 'zoopla', 'leasehold', 'freehold', 'buy to let', 'mortgage broker', 'offer accepted', 'survey', 'fhsa', 'home buyers plan', 'cmhc', 'first home', 'first house', 'first flat', 'first property', 'zillow', 'redfin', 'afford a house', 'afford a home'],
+  rivals: ['car', 'cars', 'used car', 'new car', 'vehicle', 'vehicles', 'truck', 'trucks', 'suv', 'dealership', 'tesla', 'motorcycle', 'motorbike', 'bike', 'bikes', 'watch', 'watches', 'rolex', 'omega', 'seiko', 'laptop', 'laptops', 'phone', 'phones', 'iphone', 'android', 'camera', 'cameras', 'guitar', 'guitars', 'piano', 'drone', 'drones', 'dog', 'dogs', 'puppy', 'puppies', 'cat', 'cats', 'kitten', 'horse', 'pet', 'pets', 'gun', 'guns', 'rifle', 'knife', 'shoes', 'sneakers', 'headphones', 'gpu', 'keyboard', 'console', 'ps5', 'xbox', 'bitcoin', 'crypto', 'cryptocurrency', 'stock', 'stocks', 'etf', 'mattress', 'bed', 'sofa', 'furniture', 'perfume', 'makeup', 'skincare', 'handbag', 'jewelry', 'ring', 'engagement ring'],
+}]
+
+/** Does a phrase-defined domain (housing for «first time buyer») apply to this query? Used to know which stored analyses an engine change touched. */
+export const domainRuleApplies = (topic: string) => { const q = queryProfile(topic); return DOMAIN_RULES.some(r => r.match.every(m => q.terms.includes(m)) && q.terms.length <= r.match.length) }
+
+type DomainVerdict = { rule: DomainRule; cues: string[]; titleCues: string[]; rivals: string[] }
+function domainOf(v: YouTubeVideoResult, q: QueryProfile): DomainVerdict | null {
+  const rule = DOMAIN_RULES.find(r => r.match.every(m => q.terms.includes(m)) && q.terms.length <= r.match.length)
+  if (!rule) return null
+  const head = fold([v.title, ...(v.tags ?? [])].join(' ')), all = fold([v.title, ...(v.tags ?? []), (v.description ?? '').slice(0, 400), v.channelTitle].join(' '))
+  const has = (text: string, w: string) => text.includes(` ${w} `) || text.includes(` ${w}s `)
+  return { rule, cues: rule.cues.filter(w => has(all, fold(w).trim())), titleCues: rule.cues.filter(w => has(head, fold(w).trim())), rivals: rule.rivals.filter(w => has(head, fold(w).trim())) }
+}
+
 /** Doubtful because the video's OWN text is about another country than the market asked for (never because of the channel's declared country). */
 function otherCountry(v: YouTubeVideoResult, region: string | null | undefined): string | null {
   if (!region) return null
@@ -281,6 +307,10 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
     if (ambHit) score += (others.length - hitOthers.length) * 0.5
     else if (hitOthers.length === others.length && new Set(ev0.intended).size >= 2) score += 0.5
   }
+  // Domain credit for phrases that define a domain (housing for «first time buyer»): a video with housing words in its TITLE, no rival product, and at
+  // least one of the query words (or a synonym) is on the topic even if it does not repeat the whole phrase.
+  const dom0 = domainOf(v, q)
+  if (dom0 && score > 0 && dom0.titleCues.length >= 1 && dom0.rivals.length === 0 && n && score / n < minCoverage(n)) score = Math.max(score, n * minCoverage(n))
   const coverage = n ? score / n : 1
   if (n && coverage < minCoverage(n)) return out('descartado', 'tema', `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage)
 
@@ -296,6 +326,14 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
     return out('aceptado', null, `confirmado por: ${ev.intended.slice(0, 4).join(', ')}`, coverage, ev.intended)
   }
 
+  const dom = domainOf(v, q)
+  if (dom) {
+    if (dom.rivals.length && !dom.titleCues.length) return out('descartado', 'nicho', `el título habla de ${dom.rivals.slice(0, 3).join(', ')}, no de ${dom.rule.label} (${dom.rule.cues.slice(0, 3).join(', ')}…)`, coverage)
+    if (!dom.cues.length) return out('dudoso', 'contexto', `nada en el título, etiquetas, descripción o canal confirma que trate de ${dom.rule.label}`, coverage)
+    if (dom.rivals.length > dom.titleCues.length) return out('descartado', 'nicho', `habla más de ${dom.rivals.slice(0, 3).join(', ')} que de ${dom.rule.label}`, coverage)
+    const gd = otherCountry(v, opts.region); if (gd) return out('dudoso', 'contexto', gd, coverage)
+    return out('aceptado', null, `confirmado por vocabulario de ${dom.rule.label}: ${dom.cues.slice(0, 4).join(', ')}`, coverage, dom.cues)
+  }
   const ne = nicheEvidence(v, q)
   if (ne.conflict) return out('descartado', 'nicho', `fuera de las palabras del tema, el vídeo trata de ${ne.foreign.join(', ')} y el tema es de ${q.niches.join(', ')}`, coverage)
   if (opts.strict && q.niches.length && !ne.own.some(x => q.niches.includes(x))) return out('dudoso', 'contexto', `el tema es de ${q.niches.join(', ')} y nada en el vídeo, salvo las palabras de la consulta, lo confirma`, coverage)

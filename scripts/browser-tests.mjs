@@ -602,6 +602,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByText('Corto viral de gatos').first().waitFor({ timeout: 20000 })
   check('research: entering loads only the cheap official chart of one country', requests.filter(r => r.includes('/trending')).length === 1 && requests.every(r => !r.includes('/topic') && !r.includes('/youtube?')), requests)
   check('research: the seven sections (the Comparador was folded into Nichos) are in the navigation, above the filters', (await page.getByRole('tab').count()) === 7 && (await page.getByRole('tab', { name: 'Comparador' }).count()) === 0 && /Qué quieres investigar/.test(await body()) && !/1 · Qué quieres investigar/.test(await body()))
+  check('research: the cost of the action is always shown in units AND searches against both daily limits', (await page.getByLabel('Coste de esta acción').count()) >= 1 && /unidades y \d+ búsqueda/.test((await page.getByLabel('Coste de esta acción').first().innerText())) && /10\.000 unidades y 100 búsquedas/.test((await page.getByLabel('Coste de esta acción').first().innerText())))
   check('research: the panel separates what is free from what spends quota, and explains the units', (await page.getByText('Gasta cuota').count()) >= 1 && (await page.getByText('Gratis').count()) >= 1 && (await page.getByText(/¿Qué son las «unidades» de YouTube/).count()) === 1)
   { const legends = await page.locator('legend').allInnerTexts(); const nums = legends.map(l => /^(\d) · /.exec(l)?.[1]).filter(Boolean).map(Number); check('research: filter steps are numbered 1..n without repeats or gaps', nums.length > 0 && nums.every((n, i) => n === i + 1), JSON.stringify(legends)) }
   check('research: the button starts disabled with "Sin filtros"', await go().isDisabled() && (await page.getByText('Sin filtros', { exact: true }).count()) >= 1)
@@ -613,7 +614,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const before = requests.length
   await pick('Países', 'Estados', /Estados Unidos/); await pick('Países', 'Alemania', /Alemania/); await pick('Países', 'Australia', /Australia/)
   check('research: picking countries runs no query and is marked as not applied', requests.length === before && (await page.getByText('Cambios sin aplicar').count()) >= 1 && (await page.getByText(/siguen con los filtros anteriores/).count()) === 1, requests.slice(before))
-  check('research: the button states what it will do and its cost before running', (await go().innerText()).includes('Aplicar y cargar tendencias de 3 países (6 unidades)'))
+  check('research: the button states what it will do and its cost before running', (await go().innerText()).includes('Aplicar y cargar tendencias de 3 países (6 unidades · 0 búsquedas)'))
   await go().click()
   await page.getByText(/Aplicados · 3 activos/).waitFor({ timeout: 20000 })
   await page.getByText('Best gadgets and tech review 2026').first().waitFor({ timeout: 20000 })
@@ -640,7 +641,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const noSearchYet = topicReqs().length
   await page.getByLabel(/Temas o subnichos/).fill('historia medieval, música de moda, tema sin público')
   check('research: typing topics runs nothing, and the plan above the button shows topics, markets and cost (612 units)', topicReqs().length === noSearchYet && (await page.getByText(/Se buscará:/).count()) === 1 && (await page.getByText(/3 análisis nuevos × 204 = 612 unidades/).count()) === 1)
-  check('research: the button names the cost and stays disabled until the cost is confirmed', (await go().innerText()).includes('Aplicar y buscar (612 unidades)') && await go().isDisabled())
+  check('research: the button names the cost and stays disabled until the cost is confirmed', (await go().innerText()).includes('Aplicar y buscar (612 unidades · 6 búsquedas)') && await go().isDisabled())
   await page.getByRole('checkbox', { name: /gastará 612 unidades/ }).check()
   await go().click()
   await page.getByRole('article', { name: 'Análisis de historia medieval' }).waitFor({ timeout: 20000 })
@@ -772,7 +773,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await tab('Competencia y canales').click()
   check('research: the video search has no duplicate country/language boxes and says where it will search', (await page.getByLabel('Código de país').count()) === 0 && (await page.getByText(/se busca en/i).count()) >= 1)
   await page.getByLabel('Búsqueda en YouTube').fill('herramientas de inteligencia artificial')
-  check('research: the search plan shows its cost for the three markets (306 units, no confirmation needed)', (await page.getByText(/3 mercados × 102 = 306 unidades/).count()) === 1 && (await go().innerText()).includes('Aplicar y buscar (306 unidades)'))
+  check('research: the search plan shows its cost for the three markets (306 units, no confirmation needed)', (await page.getByText(/3 mercados × 102 = 306 unidades/).count()) === 1 && (await go().innerText()).includes('Aplicar y buscar (306 unidades · 3 búsquedas)'))
   const sReq = requests.length
   await go().click()
   await page.getByText(/Resultados actualizados: \d+ vídeos/).waitFor({ timeout: 20000 })

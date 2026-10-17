@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
-import { CostBadge, CostLegend, GrowthControl, QuotaExplainer, QuotaNote } from '@/app/market-intelligence/insight-panels'
+import { CostBadge, CostLegend, CostSummary, GrowthControl, QuotaExplainer, QuotaNote } from '@/app/market-intelligence/insight-panels'
 import { growthStatus, type TopicAnalysis } from '@/lib/research/topic-analysis'
 import { statusLabel } from '@/lib/research/labels'
 
@@ -52,5 +52,32 @@ describe('the quota is explained in plain words', () => {
   })
   it('opportunity states are shown in Spanish, never as stored codes', () => {
     expect(statusLabel('discovered')).toBe('Descubierta'); expect(statusLabel('research_needed')).toBe('Necesita investigación'); expect(statusLabel('some_new_state')).toBe('some new state')
+  })
+})
+
+describe('P3 — growth badge date, both limits explained, cost always visible', () => {
+  it('«ya medido el …» has no stray comma or empty date, whatever the date', () => {
+    const a = an(growth({ state: 'calculable', label: 'al alza (posible)', ratio: 2, previous: { n: 10, medianVpd: 1 }, measuredAt: '2026-10-17T10:00:00Z' }))
+    const h = html(a); expect(h).toMatch(/ya medido el 17 oct/); expect(h).not.toMatch(/ya medido el ,|el ,|, ?17/)
+    expect(renderToStaticMarkup(createElement(CostBadge, { kind: 'free' }, 'ya medido el ', '17 oct'))).toContain('ya medido el 17 oct')
+    expect(html(an(growth({ previous: { n: 3, medianVpd: 1 }, measuredAt: '2026-10-17T10:00:00Z' })))).toMatch(/medido el 17 oct, sin resultado/)
+  })
+  it('the explainer states the 100-searches limit next to the 10,000 units', () => {
+    const t = renderToStaticMarkup(createElement(QuotaExplainer)); expect(t).toMatch(/100 al día/); expect(t).toMatch(/10\.000 unidades/); expect(t).toMatch(/Se acaba el que llegue antes/)
+  })
+  it('every action shows its cost in units AND searches against both limits, also when it is free', () => {
+    const h = renderToStaticMarkup(createElement(CostSummary, { units: 204, searches: 2, usage: { usedToday: 408, cap: 6000, searchesToday: 4, searchCap: 60 } }))
+    expect(h).toMatch(/204 unidades y 2 búsquedas/); expect(h).toMatch(/10\.000 unidades y 100 búsquedas/); expect(h).toMatch(/408 de 6\.?000 unidades y 4 de 60 búsquedas/)
+    expect(renderToStaticMarkup(createElement(CostSummary, { units: 0, searches: 0 }))).toMatch(/0 unidades y 0 búsquedas/)
+    expect(renderToStaticMarkup(createElement(CostSummary, { units: 1, searches: 1 }))).toMatch(/1 unidad y 1 búsqueda\./)
+  })
+  it('the search plans count searches: 2 per analysis, 1 per market search, 0 for charts', async () => {
+    const { searchPlanFor, planLabel } = await import('@/lib/research/search-plan'), { EMPTY_FILTERS } = await import('@/lib/research/filters')
+    const q = { niches: 'tema a, tema b', keywords: '', competition: 'invertir', international: '', order: 'relevance', perMarket: 3 } as never
+    const f = { ...EMPTY_FILTERS, countries: ['US', 'DE'] }
+    const p = searchPlanFor('niches', f, q, { analyses: {}, charts: {}, remainingToday: 6000 })
+    expect(p.searches).toBe(p.fresh * 2); expect(planLabel(p)).toMatch(/\(\d[\d.]* unidades · \d+ búsquedas\)/)
+    const s = searchPlanFor('competition', f, q, { analyses: {}, charts: {}, remainingToday: 6000 }); expect(s.searches).toBe(2); expect(planLabel(s)).toMatch(/2 búsquedas/)
+    const c = searchPlanFor('discover', { ...f, countries: ['US'] }, q, { analyses: {}, charts: {}, remainingToday: 6000 }); expect(c.searches).toBe(0); expect(planLabel(c)).toMatch(/0 búsquedas/)
   })
 })

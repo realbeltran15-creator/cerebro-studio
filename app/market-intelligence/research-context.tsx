@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { EMPTY_FILTERS, durationParam, loadPresets, planTopicBatch, savePresets, addPreset, sanitizeFilters, sameFilters, validateFilters, type ActiveChip, type Plan, type Preset, type ResearchFilters } from '@/lib/research/filters'
-import { growthStatus, isCurrentEngine } from '@/lib/research/topic-analysis'
+import { growthStatus, isCurrentEngine, upgradeAnalysis } from '@/lib/research/topic-analysis'
 import { analysisKey, isFresh, marketsFromFilters, recentDaysFrom, type Market } from '@/lib/research/markets'
 import { jobKey, type Job } from '@/lib/research/guided'
 import { quotaDayKey } from '@/lib/research/cache'
@@ -112,7 +112,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     // Analyses are paid for, so they live in this browser (localStorage) and survive closing the tab: a multi-day research can resume.
     try {
       const raw = store()?.getItem(DATA)
-      if (raw) { const d = JSON.parse(raw) as { analyses?: Record<string, TopicAnalysis>; charts?: Record<string, YouTubeVideoResult[]>; guided?: GuidedPlan | null }; if (d.analyses && typeof d.analyses === 'object') setAnalyses(Object.fromEntries(Object.entries(d.analyses).filter(([, a]) => a && a.quality && a.growth)));  // analyses from before the relevance rules are dropped, not reused
+      if (raw) { const d = JSON.parse(raw) as { analyses?: Record<string, TopicAnalysis>; charts?: Record<string, YouTubeVideoResult[]>; guided?: GuidedPlan | null }; if (d.analyses && typeof d.analyses === 'object') setAnalyses(Object.fromEntries(Object.entries(d.analyses).filter(([, a]) => a && a.quality && a.growth).map(([k, a]) => [k, upgradeAnalysis(a) ?? a])));  // analyses from before the relevance rules are dropped, not reused
        if (d.charts && typeof d.charts === 'object') setCharts(d.charts); if (d.guided && Array.isArray(d.guided.jobs)) setGuided(d.guided) }
     } catch { /* ignore */ }
     try { const l = parseLedger(store()?.getItem(LEDGER) ?? null); ledgerRef.current = l; setLedger(l) } catch { /* ignore */ }

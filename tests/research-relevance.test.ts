@@ -62,7 +62,7 @@ describe('audit example 2: «first time buyer UK» must not include cars', () =>
 describe('country and language: regionCode does not prove the video belongs to the market', () => {
   it('a German-language video found through a UK search is excluded; a declared and a detected English video are kept', () => {
     expect(judge('So kaufst du dein erstes Haus: Tipps für Erstkäufer in Deutschland und was Sie wissen müssen', 'first time buyer', 'GB', 'en').reason).toBe('idioma')
-    expect(judge('first time buyer tips', 'first time buyer', 'GB', 'en', { lang: 'en' }).relevant).toBe(true)
+    expect(judge('first time buyer tips: buying a house in the UK', 'first time buyer', 'GB', 'en', { lang: 'en' }).relevant).toBe(true)
   })
   it('a multilingual market accepts its official languages; an unverifiable language is kept but counted as unverified', () => {
     expect(expectedLanguages('CH', 'de')).toEqual(['de', 'fr', 'it']); expect(expectedLanguages('GB', 'en')).toEqual(['en']); expect(expectedLanguages(null, null)).toEqual([])
@@ -115,12 +115,37 @@ describe('growth: comparable windows or «No calculable»', () => {
     expect(a.growth.state).toBe('no_calculable'); expect(a.indices.growth).toBeNull(); expect(a.growthPct).toBeNull(); expect(a.growth.reason).toMatch(/Medir crecimiento/)
     expect(a.evidence.find(e => /^Crecimiento/.test(e.label))?.value).toBe('No calculable')
   })
-  it('two adjacent windows of equal length give a measured, cautious label', () => {
-    const a = analyzeTopic(samples(T, 'GB', 'en', top, recent(1000)), NOW)
-    const up = applyGrowth(a, prev(300), NOW), flat = applyGrowth(a, prev(800), NOW), down = applyGrowth(a, prev(1600), NOW)
-    expect(up.growth.state).toBe('calculable'); expect(up.growth.label).toBe('al alza (posible)'); expect(up.indices.growth).toBeGreaterThan(50); expect(up.growthPct).toBeGreaterThan(0)
-    expect(flat.growth.label).toBe('estable o no concluyente'); expect(down.growth.label).toBe('a la baja'); expect(down.growthPct).toBeLessThan(0)
-    expect(up.reasons.join(' ')).toMatch(/más tiempo para acumular vistas/)
+  it('P1 regression — a flat topic is NOT «×10 rising» because newer videos have a higher views-per-day', () => {
+    // Realistic decay: a 10-day-old video already has most of the views a 45-day-old one will ever have per day, so views/day looks 2–3× higher for the newer window.
+    const a = analyzeTopic(samples(T, 'GB', 'en', top, many(12, i => ({ title: `mortgage guide recent ${i}`, lang: 'en', views: 30000, days: 8 + i, ch: `r${i}` }))), NOW)
+    const flatButYounger = applyGrowth(a, { videos: many(12, i => ({ title: `mortgage guide previous ${i}`, lang: 'en', views: 40000, days: 38 + i, ch: `p${i}` })), approxTotal: 10 }, NOW)
+    const vpdRecent = flatButYounger.growth.recent.medianVpd!, vpdPrev = flatButYounger.growth.previous!.medianVpd!
+    expect(vpdRecent / vpdPrev).toBeGreaterThan(2)                       // the old method would have said «al alza»
+    expect(flatButYounger.growth.state).toBe('no_calculable'); expect(flatButYounger.indices.growth).toBeNull(); expect(flatButYounger.growth.ratio).toBeUndefined()
+    expect(flatButYounger.growth.reason).toMatch(/efecto de la edad/)
+  })
+  it('a rise is only claimed when the NEWER videos already beat the older ones on total views (the age bias works against the claim)', () => {
+    const a = analyzeTopic(samples(T, 'GB', 'en', top, many(12, i => ({ title: `mortgage guide recent ${i}`, lang: 'en', views: 90000, days: 8 + i, ch: `r${i}` }))), NOW)
+    const up = applyGrowth(a, { videos: many(12, i => ({ title: `mortgage guide previous ${i}`, lang: 'en', views: 40000, days: 38 + i, ch: `p${i}` })), approxTotal: 10 }, NOW)
+    expect(up.growth.state).toBe('calculable'); expect(up.growth.label).toBe('al alza (posible)'); expect(up.growth.ratio).toBeCloseTo(2.25, 1)
+    expect(up.indices.growth).toBeGreaterThanOrEqual(60); expect(up.growth.reason).toMatch(/menos tiempo para acumular/); expect(up.growth.reason).toMatch(/indicio, no una tendencia confirmada/)
+    expect(up.growth.measuredAt).toBeTruthy()
+  })
+  it('a fall or a plateau is never labelled: with one reading it cannot be told apart from age', () => {
+    const a = analyzeTopic(samples(T, 'GB', 'en', top, many(12, i => ({ title: `mortgage guide recent ${i}`, lang: 'en', views: 10000, days: 8 + i, ch: `r${i}` }))), NOW)
+    const down = applyGrowth(a, { videos: many(12, i => ({ title: `mortgage guide previous ${i}`, lang: 'en', views: 60000, days: 38 + i, ch: `p${i}` })), approxTotal: 10 }, NOW)
+    expect(down.growth.state).toBe('no_calculable'); expect(down.growth.label).toBeUndefined(); expect(down.growthPct).toBeNull(); expect(down.growth.reason).toMatch(/No concluyente/)
+  })
+  it('views that are too low, or videos too young, give «No calculable» (minimum sample and minimum views)', () => {
+    const lowViews = analyzeTopic(samples(T, 'GB', 'en', top, many(12, i => ({ title: `mortgage guide recent ${i}`, lang: 'en', views: 300, days: 8 + i, ch: `r${i}` }))), NOW)
+    expect(applyGrowth(lowViews, { videos: many(12, i => ({ title: `mortgage guide previous ${i}`, lang: 'en', views: 100, days: 38 + i, ch: `p${i}` })), approxTotal: 1 }, NOW).growth.reason).toMatch(/demasiado bajas/)
+    const young = analyzeTopic(samples(T, 'GB', 'en', top, many(12, i => ({ title: `mortgage guide recent ${i}`, lang: 'en', views: 90000, days: 3 + (i % 4), ch: `r${i}` }))), NOW)
+    expect(applyGrowth(young, { videos: many(12, i => ({ title: `mortgage guide previous ${i}`, lang: 'en', views: 40000, days: 38 + i, ch: `p${i}` })), approxTotal: 1 }, NOW).growth.reason).toMatch(/Pocas pruebas/)
+  })
+  it('viral outliers and promotions do not decide the comparison', () => {
+    const a = analyzeTopic(samples(T, 'GB', 'en', top, many(12, i => ({ title: `mortgage guide recent ${i}`, lang: 'en', views: 12000 + i, days: 8 + i, ch: `r${i}` }))), NOW)
+    const prev = many(11, i => ({ title: `mortgage guide previous ${i}`, lang: 'en', views: 40000, days: 38 + i, ch: `p${i}` })).concat(many(1, () => ({ title: 'mortgage guide viral', lang: 'en', views: 90_000_000, days: 40, ch: 'v' })))
+    expect(applyGrowth(a, { videos: prev, approxTotal: 10 }, NOW).growth.previous!.medianViews).toBe(40000)
   })
   it(`fewer than ${EVIDENCE.minCohort} relevant videos in either window stays «No calculable», and the previous window is judged by the same relevance rules`, () => {
     const a = analyzeTopic(samples(T, 'GB', 'en', top, recent(1000)), NOW)

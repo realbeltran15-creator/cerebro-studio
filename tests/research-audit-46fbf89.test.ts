@@ -23,7 +23,7 @@ describe('problem 5 — «first time buyer UK» no longer loses legitimate home-
       expect(judge(t, T, 'GB', 'en', { lang: 'en' }).relevant, t).toBe(true)
   })
   it('a description that carries the rewording is enough when the title is short', () => {
-    expect(judge('Our house hunt, part 3', T, 'GB', 'en', { lang: 'en', desc: 'We are first time home buyers in Manchester and walk through the mortgage' }).relevant).toBe(false)   // partial: the title says nothing
+    expect(judge('Our house hunt, part 3', T, 'GB', 'en', { lang: 'en', desc: 'We are first time home buyers in Manchester and walk through the mortgage' }).relevant).toBe(true)   // housing word in the title + the phrase in the description
     expect(judge('Mortgage in principle: what we learned', T, 'GB', 'en', { lang: 'en', tags: ['first time buyer', 'uk mortgage'] }).relevant).toBe(true)
   })
   it('the car, gym and unrelated videos are still rejected', () => {

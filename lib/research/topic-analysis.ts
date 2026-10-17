@@ -4,7 +4,7 @@ import { GEO_LEVEL_LABEL, shortCountry, summarizeGeo, type GeoSummary } from './
 import { resolveDoubtful } from './semantic'
 import { concentration, demandProfile, entryDifficulty, medianInterval, opportunityOf, sensitivity, smallChannelWins, verdictOf, type Concentration, type DemandProfile, type Entry, type SmallWins, type Sensitivity, type Verdict } from './statistics'
 import { inferFormat, nichesOf, type Confidence } from './taxonomy'
-import { assessVideo, expectedLanguages, queryProfile, viralOutliers, type Assessment, type ExclusionReason, type SampleQuality, type VideoStatus } from './relevance'
+import { assessVideo, domainRuleApplies, expectedLanguages, queryProfile, viralOutliers, type Assessment, type ExclusionReason, type SampleQuality, type VideoStatus } from './relevance'
 export type { SampleQuality } from './relevance'
 
 /**
@@ -37,13 +37,15 @@ export type FormatStats = { count: number; recentCount: number; medianViewsPerDa
  * Growth is only calculable from two ADJACENT windows of the same length, sampled the same way and judged by the same relevance rules.
  * The default analysis has one window (the recent one), so it says «No calculable»; «Medir crecimiento» adds the previous window (~102 units).
  */
+/** One window's evidence. `nMature`/`medianViews` use only videos at least a week old, and TOTAL views (never views per day: see growthFrom). */
+export type CohortStat = { n: number; medianVpd: number | null; nMature?: number; medianViews?: number | null }
 export type GrowthResult = {
   state: 'calculable' | 'no_calculable'
   reason: string
   windowDays: number
   /** The recent window: relevant, non-promotional, non-outlier videos aged ≥ 3 days. */
-  recent: { n: number; medianVpd: number | null }
-  previous?: { n: number; medianVpd: number | null }
+  recent: CohortStat
+  previous?: CohortStat
   ratio?: number | null
   label?: 'al alza (posible)' | 'estable o no concluyente' | 'a la baja'
   /** When the previous window was measured (absent = never measured). */
@@ -64,7 +66,7 @@ export function growthStatus(a: Pick<TopicAnalysis, 'growth' | 'fetchedAt'>, now
  * handling). An analysis from an older engine is kept and shown, but never mixed into recommendations, opportunities or comparisons, and it
  * is never served from the cache: it is re-analysed instead.
  */
-export const ENGINE_VERSION = 4
+export const ENGINE_VERSION = 5
 export const isCurrentEngine = (a: { engineVersion?: number }) => a.engineVersion === ENGINE_VERSION
 
 export type TopicAnalysis = {
@@ -161,7 +163,7 @@ const isLong = (v: YouTubeVideoResult) => ['brief', 'medium', 'long'].includes(i
 const k = (n: number) => new Intl.NumberFormat('es-ES', { notation: n >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n)
 
 /** Thresholds that decide what counts as enough evidence. Exported so the screen and the tests state the same numbers. */
-export const EVIDENCE = { minTop: 10, minRecent: 5, minCohort: 8, minKeptShare: 0.4, topVideoShare: 0.5, growthUp: 2, growthDown: 0.75 } as const
+export const EVIDENCE = { minTop: 10, minRecent: 5, minCohort: 8, minKeptShare: 0.4, topVideoShare: 0.5, growthUp: 1.5, minMatureAgeDays: 7, minMedianViews: 1000 } as const
 
 /** Judges every video of both samples (topic, meaning, niche, language, live, promo) and keeps the ones that may influence the indices. */
 function clean(s: TopicSamples): { top: YouTubeVideoResult[]; recent: YouTubeVideoResult[]; promoTop: Set<string>; quality: SampleQuality; verdicts: Map<string, Assessment>; inTop: Set<string>; inRecent: Set<string> } {
@@ -198,21 +200,36 @@ function cohort(vs: YouTubeVideoResult[], promo: Set<string>, now: number) {
   const vpd = aged.map(v => v.calculated.viewsPerDay).filter(num)
   const out = viralOutliers(vpd), kept = vpd.filter((_, i) => !out.has(i))
   const withVpd = aged.filter(v => typeof v.calculated.viewsPerDay === 'number' && Number.isFinite(v.calculated.viewsPerDay))
-  return { n: kept.length, medianVpd: median(kept), outliers: out.size, outlierIds: new Set(withVpd.filter((_, i) => out.has(i)).map(v => v.videoId)) }
+  // Total views of the videos old enough (≥ 7 days) not to be dominated by their launch burst; viral outliers removed. Used for growth.
+  const mature = aged.filter(v => (ageDays(v, now) ?? 0) >= EVIDENCE.minMatureAgeDays && num(v.observed.views))
+  const views = mature.map(v => v.observed.views as number), outV = viralOutliers(views), keptViews = views.filter((_, i) => !outV.has(i))
+  return { n: kept.length, medianVpd: median(kept), nMature: keptViews.length, medianViews: median(keptViews), outliers: out.size, outlierIds: new Set(withVpd.filter((_, i) => out.has(i)).map(v => v.videoId)) }
 }
 
-export function growthFrom(recent: { n: number; medianVpd: number | null }, previous: { n: number; medianVpd: number | null } | null, windowDays: number): GrowthResult {
-  const base = { windowDays, recent: { n: recent.n, medianVpd: recent.medianVpd } }
-  if (!previous) return { ...base, state: 'no_calculable', reason: `Hace falta comparar dos ventanas seguidas de ${windowDays} días con al menos ${EVIDENCE.minCohort} vídeos relevantes cada una. Esta consulta solo tiene la reciente: usa «Medir crecimiento» (≈ 102 unidades).` }
-  if (recent.n < EVIDENCE.minCohort || previous.n < EVIDENCE.minCohort || !recent.medianVpd || !previous.medianVpd) {
-    return { ...base, previous, state: 'no_calculable', reason: `Pocas pruebas: ${recent.n} vídeos relevantes en los últimos ${windowDays} días y ${previous.n} en los ${windowDays} anteriores (mínimo ${EVIDENCE.minCohort} en cada ventana).` }
-  }
-  const ratio = recent.medianVpd / previous.medianVpd
-  // The older window had more time to collect views, which flatters neither side evenly: only a clear gap is called a trend.
-  const label = ratio >= EVIDENCE.growthUp ? 'al alza (posible)' : ratio <= EVIDENCE.growthDown ? 'a la baja' : 'estable o no concluyente'
-  return { ...base, previous, state: 'calculable', ratio, label, reason: `Vistas por día (mediana): ${Math.round(recent.medianVpd)} en los últimos ${windowDays} días frente a ${Math.round(previous.medianVpd)} en los ${windowDays} anteriores (×${ratio.toFixed(2)}). Los vídeos más antiguos tuvieron más tiempo para acumular vistas, por eso solo se habla de alza con ×${EVIDENCE.growthUp} o más y de baja con ×${EVIDENCE.growthDown} o menos.` }
+/**
+ * GROWTH — why it is NOT views per day.
+ * A video's views per day (views ÷ age) is highest right after it is published and falls as it ages, so a window of newer videos always
+ * looks «faster» than a window of older ones even when nothing changed (the old method printed ×10 «rising» for a flat topic). A single
+ * snapshot cannot undo that, because the two windows can never be observed at the same age.
+ * What a single snapshot CAN support is an asymmetric test on TOTAL views: videos from the more recent window have had LESS time to
+ * collect views, so if their median total views still reach 1.5× those of the older window (each with ≥ 8 videos aged ≥ 7 days and a
+ * median of ≥ 1 000 views), interest has probably risen, because the age bias works against that result. Anything else — flat, lower or
+ * too little evidence — is «No calculable»: a fall or a plateau cannot be told apart from the effect of age.
+ */
+export function growthFrom(recent: CohortStat, previous: CohortStat | null, windowDays: number): GrowthResult {
+  const pick = (c: CohortStat): CohortStat => ({ n: c.n, medianVpd: c.medianVpd, nMature: c.nMature, medianViews: c.medianViews })
+  recent = pick(recent); if (previous) previous = pick(previous)
+  const base = { windowDays, recent }
+  if (!previous) return { ...base, state: 'no_calculable', reason: `Hace falta comparar dos ventanas seguidas de ${windowDays} días con al menos ${EVIDENCE.minCohort} vídeos relevantes de más de ${EVIDENCE.minMatureAgeDays} días en cada una. Esta consulta solo tiene la reciente: usa «Medir crecimiento» (≈ 102 unidades).` }
+  const rn = recent.nMature ?? 0, pn = previous.nMature ?? 0, rv = recent.medianViews ?? null, pv = previous.medianViews ?? null
+  if (rn < EVIDENCE.minCohort || pn < EVIDENCE.minCohort) return { ...base, previous, state: 'no_calculable', reason: `Pocas pruebas: ${rn} vídeos relevantes de más de ${EVIDENCE.minMatureAgeDays} días en los últimos ${windowDays} días y ${pn} en los ${windowDays} anteriores (mínimo ${EVIDENCE.minCohort} en cada ventana).` }
+  if (!rv || !pv || pv < EVIDENCE.minMedianViews || rv < EVIDENCE.minMedianViews) return { ...base, previous, state: 'no_calculable', reason: `Visualizaciones demasiado bajas para comparar (mediana de ${rv ? Math.round(rv) : '—'} frente a ${pv ? Math.round(pv) : '—'}; mínimo ${EVIDENCE.minMedianViews} en cada ventana): con tan pocas, las diferencias son ruido.` }
+  const ratio = rv / pv
+  if (ratio >= EVIDENCE.growthUp) return { ...base, previous, state: 'calculable', ratio, label: 'al alza (posible)', reason: `Los vídeos de los últimos ${windowDays} días, que han tenido menos tiempo para acumular visualizaciones, ya superan a los de los ${windowDays} anteriores: mediana de ${Math.round(rv)} frente a ${Math.round(pv)} visualizaciones totales (×${ratio.toFixed(2)}, con ${rn} y ${pn} vídeos). Es un indicio, no una tendencia confirmada.` }
+  return { ...base, previous, state: 'no_calculable', reason: `No concluyente: mediana de ${Math.round(rv)} visualizaciones en los vídeos recientes frente a ${Math.round(pv)} en los anteriores (×${ratio.toFixed(2)}). Con una sola lectura no se puede distinguir estabilidad o caída del simple efecto de la edad (los vídeos más antiguos han tenido más tiempo para acumular visualizaciones), así que no se afirma ninguna tendencia.` }
 }
-const growthIndex = (g: GrowthResult) => (g.state === 'calculable' && g.ratio ? Math.round(clamp(50 + 40 * Math.log2(Math.max(g.ratio, 0.05) / 1.5))) : null)
+/** Only a measured rise has an index (60 at the 1.5× threshold, 100 at 6×); everything else is null, never a neutral number. */
+const growthIndex = (g: GrowthResult) => (g.state === 'calculable' && g.ratio ? Math.round(clamp(60 + 20 * Math.log2(Math.max(g.ratio, 1.5) / 1.5))) : null)
 export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   // Relevance first: the raw search is fuzzy. What survives is unique, on-topic, in the market's language and not on air.
   const c = clean(s)
@@ -356,12 +373,34 @@ export function applyGrowth(a: TopicAnalysis, previous: Sample, now = Date.now()
   const relevant = previous.videos.filter(v => { if (seen.has(v.videoId)) return false; seen.add(v.videoId); return assessVideo(v, q, expected, { strict, region: a.region }).relevant })
   const promo = new Set(relevant.filter(v => assessVideo(v, q, expected, { strict, region: a.region }).promo).map(v => v.videoId))
   const prev = cohort(relevant, promo, now)
-  const growth = { ...growthFrom(a.growth.recent, { n: prev.n, medianVpd: prev.medianVpd }, a.recentDays), measuredAt: new Date(now).toISOString() }
+  const growth = { ...growthFrom(a.growth.recent, { n: prev.n, medianVpd: prev.medianVpd, nMature: prev.nMature, medianViews: prev.medianViews }, a.recentDays), measuredAt: new Date(now).toISOString() }
+  return withGrowth(a, growth)
+}
+
+/** The same analysis with a (re)computed growth result: index, opportunity, sensitivity, reasons and evidence stay consistent with it. */
+function withGrowth(a: TopicAnalysis, growth: GrowthResult): TopicAnalysis {
   const growthIdx = growthIndex(growth)
   const pct = growth.state === 'calculable' && growth.ratio ? Math.round((growth.ratio - 1) * 100) : null
   const reasons = a.reasons.map(r => (r.startsWith('Crecimiento:') ? `Crecimiento: ${growth.state === 'calculable' ? growth.label : 'No calculable'}. ${growth.reason}` : r))
   const evidence = a.evidence.map(e => (e.label.startsWith('Crecimiento') ? { ...e, value: growth.state === 'calculable' ? `${growth.label} (×${growth.ratio!.toFixed(2)})` : 'No calculable' } : e))
   return { ...a, growth, growthPct: pct, ...(a.stats ? { stats: { ...a.stats, sensitivity: sensitivity({ demand: a.indices.demand, competition: a.indices.competition, supply: a.indices.supply, growth: growthIdx }) } } : {}), indices: { ...a.indices, growth: growthIdx, opportunity: opportunityOf(a.indices.demand, a.indices.competition, a.indices.supply, growthIdx) }, reasons, evidence }
+}
+
+/**
+ * Engine 4 → 5 changed two things: how growth is measured and how housing phrases are judged. An engine-4 analysis of a topic the second change
+ * does not touch keeps its relevance verdicts as they are; only its growth is rebuilt (from the videos it already stored, at no cost) so that the
+ * old views-per-day measurement can never be shown. Anything else from an older engine is not upgradable: it stays apart until it is re-analysed.
+ */
+export function upgradeAnalysis(a: TopicAnalysis, now = Date.now()): TopicAnalysis | null {
+  if (a.engineVersion === ENGINE_VERSION) return a
+  if (a.engineVersion !== 4 || !a.sample?.length || domainRuleApplies(a.topic)) return null
+  const aged = a.sample.filter(v => v.status === 'aceptado' && v.inRecent && !v.promo && v.views !== null && Number.isFinite(Date.parse(v.publishedAt)))
+    .map(v => ({ views: v.views as number, outlier: v.outlier, age: Math.max((now - Date.parse(v.publishedAt)) / 86400000, 0) })).filter(v => v.age >= 3)
+  const vpd = aged.map(v => v.views / Math.max(v.age, 1)), outVpd = viralOutliers(vpd), keptVpd = vpd.filter((_, i) => !outVpd.has(i))
+  const mature = aged.filter(v => v.age >= EVIDENCE.minMatureAgeDays).map(v => v.views), outV = viralOutliers(mature), keptViews = mature.filter((_, i) => !outV.has(i))
+  const recent: CohortStat = { n: keptVpd.length, medianVpd: median(keptVpd), nMature: keptViews.length, medianViews: median(keptViews) }
+  const base = withGrowth(a, growthFrom(recent, null, a.recentDays))
+  return { ...base, engineVersion: ENGINE_VERSION }
 }
 
 /** Where the topic is popular but little is published in a format: H "oportunidades por formato". */

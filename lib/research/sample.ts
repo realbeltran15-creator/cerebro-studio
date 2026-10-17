@@ -1,5 +1,5 @@
 import { searchYouTubeVideosMeta, type YouTubeSearchInput, type YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { analyzeTopic, applyGrowth, isCurrentEngine, type Sample, type TopicAnalysis, type TopicSamples } from './topic-analysis'
+import { analyzeTopic, applyGrowth, isCurrentEngine, upgradeAnalysis, type Sample, type TopicAnalysis, type TopicSamples } from './topic-analysis'
 import { cacheKey, DEFAULT_TTL_MS, quotaDayStart, type CacheStore } from './cache'
 import { isExhausted } from './cache'
 import { BudgetError, isQuotaExceeded, lockForToday, quotaLimits, reserveSpend } from './quota'
@@ -45,6 +45,21 @@ const usageOf = async (store: CacheStore, cap: number, now: number, extra = 0) =
   return { usedToday: (await store.unitsSince(since)) + extra, cap, persistent: store.persistent, searchesToday: await store.searchesSince(since), searchCap: limits.searchCap, exhausted: await isExhausted(store, now) }
 }
 
+
+/**
+ * A cached analysis is served only if it was made by the current engine, or can be upgraded for free (see `upgradeAnalysis`). Anything else is a
+ * miss: the topic is analysed again instead of showing numbers the current rules would not produce.
+ */
+async function currentFromCache(store: CacheStore, key: string, now: number): Promise<{ payload: TopicAnalysis } | null> {
+  const hit = await store.get<TopicAnalysis>(key, now)
+  if (!hit) return null
+  if (isCurrentEngine(hit.payload)) return hit
+  const up = upgradeAnalysis(hit.payload, now)
+  if (!up) return null
+  await store.put(key, 'topic', up, 0, DEFAULT_TTL_MS, now).catch(() => undefined)
+  return { payload: up }
+}
+
 /** Another server instance is running this very research: the caller should retry shortly instead of paying for it twice. */
 export class InProgressError extends Error { constructor(message: string) { super(message) } }
 
@@ -55,8 +70,8 @@ const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 /** Waits for the instance that holds the lease to publish its result; null when it did not finish in time. */
 async function waitForResult(key: string, deps: Deps): Promise<TopicAnalysis | null> {
   const now = deps.now ?? Date.now, poll = deps.pollMs ?? 1500, deadline = Date.now() + (deps.waitMs ?? 25_000)
-  while (Date.now() < deadline) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return hit.payload; await sleep(poll) }
-  return deps.store.get<TopicAnalysis>(key, now()).then(h => h?.payload ?? null)
+  while (Date.now() < deadline) { const hit = await currentFromCache(deps.store, key, now()); if (hit) return hit.payload; await sleep(poll) }
+  return currentFromCache(deps.store, key, now()).then(h => h?.payload ?? null)
 }
 
 async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicResult> {
@@ -67,7 +82,7 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicR
   const used = () => deps.store.unitsSince(quotaDayStart(now()))
   const result = async (analysis: TopicAnalysis, cached: boolean, usedToday?: number): Promise<TopicResult> => ({ analysis, cached, usage: usedToday === undefined ? await usageOf(deps.store, cap, now()) : { ...(await usageOf(deps.store, cap, now())), usedToday } })
 
-  if (!req.refresh) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return result(hit.payload, true) }
+  if (!req.refresh) { const hit = await currentFromCache(deps.store, key, now()); if (hit) return result(hit.payload, true) }
   if (req.cacheOnly) return { analysis: null, cached: false, usage: await usageOf(deps.store, cap, now()) }
 
   // Exclusive lease across ALL server instances: two instances never run the same research at once. The loser waits for the winner's result.
@@ -77,7 +92,7 @@ async function fetchTopicAnalysis(req: TopicRequest, deps: Deps): Promise<TopicR
     throw new InProgressError('Otra consulta idéntica sigue en marcha. Espera unos segundos y vuelve a intentarlo: no se ha gastado cuota.')
   }
   try {
-    if (!req.refresh) { const hit = await deps.store.get<TopicAnalysis>(key, now()); if (hit) return result(hit.payload, true) }   // the winner before us may have just finished
+    if (!req.refresh) { const hit = await currentFromCache(deps.store, key, now()); if (hit) return result(hit.payload, true) }   // the winner before us may have just finished
     // A first search that succeeded before an earlier failure is reused: only the missing search is paid again.
     const partialKey = cacheKey('partial', [topic, req.region, req.language, 'top'])
     const partial = req.refresh ? null : await deps.store.get<Sample>(partialKey, now())
@@ -128,7 +143,7 @@ export function getGrowth(req: { topic: string; region: string | null; language:
     const topic = req.topic.trim().replace(/\s+/g, ' ')
     const recentDays = Math.min(Math.max(Math.round(req.recentDays ?? 30), 7), 365)
     const key = cacheKey('topic', [topic, req.region, req.language, String(recentDays)])
-    const cached = await deps.store.get<TopicAnalysis>(key, now())
+    const cached = await currentFromCache(deps.store, key, now())
     const supplied = usableAnalysis(req.analysis, { topic, region: req.region, language: req.language, recentDays }) ? req.analysis : null
     const hit = cached ? { payload: cached.payload } : supplied ? { payload: supplied } : null
     if (!hit) throw new NoBaseAnalysisError('No hay un análisis actual de este tema con el que comparar (puede venir de una versión anterior del motor). Vuelve a analizarlo primero.')

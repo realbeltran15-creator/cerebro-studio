@@ -50,11 +50,11 @@ describe('videos about another country are set aside, but a foreign channel is n
 describe('geographic confidence: oriented to a market, never «verified local demand»', () => {
   const kept = (items: Array<[string, string | null]>) => items.map(([t, c]) => vid(t, { country: c }))
   it('mostly US/Canadian channels for a UK search: contradictory, and it says it cannot be presented as British demand', () => {
-    const g = summarizeGeo(kept([...Array(8).fill(['First time buyer tips', 'US']), ...Array(4).fill(['First time buyer advice', 'CA']), ['First time buyer: stamp duty explained', 'GB']] as Array<[string, string]>), 'GB')
+    const g = summarizeGeo(kept([...Array(8).fill(['First time home buyer tips', 'US']), ...Array(4).fill(['First time home buyer advice', 'CA']), ['First time buyer: stamp duty explained', 'GB']] as Array<[string, string]>), 'GB')
     expect(g.level).toBe('contradictoria'); expect(g.statement).toMatch(/NO se pueden presentar como demanda/); expect(g.statement).toMatch(/Estados|EE\. UU\./)
   })
   it('few geographic clues: low confidence, described as oriented research', () => {
-    const g = summarizeGeo(kept([...Array(8).fill(['First time buyer tips', null]), ['First time buyer: stamp duty', null], ['Help to Buy explained', 'GB'], ['Mortgage tips', 'US']] as Array<[string, string | null]>), 'GB')
+    const g = summarizeGeo(kept([...Array(8).fill(['First time home buyer tips', null]), ['First time buyer: stamp duty', null], ['Help to Buy explained', 'GB'], ['Mortgage tips', 'US']] as Array<[string, string | null]>), 'GB')
     expect(['baja', 'insuficiente']).toContain(g.level); expect(g.statement).toMatch(/orientada/)
   })
   it('clues that support the market give at most MEDIUM confidence: the audience is never observable', () => {
@@ -68,8 +68,8 @@ describe('geographic confidence: oriented to a market, never «verified local de
 
 describe('the analysis of the audit case', () => {
   const samples = (): TopicSamples => {
-    const us = Array.from({ length: 10 }, (_, i) => vid(`First time buyer tips ${i}`, { country: 'US', ch: `us${i}` }))
-    const ca = Array.from({ length: 6 }, (_, i) => vid(`First time buyer advice ${i}`, { country: 'CA', ch: `ca${i}` }))
+    const us = Array.from({ length: 10 }, (_, i) => vid(`First time home buyer tips ${i}`, { country: 'US', ch: `us${i}` }))
+    const ca = Array.from({ length: 6 }, (_, i) => vid(`First time home buyer advice ${i}`, { country: 'CA', ch: `ca${i}` }))
     const usCue = Array.from({ length: 4 }, (_, i) => vid(`First time buyer: FHA loan and closing costs ${i}`, { ch: `f${i}` }))
     const gb = Array.from({ length: 3 }, (_, i) => vid(`First time buyer: stamp duty and Help to Buy ${i}`, { country: 'GB', ch: `gb${i}` }))
     return { topic: T, region: 'GB', language: 'en', recentDays: 30, top: { videos: [...us, ...ca, ...usCue, ...gb], approxTotal: 900 }, recent: { videos: [...us.slice(0, 5), ...ca.slice(0, 3)].map(v => ({ ...v, videoId: `${v.videoId}r` })), approxTotal: 90 }, fetchedAt: new Date(NOW).toISOString(), units: 204 }

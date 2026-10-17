@@ -121,7 +121,7 @@ export function LegacyPanel({ legacy, onRedo }: { legacy: TopicAnalysis[]; onRed
 
 /** Marks a control as free (it only reorganises what is already on screen) or as one that asks YouTube for something new and spends quota. */
 export function CostBadge({ kind, children }: { kind: 'free' | 'cost'; children?: React.ReactNode }) {
-  return <span className={`pill ${kind === 'free' ? 'ok' : 'warn'}`} title={kind === 'free' ? 'No consulta YouTube: no gasta cuota' : 'Puede hacer una búsqueda nueva en YouTube y gastar cuota'}>{kind === 'free' ? 'Gratis' : 'Gasta cuota'}{children ? ` · ${children}` : ''}</span>
+  return <span className={`pill ${kind === 'free' ? 'ok' : 'warn'}`} title={kind === 'free' ? 'No consulta YouTube: no gasta cuota' : 'Puede hacer una búsqueda nueva en YouTube y gastar cuota'}>{kind === 'free' ? 'Gratis' : 'Gasta cuota'}{children ? ` · ${Array.isArray(children) ? children.join('') : children}` : ''}</span>
 }
 
 export function CostLegend() {
@@ -138,7 +138,7 @@ export function QuotaExplainer() {
     <ul style={{ margin: '6px 0 0 16px' }}>
       <li><b>No son dinero.</b> YouTube da a cada proyecto un cupo diario de «unidades» (10.000 al día por defecto): una medida técnica de cuánto trabajo le pides. Con ese cupo normal no se paga nada.</li>
       <li><b>Cuánto gasta cada cosa:</b> una búsqueda, unas 100 unidades; analizar un tema en un mercado son 2 búsquedas (≈ 204); medir el crecimiento, 1 búsqueda (≈ 102); cargar las tendencias de un país, 2.</li>
-      <li><b>Hay un segundo límite aparte:</b> YouTube también limita cuántas búsquedas se pueden hacer al día. Puede acabarse uno aunque sobre el otro.</li>
+      <li><b>Hay un segundo límite aparte:</b> YouTube también limita las búsquedas a unas <b>100 al día</b>, además de las <b>10.000 unidades</b>. Se acaba el que llegue antes: con 100 búsquedas no caben más de 50 análisis de un tema, aunque sobren unidades.</li>
       <li><b>Cuando se acaba</b>, YouTube no responde hasta el día siguiente (medianoche, hora del Pacífico). Ampliar el cupo hay que pedírselo a Google; no ocurre solo ni se cobra solo.</li>
       <li><b>Esta aplicación no cobra por unidad.</b> Investigación no usa modelos de IA de pago: lo que gasta es solo cupo de YouTube.</li>
       <li><b>Es gratis:</b> volver a ver análisis ya hechos, cambiar filtros, ordenar, exportar y guardar.</li>
@@ -149,11 +149,11 @@ export function QuotaExplainer() {
 /** Growth: says whether it was already measured and never offers a second, identical measurement (it would cost quota and change nothing). */
 export function GrowthControl({ a, busy, onMeasure }: { a: TopicAnalysis; busy: boolean; onMeasure: () => void }) {
   const st = growthStatus(a), when = st.measuredAt ? new Date(st.measuredAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) : ''
-  if (st.kind === 'vigente') return <p className="small" style={{ marginTop: 8 }} aria-label="Crecimiento medido"><CostBadge kind="free">ya medido el {when}</CostBadge> <span className="muted">Resultado: {a.growth.label ?? 'calculado'}. No hace falta repetirlo: una segunda medición daría lo mismo y gastaría cuota.</span></p>
-  if (st.kind === 'medido_no_calculable') return <p className="small" style={{ marginTop: 8 }} aria-label="Crecimiento medido sin resultado"><CostBadge kind="free">medido el {when}, sin resultado</CostBadge> <span className="muted">{a.growth.reason} Repetirlo ahora no cambiaría nada; inténtalo más adelante, cuando haya más vídeos, con un análisis nuevo.</span></p>
+  if (st.kind === 'vigente') return <p className="small" style={{ marginTop: 8 }} aria-label="Crecimiento medido"><CostBadge kind="free">{`ya medido el ${when}`}</CostBadge> <span className="muted">Resultado: {a.growth.label ?? 'calculado'}. No hace falta repetirlo: una segunda medición daría lo mismo y gastaría cuota.</span></p>
+  if (st.kind === 'medido_no_calculable') return <p className="small" style={{ marginTop: 8 }} aria-label="Crecimiento medido sin resultado"><CostBadge kind="free">{`medido el ${when}, sin resultado`}</CostBadge> <span className="muted">{a.growth.reason} Repetirlo ahora no cambiaría nada; inténtalo más adelante, cuando haya más vídeos, con un análisis nuevo.</span></p>
   return <p className="small" style={{ marginTop: 8 }}>
     <button type="button" className="ghost" disabled={busy} onClick={onMeasure}>{busy ? 'Midiendo…' : `Medir crecimiento (≈ ${UNITS.search} unidades, 1 búsqueda)`}</button>{' '}
-    <span className="muted">{st.kind === 'caducado' ? `La medición del ${when} ya caducó. ` : ''}Compara los últimos {a.recentDays} días con los {a.recentDays} anteriores. Es la única forma de saber si el tema crece; sin ella el crecimiento sale «No calculable».</span>
+    <span className="muted">{st.kind === 'caducado' ? `La medición del ${when} ya caducó. ` : ''}Compara las visualizaciones totales de los vídeos de los últimos {a.recentDays} días con las de los {a.recentDays} anteriores. Solo puede confirmar un indicio de subida; si no hay pruebas suficientes saldrá «No calculable» (no se compara vistas por día entre vídeos de edades distintas, porque inventa subidas).</span>
   </p>
 }
 
@@ -214,7 +214,7 @@ export function DataKinds({ a }: { a: TopicAnalysis }) {
     <summary className="small"><b>Qué es dato, qué es estimación y qué se desconoce</b></summary>
     <div className="small" style={{ display: 'grid', gap: 6, marginTop: 6 }}>
       <p style={{ margin: 0 }}><span className="tag observado">DATO DE YOUTUBE</span> Título, enlace, canal, fecha, duración, visualizaciones, suscriptores públicos y país que el canal declara (si lo declara). Fecha de la consulta: {dateEs(a.fetchedAt)}.</p>
-      <p style={{ margin: 0 }}><span className="tag calculado">CALCULADO</span> Demanda, oferta, competencia, oportunidad, vistas por día y crecimiento: operaciones sobre esos datos, con la muestra de {a.quality.examined} resultados.</p>
+      <p style={{ margin: 0 }}><span className="tag calculado">CALCULADO</span> Demanda, oferta, competencia, oportunidad, vistas por día y la señal de crecimiento: operaciones sobre esos datos, con la muestra de {a.quality.examined} resultados.</p>
       <p style={{ margin: 0 }}><span className="tag estimado">ESTIMADO</span> Ingresos publicitarios (visualizaciones × RPM de estudios del sector), nicho y formato deducidos del texto, y la orientación geográfica.</p>
       <p style={{ margin: 0 }}><span className="tag desconocido">DESCONOCIDO</span> País real de los espectadores, RPM e ingresos reales de cualquier canal, patrocinios y otros ingresos, retención y búsquedas por mes. YouTube no los da para canales ajenos y aquí no se inventan.</p>
     </div>
@@ -246,4 +246,17 @@ export function ChannelRevenuePanel({ c }: { c: ChannelAnalysis }) {
     {r.last30 ? <EstimateBlock title={`Vídeos de los últimos 30 días (${r.last30.videos} vídeos, ${fmtNumber(r.last30.views)} visualizaciones hasta hoy)`} e={r.last30.estimate} /> : <p className="small muted">No hay vídeos de los últimos 30 días en la muestra.</p>}
     <ul className="small muted" style={{ margin: '4px 0 0 16px' }}>{r.notes.map(n => <li key={n}>{n}</li>)}</ul>
   </section>
+}
+
+const OFFICIAL = { units: 10_000, searches: 100 }
+/**
+ * What an action will cost, in BOTH daily limits, before it runs: units and searches, next to what YouTube allows per day and what has been
+ * counted today. Shown for free actions too (0 and 0), so the cost is always visible.
+ */
+export function CostSummary({ units, searches, usage }: { units: number; searches: number; usage?: { usedToday: number; cap: number; searchesToday: number; searchCap: number } | null }) {
+  const f = (n: number) => n.toLocaleString('es-ES')
+  return <p className="small" role="note" aria-label="Coste de esta acción" style={{ margin: '4px 0' }}>
+    <b>Coste de esta acción: {f(units)} {units === 1 ? 'unidad' : 'unidades'} y {f(searches)} {searches === 1 ? 'búsqueda' : 'búsquedas'}.</b>{' '}
+    <span className="muted">Se cuentan contra dos límites diarios distintos de YouTube: {f(OFFICIAL.units)} unidades y {f(OFFICIAL.searches)} búsquedas.{usage ? ` Esta aplicación ha usado hoy ${f(usage.usedToday)} de ${f(usage.cap)} unidades y ${f(usage.searchesToday)} de ${f(usage.searchCap)} búsquedas que se permite.` : ''}</span>
+  </p>
 }
