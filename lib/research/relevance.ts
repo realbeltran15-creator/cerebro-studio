@@ -259,23 +259,46 @@ export type AssessOptions = { /** Market the search was oriented to: a video who
  * decided by positive evidence: housing words (US and UK) confirm it, words of the usual rivals (cars, watches, phones, pets, crypto…) in the
  * title or tags reject it, and a video with no housing words at all is only «doubtful». Incidental words elsewhere in the text cannot overrule it.
  */
-type DomainRule = { id: string; label: string; match: string[]; cues: string[]; rivals: string[] }
+type DomainRule = {
+  id: string; label: string; match: string[]; cues: string[]; rivals: string[]
+  /** Overrides `match` when the rule is defined by a predicate over the topic words instead of an exact phrase. */
+  applies?: (terms: string[]) => boolean
+  /** Product/brand names that, in the TITLE, are enough to cover the generic topic words (a «Claude tutorial» is an AI-tools video). All brands are treated alike. */
+  names?: string[]
+  /** Names that also mean something else (Gemini = zodiac, Claude = Monet…): they count only when no rival word is in the title. */
+  ambiguousNames?: string[]
+}
+const AI_MARKERS = new Set(['ai', 'ia', 'artificial', 'intelligence', 'inteligencia', 'intelligenz', 'inteligência', 'chatgpt', 'gpt', 'llm'])
+const GENERIC_TOOL_WORDS = new Set(['tools', 'tool', 'apps', 'app', 'software', 'platforms', 'platform', 'assistants', 'assistant', 'chatbots', 'chatbot', 'programs', 'websites', 'sites', 'herramientas', 'herramienta', 'aplicaciones', 'ferramentas', 'werkzeuge', 'outils', 'strumenti', 'gratis', 'free', 'gratuitas', 'gratuitos', 'artificial', 'intelligence', 'inteligencia', 'intelligenz', 'inteligência', 'para', 'les', 'fur', 'fuer', 'pour', 'per'])
+const aiToolsApplies = (terms: string[]) => terms.some(t => AI_MARKERS.has(t)) && terms.every(t => AI_MARKERS.has(t) || GENERIC_TOOL_WORDS.has(t))
+const AI_NAMES = ['chatgpt', 'chat gpt', 'gpt 4', 'gpt 5', 'gpt4', 'gpt5', 'openai', 'claude', 'anthropic', 'gemini', 'copilot', 'perplexity', 'midjourney', 'deepseek', 'grok', 'llama', 'mistral', 'stable diffusion', 'dall e', 'sora', 'runway', 'elevenlabs', 'suno', 'notebooklm', 'notebook lm', 'cursor', 'canva ai', 'notion ai', 'leonardo ai', 'firefly', 'kling', 'veo', 'heygen', 'synthesia', 'jasper', 'copy ai', 'poe', 'character ai', 'meta ai', 'bard', 'bing chat', 'github copilot', 'langchain', 'zapier', 'make com']
+const AI_GENERIC_CUES = ['ai', 'a i', 'artificial intelligence', 'llm', 'chatbot', 'chatbots', 'prompt', 'prompts', 'prompting', 'generative', 'machine learning', 'ai tool', 'ai tools', 'ai agent', 'ai agents', 'ai assistant', 'ai assistants', 'gpt', 'neural', 'text to image', 'text to video', 'image generator', 'video generator', 'ai art', 'ai video', 'ai image', 'ai coding', 'vibe coding', 'no code', 'automation', 'automate']
 const DOMAIN_RULES: DomainRule[] = [{
   id: 'vivienda', label: 'compra de vivienda', match: ['first', 'time', 'buyer'],
   cues: ['home', 'homes', 'house', 'houses', 'housing', 'homebuyer', 'homebuyers', 'home buyer', 'home buyers', 'homeowner', 'homeowners', 'homeownership', 'home ownership', 'property', 'properties', 'real estate', 'realtor', 'realtors', 'estate agent', 'mortgage', 'mortgages', 'remortgage', 'down payment', 'deposit', 'closing costs', 'closing cost', 'pre approval', 'preapproval', 'pre approved', 'preapproved', 'escrow', 'appraisal', 'home inspection', 'fha', 'fha loan', 'va loan', 'usda', 'conventional loan', 'home loan', 'lender', 'lenders', 'refinance', 'home equity', 'hoa', 'condo', 'condos', 'townhouse', 'townhome', 'apartment', 'flat', 'starter home', 'house hunting', 'open house', 'listing', 'listings', 'housing market', 'house prices', 'house price', 'rent vs buy', 'renting vs buying', 'stamp duty', 'help to buy', 'shared ownership', 'lifetime isa', 'conveyancing', 'solicitor', 'rightmove', 'zoopla', 'leasehold', 'freehold', 'buy to let', 'mortgage broker', 'offer accepted', 'survey', 'fhsa', 'home buyers plan', 'cmhc', 'first home', 'first house', 'first flat', 'first property', 'zillow', 'redfin', 'afford a house', 'afford a home'],
   rivals: ['car', 'cars', 'used car', 'new car', 'vehicle', 'vehicles', 'truck', 'trucks', 'suv', 'dealership', 'tesla', 'motorcycle', 'motorbike', 'bike', 'bikes', 'watch', 'watches', 'rolex', 'omega', 'seiko', 'laptop', 'laptops', 'phone', 'phones', 'iphone', 'android', 'camera', 'cameras', 'guitar', 'guitars', 'piano', 'drone', 'drones', 'dog', 'dogs', 'puppy', 'puppies', 'cat', 'cats', 'kitten', 'horse', 'pet', 'pets', 'gun', 'guns', 'rifle', 'knife', 'shoes', 'sneakers', 'headphones', 'gpu', 'keyboard', 'console', 'ps5', 'xbox', 'bitcoin', 'crypto', 'cryptocurrency', 'stock', 'stocks', 'etf', 'mattress', 'bed', 'sofa', 'furniture', 'perfume', 'makeup', 'skincare', 'handbag', 'jewelry', 'ring', 'engagement ring'],
+}, {
+  id: 'ia-herramientas', label: 'herramientas de inteligencia artificial', match: [], applies: aiToolsApplies, names: AI_NAMES,
+  ambiguousNames: ['claude', 'gemini', 'copilot', 'grok', 'llama', 'mistral', 'sora', 'runway', 'cursor', 'veo', 'poe', 'bard', 'jasper', 'firefly', 'make com', 'suno'],
+  cues: [...AI_NAMES, ...AI_GENERIC_CUES],
+  rivals: ['monet', 'painting', 'paintings', 'painter', 'art history', 'van damme', 'zodiac', 'horoscope', 'horoscopes', 'astrology', 'aries', 'taurus', 'gemini man', 'nasa', 'spacecraft', 'cessna', 'aircraft', 'airplane', 'pilot', 'cockpit', 'flight', 'aviation', 'car seat', 'dealership', 'woodworking', 'garden', 'gardening', 'makeup', 'guitar', 'piano', 'knife', 'knives', 'sewing', 'drawing', 'cooking', 'recipe', 'recipes', 'fishing', 'lego', 'minecraft', 'roblox', 'fortnite'],
 }]
 
 /** Does a phrase-defined domain (housing for «first time buyer») apply to this query? Used to know which stored analyses an engine change touched. */
-export const domainRuleApplies = (topic: string) => { const q = queryProfile(topic); return DOMAIN_RULES.some(r => r.match.every(m => q.terms.includes(m)) && q.terms.length <= r.match.length) }
+const ruleFor = (terms: string[]) => DOMAIN_RULES.find(r => (r.applies ? r.applies(terms) : r.match.every(m => terms.includes(m)) && terms.length <= r.match.length))
+export const domainRuleApplies = (topic: string) => !!ruleFor(queryProfile(topic).terms)
 
-type DomainVerdict = { rule: DomainRule; cues: string[]; titleCues: string[]; rivals: string[] }
+type DomainVerdict = { rule: DomainRule; cues: string[]; titleCues: string[]; rivals: string[]; /** A brand/product name of the rule is in the title (and is not drowned out by a rival word). */ named: boolean }
 function domainOf(v: YouTubeVideoResult, q: QueryProfile): DomainVerdict | null {
-  const rule = DOMAIN_RULES.find(r => r.match.every(m => q.terms.includes(m)) && q.terms.length <= r.match.length)
+  const rule = ruleFor(q.terms)
   if (!rule) return null
   const head = fold([v.title, ...(v.tags ?? [])].join(' ')), all = fold([v.title, ...(v.tags ?? []), (v.description ?? '').slice(0, 400), v.channelTitle].join(' '))
   const has = (text: string, w: string) => text.includes(` ${w} `) || text.includes(` ${w}s `)
-  return { rule, cues: rule.cues.filter(w => has(all, fold(w).trim())), titleCues: rule.cues.filter(w => has(head, fold(w).trim())), rivals: rule.rivals.filter(w => has(head, fold(w).trim())) }
+  const rivals = rule.rivals.filter(w => has(head, fold(w).trim()))
+  // A name that also means something else (Gemini the zodiac sign, Claude Monet) is not evidence when the title also carries a rival word.
+  const usable = (w: string) => !(rivals.length && rule.ambiguousNames?.includes(w))
+  const cues = rule.cues.filter(w => usable(w) && has(all, fold(w).trim())), titleCues = rule.cues.filter(w => usable(w) && has(head, fold(w).trim()))
+  return { rule, cues, titleCues, rivals, named: (rule.names ?? []).some(w => usable(w) && has(head, fold(w).trim())) }
 }
 
 /** Doubtful because the video's OWN text is about another country than the market asked for (never because of the channel's declared country). */
@@ -311,6 +334,8 @@ export function assessVideo(v: YouTubeVideoResult, q: QueryProfile, expected: st
   // least one of the query words (or a synonym) is on the topic even if it does not repeat the whole phrase.
   const dom0 = domainOf(v, q)
   if (dom0 && score > 0 && dom0.titleCues.length >= 1 && dom0.rivals.length === 0 && n && score / n < minCoverage(n)) score = Math.max(score, n * minCoverage(n))
+  // A tool named in the title covers the generic words of an «AI tools» topic: «Claude tutorial for beginners» is on topic whichever brand it names.
+  if (dom0?.named && dom0.rivals.length === 0 && n) score = Math.max(score, n)
   const coverage = n ? score / n : 1
   if (n && coverage < minCoverage(n)) return out('descartado', 'tema', `solo muestra ${Math.round(coverage * 100)} % de los términos del tema (${q.terms.join(', ')})`, coverage)
 

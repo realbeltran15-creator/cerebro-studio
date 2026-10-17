@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChannelAnalysis, YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { channelRevenue, estimateRevenue, marketFactor, nicheRevenue, videoRevenue } from '@/lib/research/revenue'
+import { channelRevenue, estimateRevenue, nicheRevenue, videoRevenue } from '@/lib/research/revenue'
 import { SOURCES_REGISTRY, connectedSources } from '@/lib/research/sources/registry'
 import { analyzeTopic, type TopicSamples } from '@/lib/research/topic-analysis'
 import { formatAdjusted, nicheRpm } from '@/lib/research/monetization'
@@ -32,12 +32,16 @@ describe('the estimator: income = views ÷ 1000 × RPM, with its formula, assump
     expect(own.status).toBe('estimado'); if (own.status === 'estimado') { expect(own.range).toEqual({ low: 10, mid: 15, high: 20 }); expect(own.assumptions.join(' ')).toMatch(/dato tuyo, no verificado/) }
   })
   it('no public view count → unknown', () => { expect(estimateRevenue({ views: null, niches: ['finanzas'], format: 'long' }).status).toBe('desconocido') })
-  it('the market adjustment is explicit, bounded, lowers the confidence and never claims to know the audience', () => {
-    const plain = estimateRevenue({ views: 100_000, niches: ['gaming'], format: 'long', region: null }), us = estimateRevenue({ views: 100_000, niches: ['gaming'], format: 'long', region: 'US' }), br = estimateRevenue({ views: 100_000, niches: ['gaming'], format: 'long', region: 'BR' })
-    if (plain.status !== 'estimado' || us.status !== 'estimado' || br.status !== 'estimado') throw new Error('expected estimates')
-    expect(us.range.mid).toBeGreaterThan(plain.range.mid); expect(br.range.mid).toBeLessThan(plain.range.mid)
-    expect(us.assumptions.join(' ')).toMatch(/el público real no se conoce/); expect(us.confidence).not.toBe('media'); expect(plain.confidence).toBe('media')
-    expect(marketFactor('US')).toBeLessThanOrEqual(2); expect(marketFactor('BR')).toBeGreaterThanOrEqual(0.4); expect(marketFactor('XX')).toBeNull()
+  it('applies NO per-country multiplier: the sector RPM is already anchored and the viewers\' country is not observable', () => {
+    const at = (region: string | null) => estimateRevenue({ views: 100_000, niches: ['gaming'], format: 'long', region })
+    const plain = at(null), us = at('US'), br = at('BR'), de = at('DE')
+    if (plain.status !== 'estimado' || us.status !== 'estimado' || br.status !== 'estimado' || de.status !== 'estimado') throw new Error('expected estimates')
+    expect(us.range).toEqual(plain.range); expect(br.range).toEqual(plain.range); expect(de.rpm).toEqual(plain.rpm); expect(us.confidence).toBe(plain.confidence)
+    expect(us.assumptions.join(' ')).toMatch(/no se atribuyen ingresos de ningún país/)
+  })
+  it('is always labelled a hypothesis: verified is false and the text says it is not a verified earning', () => {
+    const e = estimateRevenue({ views: 50_000, niches: ['finanzas'], format: 'long', region: 'US' })
+    expect(e.status === 'estimado' && e.verified).toBe(false); expect(e.status === 'estimado' && e.assumptions.join(' ')).toMatch(/HIPÓTESIS.*no es una ganancia verificada/)
   })
   it('a niche whose RPM is borrowed from another niche keeps its «muy baja» confidence', () => {
     const e = estimateRevenue({ views: 10_000, niches: ['ia'], format: 'long' }); expect(e.status === 'estimado' && e.confidence).toBe('muy baja')
@@ -70,7 +74,7 @@ describe('niche and channel estimates', () => {
     const c: ChannelAnalysis = { channel: { id: 'UC1', title: 'Canal', handle: '@c', url: 'https://youtube.com/@c', thumbnailUrl: null, country: 'US' }, observed: { subscribers: 50_000, totalViews: 4_000_000, videoCount: 120, fetchedAt: '' }, calculated: { sampleSize: 3, avgViews: 1, medianViews: 1, uploadsPerWeek: 1, outlierIds: [] },
       videos: [vid('Finanzas personales: invertir paso a paso', { days: 5, views: 30_000 }), vid('Finanzas: ahorrar dinero', { days: 20, views: 20_000 }), vid('Finanzas: viejo', { days: 200, views: 900_000 })] }
     const r = channelRevenue(c, NOW)
-    expect(r.lifetime.status).toBe('estimado'); if (r.lifetime.status === 'estimado') { expect(r.lifetime.marketFactor).toBeNull(); expect(r.lifetime.views).toBe(4_000_000) }
+    expect(r.lifetime.status).toBe('estimado'); if (r.lifetime.status === 'estimado') { expect(r.lifetime.verified).toBe(false); expect(r.lifetime.views).toBe(4_000_000) }
     expect(r.last30 && r.last30.videos).toBe(2); expect(r.last30 && r.last30.views).toBe(50_000); expect(r.notes.join(' ')).toMatch(/no incluye lo que ganan hoy los vídeos antiguos/)
   })
 })

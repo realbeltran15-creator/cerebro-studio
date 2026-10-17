@@ -35,36 +35,21 @@ describe('P1 — the age of a video cannot create a trend', () => {
   })
 })
 
-describe('older analyses: upgraded for free when nothing relevant changed, kept apart otherwise', () => {
-  const stored = (): TopicAnalysis => {
-    const a = analyzeTopic(samples(), NOW)
-    // What the audited deployment (engine 4) stored: a measured growth «×10 al alza» based on views per day.
-    return { ...a, engineVersion: 4, growth: { state: 'calculable', ratio: 10, label: 'al alza (posible)', reason: '…', windowDays: 30, recent: { n: 14, medianVpd: 2000 }, previous: { n: 14, medianVpd: 200 }, measuredAt: new Date(NOW).toISOString() }, indices: { ...a.indices, growth: 100 }, growthPct: 900 }
-  }
-  it('an engine-4 analysis of a non-housing topic is upgraded from the videos it already stored: old growth discarded, no search needed', () => {
-    const up = upgradeAnalysis(stored(), NOW)!
-    expect(up.engineVersion).toBe(ENGINE_VERSION); expect(up.growth.state).toBe('no_calculable'); expect(up.growth.previous).toBeUndefined(); expect(up.growth.measuredAt).toBeUndefined()
-    expect(up.indices.growth).toBeNull(); expect(up.growthPct).toBeNull(); expect(up.growth.recent.nMature).toBeGreaterThanOrEqual(8); expect(up.growth.recent.medianViews).toBeGreaterThan(1000)
-    expect(up.reasons.join(' ')).not.toMatch(/×10|al alza/)
+describe('older analyses: never mixed in — engine 6 changed what demand and supply mean', () => {
+  const stored = (engineVersion: number): TopicAnalysis => ({ ...analyzeTopic(samples(), NOW), engineVersion })
+  it('an analysis from engine 4 or 5 is not upgraded in place (its stored videos lack the channels and text the new numbers need)', () => {
+    expect(upgradeAnalysis(stored(4), NOW)).toBeNull(); expect(upgradeAnalysis(stored(5), NOW)).toBeNull(); expect(upgradeAnalysis(stored(ENGINE_VERSION), NOW)).not.toBeNull()
   })
-  it('after the upgrade «Medir crecimiento» works with ONE search and uses the new method', async () => {
-    const up = upgradeAnalysis(stored(), NOW)!; let calls = 0
-    const r = await getGrowth({ topic: T, region: 'DE', language: 'de', analysis: up }, { store: new MemoryCacheStore(`gm-${Math.random()}`), search: (async () => { calls++; return olderVideos() }) as never, owner: 'o', now: () => NOW })
+  it('«Medir crecimiento» still works with ONE search on a current analysis and uses the comparable-windows method', async () => {
+    const a = analyzeTopic(samples(), NOW); let calls = 0
+    const r = await getGrowth({ topic: T, region: 'DE', language: 'de', analysis: a }, { store: new MemoryCacheStore(`gm-${Math.random()}`), search: (async () => { calls++; return olderVideos() }) as never, owner: 'o', now: () => NOW })
     expect(calls).toBe(1); expect(r.analysis!.growth.state).toBe('no_calculable'); expect(r.analysis!.growth.measuredAt).toBeTruthy()
   })
-  it('a housing topic (the housing rule changed), an engine-3 analysis, or one without its stored videos are NOT upgraded', () => {
-    const a = analyzeTopic(samples(), NOW)
-    expect(upgradeAnalysis({ ...a, topic: 'first time buyer', engineVersion: 4 }, NOW)).toBeNull()
-    expect(upgradeAnalysis({ ...a, engineVersion: 3 }, NOW)).toBeNull(); expect(upgradeAnalysis({ ...a, engineVersion: 4, sample: [] }, NOW)).toBeNull()
-  })
-  it('a server cache entry from engine 4 is upgraded when it can be (free) and re-analysed when it cannot', async () => {
+  it('a server cache entry from an older engine is re-analysed (and paid) instead of being served', async () => {
     const store = new MemoryCacheStore(`gm-${Math.random()}`); let calls = 0
     const search = (async () => { calls++; return { videos: recentVideos(), approxTotal: 5 } }) as never
-    await store.put(cacheKey('topic', [T, 'DE', 'de', '30']), 'topic', stored(), 204, 1e9, NOW)
-    const ok = await getTopicAnalysis({ topic: T, region: 'DE', language: 'de' }, { store, search, owner: 'o', now: () => NOW })
-    expect(ok.cached).toBe(true); expect(calls).toBe(0); expect(ok.analysis!.engineVersion).toBe(ENGINE_VERSION); expect(ok.analysis!.growth.previous).toBeUndefined()
-    await store.put(cacheKey('topic', ['first time buyer', 'US', 'en', '30']), 'topic', { ...stored(), topic: 'first time buyer', region: 'US', language: 'en', engineVersion: 4 }, 204, 1e9, NOW)
-    const redo = await getTopicAnalysis({ topic: 'first time buyer', region: 'US', language: 'en' }, { store, search, owner: 'o', now: () => NOW })
+    await store.put(cacheKey('topic', [T, 'DE', 'de', '30']), 'topic', stored(5), 204, 1e9, NOW)
+    const redo = await getTopicAnalysis({ topic: T, region: 'DE', language: 'de' }, { store, search, owner: 'o', now: () => NOW })
     expect(redo.cached).toBe(false); expect(calls).toBeGreaterThan(0); expect(redo.analysis!.engineVersion).toBe(ENGINE_VERSION)
   })
 })

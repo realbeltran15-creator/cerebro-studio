@@ -1,5 +1,5 @@
 import type { ChannelAnalysis, YouTubeVideoResult } from '@/lib/providers/youtube-data'
-import { COUNTRY_RPM, SHORTS_FACTOR, formatAdjusted, nicheRpm, type RpmConfidence, type RpmSource } from './monetization'
+import { SHORTS_FACTOR, formatAdjusted, nicheRpm, type RpmConfidence, type RpmSource } from './monetization'
 import { inferFormat, nichesOf } from './taxonomy'
 import type { TopicAnalysis } from './topic-analysis'
 
@@ -9,7 +9,7 @@ import type { TopicAnalysis } from './topic-analysis'
  *   income = views ÷ 1 000 × RPM        (RPM = what a creator earns per 1 000 views, ads only)
  *
  * What is OBSERVED (public, from the YouTube Data API): views, publication dates, subscribers, the channel's total views.
- * What is ESTIMATED: the RPM range (sector studies by niche, adjusted by format and, optionally, by the market's relative ad prices).
+ * What is ESTIMATED: the RPM range (sector studies by niche, adjusted by format only: never by country).
  * What is UNKNOWN and never invented: the real RPM of any channel, the audience's countries, how many views are monetised, sponsorships,
  * affiliate sales, memberships, merchandise and anything else a channel earns outside ads. The result is therefore an ADVERTISING range
  * with a stated confidence — never «what the channel earns».
@@ -22,11 +22,11 @@ export type RevenueEstimate =
       status: 'estimado'; kind: RevenueKind
       views: number
       range: Range
-      /** The RPM range used, after the format and market adjustments. */
+      /** The RPM range used, after the format adjustment only (never a per-country one: see `estimateRevenue`). */
       rpm: Range
       niche: string; format: 'long' | 'short'
-      /** Relative ad prices of the requested market (1 = reference average of the table), or null when no adjustment was applied. */
-      marketFactor: number | null
+      /** Always false: this is a hypothesis built from public views and sector studies, never earnings read from a channel. */
+      verified: false
       confidence: RpmConfidence
       /** The formula with this case's numbers filled in. */
       formula: string
@@ -36,22 +36,12 @@ export type RevenueEstimate =
   | { status: 'desconocido'; reason: string }
 
 const round = (n: number) => Math.round(n * 100) / 100
-const order: RpmConfidence[] = ['media', 'baja', 'muy baja']
-const worse = (c: RpmConfidence): RpmConfidence => order[Math.min(order.indexOf(c) + 1, order.length - 1)]
 const usd = (n: number) => `$${n.toLocaleString('es-ES', { maximumFractionDigits: n < 100 ? 2 : 0 })}`
 const num = (n: number) => n.toLocaleString('es-ES')
 
-/** Mean of the relative ad prices in the reference table: the point where a market has no adjustment. */
-const MEAN_INDEX = COUNTRY_RPM.reduce((t, c) => t + c.index, 0) / COUNTRY_RPM.length
-/** Relative ad price of a market against the table's mean, bounded so one noisy source cannot swing the range wildly. */
-export const marketFactor = (region: string | null): number | null => {
-  const c = region ? COUNTRY_RPM.find(x => x.code === region) : null
-  return c ? round(Math.min(Math.max(c.index / MEAN_INDEX, 0.4), 2)) : null
-}
-
 export type EstimateInput = {
   views: number | null; niches: string[]; format: 'long' | 'short'
-  /** The market the research was ORIENTED to. It is NOT the audience: it only adjusts the ad-price assumption, and the result says so. */
+  /** The market the research was oriented to. Kept for the caller's context only: it does NOT change the figure (the audience's country is not observable). */
   region?: string | null
   /** The person's own RPM (e.g. read from their YouTube Studio): replaces the sector range. */
   ownRpm?: Range | null
@@ -67,19 +57,21 @@ export function estimateRevenue(input: EstimateInput): RevenueEstimate {
     if (r.status === 'estimado') { base = { range: { low: r.low, mid: r.mid, high: r.high }, confidence: r.confidence, niche: n, sources: r.sources, note: r.note }; break }
   }
   if (!base) return { status: 'desconocido', reason: 'No hay estudios fiables de RPM para el nicho de este contenido. Escribe tu propio RPM para calcular escenarios.' }
-  const mf = input.ownRpm ? null : marketFactor(region)
-  const rpm: Range = mf ? { low: round(base.range.low * mf), mid: round(base.range.mid * mf), high: round(base.range.high * mf) } : base.range
+  // No per-country multiplier: the sector RPM is already anchored on the studies' (mostly US/mixed) audience, and the country of the VIEWERS is not
+  // observable, so multiplying by the searched market would both double-count and attribute US-level income to unproven audiences.
+  const rpm: Range = base.range
   const k = views / 1000
   const range: Range = { low: round(k * rpm.low), mid: round(k * rpm.mid), high: round(k * rpm.high) }
   const assumptions = [
     input.ownRpm ? `RPM propio: ${usd(rpm.low)}–${usd(rpm.high)} por 1000 visitas (dato tuyo, no verificado por esta aplicación).` : `RPM del nicho «${base.niche}»: ${usd(base.range.low)}–${usd(base.range.high)} por 1000 visitas (${base.note})`,
     ...(format === 'short' && !input.ownRpm ? [`Es un Short: se aplica ${Math.round(SHORTS_FACTOR.low * 100)}–${Math.round(SHORTS_FACTOR.high * 100)} % del RPM de un vídeo largo (estudio de terceros).`] : []),
-    ...(mf ? [`Ajuste por mercado: ${region} paga ${mf > 1 ? 'más' : 'menos'} publicidad que la media de la tabla de países (×${mf}). Se aplica porque la investigación está orientada a ese mercado; el público real no se conoce.`] : input.ownRpm ? [] : ['Sin ajuste por país: el RPM de los estudios es de audiencia mixta o de EE. UU. según el nicho.']),
+    ...(input.ownRpm ? [] : [`Sin ajuste por país${region ? ` (mercado buscado: ${region})` : ''}: el RPM de los estudios ya es de audiencia mixta o de EE. UU. según el nicho y la audiencia geográfica de estos vídeos no está demostrada, así que no se atribuyen ingresos de ningún país concreto.`]),
+    'Es una HIPÓTESIS calculada con visualizaciones públicas y estudios de sector; no es una ganancia verificada. Solo el RPM de tu propio canal (YouTube Analytics) la verificaría.',
     'Solo publicidad. No incluye patrocinios, afiliados, membresías, mercancía ni otros ingresos privados del canal.',
     'No todas las visualizaciones se monetizan igual (anunciantes, edad del público, contenido); el RPM de los estudios ya es un promedio por 1000 visualizaciones totales.',
   ]
-  const confidence = mf && !input.ownRpm ? worse(base.confidence) : base.confidence
-  return { status: 'estimado', kind: 'ingresos publicitarios estimados', views, range, rpm, niche: base.niche, format, marketFactor: mf, confidence,
+  const confidence = base.confidence
+  return { status: 'estimado', kind: 'ingresos publicitarios estimados', views, range, rpm, niche: base.niche, format, verified: false, confidence,
     formula: `${num(views)} visualizaciones ÷ 1 000 × RPM (${usd(rpm.low)} – ${usd(rpm.mid)} – ${usd(rpm.high)}) = ${usd(range.low)} – ${usd(range.mid)} – ${usd(range.high)}`, assumptions, sources: base.sources }
 }
 

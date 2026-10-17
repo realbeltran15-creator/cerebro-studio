@@ -2,7 +2,7 @@ import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
 import { stopwords } from '@/lib/radar'
 import { GEO_LEVEL_LABEL, shortCountry, summarizeGeo, type GeoSummary } from './geo'
 import { resolveDoubtful } from './semantic'
-import { concentration, demandProfile, entryDifficulty, medianInterval, opportunityOf, sensitivity, smallChannelWins, verdictOf, type Concentration, type DemandProfile, type Entry, type SmallWins, type Sensitivity, type Verdict } from './statistics'
+import { METHOD, concentration, demandProfile, demandReliability, entryDifficulty, medianInterval, opportunityOf, sensitivity, shownOpportunity, smallChannelWins, verdictOf, type Concentration, type DemandReliability, type DemandProfile, type Entry, type SmallWins, type Sensitivity, type Verdict } from './statistics'
 import { inferFormat, nichesOf, type Confidence } from './taxonomy'
 import { assessVideo, domainRuleApplies, expectedLanguages, queryProfile, viralOutliers, type Assessment, type ExclusionReason, type SampleQuality, type VideoStatus } from './relevance'
 export type { SampleQuality } from './relevance'
@@ -66,8 +66,16 @@ export function growthStatus(a: Pick<TopicAnalysis, 'growth' | 'fetchedAt'>, now
  * handling). An analysis from an older engine is kept and shown, but never mixed into recommendations, opportunities or comparisons, and it
  * is never served from the cache: it is re-analysed instead.
  */
-export const ENGINE_VERSION = 5
+export const ENGINE_VERSION = 6
 export const isCurrentEngine = (a: { engineVersion?: number }) => a.engineVersion === ENGINE_VERSION
+
+/** Supply split into what is merely published and what actually competes (has traction). */
+export type SupplyBreakdown = {
+  published: number; withTraction: number; withoutTraction: number; tooNew: number; unknownViews: number
+  publishedPerWeek: number; competitivePerWeek: number
+  publishedChannels: number; competitiveChannels: number
+  tractionViews: number; spanDays: number
+}
 
 export type TopicAnalysis = {
   /** Engine version that made this analysis (absent on analyses saved before versions existed). */
@@ -93,7 +101,7 @@ export type TopicAnalysis = {
   /** Where the results point geographically, in four separate senses (requested / channel / content / audience). Optional on older analyses. */
   geo?: GeoSummary
   /** Statistical reading of the sample. Optional: analyses saved before it existed do not have it. */
-  stats?: { concentration: Concentration; smallWins: SmallWins; demandProfile: DemandProfile; entry: Entry; sensitivity: Sensitivity; demandInterval: { lo: number; hi: number } | null }
+  stats?: { concentration: Concentration; smallWins: SmallWins; demandProfile: DemandProfile; entry: Entry; sensitivity: Sensitivity; demandInterval: { lo: number; hi: number } | null; /** How far the demand score can be trusted (sample size, concentration, Shorts). */ demandReliability?: DemandReliability; /** Published volume vs competitive supply (videos with traction). */ supplyBreakdown?: SupplyBreakdown }
   sampleSizes: { top: number; recent: number }
   approxTotals: { top: number | null; recent: number | null }
   topVideos: YouTubeVideoResult[]
@@ -243,7 +251,10 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const topOut = viralOutliers(topVpdAll), topVpd = median(topVpdAll.filter((_, i) => !topOut.has(i)))
   const outlierIds = new Set(topCand.filter((_, i) => topOut.has(i)).map(v => v.videoId))
   const recentCohort = cohort(recent, promo, now)
-  const demand = Math.round(0.6 * logScore(topVpd, 20000) + 0.4 * logScore(recentCohort.medianVpd ?? (topVpd ?? 0) * 0.5, 20000))
+  const demandRaw = Math.round(0.6 * logScore(topVpd, 20000) + 0.4 * logScore(recentCohort.medianVpd ?? (topVpd ?? 0) * 0.5, 20000))
+  // How far that number can be trusted: a viral Short or one channel's hit must not read as demand for the topic.
+  const reliability = demandReliability({ raw: demandRaw, views: topCand.map(v => v.observed.views ?? 0), channelIds: topCand.map(v => v.channelId), shortViews: topCand.filter(v => inferFormat(v).format === 'short').reduce((t, v) => t + (v.observed.views ?? 0), 0), outliers: topOut.size })
+  const demand = Math.round(demandRaw * reliability.factor)
   const topViews = top.map(v => v.observed.views ?? 0), topTotal = topViews.reduce((t, x) => t + x, 0)
   const oneVideoShare = topTotal ? Math.max(0, ...topViews) / topTotal : 0
   recentCohort.outlierIds.forEach(id => outlierIds.add(id))
@@ -265,7 +276,15 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const inSpan = recent.filter(v => (ageDays(v, now) ?? 99) <= spanDays)
   const uploadsPerWeek = inSpan.length ? Math.round((inSpan.length / (spanDays / 7)) * 10) / 10 : 0
   const recentChannels = new Set(recent.map(v => v.channelId).filter(Boolean)).size
-  const supply = Math.round(0.6 * logScore(uploadsPerWeek, 100) + 0.4 * clamp((recentChannels / 25) * 100))
+  // Competitive supply: only videos with traction compete. Published volume is reported but a video with 1–28 views does not weigh like one with proof of audience.
+  const T = METHOD.traction, hasTraction = (v: YouTubeVideoResult) => num(v.observed.views) && v.observed.views >= T.tractionViews
+  const tractive = inSpan.filter(hasTraction)
+  const tooNew = inSpan.filter(v => num(v.observed.views) && !hasTraction(v) && (ageDays(v, now) ?? 99) < T.tractionGraceDays)
+  const unknownViews = inSpan.filter(v => !num(v.observed.views)).length
+  const perWeek = (n: number) => (inSpan.length ? Math.round((n / (spanDays / 7)) * 10) / 10 : 0)
+  const competitiveChannels = new Set(tractive.map(v => v.channelId).filter(Boolean)).size
+  const supplyBreakdown: SupplyBreakdown = { published: inSpan.length, withTraction: tractive.length, withoutTraction: inSpan.length - tractive.length - tooNew.length - unknownViews, tooNew: tooNew.length, unknownViews, publishedPerWeek: uploadsPerWeek, competitivePerWeek: perWeek(tractive.length), publishedChannels: recentChannels, competitiveChannels, tractionViews: T.tractionViews, spanDays: Math.round(spanDays) }
+  const supply = Math.round(0.6 * logScore(supplyBreakdown.competitivePerWeek, 100) + 0.4 * clamp((competitiveChannels / 25) * 100))
 
   // Competition: how big and how concentrated the channels behind the most-viewed videos are.
   const subs = top.map(v => v.observed.channelSubscribers)
@@ -293,19 +312,19 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   if (top.length < EVIDENCE.minTop || recent.length < EVIDENCE.minRecent) lowReasons.push(`solo ${top.length} vídeos relevantes entre los más vistos y ${recent.length} entre los recientes`)
   if (quality.examined >= 10 && keptShare < EVIDENCE.minKeptShare) lowReasons.push(`más de la mitad de los resultados de YouTube (${quality.examined - quality.kept} de ${quality.examined}) no eran del tema o del mercado`)
   if (quality.examined >= 10 && quality.uncertain / quality.examined >= 0.3) lowReasons.push(`${quality.uncertain} de ${quality.examined} resultados son dudosos: nada confirma que traten del significado buscado`)
-  if (oneVideoShare > EVIDENCE.topVideoShare && top.length >= 5) lowReasons.push(`un solo vídeo reúne el ${Math.round(oneVideoShare * 100)} % de las vistas de la muestra`)
-  const confidence: Confidence = lowReasons.length ? 'baja' : enough ? 'media' : 'baja'
+  if (reliability.level !== 'media') lowReasons.push(`la demanda no es representativa (${reliability.reasons.join('; ')})`)
+  const confidence: Confidence = lowReasons.length ? 'baja' : enough ? 'media' : 'baja'   // never «alta»: one search is one source and one sample
 
   const verdictRaw: Verdict = verdictOf(demand, competition, supply)
   // Thin or contaminated evidence never earns the label «oportunidad».
   const verdict: Verdict = confidence === 'baja' && verdictRaw === 'oportunidad' ? 'mixto' : verdictRaw
-  const opportunity = opportunityOf(demand, competition, supply, growthIdx)
+  const opportunity = shownOpportunity(opportunityOf(demand, competition, supply, growthIdx), confidence)
   const conc = concentration(top.map(v => ({ channelId: v.channelId, views: v.observed.views })))
   const small = smallChannelWins(top.map(v => ({ subs: v.observed.channelSubscribers, views: v.observed.views })))
   const profile = demandProfile({ topVpd, recentVpd: recentCohort.medianVpd, oneVideoShare, outliers: quality.outliers, relevantTop: top.length, relevantRecent: recent.length })
   const entry = entryDifficulty({ competition, supply, concentration: conc, smallWins: small })
   const sens = sensitivity({ demand, competition, supply, growth: growthIdx })
-  const statistical = { concentration: conc, smallWins: small, demandProfile: profile, entry, sensitivity: sens, demandInterval: medianInterval(topVpdAll) }
+  const statistical = { concentration: conc, smallWins: small, demandProfile: profile, entry, sensitivity: sens, demandInterval: medianInterval(topVpdAll), demandReliability: reliability, supplyBreakdown }
 
   const confidenceNote = `Muestra de ${top.length} vídeos relevantes entre los más vistos y ${recent.length} entre los recientes (de ${quality.examined} resultados de YouTube; ${quality.kept} sirven; YouTube no permite contar todos los vídeos ni creadores).${lowReasons.length ? ` Confianza baja: ${lowReasons.join('; ')}.` : ''} ${subsKnown.length}/${top.length} canales con suscriptores visibles. Con una sola fuente la confianza nunca pasa de «media».`
 
@@ -322,8 +341,9 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
     ...(s.region ? [{ label: 'Confianza geográfica (contenido del vídeo y país declarado del canal; la audiencia no se puede medir)', value: `${GEO_LEVEL_LABEL[geo.level]}${geo.inMarketShare === null ? '' : ` · ${Math.round(geo.inMarketShare * 100)} % de las pistas apuntan a ${shortCountry(s.region)}`}${geo.setAside ? ` · ${geo.setAside} vídeo${geo.setAside === 1 ? '' : 's'} apartado${geo.setAside === 1 ? '' : 's'} por hablar de otro país` : ''}`, kind: 'inferido' as const }] : []),
     { label: 'Vistas por día (mediana, vídeos relevantes más vistos del último año)', value: topVpd === null ? 'sin datos' : k(Math.round(topVpd)), kind: 'calculado' },
     { label: `Vistas por día (mediana, vídeos relevantes de los últimos ${WINDOW} días con ≥ 3 días)`, value: recentCohort.medianVpd === null ? 'sin datos' : k(Math.round(recentCohort.medianVpd)), kind: 'calculado' },
-    { label: `Subidas por semana (${inSpan.length} vídeos relevantes en una ventana de ${Math.round(spanDays)} días${strayAges.size ? `; ${strayAges.size} resultado${strayAges.size === 1 ? '' : 's'} antiguo${strayAges.size === 1 ? '' : 's'} fuera de la ventana` : ''})`, value: String(uploadsPerWeek), kind: 'calculado' },
-    { label: 'Canales distintos entre los vídeos recientes', value: `${recentChannels} de ${recent.length}`, kind: 'observado' },
+    { label: `Representatividad de la demanda (índice sin ajustar ${demandRaw}/100, ajustado ${demand}/100)`, value: reliability.level === 'media' ? 'media (nunca alta: una sola búsqueda es una sola fuente)' : `${reliability.level}: ${reliability.reasons.join('; ')}`, kind: 'calculado' },
+    { label: `Publicados en una ventana de ${Math.round(spanDays)} días${strayAges.size ? ` (${strayAges.size} resultado${strayAges.size === 1 ? '' : 's'} antiguo${strayAges.size === 1 ? '' : 's'} fuera de la ventana)` : ''}`, value: `${supplyBreakdown.published} vídeos relevantes · ${uploadsPerWeek} por semana · ${recentChannels} canales`, kind: 'calculado' },
+    { label: `Oferta competitiva: con tracción (≥ ${T.tractionViews} visualizaciones)`, value: `${supplyBreakdown.withTraction} vídeos · ${supplyBreakdown.competitivePerWeek} por semana · ${competitiveChannels} canales · sin tracción ${supplyBreakdown.withoutTraction} · demasiado nuevos para valorar ${supplyBreakdown.tooNew}${unknownViews ? ` · sin cifra de visualizaciones ${unknownViews}` : ''}`, kind: 'calculado' },
     { label: 'Suscriptores del canal mediano de los más vistos', value: medianSubs === null ? 'sin datos' : k(Math.round(medianSubs)), kind: 'observado' },
     { label: 'Canales de ≥ 100 000 suscriptores en el top 10', value: `${big} de ${top10.length}`, kind: 'observado' },
     { label: 'Reparto de vistas entre canales (HHI 0–10 000 / los 3 mayores)', value: conc.hhi === null ? 'sin datos suficientes' : `${conc.hhi} (${conc.level}) / ${Math.round(conc.top3 * 100)} %`, kind: 'calculado' },
@@ -338,7 +358,8 @@ export function analyzeTopic(s: TopicSamples, now = Date.now()): TopicAnalysis {
   const reasons: string[] = []
   if (demand < 25) reasons.push(`Hay poca demanda observable: los vídeos del tema ganan ${topVpd === null ? 'pocas' : k(Math.round(topVpd))} vistas/día. Que haya pocos vídeos no lo convierte en oportunidad.`)
   else reasons.push(`Demanda ${demand}/100: los vídeos relevantes más vistos del año ganan ${topVpd === null ? '—' : k(Math.round(topVpd))} vistas/día (mediana, sin anuncios ni virales atípicos).`)
-  reasons.push(`Oferta ${supply}/100: ${uploadsPerWeek} vídeos nuevos por semana en la muestra y ${recentChannels} canales distintos entre ${recent.length} recientes.`)
+  reasons.push(`Oferta ${supply}/100 (solo cuenta la competitiva): ${uploadsPerWeek} vídeos nuevos por semana se publican, pero solo ${supplyBreakdown.competitivePerWeek} por semana (${supplyBreakdown.withTraction} vídeos de ${competitiveChannels} canales) tienen al menos ${T.tractionViews} visualizaciones; ${supplyBreakdown.withoutTraction} no han logrado tracción y ${supplyBreakdown.tooNew} son demasiado nuevos para valorarlos.`)
+  if (reliability.level !== 'media') reasons.push(`Demanda poco representativa (${reliability.level}): ${reliability.reasons.join('; ')}. Se muestra ${demand}/100 en vez de ${demandRaw}/100 y el análisis no puede llamarse oportunidad.`)
   reasons.push(`Competencia ${competition}/100: canal mediano con ${medianSubs === null ? '—' : k(Math.round(medianSubs))} suscriptores y ${big} de ${top10.length} del top 10 con ≥ 100 000.`)
   reasons.push(`Mercado: ${geo.statement}`)
   reasons.push(`Crecimiento: ${growth.state === 'calculable' ? growth.label : 'No calculable'}. ${growth.reason}`)
@@ -383,24 +404,16 @@ function withGrowth(a: TopicAnalysis, growth: GrowthResult): TopicAnalysis {
   const pct = growth.state === 'calculable' && growth.ratio ? Math.round((growth.ratio - 1) * 100) : null
   const reasons = a.reasons.map(r => (r.startsWith('Crecimiento:') ? `Crecimiento: ${growth.state === 'calculable' ? growth.label : 'No calculable'}. ${growth.reason}` : r))
   const evidence = a.evidence.map(e => (e.label.startsWith('Crecimiento') ? { ...e, value: growth.state === 'calculable' ? `${growth.label} (×${growth.ratio!.toFixed(2)})` : 'No calculable' } : e))
-  return { ...a, growth, growthPct: pct, ...(a.stats ? { stats: { ...a.stats, sensitivity: sensitivity({ demand: a.indices.demand, competition: a.indices.competition, supply: a.indices.supply, growth: growthIdx }) } } : {}), indices: { ...a.indices, growth: growthIdx, opportunity: opportunityOf(a.indices.demand, a.indices.competition, a.indices.supply, growthIdx) }, reasons, evidence }
+  return { ...a, growth, growthPct: pct, ...(a.stats ? { stats: { ...a.stats, sensitivity: sensitivity({ demand: a.indices.demand, competition: a.indices.competition, supply: a.indices.supply, growth: growthIdx }) } } : {}), indices: { ...a.indices, growth: growthIdx, opportunity: shownOpportunity(opportunityOf(a.indices.demand, a.indices.competition, a.indices.supply, growthIdx), a.confidence) }, reasons, evidence }
 }
 
 /**
- * Engine 4 → 5 changed two things: how growth is measured and how housing phrases are judged. An engine-4 analysis of a topic the second change
- * does not touch keeps its relevance verdicts as they are; only its growth is rebuilt (from the videos it already stored, at no cost) so that the
- * old views-per-day measurement can never be shown. Anything else from an older engine is not upgradable: it stays apart until it is re-analysed.
+ * Engine 6 changed what demand and supply MEAN (reliability-adjusted demand, supply counted only with traction) and what the AI-tools topics accept.
+ * The stored per-video sample has no channel ids, subscribers, descriptions or tags, so those numbers cannot be rebuilt from it: an analysis from an
+ * older engine is never upgraded in place — it stays apart (read-only, outside every recommendation) until the topic is analysed again.
  */
-export function upgradeAnalysis(a: TopicAnalysis, now = Date.now()): TopicAnalysis | null {
-  if (a.engineVersion === ENGINE_VERSION) return a
-  if (a.engineVersion !== 4 || !a.sample?.length || domainRuleApplies(a.topic)) return null
-  const aged = a.sample.filter(v => v.status === 'aceptado' && v.inRecent && !v.promo && v.views !== null && Number.isFinite(Date.parse(v.publishedAt)))
-    .map(v => ({ views: v.views as number, outlier: v.outlier, age: Math.max((now - Date.parse(v.publishedAt)) / 86400000, 0) })).filter(v => v.age >= 3)
-  const vpd = aged.map(v => v.views / Math.max(v.age, 1)), outVpd = viralOutliers(vpd), keptVpd = vpd.filter((_, i) => !outVpd.has(i))
-  const mature = aged.filter(v => v.age >= EVIDENCE.minMatureAgeDays).map(v => v.views), outV = viralOutliers(mature), keptViews = mature.filter((_, i) => !outV.has(i))
-  const recent: CohortStat = { n: keptVpd.length, medianVpd: median(keptVpd), nMature: keptViews.length, medianViews: median(keptViews) }
-  const base = withGrowth(a, growthFrom(recent, null, a.recentDays))
-  return { ...base, engineVersion: ENGINE_VERSION }
+export function upgradeAnalysis(a: TopicAnalysis, _now = Date.now()): TopicAnalysis | null {
+  return a.engineVersion === ENGINE_VERSION ? a : null
 }
 
 /** Where the topic is popular but little is published in a format: H "oportunidades por formato". */

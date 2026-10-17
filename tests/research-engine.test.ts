@@ -604,10 +604,10 @@ describe('recommendations: real videos only, thumbnails from the API, no repeats
   })
   it('never invents a thumbnail: a video the API gave none for stays without one', () => {
     const a = withVideos('tema sin miniatura', 'US', [v('Sin miniatura', { thumb: null, views: 100000, days: 20, subs: 900000 })], { niches: ['ia'] })
-    const item = input([a]).sections[0].items[0]; expect(item.kind === 'niche' && item.videos[0].thumbnailUrl).toBeNull()
+    const item = input([{ ...a, indices: { ...a.indices, demand: 70, supply: 20, competition: 30, opportunity: 80 } }]).sections[0].items[0]; expect(item.kind === 'niche' && item.videos[0].thumbnailUrl).toBeNull()
   })
   it('the neglected section takes only real opportunities; the Shorts/long sections only format gaps', () => {
-    const opp = { ...a1, verdict: 'oportunidad' as const }, sat = { ...a2, verdict: 'saturado' as const }
+    const opp = { ...a1, verdict: 'oportunidad' as const, indices: { ...a1.indices, demand: 70, supply: 20, competition: 30, opportunity: 80 } }, sat = { ...a2, verdict: 'saturado' as const }
     const r = input([opp, sat])
     const neglected = r.sections.find(s => s.id === 'neglected')!.items
     expect(neglected.map(i => (i.kind === 'niche' ? i.topic : ''))).toEqual([opp.topic])

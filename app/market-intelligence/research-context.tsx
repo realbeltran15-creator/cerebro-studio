@@ -8,7 +8,8 @@ import { jobKey, type Job } from '@/lib/research/guided'
 import { quotaDayKey } from '@/lib/research/cache'
 import { addUnits, effectiveUsage, emptyLedger, ledgerHeader, parseLedger, type Ledger, type ServerUsage } from '@/lib/research/ledger'
 import { LEDGER_HEADER } from '@/lib/research/guard-header'
-import { isNetworkFailure, networkFailureMessage } from '@/lib/research/net-error'
+import { isNetworkFailure, networkFailureMessage, unansweredMessage } from '@/lib/research/net-error'
+import { SessionExpiredError, sessionFetch } from '@/lib/research/session'
 import { UNITS } from '@/lib/research/filters'
 import type { Queries, SearchPlan } from '@/lib/research/search-plan'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
@@ -88,7 +89,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const remainingNow = useCallback(() => effectiveUsage(serverRef.current, ledgerRef.current).remaining, [])
   const searchesLeft = useCallback(() => effectiveUsage(serverRef.current, ledgerRef.current).searchesRemaining, [])
   /** Every paid request carries this browser's own tally, so a server that forgot the day (cold start, no table) never resets it. */
-  const paidFetch = useCallback((url: string) => fetch(url, { cache: 'no-store', headers: { [LEDGER_HEADER]: ledgerHeader(ledgerRef.current) } }), [])
+  const paidFetch = useCallback((url: string) => sessionFetch(url, { cache: 'no-store', headers: { [LEDGER_HEADER]: ledgerHeader(ledgerRef.current) } }), [])
   const usage = useMemo<Usage>(() => (serverUsage || ledger.units ? effectiveUsage(serverUsage, ledger) : null), [serverUsage, ledger])
   /** Records units this browser asked YouTube for and returns the new ledger. */
   const spend = useCallback((units: number, searches = 0) => { const next = addUnits(ledgerRef.current, units, Date.now(), searches); ledgerRef.current = next; setLedger(next); try { store()?.setItem(LEDGER, JSON.stringify(next)) } catch { /* private mode */ } return next }, [])
@@ -162,6 +163,8 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
         setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: j.analysis! })); ok++; if (!j.cached) { units += j.analysis!.units; spend(j.analysis!.units, Math.round(j.analysis!.units / UNITS.search)) }
         takeServer(j.usage)
       } catch (e) {
+        // Signed out: the request never reached the application. Say so, count nothing, do not retry and do not go on with the rest of the queue.
+        if (e instanceof SessionExpiredError) { failed.push(`${topic} · ${m.label}: ${e.message}`); setError(e.message); break }
         if (!isNetworkFailure(e)) { failed.push(`${topic} · ${m.label}: ${e instanceof Error ? e.message : 'error'}`); continue }
         // No answer arrived. Ask the server (free) whether it kept the result, and what it spent, before telling the user anything.
         let after: ServerUsage | null = null, recovered: TopicAnalysis | null = null
@@ -169,7 +172,10 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
           const p = new URLSearchParams({ q: topic, days: String(opts.recentDays), cacheOnly: '1' }); if (m.region) p.set('region', m.region); if (m.language) p.set('lang', m.language)
           const r = await paidFetch(`/api/research/topic?${p}`)
           if (r.ok) { const j = await r.json() as { analysis?: TopicAnalysis | null; usage?: ServerUsage }; recovered = j.analysis ?? null; after = j.usage ?? null }
-        } catch { /* still unreachable */ }
+        } catch (probe) {
+          if (probe instanceof SessionExpiredError) { failed.push(`${topic} · ${m.label}: ${probe.message}`); setError(probe.message); break }
+          /* still unreachable */
+        }
         if (recovered) { setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: recovered! })); ok++; takeServer(after); continue }
         if (after) takeServer(after)
         failed.push(`${topic} · ${m.label}: ${networkFailureMessage(before, after)}`)
@@ -189,7 +195,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
     try {
       // The analysis travels with the request: it may exist only in this browser (the server cache can be another instance, or empty after a deploy).
       const { sample: _sample, topVideos: _top, ...slim } = a
-      const r = await fetch('/api/research/topic', { method: 'POST', cache: 'no-store', headers: { 'content-type': 'application/json', [LEDGER_HEADER]: ledgerHeader(ledgerRef.current) }, body: JSON.stringify({ topic: a.topic, region: a.region, lang: a.language, days: a.recentDays, analysis: slim }) })
+      const r = await sessionFetch('/api/research/topic', { method: 'POST', cache: 'no-store', headers: { 'content-type': 'application/json', [LEDGER_HEADER]: ledgerHeader(ledgerRef.current) }, body: JSON.stringify({ topic: a.topic, region: a.region, lang: a.language, days: a.recentDays, analysis: slim }) })
       const j = await r.json() as { analysis?: TopicAnalysis; error?: string; needsAnalysis?: boolean; usage?: ServerUsage }
       if (!r.ok || !j.analysis) { setError(j.needsAnalysis ? `${j.error} (usa «Actualizar» en este tema).` : j.error ?? 'No se pudo medir el crecimiento.'); return }
       spend(UNITS.search, 1)
@@ -197,7 +203,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       const g = j.analysis
       setAnalyses(all => { const k = analysisKey(a.topic, a.region, a.language, a.recentDays); const cur = all[k] ?? a; return { ...all, [k]: { ...cur, growth: g.growth, growthPct: g.growthPct, indices: g.indices, stats: g.stats, reasons: g.reasons, evidence: g.evidence } } })
       takeServer(j.usage)
-    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo medir el crecimiento.') } finally { setGrowthBusy(false) }
+    } catch (e) { setError(isNetworkFailure(e) ? unansweredMessage('102 unidades · 1 búsqueda') : e instanceof Error ? e.message : 'No se pudo medir el crecimiento.') } finally { setGrowthBusy(false) }
   }, [spend, remainingNow, searchesLeft, paidFetch, takeServer])
 
   const run = useCallback((topics: string[], ms: Market[] = markets, opts: { refresh?: boolean } = {}) =>
@@ -217,7 +223,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
         if (!response.ok) { failed.push(`${m.label}: ${json.error ?? 'error'}`); if (response.status === 503 || response.status === 429) break; continue }
         spend(UNITS.search, 1)
         out.push({ region: m.region ?? m.label, videos: json.results ?? [] })
-      } catch (e) { failed.push(`${m.label}: ${e instanceof Error ? e.message : 'error'}`) }
+      } catch (e) { failed.push(`${m.label}: ${isNetworkFailure(e) ? unansweredMessage('102 unidades · 1 búsqueda') : e instanceof Error ? e.message : 'error'}`); if (e instanceof SessionExpiredError) break }
     }
     setSearch({ videos: out, ranFor: { q, labels: ms.map(m => m.label) }, busy: false,
       error: failed.length ? `falló en ${failed.length} mercado${failed.length === 1 ? '' : 's'} — ${failed.slice(0, 2).join(' · ')}` : '',

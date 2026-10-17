@@ -17,3 +17,8 @@ export function networkFailureMessage(before: ServerUsage | null, after: ServerU
   if (units <= 0 && searches <= 0) return `${head}. No se ha gastado cuota de YouTube: es seguro reintentar.`
   return `${head}, pero el servidor sí llegó a consultar YouTube (${units} unidades · ${searches} búsqueda${searches === 1 ? '' : 's'}). Reintentar puede volver a gastarlas: pulsa «Actualizar» solo si el resultado no aparece.`
 }
+
+/** The text for any failed request that has no server answer to read (growth, free-text search): never a bare «Failed to fetch». */
+export function unansweredMessage(cost: string): string {
+  return `No se recibió respuesta del servidor (se cortó la conexión antes de terminar). No se puede comprobar si llegó a gastar cuota (${cost}); reintenta una sola vez y mira el contador de uso antes de insistir.`
+}

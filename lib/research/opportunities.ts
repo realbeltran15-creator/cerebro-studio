@@ -28,7 +28,8 @@ export type Opportunity = {
 const MIN_RELEVANT = 20
 const label = (a: TopicAnalysis) => marketLabel(a.region, a.language)
 const relevantCount = (a: TopicAnalysis) => a.sampleSizes.top + a.sampleSizes.recent
-const solid = (a: TopicAnalysis) => a.confidence !== 'baja' && relevantCount(a) >= MIN_RELEVANT
+/** An analysis may back an opportunity only with a non-low confidence, enough relevant videos AND a demand figure the sample can represent. */
+const solid = (a: TopicAnalysis) => a.confidence !== 'baja' && relevantCount(a) >= MIN_RELEVANT && (a.stats?.demandReliability?.level ?? 'media') === 'media'
 const days = (iso: string, now: number) => Math.max((now - Date.parse(iso)) / 86400000, 0)
 
 const videoEvidence = (a: TopicAnalysis, pick: (v: TopicAnalysis['topVideos'][number]) => boolean, limit = 3): OppEvidence[] =>
@@ -59,7 +60,7 @@ export function detectOpportunities(analyses: TopicAnalysis[], now = Date.now())
       // 1. Real demand with little supply.
       if (a.indices.demand >= 50 && a.indices.supply <= 40 && a.indices.competition <= 60 && (!s || s.demandProfile.kind !== 'puntual')) {
         out.push({ ...baseOf(a), id: idOf('demanda_poca_oferta', a), kind: 'demanda_poca_oferta', strength: a.confidence === 'alta' && s?.sensitivity.stable ? 'fuerte' : 'moderada',
-          claim: `Los vídeos sobre «${a.topic}» ganan vistas de forma ${s?.demandProfile.kind === 'sostenida' ? 'sostenida' : 'apreciable'} mientras se publica poco (${a.indices.supply}/100 de oferta).`,
+          claim: `Los vídeos sobre «${a.topic}» ganan vistas de forma ${s?.demandProfile.kind === 'sostenida' ? 'sostenida' : 'apreciable'} mientras compite poco contenido con tracción (${a.indices.supply}/100 de oferta competitiva).`,
           evidence: [{ label: 'Demanda / oferta / competencia', value: `${a.indices.demand} / ${a.indices.supply} / ${a.indices.competition} (de 100)` }, ...(s ? [{ label: 'Tipo de demanda', value: s.demandProfile.note }, { label: 'Sensibilidad', value: s.sensitivity.note }] : []), ...videoEvidence(a, () => true)],
           uncertainty: 'Es una muestra de 25 vídeos por consulta. Poca oferta en YouTube puede significar también que el público no busca el tema en forma de vídeo: comprueba las vistas de los ejemplos antes de apostar.',
           nextStep: 'Abre los vídeos de ejemplo, anota qué preguntas dejan sin responder y prueba 3 vídeos antes de comprometer el canal.' })

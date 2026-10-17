@@ -15,6 +15,16 @@ export const METHOD = {
   demand: { noDemandBelow: 25, opportunityFrom: 50, topSampleWeight: 0.6, recentSampleWeight: 0.4, viewsPerDayForFullScore: 20_000 },
   competition: { weights: { authority: 0.4, dominance: 0.35, topChannelShare: 0.25 }, opportunityMax: 55, saturatedAbove: 70, bigChannelSubscribers: 100_000, authorityFullScoreSubscribers: 5_000_000 },
   supply: { weights: { uploadsPerWeek: 0.6, distinctChannels: 0.4 }, opportunityMax: 60, saturatedAbove: 75, uploadsPerWeekForFullScore: 100, channelsForFullScore: 25 },
+  /**
+   * Supply counts only COMPETITIVE videos: those with traction. Below `tractionViews` total views a video says almost nothing about audience pull (it is
+   * mostly its own channel's reach), so it is reported as published volume but does not weigh in the supply score. A video younger than
+   * `tractionGraceDays` that has not reached the threshold is «too new to judge», not «without traction».
+   */
+  traction: { tractionViews: 100, tractionGraceDays: 3 },
+  /** How much a demand figure is trusted. The factor shrinks the demand score when the sample cannot represent the topic; the reasons are always printed. */
+  demandReliability: { minRelevantTop: 20, lowBelowChannels: 6, topVideoShareMax: 0.4, top3VideoShareMax: 0.7, shortsViewShareMax: 0.5, factor: { media: 1, baja: 0.75, insuficiente: 0.5 } },
+  /** A score whose confidence is «baja» never reaches the band of an opportunity: it is capped just under `demand.opportunityFrom`. */
+  lowConfidenceOpportunityCap: 49,
 } as const
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n))
@@ -24,6 +34,9 @@ export function opportunityOf(demand: number, competition: number, supply: numbe
   const raw = growth === null ? open / (w.demand + w.openCompetition + w.openSupply) : open + w.growth * growth
   return Math.round(demand < METHOD.demand.noDemandBelow ? Math.min(raw, 20) : raw)
 }
+
+/** The opportunity index as it may be SHOWN: a low-confidence analysis cannot display a score in the opportunity band. */
+export const shownOpportunity = (raw: number, confidence: Confidence) => (confidence === 'baja' ? Math.min(raw, METHOD.lowConfidenceOpportunityCap) : raw)
 
 export function verdictOf(demand: number, competition: number, supply: number): Verdict {
   const { demand: d, competition: c, supply: s } = METHOD
@@ -61,6 +74,43 @@ export function smallChannelWins(videos: Array<{ subs: number | null; views: num
   const small = known.filter(v => (v.subs as number) < smallBelow)
   const wins = small.filter(v => (v.views as number) >= (v.subs as number)).length
   return { known: known.length, small: small.length, wins, share: small.length >= 3 ? wins / small.length : null }
+}
+
+// ---------- Demand: how representative the sample is ----------
+export type DemandReliability = {
+  level: 'media' | 'baja' | 'insuficiente'
+  /** Why it is not «media» (empty when it is). */
+  reasons: string[]
+  /** What multiplies the raw demand score (1 when the sample is representative). */
+  factor: number
+  /** The demand score before the factor. */
+  raw: number
+  figures: { relevantTop: number; channels: number; top1VideoShare: number; top3VideoShare: number; shortsViewShare: number; outliers: number }
+}
+
+/**
+ * Isolated hits (a viral Short, one channel's smash) can make a topic look in demand. This never says «alta»: a single search is one source and a
+ * sample, so the best a demand figure can be is «media». It is lowered by a small sample, few channels, views concentrated in one or three videos,
+ * or a demand carried by Shorts, whose views are not long-form demand.
+ */
+export function demandReliability(i: { raw: number; views: number[]; channelIds: string[]; shortViews: number; outliers: number }): DemandReliability {
+  const R = METHOD.demandReliability, n = i.views.length, total = i.views.reduce((t, x) => t + x, 0)
+  const sorted = [...i.views].sort((a, b) => b - a)
+  const top1 = total ? (sorted[0] ?? 0) / total : 0, top3 = total ? sorted.slice(0, 3).reduce((t, x) => t + x, 0) / total : 0
+  const shortsShare = total ? i.shortViews / total : 0
+  const channels = new Set(i.channelIds.filter(Boolean)).size
+  const pct = (x: number) => `${Math.round(x * 100)} %`
+  const reasons: string[] = []
+  let insufficient = false
+  if (n < 8) { insufficient = true; reasons.push(`solo ${n} vídeos relevantes entre los más vistos (se piden al menos ${R.minRelevantTop} para que la mediana represente al tema)`) }
+  else if (n < R.minRelevantTop) reasons.push(`muestra pequeña: ${n} vídeos relevantes entre los más vistos (se piden al menos ${R.minRelevantTop})`)
+  if (n >= 5 && channels < R.lowBelowChannels) reasons.push(`solo ${channels} canales distintos detrás de esos vídeos (se piden al menos ${R.lowBelowChannels})`)
+  if (n >= 5 && top1 > R.topVideoShareMax) reasons.push(`un solo vídeo reúne el ${pct(top1)} de las vistas`)
+  else if (n >= 5 && top3 > R.top3VideoShareMax) reasons.push(`tres vídeos reúnen el ${pct(top3)} de las vistas`)
+  if (n >= 5 && shortsShare > R.shortsViewShareMax) reasons.push(`el ${pct(shortsShare)} de las vistas son de Shorts: su alcance no equivale a demanda de vídeo largo`)
+  if (i.outliers >= Math.max(2, n * 0.25)) reasons.push(`${i.outliers} vídeos virales atípicos en una muestra de ${n}`)
+  const level: DemandReliability['level'] = insufficient ? 'insuficiente' : reasons.length ? 'baja' : 'media'
+  return { level, reasons, factor: R.factor[level], raw: i.raw, figures: { relevantTop: n, channels, top1VideoShare: Math.round(top1 * 100) / 100, top3VideoShare: Math.round(top3 * 100) / 100, shortsViewShare: Math.round(shortsShare * 100) / 100, outliers: i.outliers } }
 }
 
 // ---------- Demand: one hit vs sustained interest ----------

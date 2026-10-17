@@ -83,19 +83,19 @@ describe('problem 8 — supply uses one consistent window, and an old video cann
   const dense = (k: number, extra: O[] = []) => [...many(k, i => ({ title: `tema video ${i}`, lang: 'en', days: 1 + i * 0.1, ch: `d${i}` })), ...extra.map(vid)]
   it('a full sample is measured over its own span: 25 videos in ~3.5 days is a high rate, whatever survives the relevance filter', () => {
     const a = analyzeTopic(mk(dense(25)), NOW)
-    const rate = Number(a.evidence.find(e => e.label.startsWith('Subidas por semana'))!.value)
+    const rate = Number(/([\d.]+) por semana/.exec(a.evidence.find(e => e.label.startsWith('Publicados en una ventana'))!.value)![1])
     expect(rate).toBeGreaterThan(40)
   })
   it('one stray month-old result does not stretch the window and halve the rate', () => {
     const clean = analyzeTopic(mk(dense(24)), NOW), withOld = analyzeTopic(mk(dense(24, [{ title: 'tema video viejo', lang: 'en', days: 29, ch: 'old' }])), NOW)
-    const r = (a: ReturnType<typeof analyzeTopic>) => Number(a.evidence.find(e => e.label.startsWith('Subidas por semana'))!.value)
+    const r = (a: ReturnType<typeof analyzeTopic>) => Number(/([\d.]+) por semana/.exec(a.evidence.find(e => e.label.startsWith('Publicados en una ventana'))!.value)![1])
     expect(r(withOld)).toBeGreaterThan(r(clean) * 0.9)
-    expect(withOld.evidence.find(e => e.label.startsWith('Subidas por semana'))!.label).toMatch(/antiguo/)
+    expect(withOld.evidence.find(e => e.label.startsWith('Publicados en una ventana'))!.label).toMatch(/antiguo/)
   })
   it('off-topic results still define the window: filtering them out does not change the span', () => {
     const relevantOnly = dense(10), padded = [...dense(10), ...many(15, i => ({ title: `cooking pasta ${i}`, lang: 'en', days: 1 + i * 0.1, ch: `x${i}` }))]
     const a = analyzeTopic(mk(relevantOnly), NOW), b = analyzeTopic(mk(padded), NOW)
-    const label = (x: ReturnType<typeof analyzeTopic>) => x.evidence.find(e => e.label.startsWith('Subidas por semana'))!.label
+    const label = (x: ReturnType<typeof analyzeTopic>) => x.evidence.find(e => e.label.startsWith('Publicados en una ventana'))!.label
     expect(label(a)).toMatch(/ventana de 30 días/)       // not full: the declared window
     expect(label(b)).toMatch(/ventana de [234] días/)   // full raw sample: its real span
   })

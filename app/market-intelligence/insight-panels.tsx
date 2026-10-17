@@ -165,7 +165,7 @@ const dateEs = (iso: string) => (iso ? new Date(iso).toLocaleDateString('es-ES',
 export function EstimateBlock({ title, e }: { title: string; e: RevenueEstimate }) {
   if (e.status === 'desconocido') return <p className="small"><span className="tag desconocido">DESCONOCIDO</span> <b>{title}:</b> {e.reason}</p>
   return <div className="small" style={{ margin: '6px 0' }}>
-    <p style={{ margin: 0 }}><span className="tag estimado">ESTIMADO</span> <b>{title}:</b> {rng(e.range)} · confianza {confidenceLabel(e.confidence).toLowerCase()}</p>
+    <p style={{ margin: 0 }}><span className="tag estimado">ESTIMADO</span> <b>{title}:</b> {rng(e.range)} · confianza {confidenceLabel(e.confidence).toLowerCase()} · <span className="muted">hipótesis, no es una ganancia verificada</span></p>
     <details><summary className="muted">Fórmula y supuestos</summary>
       <p style={{ margin: '4px 0' }}><b>Fórmula:</b> {e.formula}</p>
       <ul style={{ margin: '0 0 0 16px' }}>{e.assumptions.map(x => <li key={x}>{x}</li>)}</ul>
@@ -198,7 +198,7 @@ export function EvidencePanel({ a }: { a: TopicAnalysis }) {
   return <details style={{ marginTop: 8 }} open aria-label="Vídeos y canales que respaldan">
     <summary className="small"><b>Vídeos y canales que respaldan esta conclusión</b> <span className="muted">· país pedido: {country} · idioma: {lang}</span></summary>
     <div className="tableScroll"><table className="dataTable" aria-label={`Vídeos de ${a.topic}`}>
-      <thead><tr><th>Vídeo</th><th>Canal</th><th>Visualizaciones</th><th>Publicado</th><th>Vistas/día</th><th>Ingreso publicitario estimado</th></tr></thead>
+      <thead><tr><th>Vídeo</th><th>Canal</th><th>Visualizaciones</th><th>Publicado</th><th>Vistas/día</th><th>Ingreso publicitario estimado (hipótesis)</th></tr></thead>
       <tbody>{vids.map(v => { const e = videoRevenue(v, a.region); return <tr key={v.videoId}>
         <td><a href={v.url} target="_blank" rel="noreferrer">{v.title}</a></td>
         <td><a href={`https://www.youtube.com/channel/${v.channelId}`} target="_blank" rel="noreferrer">{v.channelTitle}</a><div className="muted">{typeof v.observed.channelSubscribers === 'number' ? `${fmtNumber(v.observed.channelSubscribers)} suscriptores` : 'suscriptores no públicos'}{v.channelCountry ? ` · país declarado por el canal: ${shortCountry(v.channelCountry)} (no es la audiencia)` : ''}</div></td>
