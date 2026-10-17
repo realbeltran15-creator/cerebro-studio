@@ -50,3 +50,32 @@ describe('composition', () => {
     expect(s.origin).toEqual({ kind: 'repurpose', sourceJobId: 'job1' })
   })
 })
+
+import { compositionCues, cuesToSrt, cuesToVtt } from '@/lib/editor/composition'
+describe('subtitle export from a montage', () => {
+  it('uses the renderer timing on the montage timeline (clip offsets added) and writes valid SRT/VTT', () => {
+    const c = base()
+    c.clips[1].narration = 'segunda escena con texto'
+    const cues = compositionCues(c)
+    expect(cues).toEqual([{ startMs: 0, endMs: 4000, text: 'x' }, { startMs: 4000, endMs: 7000, text: 'segunda escena con texto' }])
+    expect(cuesToSrt(cues)).toBe('1\n00:00:00,000 --> 00:00:04,000\nx\n\n2\n00:00:04,000 --> 00:00:07,000\nsegunda escena con texto\n')
+    expect(cuesToVtt(cues).startsWith('WEBVTT\n\n00:00:00.000 --> 00:00:04.000\nx\n')).toBe(true)
+    expect(cuesToSrt(compositionCues({ clips: [{ ...c.clips[0], narration: null }] }))).toBe('')
+  })
+})
+
+import { applyTemplate, BUILT_IN_TEMPLATES, templateFrom } from '@/lib/editor/templates'
+describe('montage templates', () => {
+  it('applies global settings and per-clip transition/motion without touching content, trims or assets', () => {
+    const c = base(); c.clips[0].trimInMs = 1200
+    const short = BUILT_IN_TEMPLATES.find(t => t.id === 'short-rapido')!
+    const out = applyTemplate(c, short)
+    expect(out).toMatchObject({ format: '9:16', fadeMs: 0, hookMs: 3000, subtitles: true })
+    expect(out.clips.map(x => [x.transition, x.motion, x.visualAssetId, x.narration, x.trimInMs])).toEqual([['cut', 'kenburns', 'img', 'x', 1200], ['cut', 'kenburns', 'v', null, undefined]])
+    expect(c.format).toBe('16:9')   // the original is not mutated
+  })
+  it('captures the current settings as a reusable template', () => {
+    const t = templateFrom(applyTemplate(base(), BUILT_IN_TEMPLATES[2]), '  Mi serie  ')
+    expect(t).toMatchObject({ name: 'Mi serie', format: '9:16', transition: 'fade', motion: 'none', hookMs: 2500 })
+  })
+})

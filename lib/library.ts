@@ -44,3 +44,32 @@ export function describeAsset(a: LibraryAsset) {
     sourceUrl: (a.source_url && /^https?:\/\//.test(a.source_url) ? a.source_url : null) ?? str(p.originalUrl),
   }
 }
+
+// ---------- Safe deletion ----------
+/** What still points at an asset. Publication jobs and render outputs are hard references; derived files only a warning. */
+export type AssetReferences = { publications: Array<{ id: string; platform: string; status: string }>; renders: Array<{ id: string }>; derived: Array<{ id: string; asset_type: string }> }
+
+/**
+ * Deleting is permanent (the file is removed from storage). It is refused while a publication job uses the file (any status: a published
+ * job keeps its record, an approved one would fail or upload something else). Render outputs and derived files (subtitles, versions) are only
+ * reported: the montage can be rendered again and derived files are separate files that keep working.
+ */
+export function deletionCheck(refs: AssetReferences): { allowed: boolean; reasons: string[]; warnings: string[] } {
+  const reasons: string[] = []
+  if (refs.publications.length) reasons.push(`Lo usa${refs.publications.length > 1 ? 'n' : ''} ${refs.publications.length} publicación${refs.publications.length > 1 ? 'es' : ''} (${refs.publications.map(p => `${p.platform}: ${p.status}`).join(', ')}). Quítalo de la publicación antes de borrarlo.`)
+  const warnings = [
+    ...(refs.renders.length ? ['Es el resultado de un montaje guardado: el montaje se conserva y podrás volver a renderizarlo.'] : []),
+    ...(refs.derived.length ? [`Tiene ${refs.derived.length} archivo${refs.derived.length > 1 ? 's' : ''} derivado${refs.derived.length > 1 ? 's' : ''} (p. ej. subtítulos) que se conservan.`] : []),
+  ]
+  return { allowed: reasons.length === 0, reasons, warnings }
+}
+
+/** Library page size: the list is loaded in pages instead of a fixed cap of 500 rows. */
+export const LIBRARY_PAGE = 120
+
+/** Download a text file in the browser (SRT/VTT exports). */
+export function downloadText(filename: string, text: string, mime = 'text/plain') {
+  const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }))
+  const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { rateLimited } from '@/lib/security/rate-limit'
 import { downloadObject, putObject, removeObject } from '@/lib/storage/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { routeStt, toSrt, toVtt, transcribe } from '@/lib/providers/transcribe'
@@ -18,6 +19,7 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const limited = rateLimited(user.id, 'transcribe'); if (limited) return limited
   const body = await request.json().catch(() => null) as { assetId?: string; language?: string } | null
   const language = body?.language && /^[a-z]{2}$/.test(body.language) ? body.language : undefined
   const { data: asset } = await supabase.from('assets').select('id,project_id,asset_type,storage_path,provenance').eq('id', body?.assetId ?? '').eq('owner_id', user.id).maybeSingle()

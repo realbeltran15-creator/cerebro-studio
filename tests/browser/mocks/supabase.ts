@@ -12,7 +12,7 @@ function q(table: string) {
     neq(c: string, v: any) { filters.push(r => r[c] !== v); return api },
     in(c: string, v: any[]) { filters.push(r => v.includes(r[c])); return api },
     not(c: string, _o: string, v: any) { filters.push(r => r[c] !== v); return api },
-    order() { return api }, limit() { return api },
+    order() { return api }, limit() { return api }, range() { return api },
     update(p: Row) { op = 'update'; payload = p; return api },
     insert(p: Row) { op = 'insert'; payload = p; return api },
     delete() { op = 'delete'; return api },

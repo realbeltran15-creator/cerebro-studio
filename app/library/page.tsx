@@ -8,7 +8,8 @@ import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { modelById } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
-import { describeAsset, originOf, type LibraryAsset } from '@/lib/library'
+import { deletionCheck, describeAsset, downloadText, LIBRARY_PAGE, originOf, type AssetReferences, type LibraryAsset } from '@/lib/library'
+import { deleteAsset, uploadKindFor, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Project = { id: string; name: string }
 type Scene = { id: string; position: number }
@@ -32,17 +33,87 @@ export default function LibraryPage() {
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
 
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const COLS = 'id,asset_type,project_id,storage_path,source_provider,source_url,license_status,provenance,created_at'
   useEffect(() => {
     void (async () => {
       const [a, p, s] = await Promise.all([
-        supabase.from('assets').select('id,asset_type,project_id,storage_path,source_provider,source_url,license_status,provenance,created_at').order('created_at', { ascending: false }).limit(500),
+        supabase.from('assets').select(COLS).order('created_at', { ascending: false }).range(0, LIBRARY_PAGE - 1),
         supabase.from('projects').select('id,name'),
         supabase.from('scenes').select('id,position'),
       ])
-      if (a.error) setError(a.error.message); else setAssets((a.data ?? []) as LibraryAsset[])
+      if (a.error) setError(a.error.message); else { setAssets((a.data ?? []) as LibraryAsset[]); setHasMore((a.data ?? []).length === LIBRARY_PAGE) }
       setProjects((p.data ?? []) as Project[]); setScenes((s.data ?? []) as Scene[])
     })()
   }, [supabase])
+  async function loadMore() {
+    setLoadingMore(true)
+    const { data, error: e } = await supabase.from('assets').select(COLS).order('created_at', { ascending: false }).range(assets.length, assets.length + LIBRARY_PAGE - 1)
+    setLoadingMore(false)
+    if (e) { setError(e.message); return }
+    const rows = (data ?? []) as LibraryAsset[]
+    setAssets(list => [...list, ...rows.filter(r => !list.some(x => x.id === r.id))]); setHasMore(rows.length === LIBRARY_PAGE)
+  }
+
+  // ---------- Upload ----------
+  const [uploading, setUploading] = useState(false)
+  const [upFile, setUpFile] = useState<File | null>(null)
+  const [upKind, setUpKind] = useState<UploadKind>('image')
+  const [upProject, setUpProject] = useState('')
+  const [upTitle, setUpTitle] = useState('')
+  const [upLicense, setUpLicense] = useState<LicenseStatus>('owned')
+  const [upProgress, setUpProgress] = useState<number | null>(null)
+  function pickFile(f: File | null) {
+    setUpFile(f); setError('')
+    if (!f) return
+    const k = uploadKindFor(f)
+    if (!k) { setError(`Formato no admitido (${f.type || 'desconocido'}).`); setUpFile(null); return }
+    setUpKind(k); setUpTitle(t => t || f.name.replace(/\.[^.]+$/, ''))
+  }
+  async function upload() {
+    if (!upFile || !upProject) { setError('Elige un archivo y el proyecto al que pertenece.'); return }
+    const problem = validateUpload(upKind, upFile)
+    if (problem) { setError(problem); return }
+    setBusy('upload'); setError(''); setNotice(''); setUpProgress(0)
+    try {
+      const { id } = await uploadProjectMedia(supabase, { projectId: upProject, kind: upKind, file: upFile, title: upTitle, license: upLicense, onProgress: f => setUpProgress(f) })
+      const { data } = await supabase.from('assets').select(COLS).eq('id', id).maybeSingle()
+      if (data) { setAssets(list => [data as LibraryAsset, ...list]); setSelected(data as LibraryAsset) }
+      setNotice('Archivo subido a la Biblioteca.'); setUpFile(null); setUpTitle(''); setUploading(false)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo subir el archivo.') }
+    finally { setBusy(''); setUpProgress(null) }
+  }
+
+  // ---------- Safe deletion ----------
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; check: ReturnType<typeof deletionCheck> } | null>(null)
+  async function referencesOf(a: LibraryAsset): Promise<AssetReferences> {
+    const [pubs, renders] = await Promise.all([
+      supabase.from('publication_jobs').select('id,platform,status,payload').limit(500),
+      supabase.from('render_jobs').select('id').eq('output_asset_id', a.id).limit(20),
+    ])
+    if (pubs.error) throw new Error(pubs.error.message)
+    const publications = ((pubs.data ?? []) as Array<{ id: string; platform: string; status: string; payload: Record<string, unknown> | null }>)
+      .filter(j => j.payload?.videoAssetId === a.id || j.payload?.thumbnailAssetId === a.id).map(({ id, platform, status }) => ({ id, platform, status }))
+    const derived = assets.filter(x => x.provenance?.sourceAssetId === a.id || (Array.isArray(x.provenance?.inputs) && (x.provenance.inputs as Array<{ id?: string }>).some(i => i.id === a.id)))
+    return { publications, renders: renders.error ? [] : ((renders.data ?? []) as Array<{ id: string }>), derived: derived.map(d => ({ id: d.id, asset_type: d.asset_type })) }
+  }
+  async function askDelete(a: LibraryAsset) {
+    setError(''); setNotice('')
+    try { setConfirmDelete({ id: a.id, check: deletionCheck(await referencesOf(a)) }) }
+    catch (e) { setError(`No se pudo comprobar si el archivo está en uso: ${e instanceof Error ? e.message : 'error'}. No se ha borrado nada.`) }
+  }
+  async function doDelete(a: LibraryAsset) {
+    setBusy(a.id)
+    try {
+      // Re-checked right before deleting: a publication may have been created in the meantime.
+      const check = deletionCheck(await referencesOf(a))
+      if (!check.allowed) { setConfirmDelete({ id: a.id, check }); return }
+      await deleteAsset(supabase, a)
+      setAssets(list => list.filter(x => x.id !== a.id)); setSelected(null); setConfirmDelete(null); setNotice('Archivo borrado.')
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo borrar.') }
+    finally { setBusy('') }
+  }
 
   async function url(id: string) {
     if (urls[id]) return urls[id]
@@ -67,7 +138,7 @@ export default function LibraryPage() {
     setBusy('')
     if (!r.ok || !j.asset) { setError(`${j.error ?? 'No se pudo transcribir.'}${j.attempts?.length ? ` (${j.attempts.join(' · ')})` : ''}`); return }
     setNotice(j.duplicate ? 'Este archivo ya tenía subtítulos.' : 'Subtítulos creados y guardados en la Biblioteca.')
-    const { data } = await supabase.from('assets').select('id,asset_type,project_id,storage_path,source_provider,source_url,license_status,provenance,created_at').eq('id', j.asset.id).maybeSingle()
+    const { data } = await supabase.from('assets').select(COLS).eq('id', j.asset.id).maybeSingle()
     if (data) { setAssets(list => list.some(x => x.id === data.id) ? list : [data as LibraryAsset, ...list]); setSelected(data as LibraryAsset) }
   }
   async function copy(text: string) {
@@ -90,16 +161,32 @@ export default function LibraryPage() {
   }
 
   return (
-    <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<Link className="buttonLink ghost" href="/usage">Costes y créditos</Link>}>
+    <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<><button type="button" className="small" onClick={() => setUploading(u => !u)}><Icon name="upload" size={14} />Subir archivo</button><Link className="buttonLink ghost" href="/usage">Costes y créditos</Link></>}>
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
+      {uploading && (
+        <section className="panel" aria-label="Subir archivo" style={{ marginBottom: 14 }}>
+          <div className="field-row">
+            <label htmlFor="up-file">Archivo<input id="up-file" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,audio/*" onChange={e => pickFile(e.target.files?.[0] ?? null)} /></label>
+            <label htmlFor="up-kind">Tipo<select id="up-kind" value={upKind} onChange={e => setUpKind(e.target.value as UploadKind)}>{(['image', 'video', 'voice', 'music', 'sfx'] as UploadKind[]).map(k => <option key={k} value={k}>{typeLabels[k]}</option>)}</select></label>
+            <label htmlFor="up-project">Proyecto<select id="up-project" value={upProject} onChange={e => setUpProject(e.target.value)}><option value="">Elige…</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            <label htmlFor="up-title">Título<input id="up-title" value={upTitle} onChange={e => setUpTitle(e.target.value)} maxLength={160} /></label>
+            <label htmlFor="up-license">Licencia<select id="up-license" value={upLicense} onChange={e => setUpLicense(e.target.value as LicenseStatus)}><option value="owned">Propio</option><option value="licensed">Con licencia</option><option value="public_domain">Dominio público</option><option value="restricted">Restringido (no se podrá publicar)</option></select></label>
+          </div>
+          <p className="muted small">Imágenes hasta 25 MB, vídeo hasta 50 MB, audio hasta 50 MB. Se guarda en tu almacenamiento privado con su licencia.</p>
+          <div className="pageActions">
+            <button type="button" disabled={!upFile || !upProject || busy === 'upload'} onClick={() => void upload()}>{busy === 'upload' ? `Subiendo… ${Math.round((upProgress ?? 0) * 100)} %` : 'Subir'}</button>
+            <button type="button" className="ghost" onClick={() => { setUploading(false); setUpFile(null) }}>Cancelar</button>
+          </div>
+        </section>
+      )}
       <div className="field-row" style={{ marginBottom: 14 }}>
         <label htmlFor="lib-q">Buscar<input id="lib-q" value={q} onChange={e => setQ(e.target.value)} placeholder="Prompt, autor, modelo, licencia…" /></label>
         <label htmlFor="lib-type">Tipo<select id="lib-type" value={type} onChange={e => setType(e.target.value)}><option value="">Todos</option>{kinds.map(k => <option key={k} value={k}>{typeLabels[k] ?? k}</option>)}</select></label>
         <label htmlFor="lib-origin">Origen<select id="lib-origin" value={origin} onChange={e => setOrigin(e.target.value)}><option value="">Todos</option>{Object.entries(originLabels).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label htmlFor="lib-project">Proyecto<select id="lib-project" value={projectId} onChange={e => setProjectId(e.target.value)}><option value="">Todos</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
       </div>
-      <p className="muted small" style={{ marginBottom: 10 }}>{visible.length} de {assets.length} archivos. Pulsa uno para ver cómo se creó.</p>
+      <p className="muted small" style={{ marginBottom: 10 }}>{visible.length} de {assets.length}{hasMore ? '+' : ''} archivos cargados. Pulsa uno para ver cómo se creó.{hasMore && <> <button type="button" className="linkish" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? 'Cargando…' : 'Cargar más'}</button></>}</p>
 
       <div className="libLayout">
         <div className="thumbGrid">
@@ -143,7 +230,20 @@ export default function LibraryPage() {
                 ? <button type="button" className="ghost small" onClick={() => setSelected(subtitleOf(selected.id)!)}>Ver subtítulos</button>
                 : <button type="button" className="ghost small" disabled={busy === selected.id} onClick={() => void transcribeAsset(selected)}><Icon name="script" size={14} />{busy === selected.id ? 'Transcribiendo…' : 'Transcribir (subtítulos)'}</button>)}
               {selected.asset_type === 'subtitle' && typeof selected.provenance?.srt === 'string' && <button type="button" className="ghost small" onClick={() => void copy(String(selected.provenance?.srt))}><Icon name="copy" size={14} />Copiar SRT</button>}
+              {selected.asset_type === 'subtitle' && typeof selected.provenance?.srt === 'string' && <button type="button" className="ghost small" onClick={() => downloadText(`${d.title.replace(/[^\p{L}\p{N} _-]+/gu, '').slice(0, 60) || 'subtitulos'}.srt`, String(selected.provenance?.srt), 'application/x-subrip')}><Icon name="upload" size={14} />Descargar SRT</button>}
+              <button type="button" className="ghost small danger" disabled={busy === selected.id} onClick={() => void askDelete(selected)}><Icon name="trash" size={14} />Borrar</button>
             </div>
+            {confirmDelete?.id === selected.id && (
+              <div className={confirmDelete.check.allowed ? 'notice' : 'error'} role="alert">
+                {confirmDelete.check.allowed ? <p>¿Borrar definitivamente este archivo? Se elimina del almacenamiento y no se puede deshacer.</p> : <p>No se puede borrar:</p>}
+                {confirmDelete.check.reasons.map(r => <p key={r} className="small">{r}</p>)}
+                {confirmDelete.check.warnings.map(w => <p key={w} className="small">{w}</p>)}
+                <div className="pageActions">
+                  {confirmDelete.check.allowed && <button type="button" className="danger small" disabled={busy === selected.id} onClick={() => void doDelete(selected)}>{busy === selected.id ? 'Borrando…' : 'Sí, borrar'}</button>}
+                  <button type="button" className="ghost small" onClick={() => setConfirmDelete(null)}>Cancelar</button>
+                </div>
+              </div>
+            )}
             {selected.asset_type === 'subtitle' && typeof selected.provenance?.text === 'string' && <pre className="small">{String(selected.provenance.text).slice(0, 4000)}</pre>}
           </aside>
         )}

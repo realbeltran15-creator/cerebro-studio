@@ -86,3 +86,16 @@ describe('POST /api/studio/generate: server-side spending cap and job recording'
     expect(row.config.jobs[0]).toMatchObject({ state: 'pending', tier: 'paid', token: r.json.job.token })
   })
 })
+
+import { _resetRateLimits, hit } from '@/lib/security/rate-limit'
+describe('rate limit (per instance)', () => {
+  it('allows up to the limit inside the window, then refuses with a retry delay, and recovers', () => {
+    _resetRateLimits()
+    const rule = { limit: 3, windowMs: 60_000 }
+    for (let i = 0; i < 3; i++) expect(hit('k', rule, 1000 + i).allowed).toBe(true)
+    const r = hit('k', rule, 2000)
+    expect(r.allowed).toBe(false); expect(r.retryAfterS).toBeGreaterThan(0)
+    expect(hit('k', rule, 62_000).allowed).toBe(true)
+    expect(hit('other', rule, 2000).allowed).toBe(true)
+  })
+})

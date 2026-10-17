@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { rateLimited } from '@/lib/security/rate-limit'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { analyseReference, createPlan, publicAnalysis, RecreateError } from '@/lib/recreate/run'
 
@@ -13,6 +14,7 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const limited = rateLimited(user.id, 'recreate'); if (limited) return limited
   const body = await request.json().catch(() => null) as { projectId?: string; url?: string; transcript?: string; idea?: string; consistent?: boolean } | null
   const projectId = body?.projectId?.trim()
   if (!projectId) return NextResponse.json({ error: 'projectId es obligatorio.' }, { status: 400 })

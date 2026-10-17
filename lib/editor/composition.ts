@@ -278,3 +278,20 @@ export function videoBitrateFor(durationMs: number, maxBytes = 50 * 1024 * 1024,
   const budget = (maxBytes * 8 * 0.9) / seconds - audio
   return Math.max(Math.min(preferred, Math.floor(budget)), 250_000)
 }
+
+// ---------- Subtitle export (SRT / VTT) ----------
+export type CaptionCue = { startMs: number; endMs: number; text: string }
+
+/** The same caption cues the renderer burns into the video (same chunking and timing), on the montage's own timeline. */
+export function compositionCues(c: Pick<Composition, 'clips'> & { subtitles?: boolean }): CaptionCue[] {
+  const starts = clipStarts(c)
+  return c.clips.flatMap((clip, i) => captionChunks(clip.narration ?? null, clip.durationMs).map(ch => ({ startMs: Math.round(starts[i] + ch.startMs), endMs: Math.round(starts[i] + ch.endMs), text: ch.text })))
+}
+
+const two = (n: number) => String(Math.floor(n)).padStart(2, '0')
+function stampMs(ms: number, sep: ',' | '.') {
+  const t = Math.max(0, Math.round(ms))
+  return `${two(t / 3_600_000)}:${two((t % 3_600_000) / 60_000)}:${two((t % 60_000) / 1000)}${sep}${String(t % 1000).padStart(3, '0')}`
+}
+export const cuesToSrt = (cues: CaptionCue[]) => cues.map((q, i) => `${i + 1}\n${stampMs(q.startMs, ',')} --> ${stampMs(q.endMs, ',')}\n${q.text}\n`).join('\n')
+export const cuesToVtt = (cues: CaptionCue[]) => `WEBVTT\n\n${cues.map(q => `${stampMs(q.startMs, '.')} --> ${stampMs(q.endMs, '.')}\n${q.text}\n`).join('\n')}`

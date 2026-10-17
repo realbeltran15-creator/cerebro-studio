@@ -98,3 +98,27 @@ describe('ElevenLabs', () => {
     expect(sfx.uri.startsWith('data:audio/mpeg;base64,')).toBe(true)
   })
 })
+
+import { guardConcurrentRun, STALE_RUN_MS } from '@/lib/automations/run'
+describe('automations: no parallel runs, orphaned runs are closed', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z')
+  const db = (runs: Array<{ id: string; started_at: string }>, updates: unknown[]) => ({
+    from: () => {
+      const q: Record<string, any> = {}
+      for (const m of ['select', 'eq', 'limit']) q[m] = () => q
+      q.then = (res: any) => Promise.resolve({ data: runs, error: null }).then(res)
+      q.update = (row: unknown) => { updates.push(row); const u: Record<string, any> = {}; u.eq = () => u; u.then = (res: any) => Promise.resolve({ error: null }).then(res); return u }
+      return q
+    },
+  }) as never
+  it('refuses to start while a recent run is in progress', async () => {
+    const updates: unknown[] = []
+    expect(await guardConcurrentRun(db([{ id: 'r1', started_at: new Date(now - 60_000).toISOString() }], updates), { id: 'a', owner_id: 'u' }, now)).toMatch(/en curso/)
+    expect(updates).toHaveLength(0)
+  })
+  it('marks a run older than the function limit as failed and lets the next one start', async () => {
+    const updates: Array<Record<string, unknown>> = []
+    expect(await guardConcurrentRun(db([{ id: 'r1', started_at: new Date(now - STALE_RUN_MS - 1000).toISOString() }], updates), { id: 'a', owner_id: 'u' }, now)).toBeNull()
+    expect(updates[0]).toMatchObject({ status: 'failed' })
+  })
+})

@@ -23,7 +23,7 @@ type Model = {
   allowance: { pool: string; kind: 'daily' | 'monthly' | 'promo'; unit: string; note: string; remaining: number | null; amount: number; endsAt: string | null; label: string | null; unitsPerGeneration: number | null } | null
 }
 type Suggestion = { message: string; free: Array<{ id: string; label: string; quality: number; evidence: Evidence; warnings: string[] }>; paid: Array<{ id: string; label: string; estimateUsd: number }> }
-const evidenceLabel: Record<Evidence, string> = { tested: 'Probado', documented: 'Documentado', secondary: 'Fuente secundaria', unverified: 'Sin verificar' }
+const evidenceLabel: Record<Evidence, string> = { tested: 'Probado en vivo', documented: 'NO VERIFICADO (documentado)', secondary: 'NO VERIFICADO (fuente secundaria)', unverified: 'NO VERIFICADO' }
 const rightsLabel: Record<Rights, string> = { commercial: 'Uso comercial', plan_dependent: 'Comercial según plan', non_commercial: 'No comercial', check_terms: 'Revisar licencia' }
 type RefAsset = { id: string; provenance: Record<string, unknown> | null }
 type Balance = { used: number; limit: number; remaining: number; resetsAt: string | null; tier: string | null } | null

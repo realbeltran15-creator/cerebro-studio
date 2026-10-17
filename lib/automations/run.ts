@@ -155,7 +155,28 @@ async function runShortsFactory(db: SupabaseClient, a: Automation) {
 }
 
 /** Runs one automation and records the run. Never throws: failures are stored on the run. */
+/** A run still «running» after this long belongs to a function that was killed (the route's maxDuration is 300 s). */
+export const STALE_RUN_MS = 15 * 60 * 1000
+
+/**
+ * Before starting: close runs orphaned by a killed function (so the history never shows «running» forever) and refuse to start a second run
+ * of the same automation while one is genuinely in progress (cron and a manual click at the same time).
+ */
+export async function guardConcurrentRun(db: SupabaseClient, a: Pick<Automation, 'id' | 'owner_id'>, now = Date.now()): Promise<string | null> {
+  const { data } = await db.from('automation_runs').select('id,started_at').eq('automation_id', a.id).eq('owner_id', a.owner_id).eq('status', 'running').limit(20)
+  const running = (data ?? []) as Array<{ id: string; started_at?: string | null }>
+  let active = false
+  for (const r of running) {
+    const at = Date.parse(r.started_at ?? '')
+    if (Number.isFinite(at) && now - at < STALE_RUN_MS) { active = true; continue }
+    await db.from('automation_runs').update({ status: 'failed', error: 'Ejecución interrumpida: la función terminó antes de completarla (tiempo agotado o despliegue).', finished_at: new Date(now).toISOString() }).eq('id', r.id).eq('status', 'running')
+  }
+  return active ? 'Ya hay una ejecución en curso de esta automatización; espera a que termine.' : null
+}
+
 export async function executeAutomation(db: SupabaseClient, a: Automation, trigger: 'manual' | 'schedule') {
+  const busy = await guardConcurrentRun(db, a)
+  if (busy) return { ok: false as const, error: busy }
   const { data: run, error } = await db.from('automation_runs').insert({ owner_id: a.owner_id, automation_id: a.id, trigger, status: 'running' }).select('id').single()
   if (error) return { ok: false as const, error: error.message }
   const runId = (run as { id: string }).id

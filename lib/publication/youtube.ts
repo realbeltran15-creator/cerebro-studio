@@ -21,6 +21,11 @@ export type YouTubePayload = {
   containsSyntheticMedia?: boolean
   videoAssetId?: string
   thumbnailAssetId?: string | null
+  /**
+   * Scheduled publication handled by YouTube itself (status.publishAt): the video is uploaded as private now and YouTube makes it public at
+   * this time. ISO 8601, at least 15 minutes in the future when approving. Cerebro never publishes on its own at that moment.
+   */
+  publishAt?: string | null
 }
 
 export type PublicationJob = {
@@ -38,12 +43,18 @@ export class PublishError extends Error {
   constructor(message: string, readonly status = 400) { super(message) }
 }
 
-export function validatePayload(p: YouTubePayload) {
+export function validatePayload(p: YouTubePayload, now = Date.now()) {
   if (!p.title?.trim() || p.title.length > 100) return 'El título es obligatorio y admite hasta 100 caracteres.'
   if (/[<>]/.test(p.title) || /[<>]/.test(p.description ?? '')) return 'YouTube no admite los caracteres < y > en título ni descripción.'
   if ((p.description ?? '').length > 5000) return 'La descripción admite hasta 5000 caracteres.'
   if ((p.tags ?? []).join(',').length > 500) return 'Las etiquetas superan 500 caracteres en total.'
   if (!p.videoAssetId) return 'Elige el vídeo que se va a subir.'
+  if (p.publishAt) {
+    const at = Date.parse(p.publishAt)
+    if (!Number.isFinite(at)) return 'La fecha de publicación programada no es válida.'
+    if (at < now + 15 * 60_000) return 'La publicación programada debe ser al menos 15 minutos en el futuro.'
+    if (at > now + 180 * 86_400_000) return 'La publicación programada no puede superar 6 meses.'
+  }
   return null
 }
 
@@ -63,10 +74,20 @@ async function download(db: SupabaseClient, ownerId: string, assetId: string, ty
 }
 
 export async function publishJob(db: SupabaseClient, ownerId: string, jobId: string) {
-  const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
+  const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
   const job = data as PublicationJob | null
   if (!job || job.platform !== 'youtube') throw new PublishError('Trabajo de publicación no encontrado.', 404)
   if (typeof job.result?.videoId === 'string') return { videoId: job.result.videoId, url: String(job.result.url ?? ''), alreadyPublished: true }
+  // A job left in «publishing» by a killed function (timeout, deploy) would stay stuck forever. After 30 minutes it goes back to «approved»
+  // so the owner can retry, but THIS click does not upload: the upload may have reached the platform, so the owner must check first.
+  if (job.status === 'publishing') {
+    const since = Date.parse(String((job as { updated_at?: string }).updated_at ?? ''))
+    if (Number.isFinite(since) && Date.now() - since > 30 * 60_000) {
+      await db.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), interruptedAt: new Date().toISOString(), lastError: 'La publicación anterior se interrumpió.' }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'publishing')
+      throw new PublishError('La publicación anterior se interrumpió sin confirmar el resultado. Comprueba en la plataforma que no se subió y vuelve a pulsar «Publicar» para reintentarlo.', 409)
+    }
+    throw new PublishError('La publicación ya está en curso.', 409)
+  }
   if (job.status !== 'approved') throw new PublishError('El trabajo no está aprobado.', 409)
 
   // Hard gate: explicit approval recorded by the owner for this exact job.
@@ -96,7 +117,8 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
     const video = await download(db, ownerId, job.payload.videoAssetId!, ['video'])
     const metadata = {
       snippet: { title: job.payload.title.trim(), description: job.payload.description ?? '', tags: job.payload.tags ?? [], categoryId: job.payload.categoryId ?? '27' },
-      status: { privacyStatus: job.payload.privacyStatus ?? 'private', selfDeclaredMadeForKids: job.payload.madeForKids ?? false, containsSyntheticMedia: job.payload.containsSyntheticMedia ?? true },
+      // A scheduled video must be uploaded as private; YouTube switches it to public at publishAt.
+      status: { privacyStatus: job.payload.publishAt ? 'private' : job.payload.privacyStatus ?? 'private', ...(job.payload.publishAt ? { publishAt: new Date(job.payload.publishAt).toISOString() } : {}), selfDeclaredMadeForKids: job.payload.madeForKids ?? false, containsSyntheticMedia: job.payload.containsSyntheticMedia ?? true },
     }
     const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
       method: 'POST',
@@ -109,7 +131,7 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
     const uploaded = await upload.json().catch(() => ({})) as { id?: string; error?: { message?: string } }
     if (!upload.ok || !uploaded.id) throw new PublishError(uploaded.error?.message ?? `La subida falló (${upload.status}).`, 502)
 
-    const result: Record<string, unknown> = { ...(job.result ?? {}), lastError: undefined, failedAt: undefined, videoId: uploaded.id, url: `https://www.youtube.com/watch?v=${uploaded.id}`, privacyStatus: metadata.status.privacyStatus, publishedAt: new Date().toISOString() }
+    const result: Record<string, unknown> = { ...(job.result ?? {}), lastError: undefined, failedAt: undefined, videoId: uploaded.id, url: `https://www.youtube.com/watch?v=${uploaded.id}`, privacyStatus: metadata.status.privacyStatus, scheduledFor: job.payload.publishAt ?? null, publishedAt: new Date().toISOString() }
     if (job.payload.thumbnailAssetId) {
       try {
         const thumb = await download(db, ownerId, job.payload.thumbnailAssetId, ['thumbnail', 'image'])

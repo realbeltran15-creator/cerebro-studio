@@ -16,9 +16,11 @@ type Channel = { external_account_name: string | null; scopes: string[] }
 const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload'
 const statusLabels: Record<string, string> = { draft: 'Borrador', awaiting_approval: 'Pendiente de aprobación', approved: 'Aprobado · sin publicar', publishing: 'Publicando…', published: 'Publicado', failed: 'Falló', cancelled: 'Cancelado' }
 const privacyLabels = { private: 'Privado', unlisted: 'No listado', public: 'Público' } as const
+/** ISO → value for <input type="datetime-local"> in the browser's time zone. */
+const toLocalInput = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) }
 const categories = [['27', 'Educación'], ['22', 'Gente y blogs'], ['24', 'Entretenimiento'], ['25', 'Noticias y política'], ['28', 'Ciencia y tecnología'], ['19', 'Viajes y eventos'], ['1', 'Cine y animación']] as const
 
-const emptyForm = { videoAssetId: '', thumbnailAssetId: '', title: '', description: '', tags: '', privacyStatus: 'private' as YouTubePayload['privacyStatus'], categoryId: '27', madeForKids: false, containsSyntheticMedia: true }
+const emptyForm = { videoAssetId: '', thumbnailAssetId: '', title: '', description: '', tags: '', privacyStatus: 'private' as YouTubePayload['privacyStatus'], categoryId: '27', madeForKids: false, containsSyntheticMedia: true, publishAt: '' }
 
 export default function YouTubePage() {
   const supabase = getSupabaseBrowserClient()
@@ -74,6 +76,7 @@ export default function YouTubePage() {
       title: form.title.trim(), description: form.description.trim(), tags: form.tags.split(',').map(t => t.trim()).filter(Boolean).slice(0, 30),
       privacyStatus: form.privacyStatus, categoryId: form.categoryId, madeForKids: form.madeForKids, containsSyntheticMedia: form.containsSyntheticMedia,
       videoAssetId: form.videoAssetId || undefined, thumbnailAssetId: form.thumbnailAssetId || null,
+      publishAt: form.publishAt ? new Date(form.publishAt).toISOString() : null,
     }
   }
 
@@ -100,6 +103,7 @@ export default function YouTubePage() {
       videoAssetId: job.payload.videoAssetId ?? '', thumbnailAssetId: job.payload.thumbnailAssetId ?? '', title: job.payload.title ?? '', description: job.payload.description ?? '',
       tags: (job.payload.tags ?? []).join(', '), privacyStatus: job.payload.privacyStatus ?? 'private', categoryId: job.payload.categoryId ?? '27',
       madeForKids: job.payload.madeForKids ?? false, containsSyntheticMedia: job.payload.containsSyntheticMedia ?? true,
+      publishAt: job.payload.publishAt ? toLocalInput(job.payload.publishAt) : '',
     })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -110,7 +114,7 @@ export default function YouTubePage() {
     const byLicense = inputs.reduce<Record<string, number>>((m, i) => ({ ...m, [i.license]: (m[i.license] ?? 0) + 1 }), {})
     return [
       `Canal: ${channel?.external_account_name ?? 'sin conectar'}`,
-      `Privacidad: ${privacyLabels[job.payload.privacyStatus ?? 'private']}`,
+      job.payload.publishAt ? `Programado: se sube privado y YouTube lo hará público el ${new Date(job.payload.publishAt).toLocaleString()}` : `Privacidad: ${privacyLabels[job.payload.privacyStatus ?? 'private']}`,
       `Vídeo: ${String(v?.provenance?.title ?? job.payload.videoAssetId)} (licencia ${v?.license_status ?? '?'})`,
       `Entradas: ${Object.entries(byLicense).map(([k, n]) => `${n} ${k}`).join(', ') || 'sin registro'}`,
       `Contenido sintético declarado: ${job.payload.containsSyntheticMedia === false ? 'no' : 'sí'}`,
@@ -188,6 +192,9 @@ export default function YouTubePage() {
             <select value={form.privacyStatus} onChange={e => setForm({ ...form, privacyStatus: e.target.value as YouTubePayload['privacyStatus'] })}>
               {Object.entries(privacyLabels).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
+          </label>
+          <label>Programar (opcional)
+            <input type="datetime-local" value={form.publishAt} onChange={e => setForm({ ...form, publishAt: e.target.value })} />
           </label>
           <label>Categoría
             <select value={form.categoryId} onChange={e => setForm({ ...form, categoryId: e.target.value })}>{categories.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>

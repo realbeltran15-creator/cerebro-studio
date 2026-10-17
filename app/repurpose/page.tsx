@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { RenderPanel } from '../components/render-panel'
+import { LongVideoShorts } from './long-video'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { parseComposition, shortPlatforms, toShort, totalDurationMs, type Composition } from '@/lib/editor/composition'
 import type { EditorAsset } from '@/lib/editor/client'
@@ -213,5 +214,6 @@ export default function RepurposePage() {
       ))}</div>
       <p className="muted small">Los vídeos renderizados están en la <Link className="open" href="/library">Biblioteca</Link>. Publicar requiere OAuth y tu aprobación explícita.</p>
     </>}
+    {projectId && <LongVideoShorts projectId={projectId} />}
   </StudioShell>
 }

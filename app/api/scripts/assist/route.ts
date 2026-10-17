@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { rateLimited } from '@/lib/security/rate-limit'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { proposeScript, textConfigured, textModel, TextProviderError, type ScriptAssistMode } from '@/lib/providers/openai-text'
 import { normalizeSections } from '@/lib/scripts'
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const limited = rateLimited(user.id, 'textAssist'); if (limited) return limited
   if (!textConfigured()) {
     return NextResponse.json({ error: 'La asistencia IA necesita un proveedor de texto en el servidor (GROQ_API_KEY, GEMINI_API_KEY u OPENAI_API_KEY).', configured: false }, { status: 503 })
   }

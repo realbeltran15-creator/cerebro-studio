@@ -167,11 +167,21 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string) 
 }
 
 export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobId: string) {
-  const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
+  const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
   const job = data as SocialJob | null
   if (!job || (job.platform !== 'instagram' && job.platform !== 'tiktok')) throw new SocialPublishError('Trabajo de publicación no encontrado.', 404)
   const platform = job.platform as SocialPlatform
   if (typeof job.result?.mediaId === 'string' && job.status === 'published') return { mediaId: job.result.mediaId, url: String(job.result.url ?? ''), alreadyPublished: true }
+  // A job left in «publishing» by a killed function (timeout, deploy) would stay stuck forever. After 30 minutes it goes back to «approved»
+  // so the owner can retry, but THIS click does not upload: the upload may have reached the platform, so the owner must check first.
+  if (job.status === 'publishing') {
+    const since = Date.parse(String((job as { updated_at?: string }).updated_at ?? ''))
+    if (Number.isFinite(since) && Date.now() - since > 30 * 60_000) {
+      await db.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), interruptedAt: new Date().toISOString(), lastError: 'La publicación anterior se interrumpió.' }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'publishing')
+      throw new SocialPublishError('La publicación anterior se interrumpió sin confirmar el resultado. Comprueba en la plataforma que no se subió y vuelve a pulsar «Publicar» para reintentarlo.', 409)
+    }
+    throw new SocialPublishError('La publicación ya está en curso.', 409)
+  }
   if (job.status !== 'approved') throw new SocialPublishError('El trabajo no está aprobado.', 409)
 
   const key = socialApprovalKey(job)

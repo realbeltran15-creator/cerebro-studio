@@ -7,6 +7,7 @@ import { Icon } from '../components/studio-icon'
 import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { emptyComposition, parseComposition, syncWithScenes, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { applyTemplate, BUILT_IN_TEMPLATES, loadTemplates, saveTemplates, templateFrom, type EditTemplate } from '@/lib/editor/templates'
 import { assetLabel, audioDurationMs, sceneFirst, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import type { ProjectRow } from '@/lib/types/database'
 import { uploadProjectMedia } from '@/lib/media-upload'
@@ -120,6 +121,23 @@ export default function EditorPage() {
   }, [boardId, boards, projectId, supabase])
 
   function patch(p: Partial<Composition>) { setComp(c => c ? { ...c, ...p } : c); setDirty(true); setNotice('') }
+  // ---------- Templates ----------
+  const [userTemplates, setUserTemplates] = useState<EditTemplate[]>([])
+  const [templateId, setTemplateId] = useState('')
+  useEffect(() => { void loadTemplates(supabase).then(setUserTemplates).catch(() => undefined) }, [supabase])
+  const allTemplates = [...BUILT_IN_TEMPLATES, ...userTemplates]
+  function useTemplate() {
+    const t = allTemplates.find(x => x.id === templateId)
+    if (!t || !comp) return
+    setComp(applyTemplate(comp, t)); setDirty(true); setNotice(`Plantilla «${t.name}» aplicada. Guarda el montaje para conservarla.`)
+  }
+  async function saveAsTemplate() {
+    if (!comp) return
+    const name = window.prompt('Nombre de la plantilla', comp.title)
+    if (name === null) return
+    const next = [...userTemplates, templateFrom(comp, name)]
+    try { await saveTemplates(supabase, next); setUserTemplates(next); setNotice('Plantilla guardada.') } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar la plantilla.') }
+  }
   function patchClip(sceneId: string, p: Partial<Clip>) {
     setComp(c => c ? { ...c, clips: c.clips.map(k => k.sceneId === sceneId ? { ...k, ...p } : k) } : c); setDirty(true); setNotice('')
   }
@@ -336,6 +354,24 @@ export default function EditorPage() {
         })}
       </div>
       </>}
+
+      <h3 className="sectionTitle">Plantilla</h3>
+      <section className="panel" style={{ marginBottom: 14 }}>
+        <div className="field-row">
+          <label htmlFor="ed-template">Aplicar plantilla
+            <select id="ed-template" value={templateId} onChange={e => setTemplateId(e.target.value)}>
+              <option value="">— Elige una plantilla</option>
+              <optgroup label="Incluidas">{BUILT_IN_TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>
+              {userTemplates.length > 0 && <optgroup label="Mis plantillas">{userTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>}
+            </select>
+          </label>
+        </div>
+        <div className="pageActions" style={{ marginTop: 10 }}>
+          <button type="button" className="ghost small" disabled={!templateId} onClick={useTemplate}>Aplicar</button>
+          <button type="button" className="ghost small" onClick={() => void saveAsTemplate()}>Guardar ajustes actuales como plantilla</button>
+        </div>
+        <p className="muted small">Una plantilla cambia formato, subtítulos, transiciones, volumen de música, gancho y movimiento de imágenes; no toca el contenido, los recortes ni los archivos de las escenas.</p>
+      </section>
 
       <h3 className="sectionTitle">Audio y subtítulos</h3>
       <section className="panel" style={{ marginBottom: 14 }}>

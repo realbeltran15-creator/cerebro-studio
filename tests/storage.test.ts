@@ -52,3 +52,16 @@ describe('ownership of stored paths (R2 credentials bypass RLS)', () => {
     expect(url).toContain('X-Amz-Expires=900')
   })
 })
+
+import { deletionCheck } from '@/lib/library'
+describe('library: safe deletion', () => {
+  it('refuses while a publication uses the file; renders and derived files are only warnings', () => {
+    expect(deletionCheck({ publications: [], renders: [], derived: [] })).toEqual({ allowed: true, reasons: [], warnings: [] })
+    const blocked = deletionCheck({ publications: [{ id: 'j', platform: 'youtube', status: 'published' }], renders: [], derived: [] })
+    expect(blocked.allowed).toBe(false)
+    expect(blocked.reasons[0]).toMatch(/youtube: published/)
+    const warned = deletionCheck({ publications: [], renders: [{ id: 'r' }], derived: [{ id: 's', asset_type: 'subtitle' }] })
+    expect(warned.allowed).toBe(true)
+    expect(warned.warnings).toHaveLength(2)
+  })
+})

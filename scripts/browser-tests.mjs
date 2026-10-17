@@ -165,14 +165,14 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   // Image modes, evidence and character references.
   await page.getByRole('button', { name: 'Modo gratis' }).click()
   check('studio: free mode selects the free FLUX.2 klein model', (await page.getByRole('radio', { checked: true }).textContent()).includes('FLUX.2 klein 4B'))
-  check('studio: free model shows its daily Cloudflare allowance and evidence', (await page.getByRole('radio', { checked: true }).textContent()).includes('Crédito diario') && (await page.getByRole('radio', { checked: true }).textContent()).includes('Documentado'))
+  check('studio: free model shows its daily Cloudflare allowance and evidence', (await page.getByRole('radio', { checked: true }).textContent()).includes('Crédito diario') && (await page.getByRole('radio', { checked: true }).textContent()).includes('NO VERIFICADO (documentado)'))
   await page.getByRole('button', { name: 'Máxima calidad' }).click()
   const top = await page.getByRole('radio', { checked: true }).textContent()
   check('studio: max-quality mode picks a paid top model and says it is paid', top.includes('De pago') && top.includes('★★★★★'), top)
   await page.getByRole('radio', { name: /^FLUX\.2 klein 4B/ }).click()
   check('studio: manual choice leaves the mode', await page.getByRole('button', { name: 'Modo gratis', pressed: true }).count() === 0)
   check('studio: reference section appears for a model that takes references', await page.locator('.refBox').count() === 1)
-  check('studio: unverified/unconfigured model is not offered silently', (await page.getByRole('radio', { name: /Cloudflare\) · gratis, más calidad/ }).textContent()).includes('Sin verificar'))
+  check('studio: unverified/unconfigured model is not offered silently', (await page.getByRole('radio', { name: /Cloudflare\) · gratis, más calidad/ }).textContent()).includes('NO VERIFICADO'))
   await page.locator('.refBox .thumb').first().click()
   await page.getByLabel(/Descripción fija del personaje/).fill('Juliane, 17 años, pelo largo rubio, vestido blanco')
   await page.getByRole('button', { name: /^Generar imagen/ }).click()
@@ -191,7 +191,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('studio: choosing the alternative switches the model without generating', (await page.getByRole('radio', { checked: true }).textContent()).includes('FLUX.1 schnell') && (await page.evaluate(() => window.__GEN.length)) === before)
   await page.evaluate(() => { window.__FORCE_EXHAUSTED = false })
   await page.getByRole('button', { name: /^Voz/ }).click()
-  check('studio: TopMediai voice is marked unverified and without key', await page.getByRole('radio', { name: /TopMediai Voz/ }).textContent().then(t => t.includes('Sin verificar') && t.includes('Sin clave')))
+  check('studio: TopMediai voice is marked unverified and without key', await page.getByRole('radio', { name: /TopMediai Voz/ }).textContent().then(t => t.includes('NO VERIFICADO') && t.includes('Sin clave')))
   await page.getByRole('button', { name: /Música/ }).click()
   check('studio: music tab lists ElevenLabs Music as ready', (await page.getByRole('radio', { name: /ElevenLabs Music/ }).textContent()).includes('Listo'))
   check('studio: live ElevenLabs balance is shown', await page.getByText(/29,000 de 30,000 créditos|29.000 de 30.000 créditos/).count() === 1)
@@ -242,7 +242,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const server = serve(8794, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'studio.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
   await page.goto('http://127.0.0.1:8794/studio?project=p1')
-  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '') })
   await page.getByRole('radio', { name: /FLUX\.2 Pro/ }).waitFor({ timeout: 20000 })
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   check('mobile: studio has no horizontal overflow at 390 px', overflow <= 1, overflow)
@@ -264,7 +264,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
     ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
-  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   for (const [name, mod, url, params] of pages) {
     let code
     try { code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/${mod}'\ncreateRoot(document.getElementById('root')).render(<Page />)`) } catch (e) { check(`mobile: ${name} bundles`, false, String(e.message).slice(0, 160)); continue }
@@ -295,7 +295,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   await page.goto('http://127.0.0.1:8796/editor/manual?job=job1')
-  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '') })
   await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
   await page.waitForTimeout(500)
   const m = await page.evaluate(() => ({ over: document.documentElement.scrollWidth - window.innerWidth, wide: [...document.querySelectorAll('body *')].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest('[style*="overflow"],.timeline,[aria-label*="tiempo"],[aria-label^="Pista"]')).slice(0, 4).map(e => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 30)}`) }))
@@ -311,7 +311,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 {
   const populated = [['/opportunities', 'app/opportunities/page', '/opportunities'], ['/library', 'app/library/page', '/library'], ['/projects', 'app/projects/page', '/projects'],
     ['/projects/[id]', 'app/projects/[id]/page', '/projects/p1', { id: 'p1' }], ['/studio', 'app/studio/page', '/studio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/youtube', 'app/youtube/page', '/youtube?project=p1']]
-  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   const axeSrc = readFileSync(path.join(root, 'node_modules/axe-core/axe.min.js'), 'utf8')
   for (const [name, mod, url, params] of populated) {
     const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/${mod}'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
@@ -342,7 +342,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   await page.goto('http://127.0.0.1:8798/repurpose?project=p1')
-  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '') })
   await page.getByRole('button', { name: 'Sugerir para Instagram Reels' }).waitFor({ timeout: 20000 })
   await page.getByRole('button', { name: 'Sugerir para Instagram Reels' }).click()
   await page.getByText(/Sugerencia para Instagram Reels/).waitFor()
@@ -365,7 +365,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   await page.goto('http://127.0.0.1:8799/analytics')
-  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8') })
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '') })
   await page.getByText('Qué ha funcionado').waitFor({ timeout: 20000 })
   check('analytics: outperformer is found with its ratio and project link', await page.getByText(/Vídeo analizado 1 · .*vistas \(\d+(\.\d+)?× la mediana\)/).count() === 1 && await page.locator('a[href="/projects/p1"]').count() >= 1)
   check('analytics: panel is labelled calculated and not causal', await page.getByText('Calculado, no IA').count() === 1 && await page.getByText(/describe qué pasó, no por qué/).count() === 1)
@@ -582,7 +582,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 // The YouTube-backed API routes are MOCKED here (tests/browser/research-fixtures.mjs): no quota is spent; this proves the screen, not the live integration.
 {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/market-intelligence/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
-  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   const server = serve(8799, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
   const context = await browser.newContext({ viewport: { width: 1400, height: 1100 }, acceptDownloads: true })
   const page = await context.newPage()
@@ -866,7 +866,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 // 10. Campañas: answer the nine questions partially, get a strategy, change budget/platforms without starting again, save, reload, export. No ad API is touched.
 {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/campaigns/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
-  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8')
+  const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   const server = serve(8800, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
   const context = await browser.newContext({ viewport: { width: 1400, height: 1100 }, acceptDownloads: true })
   const page = await context.newPage()

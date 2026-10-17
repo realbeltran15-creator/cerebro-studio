@@ -154,6 +154,45 @@ describe('YouTube publishing gate', () => {
   })
 })
 
+describe('YouTube scheduled publication (publishAt)', () => {
+  it('uploads as private with status.publishAt and rejects past or too-close dates', async () => {
+    const { validatePayload } = await import('@/lib/publication/youtube')
+    const now = Date.parse('2026-10-17T12:00:00Z')
+    const base = { title: 'T', videoAssetId: 'v' }
+    expect(validatePayload({ ...base, publishAt: '2026-10-17T12:05:00Z' }, now)).toMatch(/15 minutos/)
+    expect(validatePayload({ ...base, publishAt: 'mañana' }, now)).toMatch(/no es válida/)
+    expect(validatePayload({ ...base, publishAt: '2026-10-18T09:00:00Z' }, now)).toBeNull()
+
+    const bodies: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: { body?: unknown }) => {
+      const url = String(input)
+      if (url.includes('uploadType=resumable')) { bodies.push(String(init?.body ?? '')); return new Response('', { status: 200, headers: { location: 'https://upload.example/s1' } }) }
+      if (url === 'https://upload.example/s1') return new Response(JSON.stringify({ id: 'VIDS' }), { status: 200 })
+      throw new Error(`unexpected ${url}`)
+    }))
+    const s = state()
+    const at = new Date(Date.now() + 2 * 86_400_000).toISOString()
+    s.job.payload = { ...s.job.payload, privacyStatus: 'public', publishAt: at }
+    s.job.result = sealed(s.job)
+    await publishJob(fakeDb(s), 'u1', 'j1')
+    const meta = JSON.parse(bodies[0])
+    expect(meta.status).toMatchObject({ privacyStatus: 'private', publishAt: at })
+    expect(s.job.result.scheduledFor).toBe(at)
+  })
+})
+
+describe('stuck publications', () => {
+  it('a job stuck in «publishing» for more than 30 min returns to approved, but that click does not upload', async () => {
+    let uploads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => { uploads++; return new Response('', { status: 500 }) }))
+    const s = state(); s.job.status = 'publishing'; s.job.updated_at = new Date(Date.now() - 45 * 60_000).toISOString()
+    await expect(publishJob(fakeDb(s), 'u1', 'j1')).rejects.toThrow(/se interrumpió/)
+    expect(s.job.status).toBe('approved'); expect(s.job.result.approvalSeal).toBeTruthy(); expect(uploads).toBe(0)
+    const fresh = state(); fresh.job.status = 'publishing'; fresh.job.updated_at = new Date().toISOString()
+    await expect(publishJob(fakeDb(fresh), 'u1', 'j1')).rejects.toThrow(/ya está en curso/)
+  })
+})
+
 describe('approval seal', () => {
   const base = { ownerId: 'u', jobId: 'j', platform: 'youtube', idempotencyKey: 'k', payload: { b: 1, a: [1, { y: 2, x: 1 }] }, videoStoragePath: 'p' }
   it('is stable regardless of key order and changes with any field', () => {

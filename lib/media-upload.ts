@@ -87,9 +87,17 @@ export async function uploadProjectMedia(supabase: SupabaseClient, input: {
 }
 
 export async function deleteAsset(supabase: SupabaseClient, asset: { id: string; storage_path: string | null }) {
-  if (asset.storage_path) {
-    await removeFromCloud(asset.storage_path)
-  }
+  // Row first: if it cannot be deleted (RLS, references) nothing is lost. A file left behind after the row is gone only wastes space,
+  // whereas a row pointing at a deleted file would break every montage and publication that uses it.
   const { error } = await supabase.from('assets').delete().eq('id', asset.id)
   if (error) throw new Error(`No se pudo borrar el registro: ${error.message}`)
+  if (asset.storage_path) await removeFromCloud(asset.storage_path).catch(() => undefined)
+}
+
+/** Kind of upload a browser file can be stored as (the user can still choose music / effect / voice for audio). */
+export function uploadKindFor(file: File): UploadKind | null {
+  if (file.type.startsWith('image/')) return 'image'
+  if (file.type.startsWith('video/')) return 'video'
+  if (file.type.startsWith('audio/')) return 'music'
+  return null
 }

@@ -14,7 +14,7 @@ const freeLabels = {
   daily: 'Gratis diario por API', monthly: 'Gratis mensual por API', promo: 'Crédito promocional (una vez)',
   none: 'Sin gratis por API', unknown: 'Gratis por API sin confirmar',
 } as const
-const evidenceLabels = { tested: 'Probado en vivo', documented: 'Documentación oficial', secondary: 'Solo terceros', unverified: 'Sin verificar' } as const
+const evidenceLabels = { tested: 'Probado en vivo', documented: 'NO VERIFICADO · solo documentación oficial', secondary: 'NO VERIFICADO · solo fuentes de terceros', unverified: 'NO VERIFICADO' } as const
 type Pool = { pool: string; kind: 'daily' | 'monthly' | 'promo'; unit: string; amount: number; used: number; remaining: number; endsAt: string | null; expired: boolean; exhausted: boolean; note: string }
 const kindWord = { daily: 'diario', monthly: 'mensual', promo: 'promocional' } as const
 

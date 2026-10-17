@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { compositionIssues, formatSize, totalDurationMs, type Composition } from '@/lib/editor/composition'
+import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, formatSize, totalDurationMs, type Composition } from '@/lib/editor/composition'
+import { downloadText } from '@/lib/library'
 import { downloadCompositionMedia, saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
 import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
@@ -148,6 +149,10 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported()} onClick={() => void run(true)}><Icon name="video" size={16} />Renderizar y guardar</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}
+      {compositionCues(composition).length > 0 && <>
+        <button type="button" className="ghost small" onClick={() => downloadText('subtitulos.srt', cuesToSrt(compositionCues(composition)), 'application/x-subrip')}>Subtítulos .srt</button>
+        <button type="button" className="ghost small" onClick={() => downloadText('subtitulos.vtt', cuesToVtt(compositionCues(composition)), 'text/vtt')}>.vtt</button>
+      </>}
     </div>
     {saved && mode === 'idle' && !instagramReadiness(saved.mimeType).ok && <div className="warnBox small" role="status">
       <p>{instagramReadiness(saved.mimeType).reason}</p>

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { rateLimited } from '@/lib/security/rate-limit'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { assetKindFor, catalog, evidenceOf, isConfigured, modelById, rightsOf, type GenerationOptions } from '@/lib/providers/catalog'
 import { providerById } from '@/lib/providers/directory'
@@ -49,6 +50,7 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const limited = rateLimited(user.id, 'generate'); if (limited) return limited
   const body = await request.json().catch(() => null) as Body | null
   const model = modelById(body?.modelId ?? '')
   const prompt = body?.prompt?.trim()
