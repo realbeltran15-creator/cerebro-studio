@@ -1,2 +1,4 @@
-import { ModulePage } from '../components/studio-shell'
-export default function Page(){return <ModulePage title="Vídeos" description="Genera y organiza clips y escenas de vídeo para cada proyecto." steps={['Escenas','Proveedor','Generación','Selección']}/>}
+import { redirect } from 'next/navigation'
+
+/** Generation moved to the Creation Studio (multi-provider, cost confirmation). */
+export default function Page() { redirect('/studio?tab=video') }
