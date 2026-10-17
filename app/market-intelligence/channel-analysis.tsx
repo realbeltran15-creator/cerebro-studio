@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from 'react'
 import { YouTubeResults } from '../components/youtube-results'
+import { shortCountry } from '@/lib/research/geo'
+import { ChannelRevenuePanel } from './insight-panels'
 import type { ChannelAnalysis } from '@/lib/providers/youtube-data'
 
 const fmt = (n: number | null) => (n === null ? '—' : n.toLocaleString('es-ES', { notation: n >= 100000 ? 'compact' : 'standard' }))
@@ -43,7 +45,7 @@ export function ChannelResearch({ onSaved }: { onSaved: () => void }) {
           {analysis.channel.thumbnailUrl && <img src={analysis.channel.thumbnailUrl} alt="" width={48} height={48} style={{ borderRadius: '50%' }} />}
           <div>
             <a href={analysis.channel.url} target="_blank" rel="noopener noreferrer"><b>{analysis.channel.title}</b></a>
-            <span className="muted small" style={{ display: 'block' }}>{analysis.channel.handle ?? ''}{analysis.channel.country ? ` · ${analysis.channel.country}` : ''}</span>
+            <span className="muted small" style={{ display: 'block' }}>{analysis.channel.handle ?? ''}{analysis.channel.country ? ` · país declarado por el canal: ${shortCountry(analysis.channel.country)} (no es el país de su audiencia)` : ' · no declara país'}</span>
           </div>
         </div>
       </div>
@@ -56,6 +58,7 @@ export function ChannelResearch({ onSaved }: { onSaved: () => void }) {
         <div className="kpi"><small>Subidas/semana</small><b>{analysis.calculated.uploadsPerWeek ?? '—'}</b></div>
       </div>
       <p className="authNote" style={{ marginTop: 8 }}>Suscriptores, vistas y número de vídeos son observados; mediana, media, frecuencia y destacados se calculan sobre la muestra.</p>
+      <ChannelRevenuePanel c={analysis} />
       <YouTubeResults
         results={analysis.videos}
         context={{ query: `canal:${analysis.channel.title}`.slice(0, 200), region: analysis.channel.country, language: null, origin: 'search' }}

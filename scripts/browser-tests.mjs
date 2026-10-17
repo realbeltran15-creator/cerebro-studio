@@ -652,6 +652,9 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('research: little supply with no demand is NOT an opportunity and says so', (await none.getByText('Sin demanda', { exact: true }).count()) === 1 && (await none.getByText(/no es una oportunidad/).count()) === 1)
   check('research: each card shows market, window, source, date, confidence and evidence kinds', (await opp.getByText(/recientes = últimos 30 días/).count()) === 1 && (await opp.locator('summary', { hasText: /Evidencia y confianza \(media\)/ }).count()) === 1 && (await opp.locator('.pill', { hasText: 'Mundial' }).count()) === 1)
   check('research: one request per topic and no more', topicReqs().length - noSearchYet === 3, requests)
+  check('research: each card lists the videos and channels behind the conclusion with links, dates and the researched country and language', (await opp.getByLabel('Vídeos y canales que respaldan').count()) === 1 && (await opp.getByRole('table', { name: 'Vídeos de historia medieval' }).locator('tbody tr').count()) >= 1 && (await opp.getByRole('table', { name: 'Vídeos de historia medieval' }).getByRole('link').count()) >= 2 && /país pedido/.test(await opp.getByLabel('Vídeos y canales que respaldan').innerText()))
+  check('research: the income estimate is labelled ESTIMATED, advertising only, with a formula and assumptions, and never presented as real income', (await opp.getByLabel('Ingresos potenciales').count()) === 1 && /solo publicidad/.test(await opp.getByLabel('Ingresos potenciales').innerText()) && /no son ingresos reales/.test(await opp.getByLabel('Ingresos potenciales').innerText()))
+  check('research: data, estimates and unknowns are told apart', (await opp.getByLabel('Qué es dato y qué es estimación').count()) === 1 && /DESCONOCIDO/.test((await opp.getByLabel('Qué es dato y qué es estimación').textContent()) ?? ''))
   // Regression: analyses hidden by a filter were dropped silently after a paid run.
   await pick('Nichos', 'tecno', /Tecnología/); await go().click()
   const hid = page.getByRole('status', { name: 'Resultados ocultos por filtros' })
@@ -659,6 +662,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await hid.getByRole('button', { name: /Mostrar todos de todas formas/ }).click()
   // The sample inspector: every video, accepted or not, with link and reason, filterable, exportable.
   const card = page.getByRole('article', { name: 'Análisis de historia medieval' })
+  await card.locator('summary', { hasText: /Más detalle/ }).click()
   await card.getByText(/Muestra: 3 vídeos examinados \(1 aceptados · 1 dudosos · 1 descartados\)/).click()
   const tableRows = () => card.getByRole('table', { name: 'Muestra de historia medieval' }).locator('tbody tr')
   check('research: the sample inspector lists every video with its state, link and reason', (await tableRows().count()) === 3 && (await card.getByRole('link', { name: 'Who is Isa? Jesus in the Quran explained' }).getAttribute('href')) === 'https://www.youtube.com/watch?v=s2' && (await card.getByText(/«ISA» aquí es religión \(palabras: jesus, quran\)/).count()) === 1)

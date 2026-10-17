@@ -11,7 +11,7 @@ import { RPM_LABEL, formatAdjusted, nicheRpm } from '@/lib/research/monetization
 import { fmtNumber } from '@/lib/research/format'
 import { UNITS } from '@/lib/research/filters'
 import { confidenceLabel, indexText } from '@/lib/research/labels'
-import { GrowthControl } from './insight-panels'
+import { DataKinds, EvidencePanel, GrowthControl, RevenuePanel } from './insight-panels'
 import { GEO_LEVEL_LABEL } from '@/lib/research/geo'
 import { HowItIsCalculated } from './insight-panels'
 import { SampleInspector } from './sample-inspector'
@@ -63,6 +63,10 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
     <div style={{ display: 'grid', gap: 8 }}>{(Object.keys(INDEX_LABEL) as Array<keyof typeof INDEX_LABEL>).map(k => <IndexBar key={k} name={k} value={a.indices[k]} />)}</div>
     <ul className="small" style={{ margin: '10px 0 0 16px' }}>{a.reasons.map(r => <li key={r}>{r}</li>)}</ul>
     <GrowthControl a={a} busy={growthBusy} onMeasure={() => void measureGrowth(a)} />
+    <p className="small" aria-label="Nivel de confianza" style={{ marginTop: 8 }}><span className={`pill ${a.confidence === 'baja' ? 'warn' : 'ok'}`}>Confianza {a.confidence}</span> {a.confidenceNote}</p>
+    <EvidencePanel a={a} />
+    <RevenuePanel a={a} />
+    <details style={{ marginTop: 8 }}><summary className="small"><b>Más detalle</b> <span className="muted">muestra completa, cómo se calcula, formato, dinero y evidencia</span></summary>
     {a.quality && <p className="small muted" style={{ marginTop: 8 }}>Calidad de la muestra: {a.quality.kept} de {a.quality.examined} resultados cuentan; {a.quality.excluded.tema + a.quality.excluded.nicho + a.quality.excluded.sentido} son de otro tema o significado, {a.quality.excluded.idioma} de otro idioma, {a.quality.excluded.directo} directos y {a.quality.uncertain} dudosos. Fuera de la demanda: {a.quality.promo} posibles anuncios y {a.quality.outliers} virales atípicos. Idioma sin verificar: {a.quality.languageUnverified}.{a.region && a.quality.channelCountryKnown ? ` Canales con país ${a.region}: ${a.quality.channelInMarket} de ${a.quality.channelCountryKnown} que declaran país (el país de búsqueda no garantiza el del vídeo).` : ''}</p>}
     <SampleInspector a={a} />
     <HowItIsCalculated a={a} />
@@ -73,6 +77,8 @@ export function AnalysisCard({ a, onSaved }: { a: TopicAnalysis; onSaved?: () =>
       <table className="dataTable"><tbody>{a.evidence.map(e => <tr key={e.label}><td>{e.label}</td><td><b>{e.value}</b></td><td><span className={`tag ${e.kind}`}>{e.kind}</span></td></tr>)}</tbody></table>
       <p className="muted small" style={{ marginTop: 6 }}>{a.confidenceNote}</p>
       <p className="muted small">Fuente: YouTube Data API (search.list + videos.list + channels.list), muestra del {dateEs(a.fetchedAt)}. Índices calculados por Cerebro Studio; no predicen visualizaciones ni ingresos.</p>
+    </details>
+      <DataKinds a={a} />
     </details>
     {a.terms.length > 0 && <div className="legend" style={{ marginTop: 8 }}>{a.terms.slice(0, 6).map(t => <span key={t.term} className="pill">{t.term} · {t.videos}</span>)}</div>}
     <button type="button" className={state === 'saved' || state === 'exists' ? 'ghost' : undefined} disabled={state === 'saving' || state === 'saved' || state === 'exists'} onClick={() => void save()} style={{ marginTop: 10 }}>

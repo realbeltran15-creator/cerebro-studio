@@ -1,6 +1,6 @@
 'use client'
 
-import { LegacyPanel, MarketComparisonPanel, OpportunitiesPanel } from './insight-panels'
+import { SourcesPanel, LegacyPanel, MarketComparisonPanel, OpportunitiesPanel } from './insight-panels'
 import { useEffect, useMemo, useState } from 'react'
 import { YouTubeResults } from '../components/youtube-results'
 import { RpmLine, RunStatus } from './analysis-views'
@@ -113,6 +113,7 @@ export function MonetizationTab() {
     <div className="tableScroll"><table className="dataTable"><thead><tr><th>Nicho</th><th>Estado</th><th>RPM estimado (USD/1000)</th><th>Confianza</th><th>Fuente y método</th></tr></thead>
       <tbody>{rows.map(n => { const r = formatAdjusted(nicheRpm(n.id), format); return <tr key={n.id}><td>{n.label}</td>
         {r.status === 'desconocido' ? <><td><span className="tag desconocido">DESCONOCIDO</span></td><td colSpan={3}>{r.reason}</td></> : <><td><span className="tag estimado">ESTIMADO</span></td><td>{usd(r.low)}–{usd(r.high)} ({r.midIsMedian ? 'mediana' : 'medio'} {usd(r.mid)})</td><td>{r.confidence}</td><td className="small">{r.sources.map(s => <span key={s.url}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.name}</a> · consultada {s.accessed}<br /></span>)}<span className="muted">{r.note}</span></td></>}</tr> })}</tbody></table></div>
+    <SourcesPanel />
     <p className="muted small" style={{ marginTop: 8 }}>Nichos sin datos propios: {UNKNOWN_RPM_NICHES.map(nicheLabel).join(', ')}. Los nichos marcados «asimilado» heredan la cifra de otro y tienen confianza muy baja. Las fuentes se consultaron el {SOURCES.airNiche.accessed}; revísalas antes de tomar decisiones de dinero. {Object.keys(NICHE_RPM).length} nichos con referencia.</p>
   </section>
 }

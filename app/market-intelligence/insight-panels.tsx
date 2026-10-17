@@ -9,6 +9,11 @@ import { compareMarkets } from '@/lib/research/markets-info'
 import { marketLabel } from '@/lib/research/markets'
 import { methodLines } from '@/lib/research/statistics'
 import { growthStatus, type TopicAnalysis } from '@/lib/research/topic-analysis'
+import type { ChannelAnalysis } from '@/lib/providers/youtube-data'
+import { channelRevenue, nicheRevenue, videoRevenue, type RevenueEstimate } from '@/lib/research/revenue'
+import { SOURCES_REGISTRY, STATUS_LABEL } from '@/lib/research/sources/registry'
+import { fmtNumber } from '@/lib/research/format'
+import { languageLabel } from '@/lib/research/labels'
 import { UNITS } from '@/lib/research/filters'
 
 const STRENGTH: Record<Opportunity['strength'], { label: string; cls: string }> = {
@@ -150,4 +155,95 @@ export function GrowthControl({ a, busy, onMeasure }: { a: TopicAnalysis; busy: 
     <button type="button" className="ghost" disabled={busy} onClick={onMeasure}>{busy ? 'Midiendo…' : `Medir crecimiento (≈ ${UNITS.search} unidades, 1 búsqueda)`}</button>{' '}
     <span className="muted">{st.kind === 'caducado' ? `La medición del ${when} ya caducó. ` : ''}Compara los últimos {a.recentDays} días con los {a.recentDays} anteriores. Es la única forma de saber si el tema crece; sin ella el crecimiento sale «No calculable».</span>
   </p>
+}
+
+const usd = (n: number) => `$${n.toLocaleString('es-ES', { maximumFractionDigits: n < 100 ? 2 : 0 })}`
+const rng = (r: { low: number; mid: number; high: number }) => `${usd(r.low)} – ${usd(r.high)} (central ${usd(r.mid)})`
+const dateEs = (iso: string) => (iso ? new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : '—')
+
+/** One income estimate with its formula, assumptions and confidence, always labelled as ESTIMATED advertising income. */
+export function EstimateBlock({ title, e }: { title: string; e: RevenueEstimate }) {
+  if (e.status === 'desconocido') return <p className="small"><span className="tag desconocido">DESCONOCIDO</span> <b>{title}:</b> {e.reason}</p>
+  return <div className="small" style={{ margin: '6px 0' }}>
+    <p style={{ margin: 0 }}><span className="tag estimado">ESTIMADO</span> <b>{title}:</b> {rng(e.range)} · confianza {confidenceLabel(e.confidence).toLowerCase()}</p>
+    <details><summary className="muted">Fórmula y supuestos</summary>
+      <p style={{ margin: '4px 0' }}><b>Fórmula:</b> {e.formula}</p>
+      <ul style={{ margin: '0 0 0 16px' }}>{e.assumptions.map(x => <li key={x}>{x}</li>)}</ul>
+      {e.sources.length > 0 && <p className="muted" style={{ margin: '4px 0 0' }}>Fuentes del RPM: {e.sources.map(s => <span key={s.url}><a href={s.url} target="_blank" rel="noreferrer">{s.name}</a> (consultada el {s.accessed}); </span>)}</p>}
+    </details>
+  </div>
+}
+
+/** Potential advertising income of a niche: a typical video, a strong video and monthly scenarios. Never «what a channel earns». */
+export function RevenuePanel({ a }: { a: TopicAnalysis }) {
+  const r = nicheRevenue(a)
+  return <details style={{ marginTop: 8 }} aria-label="Ingresos potenciales">
+    <summary className="small"><b>Ingresos potenciales del nicho</b> <span className="tag estimado">ESTIMADO</span> <span className="muted">solo publicidad · no son ingresos reales de nadie</span></summary>
+    {r.typical ? <EstimateBlock title={`Un vídeo típico reciente (${fmtNumber(r.typical.views)} visualizaciones)`} e={r.typical.estimate} /> : <p className="small muted">No hay suficientes vídeos recientes para estimar un vídeo típico.</p>}
+    {r.strong && <EstimateBlock title={`Un vídeo que funciona (${fmtNumber(r.strong.views)} visualizaciones)`} e={r.strong.estimate} />}
+    {r.monthly.length > 0 && <div className="tableScroll"><table className="dataTable" aria-label="Escenarios mensuales"><caption className="muted small">Si cada vídeo consiguiera lo típico del nicho hoy</caption>
+      <thead><tr><th>Vídeos al mes</th><th>Visualizaciones</th><th>Ingreso publicitario estimado</th></tr></thead>
+      <tbody>{r.monthly.map(m => m.estimate.status === 'estimado' ? <tr key={m.videosPerMonth}><td>{m.videosPerMonth}</td><td>{fmtNumber(m.estimate.views)}</td><td>{rng(m.estimate.range)}</td></tr> : null)}</tbody></table></div>}
+    <ul className="small muted" style={{ margin: '6px 0 0 16px' }}>{r.notes.map(n => <li key={n}>{n}</li>)}</ul>
+    <p className="small muted">Lo que YouTube no da y aquí no se inventa: el RPM real de ningún canal, los países de los espectadores, patrocinios, afiliados ni membresías.</p>
+  </details>
+}
+
+/** The videos and channels the conclusions rest on, with links, dates, views and a per-video estimate. */
+export function EvidencePanel({ a }: { a: TopicAnalysis }) {
+  const vids = a.topVideos
+  const country = a.region ? shortCountry(a.region) : 'sin país'
+  const lang = languageLabel(a.language)
+  if (!vids.length) return <p className="small muted">Este análisis no guardó los vídeos de ejemplo (el navegador no tenía espacio). Vuelve a analizar el tema para verlos.</p>
+  return <details style={{ marginTop: 8 }} open aria-label="Vídeos y canales que respaldan">
+    <summary className="small"><b>Vídeos y canales que respaldan esta conclusión</b> <span className="muted">· país pedido: {country} · idioma: {lang}</span></summary>
+    <div className="tableScroll"><table className="dataTable" aria-label={`Vídeos de ${a.topic}`}>
+      <thead><tr><th>Vídeo</th><th>Canal</th><th>Visualizaciones</th><th>Publicado</th><th>Vistas/día</th><th>Ingreso publicitario estimado</th></tr></thead>
+      <tbody>{vids.map(v => { const e = videoRevenue(v, a.region); return <tr key={v.videoId}>
+        <td><a href={v.url} target="_blank" rel="noreferrer">{v.title}</a></td>
+        <td><a href={`https://www.youtube.com/channel/${v.channelId}`} target="_blank" rel="noreferrer">{v.channelTitle}</a><div className="muted">{typeof v.observed.channelSubscribers === 'number' ? `${fmtNumber(v.observed.channelSubscribers)} suscriptores` : 'suscriptores no públicos'}{v.channelCountry ? ` · país declarado por el canal: ${shortCountry(v.channelCountry)} (no es la audiencia)` : ''}</div></td>
+        <td>{v.observed.views === null ? '—' : fmtNumber(v.observed.views)}</td><td>{dateEs(v.publishedAt)}</td><td>{v.calculated.viewsPerDay === null ? '—' : fmtNumber(v.calculated.viewsPerDay)}</td>
+        <td>{e.status === 'estimado' ? <>{rng(e.range)}<div className="muted">confianza {confidenceLabel(e.confidence).toLowerCase()}</div></> : <span className="tag desconocido">DESCONOCIDO</span>}</td></tr> })}</tbody></table></div>
+    <p className="small muted" style={{ marginTop: 6 }}>Crecimiento: {a.growth.state === 'calculable' ? `${a.growth.label} (comparando dos ventanas de ${a.recentDays} días).` : 'no calculable todavía (necesita una segunda ventana de tiempo: botón «Medir crecimiento»).'}</p>
+  </details>
+}
+
+/** What is data, what is an estimate and what nobody can know from public YouTube data. */
+export function DataKinds({ a }: { a: TopicAnalysis }) {
+  return <details style={{ marginTop: 8 }} aria-label="Qué es dato y qué es estimación">
+    <summary className="small"><b>Qué es dato, qué es estimación y qué se desconoce</b></summary>
+    <div className="small" style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+      <p style={{ margin: 0 }}><span className="tag observado">DATO DE YOUTUBE</span> Título, enlace, canal, fecha, duración, visualizaciones, suscriptores públicos y país que el canal declara (si lo declara). Fecha de la consulta: {dateEs(a.fetchedAt)}.</p>
+      <p style={{ margin: 0 }}><span className="tag calculado">CALCULADO</span> Demanda, oferta, competencia, oportunidad, vistas por día y crecimiento: operaciones sobre esos datos, con la muestra de {a.quality.examined} resultados.</p>
+      <p style={{ margin: 0 }}><span className="tag estimado">ESTIMADO</span> Ingresos publicitarios (visualizaciones × RPM de estudios del sector), nicho y formato deducidos del texto, y la orientación geográfica.</p>
+      <p style={{ margin: 0 }}><span className="tag desconocido">DESCONOCIDO</span> País real de los espectadores, RPM e ingresos reales de cualquier canal, patrocinios y otros ingresos, retención y búsquedas por mes. YouTube no los da para canales ajenos y aquí no se inventan.</p>
+    </div>
+  </details>
+}
+
+/** The sources registry: what is connected, what is pending and exactly what each pending one needs. */
+export function SourcesPanel() {
+  return <section className="panel" aria-label="Fuentes de datos" style={{ marginTop: 14 }}>
+    <h3>De dónde salen los datos</h3>
+    <p className="muted small" style={{ margin: '4px 0 8px' }}>Solo están conectadas las fuentes oficiales o de referencia que no cuestan dinero. Las demás se listan con lo que haría falta para conectarlas; no se contratan ni se rastrean webs sin permiso.</p>
+    <ul className="small" style={{ margin: '0 0 0 16px' }}>{SOURCES_REGISTRY.map(s => <li key={s.id} style={{ marginBottom: 8 }}>
+      <b>{s.name}</b> — <span className={`pill ${s.status === 'conectada' || s.status === 'referencia_incluida' ? 'ok' : 'warn'}`}>{STATUS_LABEL[s.status]}</span> <span className="muted">· {s.cost}</span>
+      <div><b>Aporta:</b> {s.gives.join('; ')}.</div><div><b>No puede dar:</b> {s.cannot.join('; ')}.</div>
+      {s.needs.length > 0 && <div><b>Para conectarla necesito de ti:</b> {s.needs.join('; ')}.</div>}
+      {s.note && <div className="muted">{s.note}</div>}
+      <a href={s.docs} target="_blank" rel="noreferrer">Documentación</a>
+    </li>)}</ul>
+  </section>
+}
+
+/** Estimated advertising income of a channel: lifetime (from its public total views) and the last 30 days of uploads. */
+export function ChannelRevenuePanel({ c }: { c: ChannelAnalysis }) {
+  const r = channelRevenue(c)
+  return <section className="panel" aria-label="Ingresos estimados del canal" style={{ marginTop: 12 }}>
+    <h4 style={{ margin: 0 }}>Ingresos publicitarios estimados <span className="tag estimado">ESTIMADO</span></h4>
+    <p className="muted small" style={{ margin: '2px 0 6px' }}>No son los ingresos reales del canal: YouTube no los publica. Solo publicidad, a partir de visualizaciones públicas y un RPM de sector.</p>
+    <EstimateBlock title={`Toda la vida del canal (${fmtNumber(c.observed.totalViews ?? 0)} visualizaciones)`} e={r.lifetime} />
+    {r.last30 ? <EstimateBlock title={`Vídeos de los últimos 30 días (${r.last30.videos} vídeos, ${fmtNumber(r.last30.views)} visualizaciones hasta hoy)`} e={r.last30.estimate} /> : <p className="small muted">No hay vídeos de los últimos 30 días en la muestra.</p>}
+    <ul className="small muted" style={{ margin: '4px 0 0 16px' }}>{r.notes.map(n => <li key={n}>{n}</li>)}</ul>
+  </section>
 }
