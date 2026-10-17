@@ -1,0 +1,39 @@
+pestaña,control,tipo,probado,resultado,¿gasta cuota?,persistencia,problema
+Todas,Pestañas (7),navegación,sí,cambian de vista; la pestaña se recuerda al recargar,no,sí (sesión),el aviso «Resultados actualizados» persiste entre pestañas
+Todas,Ocultar opciones,botón,sí,pliega el panel de filtros,no,no,los filtros ocupan la primera pantalla por defecto
+Todas,Chips de filtro (✕),botón,sí,quitan el filtro al instante (sin «Aplicar»),depende: quitar el país convierte el botón principal en búsqueda de pago,sí,comportamiento distinto al de los campos numéricos (que sí esperan a «Aplicar»)
+Todas,Países (desplegable múltiple) + atajos por continente,filtro de consulta y de vista,sí,define mercados de la consulta y oculta análisis de otros países,sí (cambia el mercado ⇒ análisis nuevo),sí,un mismo control sirve para buscar y para filtrar: confunde
+Todas,Idiomas (desplegable múltiple),filtro de consulta,sí,mercado «Idioma español» sin país,sí,sí,—
+Todas,Incluir vídeos sin idioma declarado,casilla,visto,activa por defecto,no,sí,sin explicación de la consecuencia
+Nichos,Temas o subnichos (hasta 6),texto,sí,define la consulta,sí,sí (sesión),con varios temas el coste se multiplica sin desglose por tema
+Nichos/Descubrir,Nichos (21 opciones),filtro de vista,sí,oculta análisis de otros nichos (Finanzas ⇒ oculta «datos curiosos»),no,sí,NO se usa para desambiguar la consulta (ISA/ETF)
+Nichos/Descubrir,Formatos (Shorts/Cortos/Medios/Largos/Directos),filtro de vista,sí,añade «Formato elegido» a cada tarjeta; no oculta análisis con 0 Shorts en el top,no,sí,«Shorts (inferido)» y «Cortos (1–4 min)» se solapan; criterio distinto al del motor (≤60 s probable / #shorts)
+Descubrir/Tendencias,Tipos de contenido,filtro,visto,—,no,sí,sin explicación
+Todas,Periodo (5 opciones),consulta,sí,«Últimos 7 días» muestra los análisis de 30 días sin aviso; cambiar el periodo exige análisis nuevo,sí,sí,«Por defecto (30 días)» y «Últimos 30 días» son duplicados
+Nichos/Descubrir,RPM estimado mín./máx. + RPM desconocido,filtro de vista,visto,—,no,sí,—
+Nichos/Descubrir,Demanda/Oferta/Competencia/Crecimiento/Oportunidad,filtro de vista,sí (Demanda ≥60),correcto: oculta ISA (50) y FTB (58),no,sí,—
+Nichos/Descubrir,Clasificación,filtro de vista,visto,—,no,sí,—
+Nichos/Descubrir,Confianza mínima,filtro de vista,sí,correcto (solo «datos curiosos»),no,sí,solo 2 opciones; «media» es el máximo posible: no se explica
+Descubrir/Tendencias,Filtros avanzados (15 campos numéricos + categoría + incluir/excluir),filtro de vista,visto,—,no,sí,demasiados controles para un usuario nuevo
+Todas,Aplicar y buscar / Aplicar y mostrar (en caché),botón,sí,lanza la consulta o muestra lo que hay en caché,sí,—,la etiqueta cambia sola entre gratis y de pago según filtros
+Todas,Solo aplicar filtros (sin buscar),botón,sí,aplica filtros de vista,no,—,redundante cuando todo está en caché
+Todas,Restablecer filtros,botón,sí,vacía filtros,no,—,—
+Todas,Favoritos: Guardar combinación / Aplicar un favorito / borrar,botón,sí,guarda en el navegador y sobrevive a la recarga,no,sí (navegador),el botón de borrar favorito se parece a un chip de filtro
+Nichos,Tarjetas / Tabla / Gráfico,vista,sí,funcionan,no,no,—
+Nichos,Exportar CSV,botón (descarga),no pulsado,descarga de archivo,no,—,no probado (la descarga requiere permiso)
+Nichos,Medir crecimiento (+102 unidades),botón,sí,falla: «No se pudo analizar el tema»,anuncia gasto; no gastó,—,F-06
+Nichos,Inspector de muestra (Todos/Aceptados/Dudosos/Descartados),filtro,sí,funciona; 49/49 enlaces reales,no,—,sin miniaturas
+Nichos,Descargar muestra (.csv),botón (descarga),no pulsado,—,no,—,no probado
+Nichos,Qué tan firme es y cómo se calcula,desplegable,sí,explica fórmulas y sensibilidad,no,—,lenguaje técnico (P25–P75; intervalo ~95 %)
+Nichos,Guardar para investigar después,botón,sí,guarda con mercado/idioma/evidencia,no,sí (base de datos),—
+Nichos,Planificar campaña,enlace,sí,abre Campañas con evidencia y país,no,sí,moneda EUR para UK
+Nichos,Investigación guiada: Subnichos por mercado + Preparar plan,formulario,visto (no ejecutado),20 por defecto = 4.080 «unidades»,sí al ejecutar,sí,ignora el límite real de 100 búsquedas/día
+Descubrir,Mostrar todos de todas formas,botón,sí,muestra análisis ocultos en la lista pero no en las secciones de recomendación,no,no,C-3
+Descubrir,Huecos detectados / Señales débiles,desplegable,sí,honesto («no es una oportunidad»),no,—,sin miniaturas
+Descubrir/Tendencias,Aplicar y cargar tendencias de 1 país (2 unidades),botón,no pulsado,—,sí,—,—
+Palabras clave,Palabra clave (hasta 3) / Ver resultados de / Exportar palabras clave (CSV),formulario,visto,reutiliza análisis en caché,sí al buscar,—,—
+Competencia,Búsqueda en YouTube + Orden + Analizar canal,formulario,visto (no ejecutado),102 / 4 unidades,sí,—,—
+Monetización,Nicho/Formato/País del escenario + Tu RPM,calculadora,visto,funciona; rangos degenerados ($10,22–$10,22),no,—,muchos nichos «asimilados» con la misma cifra
+Guardadas,Planificar campaña con esta oportunidad,enlace,sí,funciona,no,—,«GB · en · discovered» sin traducir
+Guardadas,Análisis de esta sesión (N) / Olvidar,lista,sí,no lista los análisis,no,—,C-6
+Guardadas,Registrar oportunidad,formulario,visto,—,no,sí,—
