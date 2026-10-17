@@ -5,6 +5,8 @@ import { openGuardedStore, quotaErrorResponse } from '@/lib/research/guard'
 import { InProgressError, NoBaseAnalysisError, getGrowth, getTopicAnalysis } from '@/lib/research/sample'
 
 export const dynamic = 'force-dynamic'
+// An analysis is up to six sequential YouTube calls (15 s timeout each): say so explicitly instead of relying on the platform default.
+export const maxDuration = 60
 
 /** Demand/supply/competition analysis of one topic in one market. Costs ~204 YouTube quota units unless cached. */
 export async function GET(request: Request) {

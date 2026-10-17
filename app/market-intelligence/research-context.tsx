@@ -8,6 +8,7 @@ import { jobKey, type Job } from '@/lib/research/guided'
 import { quotaDayKey } from '@/lib/research/cache'
 import { addUnits, effectiveUsage, emptyLedger, ledgerHeader, parseLedger, type Ledger, type ServerUsage } from '@/lib/research/ledger'
 import { LEDGER_HEADER } from '@/lib/research/guard-header'
+import { isNetworkFailure, networkFailureMessage } from '@/lib/research/net-error'
 import { UNITS } from '@/lib/research/filters'
 import type { Queries, SearchPlan } from '@/lib/research/search-plan'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
@@ -151,6 +152,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       const { topic, market: m } = jobs[i]
       // Without budget only the server cache (free) may answer: ask for it first and stop only when it has nothing.
       const broke = remainingNow() < UNITS.topic || searchesLeft() < 2
+      const before = serverRef.current
       try {
         const p = new URLSearchParams({ q: topic, days: String(opts.recentDays) }); if (m.region) p.set('region', m.region); if (m.language) p.set('lang', m.language); if (opts.refresh && !broke) p.set('refresh', '1'); if (broke) p.set('cacheOnly', '1')
         const r = await paidFetch(`/api/research/topic?${p}`)
@@ -159,7 +161,19 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
         if (!r.ok || !j.analysis) { failed.push(`${topic} · ${m.label}: ${r.status === 409 ? 'otra ventana o dispositivo la está consultando ahora mismo (no se ha gastado cuota); pulsa «Reintentar lo que falló» en unos segundos' : j.error ?? 'error'}`); if (r.status === 429 || r.status === 503) { setError(j.error ?? 'No se pudo consultar YouTube.'); break } continue }
         setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: j.analysis! })); ok++; if (!j.cached) { units += j.analysis!.units; spend(j.analysis!.units, Math.round(j.analysis!.units / UNITS.search)) }
         takeServer(j.usage)
-      } catch (e) { failed.push(`${topic} · ${m.label}: ${e instanceof Error ? e.message : 'error'}`) }
+      } catch (e) {
+        if (!isNetworkFailure(e)) { failed.push(`${topic} · ${m.label}: ${e instanceof Error ? e.message : 'error'}`); continue }
+        // No answer arrived. Ask the server (free) whether it kept the result, and what it spent, before telling the user anything.
+        let after: ServerUsage | null = null, recovered: TopicAnalysis | null = null
+        try {
+          const p = new URLSearchParams({ q: topic, days: String(opts.recentDays), cacheOnly: '1' }); if (m.region) p.set('region', m.region); if (m.language) p.set('lang', m.language)
+          const r = await paidFetch(`/api/research/topic?${p}`)
+          if (r.ok) { const j = await r.json() as { analysis?: TopicAnalysis | null; usage?: ServerUsage }; recovered = j.analysis ?? null; after = j.usage ?? null }
+        } catch { /* still unreachable */ }
+        if (recovered) { setAnalyses(a => ({ ...a, [jobKey(jobs[i], opts.recentDays)]: recovered! })); ok++; takeServer(after); continue }
+        if (after) takeServer(after)
+        failed.push(`${topic} · ${m.label}: ${networkFailureMessage(before, after)}`)
+      }
     }
     setProgress(null)
     if (failed.length) setError(e => e || failed.slice(0, 3).join(' · '))
