@@ -12,7 +12,8 @@
     "test:e2e-lofi": "node scripts/lofi-e2e.mjs",
     "research:run": "node scripts/research-run.mjs",
     "research:live": "node scripts/research-live.mjs",
-    "test:migrations": "bash scripts/test-migrations.sh"
+    "test:migrations": "bash scripts/test-migrations.sh",
+    "research:validate": "node scripts/validate-real.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "latest",
