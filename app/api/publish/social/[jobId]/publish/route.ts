@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { publicationWriter } from '@/lib/supabase/admin'
 import { publishSocialJob, SocialPublishError } from '@/lib/publication/social'
 
 export const dynamic = 'force-dynamic'
@@ -12,7 +13,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   try {
-    return NextResponse.json(await publishSocialJob(supabase, user.id, jobId))
+    return NextResponse.json(await publishSocialJob(supabase, user.id, jobId, publicationWriter(supabase)))
   } catch (error) {
     const blocked = /approval is required/.test(String(error))
     const status = error instanceof SocialPublishError ? error.status : blocked ? 403 : 500

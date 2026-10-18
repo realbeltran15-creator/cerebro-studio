@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { publicationWriter } from '@/lib/supabase/admin'
 import { googleOAuthConfigured } from '@/lib/oauth/google'
 import { publishJob, PublishError } from '@/lib/publication/youtube'
 
@@ -14,7 +15,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ jo
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!googleOAuthConfigured()) return NextResponse.json({ error: 'La conexión con YouTube no está configurada en el servidor.' }, { status: 503 })
   try {
-    return NextResponse.json(await publishJob(supabase, user.id, jobId))
+    return NextResponse.json(await publishJob(supabase, user.id, jobId, publicationWriter(supabase)))
   } catch (error) {
     const status = error instanceof PublishError ? error.status : /approval is required/.test(String(error)) ? 403 : 500
     console.error('YouTube publish failure', { jobId, details: error instanceof Error ? error.message : 'unknown' })

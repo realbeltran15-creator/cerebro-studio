@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { publicationWriter } from '@/lib/supabase/admin'
 import { approvalKeyFor, validatePayload, type PublicationJob } from '@/lib/publication/youtube'
 
 import { approvalStillValid, sealFor } from '@/lib/publication/approval'
@@ -35,16 +36,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ job
     return NextResponse.json({ error: 'El vídeo contiene material con licencia sin verificar o restringida. Revísalo antes de aprobar.' }, { status: 409 })
   }
 
+  // Approval and status are written by the server-side writer (service role once the RLS hardening is applied).
+  const writer = publicationWriter(supabase)
   const key = approvalKeyFor(job)
   const now = new Date().toISOString()
-  const { error: approvalError } = await supabase.from('approvals').upsert({
+  const { error: approvalError } = await writer.from('approvals').upsert({
     owner_id: user.id, action_type: 'publish', entity_type: 'publication_job', entity_id: key, status: 'approved',
     risk_summary: (body.riskSummary ?? '').slice(0, 1000) || null, decided_at: now,
   }, { onConflict: 'owner_id,action_type,entity_type,entity_id,status' })
   if (approvalError) return NextResponse.json({ error: approvalError.message }, { status: 500 })
   // The seal is computed here, server-side, over exactly what the owner approved; the publish step verifies it.
   const seal = await sealFor(supabase, job)
-  const { error } = await supabase.from('publication_jobs').update({ status: 'approved', approved_at: now, approved_by: user.id, updated_at: now, result: { ...(job.result ?? {}), ...seal } }).eq('id', job.id).eq('owner_id', user.id)
+  const { error } = await writer.from('publication_jobs').update({ status: 'approved', approved_at: now, approved_by: user.id, updated_at: now, result: { ...(job.result ?? {}), ...seal } }).eq('id', job.id).eq('owner_id', user.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ approved: true })
 }

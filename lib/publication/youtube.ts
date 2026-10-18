@@ -73,7 +73,8 @@ async function download(db: SupabaseClient, ownerId: string, assetId: string, ty
   return { blob: data, mime: mime.split(';')[0] }
 }
 
-export async function publishJob(db: SupabaseClient, ownerId: string, jobId: string) {
+/** `writer` writes the job's status/result (service role after the RLS hardening migration); `db` reads with the owner's session. */
+export async function publishJob(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db) {
   const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
   const job = data as PublicationJob | null
   if (!job || job.platform !== 'youtube') throw new PublishError('Trabajo de publicación no encontrado.', 404)
@@ -83,7 +84,7 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
   if (job.status === 'publishing') {
     const since = Date.parse(String((job as { updated_at?: string }).updated_at ?? ''))
     if (Number.isFinite(since) && Date.now() - since > 30 * 60_000) {
-      await db.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), interruptedAt: new Date().toISOString(), lastError: 'La publicación anterior se interrumpió.' }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'publishing')
+      await writer.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), interruptedAt: new Date().toISOString(), lastError: 'La publicación anterior se interrumpió.' }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'publishing')
       throw new PublishError('La publicación anterior se interrumpió sin confirmar el resultado. Comprueba en la plataforma que no se subió y vuelve a pulsar «Publicar» para reintentarlo.', 409)
     }
     throw new PublishError('La publicación ya está en curso.', 409)
@@ -109,7 +110,7 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
   if (!hasScope(connection, SCOPES.publish[0])) throw new PublishError('La conexión no tiene permiso de subida. Pulsa «Permitir subida de vídeos» en Conectores.', 409)
 
   // Claim the job so a second click cannot start a parallel upload.
-  const { data: claimed } = await db.from('publication_jobs').update({ status: 'publishing', updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'approved').select('id')
+  const { data: claimed } = await writer.from('publication_jobs').update({ status: 'publishing', updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'approved').select('id')
   if (!claimed?.length) throw new PublishError('La publicación ya está en curso.', 409)
 
   try {
@@ -139,12 +140,12 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
         result.thumbnail = t.ok ? 'set' : `failed (${t.status}); custom thumbnails require a verified channel`
       } catch { result.thumbnail = 'failed' }
     }
-    await db.from('publication_jobs').update({ status: 'published', result, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
+    await writer.from('publication_jobs').update({ status: 'published', result, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     return { videoId: uploaded.id, url: String(result.url), alreadyPublished: false }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'La publicación falló.'
     // Back to approved so the owner can retry after fixing the cause; the approval stays valid for this job only.
-    await db.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
+    await writer.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     throw error
   }
 }

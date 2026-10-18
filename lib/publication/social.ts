@@ -69,7 +69,7 @@ async function igJson(r: Response) {
   return j
 }
 
-async function publishInstagram(db: SupabaseClient, job: SocialJob, token: string, igUserId: string) {
+async function publishInstagram(db: SupabaseClient, job: SocialJob, token: string, igUserId: string, writer: SupabaseClient = db) {
   let containerId = typeof job.result?.containerId === 'string' ? job.result.containerId : null
   if (!containerId) {
     const v = await videoAsset(db, job.owner_id, job.payload.videoAssetId!)
@@ -83,7 +83,7 @@ async function publishInstagram(db: SupabaseClient, job: SocialJob, token: strin
     }))
     containerId = String(created.id ?? '')
     if (!containerId) throw new SocialPublishError('Instagram no devolvió un contenedor.', 502)
-    await db.from('publication_jobs').update({ result: { ...(job.result ?? {}), containerId }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', job.owner_id)
+    await writer.from('publication_jobs').update({ result: { ...(job.result ?? {}), containerId }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', job.owner_id)
   }
   // Instagram processes the video asynchronously; wait up to ~4 minutes, then let the user resume.
   for (let i = 0; i < 24; i++) {
@@ -92,7 +92,7 @@ async function publishInstagram(db: SupabaseClient, job: SocialJob, token: strin
     if (code === 'FINISHED') break
     if (code === 'PUBLISHED') return { mediaId: String(job.result?.mediaId ?? ''), url: String(job.result?.url ?? '') }
     if (code === 'ERROR' || code === 'EXPIRED') {
-      await db.from('publication_jobs').update({ result: { ...(job.result ?? {}), containerId: null, lastContainerStatus: code, lastContainerDetail: String(s.status ?? '').slice(0, 300) } }).eq('id', job.id).eq('owner_id', job.owner_id)
+      await writer.from('publication_jobs').update({ result: { ...(job.result ?? {}), containerId: null, lastContainerStatus: code, lastContainerDetail: String(s.status ?? '').slice(0, 300) } }).eq('id', job.id).eq('owner_id', job.owner_id)
       throw new SocialPublishError(`Instagram no pudo procesar el vídeo (${code}). ${String(s.status ?? '')}`.trim(), 502)
     }
     if (i === 23) throw new SocialPublishError('Instagram sigue procesando el vídeo. Vuelve a pulsar «Publicar» en unos minutos; se reanudará sin duplicar.', 202)
@@ -120,7 +120,7 @@ export function tiktokChunks(size: number) {
   return { chunkSize, count: Math.floor(size / chunkSize) }
 }
 
-async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string) {
+async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string, writer: SupabaseClient = db) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8' }
   let publishId = typeof job.result?.publishId === 'string' ? job.result.publishId : null
   if (!publishId) {
@@ -144,7 +144,7 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string) 
     publishId = String(init.publish_id ?? '')
     const uploadUrl = String(init.upload_url ?? '')
     if (!publishId || !uploadUrl.startsWith('https://')) throw new SocialPublishError('TikTok no devolvió la URL de subida.', 502)
-    await db.from('publication_jobs').update({ result: { ...(job.result ?? {}), publishId }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', job.owner_id)
+    await writer.from('publication_jobs').update({ result: { ...(job.result ?? {}), publishId }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', job.owner_id)
     for (let i = 0; i < count; i++) {
       const start = i * chunkSize
       const end = i === count - 1 ? size - 1 : start + chunkSize - 1
@@ -166,7 +166,8 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string) 
   return { mediaId: publishId, url: '' }
 }
 
-export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobId: string) {
+/** `writer` writes the job's status/result (service role after the RLS hardening migration); `db` reads with the owner's session. */
+export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db) {
   const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
   const job = data as SocialJob | null
   if (!job || (job.platform !== 'instagram' && job.platform !== 'tiktok')) throw new SocialPublishError('Trabajo de publicación no encontrado.', 404)
@@ -177,7 +178,7 @@ export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobI
   if (job.status === 'publishing') {
     const since = Date.parse(String((job as { updated_at?: string }).updated_at ?? ''))
     if (Number.isFinite(since) && Date.now() - since > 30 * 60_000) {
-      await db.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), interruptedAt: new Date().toISOString(), lastError: 'La publicación anterior se interrumpió.' }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'publishing')
+      await writer.from('publication_jobs').update({ status: 'approved', result: { ...(job.result ?? {}), interruptedAt: new Date().toISOString(), lastError: 'La publicación anterior se interrumpió.' }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'publishing')
       throw new SocialPublishError('La publicación anterior se interrumpió sin confirmar el resultado. Comprueba en la plataforma que no se subió y vuelve a pulsar «Publicar» para reintentarlo.', 409)
     }
     throw new SocialPublishError('La publicación ya está en curso.', 409)
@@ -201,19 +202,19 @@ export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobI
   const needed = platform === 'instagram' ? SOCIAL_SCOPES.instagram[1] : SOCIAL_SCOPES.tiktok[1]
   if (!connection.scopes.includes(needed)) throw new SocialPublishError(`La conexión no tiene el permiso ${needed}. Vuelve a conectar la cuenta.`, 409)
 
-  const { data: claimed } = await db.from('publication_jobs').update({ status: 'publishing', updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'approved').select('id')
+  const { data: claimed } = await writer.from('publication_jobs').update({ status: 'publishing', updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'approved').select('id')
   if (!claimed?.length) throw new SocialPublishError('La publicación ya está en curso.', 409)
   try {
     const token = await socialAccessToken(db, connection)
-    const r = platform === 'instagram' ? await publishInstagram(db, job, token, connection.external_account_id) : await publishTikTok(db, job, token)
+    const r = platform === 'instagram' ? await publishInstagram(db, job, token, connection.external_account_id, writer) : await publishTikTok(db, job, token, writer)
     const { data: latest } = await db.from('publication_jobs').select('result').eq('id', job.id).maybeSingle()
     const result = { ...((latest?.result as Record<string, unknown> | null) ?? {}), mediaId: r.mediaId, url: r.url, publishedAt: new Date().toISOString(), privacy: platform === 'tiktok' ? job.payload.privacyLevel ?? 'SELF_ONLY' : null }
-    await db.from('publication_jobs').update({ status: 'published', result, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
+    await writer.from('publication_jobs').update({ status: 'published', result, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     return { mediaId: r.mediaId, url: r.url, alreadyPublished: false }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'La publicación falló.'
     const { data: latest } = await db.from('publication_jobs').select('result').eq('id', job.id).maybeSingle()
-    await db.from('publication_jobs').update({ status: 'approved', result: { ...((latest?.result as Record<string, unknown> | null) ?? {}), lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
+    await writer.from('publication_jobs').update({ status: 'approved', result: { ...((latest?.result as Record<string, unknown> | null) ?? {}), lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     throw error
   }
 }
