@@ -336,7 +336,10 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 // 8. Repurpose with a real saved edit: suggestion, hook draft, packaging draft and platform limits through the UI.
 {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/repurpose/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
-  const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8')
+  const longSeed = `;(() => { const db = window.__DB; const seg = (start, end, text) => ({ start, end, text });
+    db.assets.push({ id: 'sub-as1', owner_id: 'u1', project_id: 'p1', asset_type: 'subtitle', storage_path: null, source_provider: 'groq', source_url: null, license_status: 'owned', created_at: '2026-09-30T00:00:00Z',
+      provenance: { title: 'Subtítulos', sourceAssetId: 'as1', segments: [seg(0, 8, 'Hola a todos, bienvenidos de nuevo.'), seg(8, 20, 'y hoy hablamos de varias cosas sin orden'), seg(20, 28, '¿Por qué nadie habla del secreto de las pirámides?'), seg(28, 40, 'Durante 4000 años se pensó que las construyeron esclavos, pero no fue así.'), seg(40, 52, 'Los registros muestran salarios, raciones de cerveza y bajas por enfermedad.'), seg(52, 60, 'Eran trabajadores pagados.')] } }) })()`
+  const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8') + '\n' + longSeed
   const server = serve(8798, { 'setup.js': setup, 'app.js': code })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
   const errors = []
@@ -351,6 +354,17 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('repurpose: hook is drafted from the narration', (await page.getByLabel(/Hook en pantalla/).inputValue()).includes('¿Por qué nadie sobrevivió'))
   check('repurpose: suggestion is labelled as calculated, not AI', await page.getByText('Calculado, no IA').count() >= 2)
   check('repurpose: packaging draft is shown', await page.getByText(/Borrador de título y descripción/).count() === 1)
+  // Long video → Short: a transcribed video proposes windows with reasons; «Crear Short» saves a 9:16 draft with transcript-timed captions.
+  const long = page.getByRole('region', { name: 'Shorts desde un vídeo largo' })
+  check('repurpose (long video): offers to transcribe videos that have no transcript', await long.getByRole('button', { name: 'Transcribir' }).count() >= 1)
+  await long.getByLabel('Vídeo transcrito').selectOption('as1')
+  await long.getByLabel('Duración').selectOption('20-58')
+  await long.getByText(/puntuación/).first().waitFor({ timeout: 10000 })
+  check('repurpose (long video): candidates explain why they were chosen', await long.getByText(/empieza con una pregunta/).count() >= 1)
+  await long.locator('li', { hasText: '0:20–' }).getByRole('button', { name: 'Crear Short (borrador 9:16)' }).click()
+  await long.getByRole('link', { name: /Abrir en el editor manual/ }).waitFor({ timeout: 10000 })
+  const short = (await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))).render_jobs.find(j => j.output_format === '9:16' && j.composition?.clips?.[0]?.visualAssetId === 'as1')
+  check('repurpose (long video): the draft trims the source video and carries timed captions', !!short && short.composition.clips[0].trimInMs === 20000 && short.composition.subtitles === true && (short.composition.clips[0].cues ?? []).length >= 2, short?.composition?.clips?.[0])
   check('repurpose: no horizontal overflow at 390 px', (await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 1)
   check('repurpose: no page errors', errors.length === 0, errors)
   await page.close(); server.close()

@@ -35,3 +35,24 @@ describe('long video → Short candidates (heuristic, explained)', () => {
     expect(extractShortCandidates([seg(0, 5, 'Hola.')])).toEqual([])
   })
 })
+
+import { windowCues } from '@/lib/shorts/extract'
+import { compositionCues, cuesToSrt } from '@/lib/editor/composition'
+import { splitClip, trimStart } from '@/lib/editor/timeline'
+describe('Shorts keep the transcript timing in their subtitles', () => {
+  it('re-times transcript segments to the window and survives trim and split', () => {
+    const [best] = extractShortCandidates(transcript, { minS: 20, maxS: 45, count: 1 })
+    const cues = windowCues(transcript, best)
+    expect(cues[0]).toMatchObject({ startMs: 0, text: expect.stringMatching(/^¿Por qué nadie/) })
+    expect(cues.every(q => q.endMs <= best.endMs - best.startMs)).toBe(true)
+    const comp = shortComposition('video-1', best, 'Pirámides', transcript)
+    // Second segment starts 8 s into the window (28 s - 20 s), exactly as in the source.
+    expect(compositionCues(comp).some(q => q.startMs === 8000)).toBe(true)
+    expect(cuesToSrt(compositionCues(comp))).toMatch(/^1\n00:00:00,000 --> /)
+    const trimmed = trimStart(comp, comp.clips[0].id, 2000)
+    expect(compositionCues(trimmed).some(q => q.startMs === 6000)).toBe(true)
+    const split = splitClip(comp, comp.clips[0].id, 10000)
+    expect(compositionCues(split).some(q => q.startMs === 8000)).toBe(true)
+    expect(split.clips[1].cues?.[0].startMs).toBe(0)
+  })
+})

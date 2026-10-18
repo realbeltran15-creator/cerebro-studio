@@ -34,6 +34,8 @@ export type Clip = {
   /** How this clip ends into the next one. Default fade (uses composition.fadeMs). */
   transition?: Transition
   text?: TextOverlay | null
+  /** Timed captions relative to the clip start (e.g. from a transcript). When present they replace the evenly spread narration. */
+  cues?: Array<{ startMs: number; endMs: number; text: string }>
 }
 
 /** Independent audio on the timeline: voice-over, music or effects. */
@@ -168,6 +170,7 @@ export function parseComposition(value: unknown): Composition | null {
       muted: c.muted === true,
       transition: c.transition === 'cut' ? 'cut' : 'fade',
       text: parseText(c.text),
+      ...(Array.isArray(c.cues) ? { cues: parseCues(c.cues, clampMs(Number(c.durationMs) || 5000)) } : {}),
     } satisfies Clip]
   })
   const clipIds = new Set(clips.map(c => c.id))
@@ -257,6 +260,20 @@ export function toShort(source: Composition, sourceJobId: string, sceneIds: stri
  * Splits narration into caption chunks spread evenly across the clip.
  * Timing is proportional to word count: an approximation, not forced alignment.
  */
+/** Valid, ordered cues inside [0, durationMs]; at most 400 per clip. */
+function parseCues(raw: unknown[], durationMs: number) {
+  return raw.flatMap(q => {
+    const c = q as { startMs?: unknown; endMs?: unknown; text?: unknown }
+    const start = Math.max(0, Math.round(Number(c.startMs))), end = Math.min(durationMs, Math.round(Number(c.endMs)))
+    return typeof c.text === 'string' && c.text.trim() && Number.isFinite(start) && Number.isFinite(end) && end > start ? [{ startMs: start, endMs: end, text: c.text.trim().slice(0, 300) }] : []
+  }).sort((a, b) => a.startMs - b.startMs).slice(0, 400)
+}
+
+/** Captions of one clip: its timed cues when it has them, otherwise the narration spread over the clip. */
+export function clipCaptions(clip: Pick<Clip, 'narration' | 'durationMs' | 'cues'>) {
+  return clip.cues?.length ? clip.cues.map(c => ({ text: c.text, startMs: c.startMs, endMs: Math.min(c.endMs, clip.durationMs) })) : captionChunks(clip.narration ?? null, clip.durationMs)
+}
+
 export function captionChunks(text: string | null, durationMs: number, maxWords = 10) {
   const words = (text ?? '').trim().split(/\s+/).filter(Boolean)
   if (words.length === 0) return []
@@ -285,7 +302,7 @@ export type CaptionCue = { startMs: number; endMs: number; text: string }
 /** The same caption cues the renderer burns into the video (same chunking and timing), on the montage's own timeline. */
 export function compositionCues(c: Pick<Composition, 'clips'> & { subtitles?: boolean }): CaptionCue[] {
   const starts = clipStarts(c)
-  return c.clips.flatMap((clip, i) => captionChunks(clip.narration ?? null, clip.durationMs).map(ch => ({ startMs: Math.round(starts[i] + ch.startMs), endMs: Math.round(starts[i] + ch.endMs), text: ch.text })))
+  return c.clips.flatMap((clip, i) => clipCaptions(clip).map(ch => ({ startMs: Math.round(starts[i] + ch.startMs), endMs: Math.round(starts[i] + ch.endMs), text: ch.text })))
 }
 
 const two = (n: number) => String(Math.floor(n)).padStart(2, '0')

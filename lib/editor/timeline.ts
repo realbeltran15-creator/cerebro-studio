@@ -46,6 +46,12 @@ export function setDuration(c: Composition, clipId: string, durationMs: number) 
   return updateClip(c, clipId, { durationMs })
 }
 
+/** Cues inside [fromMs, toMs) of a clip, re-timed so fromMs becomes 0. Used when a clip with transcript cues is trimmed or split. */
+export function sliceCues(cues: Clip['cues'], fromMs: number, toMs: number): Clip['cues'] {
+  if (!cues) return undefined
+  return cues.filter(q => q.endMs > fromMs && q.startMs < toMs).map(q => ({ text: q.text, startMs: Math.max(q.startMs, fromMs) - fromMs, endMs: Math.min(q.endMs, toMs) - fromMs }))
+}
+
 /**
  * Trims the start of a clip: the visible part starts `deltaMs` later in the source (video) and the clip
  * gets shorter by the same amount. Negative delta extends back towards the source start.
@@ -57,7 +63,7 @@ export function trimStart(c: Composition, clipId: string, deltaMs: number): Comp
   const applied = trimIn - (clip.trimInMs ?? 0)
   const duration = clampDur(clip.durationMs - applied)
   const realApplied = clip.durationMs - duration
-  return updateClip(c, clipId, { trimInMs: (clip.trimInMs ?? 0) + realApplied, durationMs: duration })
+  return updateClip(c, clipId, { trimInMs: (clip.trimInMs ?? 0) + realApplied, durationMs: duration, ...(clip.cues ? { cues: sliceCues(clip.cues, realApplied, clip.durationMs) } : {}) })
 }
 
 /** Splits a clip at `atMs` (relative to its start). Both halves must be at least the minimum clip length. */
@@ -66,8 +72,8 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   if (i < 0) return c
   const clip = c.clips[i]
   if (atMs < MIN_CLIP_MS || clip.durationMs - atMs < MIN_CLIP_MS) return c
-  const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut' }
-  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs), voiceAssetId: null, narration: null, text: clip.text ?? null }
+  const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut', ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
+  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)
   // Subtitles: keep the narration on the first half only (it was timed to the whole clip).

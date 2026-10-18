@@ -38,6 +38,20 @@ export function LongVideoShorts({ projectId }: { projectId: string }) {
     return s ? (s.provenance!.segments as TranscriptSegment[]) : null
   }
   const transcribed = videos.filter(v => segmentsFor(v.id))
+  const pending = videos.filter(v => !segmentsFor(v.id))
+  const [transcribing, setTranscribing] = useState('')
+  const [language, setLanguage] = useState('es')
+  async function transcribe(v: Asset) {
+    setTranscribing(v.id); setError('')
+    try {
+      const r = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assetId: v.id, language }) })
+      const j = await r.json().catch(() => ({})) as { asset?: Asset; error?: string; attempts?: string[] }
+      if (!r.ok || !j.asset) throw new Error(`${j.error ?? 'No se pudo transcribir.'}${j.attempts?.length ? ` (${j.attempts.join(' · ')})` : ''}`)
+      const { data } = await supabase.from('assets').select('id,asset_type,provenance,created_at').eq('id', j.asset.id).maybeSingle()
+      if (data) setSubs(list => [data as Asset, ...list.filter(x => x.id !== (data as Asset).id)])
+      setVideoId(v.id)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo transcribir.') } finally { setTranscribing('') }
+  }
   const candidates: ShortCandidate[] = useMemo(() => {
     const segs = videoId ? segmentsFor(videoId) : null
     return segs ? extractShortCandidates(segs, { minS: range[0], maxS: range[1], count: 5 }) : []
@@ -50,7 +64,7 @@ export function LongVideoShorts({ projectId }: { projectId: string }) {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('La sesión ha caducado.')
-      const comp = shortComposition(video.id, c, `${titleOf(video)} · ${fmt(c.startMs)}`)
+      const comp = shortComposition(video.id, c, `${titleOf(video)} · ${fmt(c.startMs)}`, segmentsFor(video.id) ?? [])
       const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user.id, project_id: projectId, output_format: comp.format, status: 'draft', composition: comp }).select('id').single()
       if (e) throw new Error(e.message)
       setCreated({ jobId: (data as { id: string }).id, start: c.startMs })
@@ -59,7 +73,7 @@ export function LongVideoShorts({ projectId }: { projectId: string }) {
 
   return <section className="panel" style={{ marginTop: 18 }} aria-label="Shorts desde un vídeo largo">
     <h2 className="panelTitle">Desde un vídeo largo</h2>
-    <p className="muted small">Propone los mejores tramos de un vídeo largo a partir de su transcripción: frases completas, gancho al inicio, ritmo de voz y sin silencios largos. Es un cálculo (no IA) y explica por qué elige cada tramo. Transcribe primero el vídeo en la <Link className="open" href="/library">Biblioteca</Link> (gratis con límites).</p>
+    <p className="muted small">Propone los mejores tramos de un vídeo largo a partir de su transcripción: frases completas, gancho al inicio, ritmo de voz y sin silencios largos. Es un cálculo (no IA) y explica por qué elige cada tramo. Si el vídeo aún no tiene transcripción, transcríbelo aquí abajo o en la <Link className="open" href="/library">Biblioteca</Link> (gratis con límites).</p>
     {error && <p className="error" role="alert">{error}</p>}
     <div className="field-row">
       <label htmlFor="lv-video">Vídeo transcrito
@@ -74,6 +88,11 @@ export function LongVideoShorts({ projectId }: { projectId: string }) {
         </select>
       </label>
     </div>
+    {pending.length > 0 && <div className="small" style={{ marginTop: 10 }}>
+      <p className="muted">Vídeos sin transcripción ({pending.length}). Transcribir es gratis dentro de los límites de Groq o Cloudflare; el resultado se guarda en la Biblioteca.</p>
+      <label htmlFor="lv-lang">Idioma del audio <select id="lv-lang" value={language} onChange={e => setLanguage(e.target.value)}><option value="es">Español</option><option value="en">Inglés</option><option value="pt">Portugués</option><option value="fr">Francés</option><option value="de">Alemán</option><option value="it">Italiano</option></select></label>
+      <ul>{pending.slice(0, 8).map(v => <li key={v.id}>{titleOf(v)} <button type="button" className="ghost small" disabled={!!transcribing} onClick={() => void transcribe(v)}>{transcribing === v.id ? 'Transcribiendo…' : 'Transcribir'}</button></li>)}</ul>
+    </div>}
     {videoId && candidates.length === 0 && <p className="muted small">No hay tramos de esa duración con frases completas en la transcripción.</p>}
     {candidates.length > 0 && <ol className="small" style={{ marginTop: 10 }}>
       {candidates.map(c => <li key={c.startMs} style={{ marginBottom: 8 }}>

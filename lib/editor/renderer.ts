@@ -1,5 +1,5 @@
 import { applyGainPlan, musicGainPlan } from './audio-plan'
-import { audioStartMs, captionChunks, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type Composition, type TextOverlay } from './composition'
+import { audioStartMs, clipCaptions, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type Composition, type TextOverlay } from './composition'
 
 /**
  * Browser renderer: draws the composition on a canvas, mixes audio with WebAudio and,
@@ -233,7 +233,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     recorder.start(1000)
   }
 
-  const captions = composition.clips.map(c => (composition.subtitles ? captionChunks(c.narration, c.durationMs) : []))
+  const captions = composition.clips.map(c => (composition.subtitles ? clipCaptions(c) : []))
   let activeClipId: string | null = null
   const last = composition.clips.length - 1
 
