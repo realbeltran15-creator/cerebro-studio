@@ -138,7 +138,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 {
   const server = serve(8788, { 'q.js': await bundle(path.join(dir, 'influencer-quality.harness.ts')) })
   const page = await browser.newPage()
-  await page.goto('http://127.0.0.1:8793/')
+  await page.goto('http://127.0.0.1:8788/')
   const r = await page.evaluate(() => window.runTest())
   check('influencer: 800x600 image fails the resolution check', r.image.check === 'fail', r.image)
   check('influencer: 1280x720 video passes resolution', r.stable.res === 'pass', r.stable)
