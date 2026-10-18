@@ -134,6 +134,18 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// Thumbnail text composed on top: real canvas, 1280×720 JPEG, text where asked, too-long text refused.
+{
+  const server = serve(8787, { 'q.js': await bundle(path.join(dir, 'thumbnail-compose.harness.ts')) })
+  const page = await browser.newPage()
+  await page.goto('http://127.0.0.1:8787/')
+  const r = await page.evaluate(() => window.runCompose())
+  check('thumbnail compose: output is a 1280x720 JPEG', r.w === 1280 && r.h === 720 && r.type === 'image/jpeg', r)
+  check('thumbnail compose: text drawn at the bottom, not at the top', r.lowerWhite > 2000 && r.upperWhite === 0, r)
+  check('thumbnail compose: unreadably long text is refused', r.threw === true)
+  await page.close(); server.close()
+}
+
 // 3. Virtual Influencer Studio: automated quality measurements on real media.
 {
   const server = serve(8788, { 'q.js': await bundle(path.join(dir, 'influencer-quality.harness.ts')) })
