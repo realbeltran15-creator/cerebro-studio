@@ -11,6 +11,8 @@ import { LEDGER_HEADER } from '@/lib/research/guard-header'
 import { isNetworkFailure, networkFailureMessage, unansweredMessage } from '@/lib/research/net-error'
 import { SessionExpiredError, sessionFetch } from '@/lib/research/session'
 import { UNITS } from '@/lib/research/filters'
+import { loadHistory, mergeAnalyses, saveHistory } from '@/lib/research/history'
+import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { Queries, SearchPlan } from '@/lib/research/search-plan'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
 import type { YouTubeVideoResult } from '@/lib/providers/youtube-data'
@@ -23,6 +25,8 @@ export type GuidedPlan = { jobs: Job[]; perMarket: number; createdAt: string; re
 export type SearchState = { videos: Array<{ region: string; videos: YouTubeVideoResult[] }>; ranFor: { q: string; labels: string[] } | null; busy: boolean; error: string; done: string }
 
 type Ctx = {
+  /** Cloud copy of the paid analyses: 'synced' when the last load/save worked, 'error' when only this browser has them. */
+  cloud: 'idle' | 'synced' | 'error'
   /** APPLIED filters: what every result on screen was computed with. */
   filters: ResearchFilters
   /** DRAFT filters: what the panel shows. They only become `filters` when the user presses Apply. */
@@ -130,6 +134,24 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
       try { shrink(9, false) } catch { try { shrink(3, false) } catch { try { shrink(0, false) } catch { /* keep in memory only */ } } }
     }
   }, [analyses, charts, guided, hydrated])
+
+  // ---------- Cloud copy of paid analyses (survives clearing the browser, other devices and deploys) ----------
+  const [cloud, setCloud] = useState<'idle' | 'synced' | 'error'>('idle')
+  const cloudLoaded = useRef(false)
+  useEffect(() => {
+    if (!hydrated || cloudLoaded.current) return
+    cloudLoaded.current = true
+    void loadHistory(getSupabaseBrowserClient()).then(remote => {
+      const upgraded = Object.fromEntries(Object.entries(remote).filter(([, a]) => a && a.quality && a.growth).map(([k, a]) => [k, upgradeAnalysis(a) ?? a]))
+      if (Object.keys(upgraded).length) setAnalyses(local => mergeAnalyses(local, upgraded))
+      setCloud('synced')
+    }).catch(() => setCloud('error'))
+  }, [hydrated])
+  useEffect(() => {
+    if (!hydrated || !cloudLoaded.current || !Object.keys(analyses).length) return
+    const t = setTimeout(() => { void saveHistory(getSupabaseBrowserClient(), analyses).then(() => setCloud('synced')).catch(() => setCloud('error')) }, 1500)
+    return () => clearTimeout(t)
+  }, [analyses, hydrated])
 
   const refreshUsage = useCallback(async () => {
     try { const r = await paidFetch('/api/research/usage'); if (r.ok) takeServer(await r.json() as ServerUsage) } catch { /* offline */ }
@@ -259,7 +281,7 @@ export function ResearchProvider({ children }: { children: ReactNode }) {
   const removeChip = useCallback((chip: ActiveChip) => { setApplied(f => chip.remove(f)); setDraft(f => chip.remove(f)); setLastRun(null) }, [])
   const persistPresets = (list: Preset[]) => { setPresets(list); savePresets(store(), list) }
   const value: Ctx = {
-    filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses: current, legacy, charts, loadCharts, chartsBusy, chartsError, list: Object.values(current), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, resetNotices: () => { setError(''); setChartsError(''); setLastRun(null); setLastPlan(null); setSearch(x => (x.error || x.done ? { ...x, error: '', done: '' } : x)) }, clearAnalyses: () => { setAnalyses({}); setGuided(null) },
+    cloud, filters, draft, setDraft, apply, reset, dirty, errors, removeChip, recentDays, lastRun, queries, setQueries: q => setQueriesState(prev => ({ ...prev, ...q })), runJobs, runPlan, lastPlan, guided, setGuided, search, runSearch, markets, analyses: current, legacy, charts, loadCharts, chartsBusy, chartsError, list: Object.values(current), usage, refreshUsage, plan, run, measureGrowth, growthBusy, progress, error, cancel: () => { stop.current = true }, resetNotices: () => { setError(''); setChartsError(''); setLastRun(null); setLastPlan(null); setSearch(x => (x.error || x.done ? { ...x, error: '', done: '' } : x)) }, clearAnalyses: () => { setAnalyses({}); setGuided(null); void saveHistory(getSupabaseBrowserClient(), {}).catch(() => setCloud('error')) },
     presets, savePreset: name => persistPresets(addPreset(presets, name, draft)), applyPreset: id => { const p = presets.find(x => x.id === id); if (p) { const f = sanitizeFilters(p.filters); setDraft(f); setApplied(f); setLastRun(null) } }, deletePreset: id => persistPresets(presets.filter(p => p.id !== id)),
   }
   return <C.Provider value={value}>{children}</C.Provider>

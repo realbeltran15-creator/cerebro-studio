@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { StudioShell } from '../components/studio-shell'
 import { YouTubeResearch } from './youtube-research'
 import { ChannelResearch } from './channel-analysis'
-import { ResearchProvider, ResetNoticesOnTab } from './research-context'
+import { ResearchProvider, ResetNoticesOnTab, useResearch } from './research-context'
 import { FilterPanel } from './filter-panel'
 import { KeywordsTab, NichesTab } from './tabs-analysis'
 import { DiscoverTab, InternationalTab, MonetizationTab } from './tabs-trends'
@@ -48,6 +48,7 @@ export default function MarketIntelligencePage() {
         {TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       <ResetNoticesOnTab tab={tab} />
+      <CloudNote />
       <FilterPanel tab={tab} />
       {tab === 'discover' && <DiscoverTab onSaved={() => void load()} goTo={setTab} />}
       {tab === 'niches' && <NichesTab onSaved={() => void load()} />}
@@ -59,4 +60,10 @@ export default function MarketIntelligencePage() {
       <p className="authNote">Los datos observados, las métricas calculadas, las estimaciones y las recomendaciones se mantienen separados y etiquetados. Esta pantalla no afirma viralidad ni publica contenido.</p>
     </ResearchProvider> : null}
   </StudioShell>
+}
+
+function CloudNote() {
+  const { cloud, list } = useResearch()
+  if (cloud === 'error') return <p className="warnBox small" role="status">Los análisis solo están guardados en este navegador: no se pudo sincronizar la copia en tu cuenta. Exporta los que necesites.</p>
+  return cloud === 'synced' && list.length ? <p className="muted small" role="status">{list.length} análisis guardados también en tu cuenta (se recuperan en otro navegador o tras borrar los datos).</p> : null
 }
