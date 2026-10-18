@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decryptJson, encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
+import { serviceRoleClient } from '@/lib/supabase/admin'
 
 /**
  * Google OAuth for the owner's YouTube channel. Server-only.
@@ -72,11 +73,11 @@ export async function accessTokenFor(db: SupabaseClient, connection: Connection)
   try {
     const t = await tokenRequest({ refresh_token: tokens.refresh_token, grant_type: 'refresh_token' })
     const next: StoredTokens = { ...tokens, access_token: t.access_token!, expires_at: Date.now() + (t.expires_in ?? 3600) * 1000, scope: t.scope ?? tokens.scope }
-    await db.from('channel_connections').update({ token_ciphertext: encryptJson(next), token_metadata: { expires_at: next.expires_at, scope: next.scope }, status: 'connected', updated_at: new Date().toISOString() }).eq('id', connection.id).eq('owner_id', connection.owner_id)
+    await (serviceRoleClient() ?? db).from('channel_connections').update({ token_ciphertext: encryptJson(next), token_metadata: { expires_at: next.expires_at, scope: next.scope }, status: 'connected', updated_at: new Date().toISOString() }).eq('id', connection.id).eq('owner_id', connection.owner_id)
     return next.access_token
   } catch (error) {
     if ((error as { code?: string }).code === 'invalid_grant') {
-      await db.from('channel_connections').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', connection.id).eq('owner_id', connection.owner_id)
+      await (serviceRoleClient() ?? db).from('channel_connections').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', connection.id).eq('owner_id', connection.owner_id)
       throw new Error('Google revocó el acceso al canal. Vuelve a conectarlo.')
     }
     throw error
@@ -90,7 +91,8 @@ export async function revoke(connection: Connection) {
 }
 
 export async function youtubeConnection(db: SupabaseClient, ownerId: string) {
-  const { data } = await db.from('channel_connections').select('id,owner_id,external_account_id,external_account_name,scopes,status,token_ciphertext')
+  // Token columns are server-only after the security migration: read them with the service role (filtered by owner).
+  const { data } = await (serviceRoleClient() ?? db).from('channel_connections').select('id,owner_id,external_account_id,external_account_name,scopes,status,token_ciphertext')
     .eq('owner_id', ownerId).eq('provider', 'youtube').eq('status', 'connected').order('updated_at', { ascending: false }).limit(1)
   return ((data ?? [])[0] as Connection | undefined) ?? null
 }

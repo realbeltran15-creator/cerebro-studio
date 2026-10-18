@@ -99,3 +99,22 @@ describe('rate limit (per instance)', () => {
     expect(hit('other', rule, 2000).allowed).toBe(true)
   })
 })
+
+describe('server-owned spend ledger', () => {
+  it('deleting generated assets does not lower the counted spend when the ledger is available', async () => {
+    const { spendStatus, spendCaps } = await import('@/lib/providers/spend')
+    const now = new Date('2026-10-18T12:00:00Z')
+    const ledger = [{ createdAt: '2026-10-18T09:00:00Z', estimateUsd: 3, tier: 'paid' }, { createdAt: '2026-10-02T09:00:00Z', estimateUsd: 10, tier: 'paid' }]
+    // The assets were deleted from the browser: the derived total is 0, the ledger still counts 3 today and 13 this month.
+    const s = spendStatus([], [], spendCaps({}), now, ledger)
+    expect(s.todayUsd).toBe(3); expect(s.monthUsd).toBe(13)
+    // Without the ledger (before the migration) behaviour is unchanged.
+    expect(spendStatus([], [], spendCaps({}), now).todayUsd).toBe(0)
+  })
+  it('recordSpend is skipped (not failed) when the service role is not configured', async () => {
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    const { _resetServiceRoleClient } = await import('@/lib/supabase/admin'); _resetServiceRoleClient()
+    const { recordSpend } = await import('@/lib/providers/spend-ledger')
+    expect(await recordSpend({ ownerId: 'u', requestId: 'r', provider: 'p', model: 'm', tier: 'paid', estimateUsd: 1 })).toBe('unavailable')
+  })
+})

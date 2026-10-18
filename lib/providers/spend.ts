@@ -30,14 +30,20 @@ export type SpendStatus = { todayUsd: number; monthUsd: number; caps: SpendCaps;
 
 const round = (n: number) => Math.round(n * 1000) / 1000
 
-export function spendStatus(assets: UsageAsset[], pending: PendingSpend[], caps: SpendCaps, now = new Date()): SpendStatus {
+/**
+ * `ledger` = rows of the server-owned spend ledger (generation_spend, written only with the service role, never deletable from the browser).
+ * The browser can delete its own assets; if spend were computed only from assets, deleting generated files would «reset» the cap. When the
+ * ledger is available the larger of the two totals is used per window, so deleting files never lowers the counted spend.
+ */
+export function spendStatus(assets: UsageAsset[], pending: PendingSpend[], caps: SpendCaps, now = new Date(), ledger: PendingSpend[] = []): SpendStatus {
   const day = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
   const month = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
-  let today = 0, monthTotal = 0
-  const add = (at: number, usd: number) => { if (!(usd > 0) || !Number.isFinite(at)) return; if (at >= month) monthTotal += usd; if (at >= day) today += usd }
-  for (const a of assets) { if (!isGeneration(a)) continue; const e = entryOf(a); if (e.tier === 'paid') add(Date.parse(a.created_at), e.estimatedUsd) }
-  for (const p of pending) if ((p.tier ?? 'paid') === 'paid') add(Date.parse(p.createdAt), p.estimateUsd)
-  return { todayUsd: round(today), monthUsd: round(monthTotal), caps, dayStart: new Date(day).toISOString(), monthStart: new Date(month).toISOString() }
+  const totals = () => { const t = { today: 0, month: 0 }; return { t, add: (at: number, usd: number) => { if (!(usd > 0) || !Number.isFinite(at)) return; if (at >= month) t.month += usd; if (at >= day) t.today += usd } } }
+  const derived = totals(), booked = totals()
+  for (const a of assets) { if (!isGeneration(a)) continue; const e = entryOf(a); if (e.tier === 'paid') derived.add(Date.parse(a.created_at), e.estimatedUsd) }
+  for (const p of pending) if ((p.tier ?? 'paid') === 'paid') derived.add(Date.parse(p.createdAt), p.estimateUsd)
+  for (const l of ledger) if ((l.tier ?? 'paid') === 'paid') booked.add(Date.parse(l.createdAt), l.estimateUsd)
+  return { todayUsd: round(Math.max(derived.t.today, booked.t.today)), monthUsd: round(Math.max(derived.t.month, booked.t.month)), caps, dayStart: new Date(day).toISOString(), monthStart: new Date(month).toISOString() }
 }
 
 /** null when the generation fits; otherwise the reason it is refused (Spanish, for the user). */

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decryptJson, encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
+import { serviceRoleClient } from '@/lib/supabase/admin'
 
 /**
  * OAuth for Instagram (Business Login for Instagram) and TikTok (Login Kit for Web). Server-only.
@@ -84,7 +85,8 @@ export async function exchangeSocialCode(p: SocialPlatform, origin: string, code
 export type SocialConnection = { id: string; owner_id: string; provider: string; external_account_id: string; external_account_name: string | null; scopes: string[]; status: string; token_ciphertext: string | null }
 
 export async function socialConnection(db: SupabaseClient, ownerId: string, p: SocialPlatform) {
-  const { data } = await db.from('channel_connections').select('id,owner_id,provider,external_account_id,external_account_name,scopes,status,token_ciphertext')
+  // Token columns are server-only after the security migration: read them with the service role (filtered by owner).
+  const { data } = await (serviceRoleClient() ?? db).from('channel_connections').select('id,owner_id,provider,external_account_id,external_account_name,scopes,status,token_ciphertext')
     .eq('owner_id', ownerId).eq('provider', p).eq('status', 'connected').order('updated_at', { ascending: false }).limit(1)
   return ((data ?? [])[0] as SocialConnection | undefined) ?? null
 }
@@ -110,11 +112,11 @@ export async function socialAccessToken(db: SupabaseClient, c: SocialConnection)
       }))
       next = { ...t, access_token: String(r.access_token), refresh_token: String(r.refresh_token ?? t.refresh_token), expires_at: Date.now() + Number(r.expires_in ?? 86400) * 1000 }
     }
-    await db.from('channel_connections').update({ token_ciphertext: encryptJson(next), token_metadata: { expires_at: next.expires_at, scope: next.scope }, updated_at: new Date().toISOString() }).eq('id', c.id).eq('owner_id', c.owner_id)
+    await (serviceRoleClient() ?? db).from('channel_connections').update({ token_ciphertext: encryptJson(next), token_metadata: { expires_at: next.expires_at, scope: next.scope }, updated_at: new Date().toISOString() }).eq('id', c.id).eq('owner_id', c.owner_id)
     return next.access_token
   } catch {
     if (t.expires_at > Date.now()) return t.access_token
-    await db.from('channel_connections').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', c.id).eq('owner_id', c.owner_id)
+    await (serviceRoleClient() ?? db).from('channel_connections').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', c.id).eq('owner_id', c.owner_id)
     throw new Error('La sesión caducó. Vuelve a conectar la cuenta en Redes sociales.')
   }
 }

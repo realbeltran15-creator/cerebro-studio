@@ -4,6 +4,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { exchangeCode, googleOAuthConfigured } from '@/lib/oauth/google'
 import { encryptJson } from '@/lib/security/tokens'
+import { serviceRoleClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
     const channel = channelJson.items?.[0]
     if (!channel) return back('no_channel')
     const scopes = tokens.scope.split(' ').filter(Boolean)
-    const { error } = await supabase.from('channel_connections').upsert({
+    const { error } = await (serviceRoleClient() ?? supabase).from('channel_connections').upsert({
       owner_id: user.id, provider: 'youtube', external_account_id: channel.id, external_account_name: channel.snippet?.title ?? null,
       scopes, status: 'connected', token_ciphertext: encryptJson(tokens),
       token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope, scope_set: scopeSet, has_refresh_token: Boolean(tokens.refresh_token) },

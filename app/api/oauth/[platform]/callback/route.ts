@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { timingSafeEqual } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { encryptJson, exchangeSocialCode, socialConfigured, socialPlatforms, type SocialPlatform } from '@/lib/oauth/social'
+import { serviceRoleClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +32,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ plat
   try {
     const { tokens, account } = await exchangeSocialCode(p, url.origin, code)
     const scopes = tokens.scope.split(/[ ,]+/).filter(Boolean)
-    const { error } = await supabase.from('channel_connections').upsert({
+    const { error } = await (serviceRoleClient() ?? supabase).from('channel_connections').upsert({
       owner_id: user.id, provider: p, external_account_id: account.id, external_account_name: account.name, scopes, status: 'connected',
       token_ciphertext: encryptJson(tokens), token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope }, updated_at: new Date().toISOString(),
     }, { onConflict: 'owner_id,provider,external_account_id' })

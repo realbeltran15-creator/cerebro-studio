@@ -178,7 +178,8 @@ export async function executeAutomation(db: SupabaseClient, a: Automation, trigg
   const busy = await guardConcurrentRun(db, a)
   if (busy) return { ok: false as const, error: busy }
   const { data: run, error } = await db.from('automation_runs').insert({ owner_id: a.owner_id, automation_id: a.id, trigger, status: 'running' }).select('id').single()
-  if (error) return { ok: false as const, error: error.message }
+  // 23505: the unique «one running run per automation» index (security migration) caught a simultaneous start that passed the guard.
+  if (error) return { ok: false as const, error: (error as { code?: string }).code === '23505' ? 'Ya hay una ejecución en curso de esta automatización; espera a que termine.' : error.message }
   const runId = (run as { id: string }).id
   try {
     const summary = a.kind === 'trend_watch' ? await runTrendWatch(db, a) : a.kind === 'shorts_factory' ? await runShortsFactory(db, a) : await runOpportunityRefresh(db, a)
