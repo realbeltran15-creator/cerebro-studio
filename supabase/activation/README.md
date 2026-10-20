@@ -1,4 +1,4 @@
-# Activación de migraciones pendientes · preparada el 20-10-2026 · NO APLICADA
+# Activación de migraciones pendientes · preparada el 20-10-2026 · AUTORIZADA el 21-10-2026 · NO APLICADA
 
 Requiere una autorización explícita del propietario: la base de datos es compartida entre Preview y Producción.
 
@@ -40,3 +40,15 @@ El plan es **Free**: Supabase no ofrece copias restaurables desde el panel. Por 
 - Crear una campaña de prueba y recargar la página para comprobar que se conserva. La caché de Investigación (`research_cache`) solo se prueba con una búsqueda real, que gasta cuota y necesita su propia autorización.
 
 Si algo falla, aplicar la reversión de seguridad.
+
+## Intento autorizado del 21-10-2026
+
+- Antes de empezar se comprobó que:
+  - los tres SQL coinciden con las versiones ensayadas (`scripts/test-activation.sh`: 13 de 13);
+  - el estado real coincide con la instantánea: 56 permisos, las políticas `*_own`, 0 ejecuciones en curso;
+  - no había objetos `research_*` previos;
+  - ninguna fila se vería afectada.
+- **Paso 1 (`research_cache`):** la herramienta `apply_migration` agotó su tiempo de espera (180 s) dos veces. Después de cada intento se comprobó que **no se aplicó nada**: ni tabla, ni funciones, ni registro en `schema_migrations`.
+- Como se pidió, **no se ejecutaron los pasos 2 y 3**.
+
+Para aplicarla hace falta otra vía: el SQL Editor de Supabase, ejecutando cada archivo en orden y después `post-check.sql`, o un conector de Supabase que no se quede bloqueado.

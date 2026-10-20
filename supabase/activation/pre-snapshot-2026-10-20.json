@@ -133,8 +133,12 @@
   "automation_runs_one_running_idx"
  ],
  "rows": {
-  "channel_connections": 2,
+  "approvals": 0,
   "publication_jobs": 0,
-  "automation_runs_running": 0
- }
+  "channel_connections": 2,
+  "automation_runs": 1,
+  "automation_runs_running": 0,
+  "projects": 10
+ },
+ "rechecked_at": "2026-10-21 (identical before the authorized attempt)"
 }
