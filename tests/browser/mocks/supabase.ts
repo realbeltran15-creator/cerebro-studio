@@ -22,10 +22,17 @@ function q(table: string) {
     then(a: any, b: any) { return Promise.resolve(run()).then(a, b) },
   }
   function run() {
+    // A table whose migration is not applied yet answers like PostgREST does.
+    if (((window as any).__MISSING_TABLES ?? []).includes(table)) return { data: null, error: { code: 'PGRST205', message: `Could not find the table 'public.${table}' in the schema cache` } }
     const rows = (db[table] ??= [])
     const m = rows.filter(r => filters.every(f => f(r)))
     if (op === 'select') return { data: JSON.parse(JSON.stringify(m)), error: null }
     if (op === 'update') { m.forEach(r => Object.assign(r, JSON.parse(JSON.stringify(payload)))); return { data: ret ? m : null, error: null } }
+    if (op === 'upsert' && Array.isArray(payload)) {
+      // Batch upsert keyed by id (onConflict: 'id').
+      for (const p of JSON.parse(JSON.stringify(payload))) { const hit = rows.find(r => r.id === p.id); if (hit) Object.assign(hit, p); else rows.push({ ...p }) }
+      return { data: null, error: null }
+    }
     if (op === 'upsert') {
       const hit = rows.find(r => r.owner_id === payload.owner_id && r.provider === payload.provider && r.capability === payload.capability)
       if (hit) Object.assign(hit, JSON.parse(JSON.stringify(payload))); else rows.push({ id: uid(), ...JSON.parse(JSON.stringify(payload)) })

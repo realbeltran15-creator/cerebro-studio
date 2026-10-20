@@ -908,7 +908,8 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/campaigns/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
-  const server = serve(8800, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
+  // Before migration 20261015120000 the `campaigns` table does not exist: the page must keep working from this browser only.
+  const server = serve(8800, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + "\nwindow.__MISSING_TABLES = ['campaigns']", 'app.js': code })
   const context = await browser.newContext({ viewport: { width: 1400, height: 1100 }, acceptDownloads: true })
   const page = await context.newPage()
   const errors = [], outbound = []
@@ -995,8 +996,43 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await p2.reload(); await p2.getByLabel('Nombre', { exact: true }).waitFor({ timeout: 10000 })
   check('campaigns: reloading after arriving from Investigación does not create a second campaign', (await p2.locator('#campaign-select option').count()) === optionsBefore)
   await p2.close()
+  check('campaigns: without the table it says the account copy is not active yet', (await page.getByText(/guardado en la cuenta aún no está activado/).count()) === 1)
   check('campaigns: no request went to any advertising platform', outbound.every(o => o === 'connections'), outbound)
   check('campaigns: no page errors', errors.length === 0, errors)
+  await page.close(); await context.close(); server.close()
+}
+
+// 10b. Campañas with the `campaigns` table: legacy browser campaigns are uploaded with uuid ids, account campaigns appear here,
+// edits are saved to the account and deleting removes the row. Uses the in-memory mock database; nothing leaves the machine.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/campaigns/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const remote = { id: '11111111-1111-4111-8111-111111111111', owner_id: 'u1', name: 'Remota', status: 'lista', brief: { name: 'Remota', totalBudget: 300 }, notes: '', project_id: null, created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-02T00:00:00.000Z' }
+  const server = serve(8801, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + `\nwindow.__DB.campaigns = [${JSON.stringify(remote)}]`, 'app.js': code })
+  const context = await browser.newContext({ viewport: { width: 1400, height: 1100 } })
+  await context.addInitScript(() => { try { if (!localStorage.getItem('cerebro.campaigns.v1')) localStorage.setItem('cerebro.campaigns.v1', JSON.stringify([{ id: 'cmp_legacy1', brief: { name: 'Local antigua' }, status: 'borrador', notes: '', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-10-03T00:00:00.000Z' }])) } catch { /* ignore */ } })
+  const page = await context.newPage()
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.route('**/api/campaigns/connections', r => r.fulfill({ json: { networks: [] } }))
+  await page.goto('http://127.0.0.1:8801/campaigns')
+  await page.getByText('Guardadas en tu cuenta y en este navegador.').waitFor({ timeout: 10000 })
+  const rows = () => page.evaluate(() => (window.__DB.campaigns ?? []).map(r => ({ id: r.id, name: r.name, owner: r.owner_id })))
+  let r = await rows()
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+  check('campaigns cloud: the account campaign is shown next to the browser one', (await page.locator('#campaign-select option', { hasText: 'Remota' }).count()) === 1 && (await page.locator('#campaign-select option', { hasText: 'Local antigua' }).count()) === 1)
+  check('campaigns cloud: the legacy browser campaign is uploaded once, with a uuid id and the owner', r.length === 2 && r.some(x => x.name === 'Local antigua' && uuid.test(x.id) && x.owner === 'u1'), r)
+  const local = JSON.parse(await page.evaluate(() => localStorage.getItem('cerebro.campaigns.v1')))
+  check('campaigns cloud: the browser copy now uses the same uuid ids', local.length === 2 && local.every(c => uuid.test(c.id)))
+  await page.locator('#campaign-select').selectOption({ label: 'Local antigua · borrador' })
+  await page.getByLabel('Nombre', { exact: true }).fill('Local editada')
+  await page.waitForFunction(() => (window.__DB.campaigns ?? []).some(x => x.brief?.subjectName === 'Local editada'), null, { timeout: 8000 }).catch(() => {})
+  check('campaigns cloud: an edit is saved to the account after a short pause', await page.evaluate(() => (window.__DB.campaigns ?? []).some(x => x.brief?.subjectName === 'Local editada')))
+  page.once('dialog', d => d.accept())
+  await page.getByRole('button', { name: 'Eliminar' }).click()
+  await page.waitForFunction(() => (window.__DB.campaigns ?? []).length === 1, null, { timeout: 8000 })
+  r = await rows()
+  check('campaigns cloud: deleting removes the row from the account', r.length === 1 && r[0].name === 'Remota', r)
+  check('campaigns cloud: no page errors', errors.length === 0, errors)
   await page.close(); await context.close(); server.close()
 }
 

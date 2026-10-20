@@ -1,8 +1,8 @@
 import { EMPTY_BRIEF, type Brief, type CampaignStatus, type SavedCampaign } from './types'
 
 /**
- * Campaigns are saved in this browser (localStorage) so they can be designed and kept with no ad connection and no database change.
- * `supabase/migrations/20261015120000_campaigns.sql` prepares a server-side table; it is NOT applied until the owner approves it.
+ * Campaigns are always saved in this browser (localStorage). When the `campaigns` table exists (migration 20261015120000) they are
+ * also kept in the account: see lib/campaigns/cloud.ts.
  */
 export const KEY = 'cerebro.campaigns.v1'
 type Store = Pick<Storage, 'getItem' | 'setItem'>
@@ -53,7 +53,8 @@ export function loadCampaigns(s: Store | null): SavedCampaign[] {
   } catch { return [] }
 }
 export function saveCampaigns(s: Store | null, list: SavedCampaign[]): boolean { try { s?.setItem(KEY, JSON.stringify(list)); return !!s } catch { return false } }
-export const newId = () => `cmp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+/** uuid, so the same id is the row id in the `campaigns` table (lib/campaigns/cloud.ts). Older `cmp_…` ids are converted on first sync. */
+export const newId = () => { try { if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID() } catch { /* fall through */ } return `cmp_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` }
 export function create(brief: Brief = EMPTY_BRIEF, now = new Date().toISOString()): SavedCampaign { return { id: newId(), brief: sanitizeBrief(brief), status: 'borrador', notes: '', createdAt: now, updatedAt: now } }
 export function upsert(list: SavedCampaign[], c: SavedCampaign, now = new Date().toISOString()): SavedCampaign[] { const next = { ...c, updatedAt: now }; return list.some(x => x.id === c.id) ? list.map(x => (x.id === c.id ? next : x)) : [next, ...list] }
 export const remove = (list: SavedCampaign[], id: string) => list.filter(c => c.id !== id)

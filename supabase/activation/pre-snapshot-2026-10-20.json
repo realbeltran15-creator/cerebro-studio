@@ -1,0 +1,140 @@
+{
+ "read_at": "2026-10-20",
+ "project": "psbvqdaksrfrkxbewrll",
+ "postgres": "17.6",
+ "policies": [
+  {
+   "table": "approvals",
+   "policy": "approvals_own",
+   "cmd": "ALL",
+   "roles": [
+    "public"
+   ],
+   "using": "(owner_id = ( SELECT auth.uid() AS uid))",
+   "with_check": "(owner_id = ( SELECT auth.uid() AS uid))"
+  },
+  {
+   "table": "automation_runs",
+   "policy": "automation_runs_owner_all",
+   "cmd": "ALL",
+   "roles": [
+    "public"
+   ],
+   "using": "(owner_id = ( SELECT auth.uid() AS uid))",
+   "with_check": "(owner_id = ( SELECT auth.uid() AS uid))"
+  },
+  {
+   "table": "channel_connections",
+   "policy": "connections_own",
+   "cmd": "ALL",
+   "roles": [
+    "public"
+   ],
+   "using": "(owner_id = ( SELECT auth.uid() AS uid))",
+   "with_check": "(owner_id = ( SELECT auth.uid() AS uid))"
+  },
+  {
+   "table": "publication_jobs",
+   "policy": "publication_jobs_own",
+   "cmd": "ALL",
+   "roles": [
+    "public"
+   ],
+   "using": "(owner_id = ( SELECT auth.uid() AS uid))",
+   "with_check": "(owner_id = ( SELECT auth.uid() AS uid))"
+  }
+ ],
+ "table_grants": {
+  "approvals": {
+   "anon": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ],
+   "authenticated": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ]
+  },
+  "automation_runs": {
+   "anon": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ],
+   "authenticated": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ]
+  },
+  "channel_connections": {
+   "anon": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ],
+   "authenticated": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ]
+  },
+  "publication_jobs": {
+   "anon": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ],
+   "authenticated": [
+    "DELETE",
+    "INSERT",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE"
+   ]
+  }
+ },
+ "absent": [
+  "research_cache",
+  "campaigns",
+  "generation_spend",
+  "automation_runs_one_running_idx"
+ ],
+ "rows": {
+  "channel_connections": 2,
+  "publication_jobs": 0,
+  "automation_runs_running": 0
+ }
+}
