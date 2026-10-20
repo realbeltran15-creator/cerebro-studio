@@ -1052,6 +1052,34 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); await context.close(); server.close()
 }
 
+// 12. YouTube channel: a new authorization waits until the owner confirms the exact channel (name + ID); uploads send the confirmed ID.
+{
+  const CH = 'UC1234567890abcdefghijKL'
+  const seed = `\nwindow.__DB.channel_connections = [{ id: 'cc-old', owner_id: 'u1', provider: 'youtube', external_account_id: 'UColdoldoldoldoldoldold1', external_account_name: 'Canal antiguo', status: 'expired', scopes: [], updated_at: '2026-10-09T00:00:00Z' }, { id: 'cc-new', owner_id: 'u1', provider: 'youtube', external_account_id: '${CH}', external_account_name: 'Umbral del Hito', status: 'pending_confirmation', scopes: ['https://www.googleapis.com/auth/youtube.upload'], updated_at: '2026-10-21T00:00:00Z' }]`
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/connectors/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const server = serve(8802, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + seed, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } })
+  const errors = [], posted = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.route('**/api/providers/status', r => r.fulfill({ json: { providers: [{ id: 'youtube-oauth', enabled: true, health: 'ready' }] } }))
+  await page.route('**/api/oauth/youtube/confirm', async r => {
+    const body = JSON.parse(r.request().postData() ?? '{}'); posted.push(body)
+    await page.evaluate(({ id }) => { for (const c of window.__DB.channel_connections) c.status = c.id === id ? 'connected' : 'replaced' }, body)
+    return r.fulfill({ json: { connected: true, channelId: body.channelId } })
+  })
+  await page.goto('http://127.0.0.1:8802/connectors?youtube=pending')
+  const box = page.getByRole('region', { name: 'Confirmar canal de YouTube' })
+  await box.waitFor({ timeout: 15000 })
+  check('youtube channel: a pending authorization shows the channel name and its ID before anything is used', (await box.getByText('Umbral del Hito').count()) === 1 && (await box.getByText(CH).count()) === 1)
+  check('youtube channel: while pending there is no usable connection (no upload or disconnect actions)', (await page.getByRole('button', { name: 'Desconectar' }).count()) === 0)
+  await box.getByRole('button', { name: 'Confirmar este canal' }).click()
+  await page.getByText(`Canal confirmado: Umbral del Hito (${CH}).`).waitFor({ timeout: 10000 })
+  check('youtube channel: confirming sends the exact ID that was shown', posted.length === 1 && posted[0].id === 'cc-new' && posted[0].channelId === CH && posted[0].decision === 'confirm', posted)
+  check('youtube channel: the connected channel shows its ID and lets you change account', (await page.getByText(CH).count()) >= 1 && (await page.getByRole('link', { name: 'Cambiar de cuenta o canal' }).getAttribute('href')) === '/api/oauth/youtube/start?scope=publish')
+  check('youtube channel: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

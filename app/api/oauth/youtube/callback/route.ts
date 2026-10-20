@@ -31,19 +31,20 @@ export async function GET(request: Request) {
 
   try {
     const tokens = await exchangeCode(url.origin, code)
-    const channelRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers: { Authorization: `Bearer ${tokens.access_token}` }, cache: 'no-store' })
-    const channelJson = await channelRes.json() as { items?: Array<{ id: string; snippet?: { title?: string } }> }
+    const channelRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true&maxResults=50', { headers: { Authorization: `Bearer ${tokens.access_token}` }, cache: 'no-store' })
+    const channelJson = await channelRes.json() as { items?: Array<{ id: string; snippet?: { title?: string; customUrl?: string } }> }
     const channel = channelJson.items?.[0]
     if (!channel) return back('no_channel')
     const scopes = tokens.scope.split(' ').filter(Boolean)
     const { error } = await (serviceRoleClient() ?? supabase).from('channel_connections').upsert({
       owner_id: user.id, provider: 'youtube', external_account_id: channel.id, external_account_name: channel.snippet?.title ?? null,
-      scopes, status: 'connected', token_ciphertext: encryptJson(tokens),
-      token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope, scope_set: scopeSet, has_refresh_token: Boolean(tokens.refresh_token) },
+      // Not usable yet: the owner must confirm this exact channel (name and ID) in Conectores before it can read or upload.
+      scopes, status: 'pending_confirmation', token_ciphertext: encryptJson(tokens),
+      token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope, scope_set: scopeSet, has_refresh_token: Boolean(tokens.refresh_token), handle: channel.snippet?.customUrl ?? null, channels_in_account: channelJson.items?.length ?? 0 },
       updated_at: new Date().toISOString(),
     }, { onConflict: 'owner_id,provider,external_account_id' })
     if (error) { console.error('YouTube connection save failed', { details: error.message }); return back('save_failed') }
-    return back('connected')
+    return back('pending')
   } catch (error) {
     console.error('YouTube OAuth failure', { details: error instanceof Error ? error.message : 'unknown' })
     return back('exchange_failed')

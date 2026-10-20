@@ -40,7 +40,9 @@ export function authUrl(origin: string, state: string, scopeSet: ScopeSet) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   url.search = new URLSearchParams({
     client_id: clientId(), redirect_uri: redirectUri(origin), response_type: 'code', scope: scopes.join(' '),
-    access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state,
+    // select_account: Google always shows the account picker, so the person chooses the account that manages the channel
+    // (never a silently reused session); consent: a refresh token is always issued.
+    access_type: 'offline', prompt: 'select_account consent', include_granted_scopes: 'true', state,
   }).toString()
   return url.toString()
 }

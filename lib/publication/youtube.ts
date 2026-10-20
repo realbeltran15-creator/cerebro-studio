@@ -74,7 +74,11 @@ async function download(db: SupabaseClient, ownerId: string, assetId: string, ty
 }
 
 /** `writer` writes the job's status/result (service role after the RLS hardening migration); `db` reads with the owner's session. */
-export async function publishJob(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db) {
+/**
+ * `expectedChannelId`: the channel ID the owner confirmed for this upload, as shown on screen. When given (the publish route
+ * always gives it), the upload only proceeds if it is exactly the channel currently connected.
+ */
+export async function publishJob(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db, expectedChannelId?: string) {
   const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
   const job = data as PublicationJob | null
   if (!job || job.platform !== 'youtube') throw new PublishError('Trabajo de publicación no encontrado.', 404)
@@ -108,6 +112,9 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
   const connection = await youtubeConnection(db, ownerId)
   if (!connection) throw new PublishError('Conecta tu canal de YouTube en Conectores.', 409)
   if (!hasScope(connection, SCOPES.publish[0])) throw new PublishError('La conexión no tiene permiso de subida. Pulsa «Permitir subida de vídeos» en Conectores.', 409)
+  if (expectedChannelId !== undefined && connection.external_account_id !== expectedChannelId) {
+    throw new PublishError(`El canal conectado (${connection.external_account_name ?? 'sin nombre'}, ID ${connection.external_account_id}) no es el que confirmaste para esta subida. No se ha subido nada.`, 409)
+  }
 
   // Claim the job so a second click cannot start a parallel upload.
   const { data: claimed } = await writer.from('publication_jobs').update({ status: 'publishing', updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'approved').select('id')

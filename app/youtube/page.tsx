@@ -11,7 +11,7 @@ import type { ProjectRow } from '@/lib/types/database'
 
 type Job = { id: string; project_id: string; status: string; created_at: string; approved_at: string | null; payload: YouTubePayload; result: Record<string, unknown> | null }
 type Asset = { id: string; asset_type: string; license_status: string; provenance: Record<string, unknown> | null; created_at: string }
-type Channel = { external_account_name: string | null; scopes: string[] }
+type Channel = { external_account_id: string; external_account_name: string | null; scopes: string[] }
 
 const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload'
 const statusLabels: Record<string, string> = { draft: 'Borrador', awaiting_approval: 'Pendiente de aprobación', approved: 'Aprobado · sin publicar', publishing: 'Publicando…', published: 'Publicado', failed: 'Falló', cancelled: 'Cancelado' }
@@ -42,7 +42,7 @@ export default function YouTubePage() {
     void (async () => {
       const [{ data }, { data: ch }] = await Promise.all([
         supabase.from('projects').select('*').order('updated_at', { ascending: false }),
-        supabase.from('channel_connections').select('external_account_name,scopes').eq('provider', 'youtube').eq('status', 'connected').limit(1),
+        supabase.from('channel_connections').select('external_account_id,external_account_name,scopes').eq('provider', 'youtube').eq('status', 'connected').limit(1),
       ])
       const rows = (data ?? []) as ProjectRow[]
       setProjects(rows)
@@ -113,7 +113,7 @@ export default function YouTubePage() {
     const inputs = Array.isArray(v?.provenance?.inputs) ? v!.provenance!.inputs as Array<{ type: string; license: string; provider: string | null }> : []
     const byLicense = inputs.reduce<Record<string, number>>((m, i) => ({ ...m, [i.license]: (m[i.license] ?? 0) + 1 }), {})
     return [
-      `Canal: ${channel?.external_account_name ?? 'sin conectar'}`,
+      `Canal: ${channel ? `${channel.external_account_name ?? 'sin nombre'} (ID ${channel.external_account_id})` : 'sin conectar'}`,
       job.payload.publishAt ? `Programado: se sube privado y YouTube lo hará público el ${new Date(job.payload.publishAt).toLocaleString()}` : `Privacidad: ${privacyLabels[job.payload.privacyStatus ?? 'private']}`,
       `Vídeo: ${String(v?.provenance?.title ?? job.payload.videoAssetId)} (licencia ${v?.license_status ?? '?'})`,
       `Entradas: ${Object.entries(byLicense).map(([k, n]) => `${n} ${k}`).join(', ') || 'sin registro'}`,
@@ -136,10 +136,12 @@ export default function YouTubePage() {
   }
 
   async function publish(job: Job) {
-    if (!window.confirm(`Se subirá «${job.payload.title}» a tu canal como ${privacyLabels[job.payload.privacyStatus ?? 'private'].toLowerCase()}. ¿Continuar?`)) return
+    if (!channel) { setError('Conecta y confirma tu canal en Conectores.'); return }
+    // The destination is confirmed by name AND ID on every upload; the server refuses if the connected channel is another one.
+    if (!window.confirm(`Se subirá «${job.payload.title}» como ${privacyLabels[job.payload.privacyStatus ?? 'private'].toLowerCase()} al canal:\n\n${channel.external_account_name ?? 'sin nombre'}\nID: ${channel.external_account_id}\n\n¿Es el canal correcto?`)) return
     setBusy(job.id); setError(''); setNotice('')
     try {
-      const r = await fetch(`/api/publish/youtube/${job.id}/publish`, { method: 'POST' })
+      const r = await fetch(`/api/publish/youtube/${job.id}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channelId: channel.external_account_id }) })
       const json = await r.json() as { url?: string; error?: string }
       if (!r.ok) throw new Error(json.error ?? 'La publicación falló.')
       setNotice(`Subido a YouTube: ${json.url}`)
@@ -158,7 +160,7 @@ export default function YouTubePage() {
     {notice && <p className="notice" role="status">{notice}</p>}
 
     <div className="hero"><div><small>PUBLICACIÓN CON APROBACIÓN</small><h2>Cola de publicación</h2><p>Prepara título, descripción y privacidad. Nada se sube sin dos pasos tuyos: aprobar el trabajo y pulsar publicar. Por defecto los vídeos se suben como privados.</p></div>
-      <div className="status"><b>{jobs.filter(j => j.status === 'published').length}</b><span>publicados</span><span>{channel ? `Canal: ${channel.external_account_name ?? 'conectado'}` : 'Canal sin conectar'}</span>{channel && !canUpload && <Link className="open" href="/connectors">Permitir subida →</Link>}{!channel && <Link className="open" href="/connectors">Conectar →</Link>}</div></div>
+      <div className="status"><b>{jobs.filter(j => j.status === 'published').length}</b><span>publicados</span><span>{channel ? `Canal: ${channel.external_account_name ?? 'conectado'} · ${channel.external_account_id}` : 'Canal sin conectar'}</span>{channel && !canUpload && <Link className="open" href="/connectors">Permitir subida →</Link>}{!channel && <Link className="open" href="/connectors">Conectar →</Link>}</div></div>
 
     <section className="panel" style={{ marginBottom: 18 }}>
       <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

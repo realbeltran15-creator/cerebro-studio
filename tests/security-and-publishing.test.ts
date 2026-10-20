@@ -115,6 +115,15 @@ describe('YouTube publishing gate', () => {
     expect(uploads).toBe(0)
   })
 
+  it('refuses when the connected channel is not the one the owner confirmed, before claiming the job', async () => {
+    const s = state()
+    await expect(publishJob(fakeDb(s), 'u1', 'j1', undefined, 'UCotherchannel')).rejects.toThrow(/no es el que confirmaste/)
+    expect(uploads).toBe(0)
+    expect(s.job.status).toBe('approved')
+    const ok = await publishJob(fakeDb(state()), 'u1', 'j1', undefined, 'ch')
+    expect(ok).toMatchObject({ videoId: 'VID123' })
+  })
+
   it('uploads once as private and is idempotent afterwards', async () => {
     const s = state()
     const first = await publishJob(fakeDb(s), 'u1', 'j1')

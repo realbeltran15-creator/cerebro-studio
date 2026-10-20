@@ -8,7 +8,7 @@ import { AdminHint } from '../components/admin-hint'
 
 type Connector = { id: string; provider: string; capability: string; enabled: boolean; updated_at: string }
 type Runtime = { id: string; capability: string; enabled: boolean; health: string }
-type Channel = { id: string; external_account_name: string | null; status: string; scopes: string[]; updated_at: string }
+type Channel = { id: string; external_account_id: string; external_account_name: string | null; status: string; scopes: string[]; updated_at: string }
 
 /** Plain-language state of a service: what it means for the person using the app, not the internal health code. */
 function serviceState(enabled: boolean, health: string): { label: string; cls: string; help: string } {
@@ -21,6 +21,7 @@ const serviceName = (id: string) => SERVICE_NAMES[id] ?? SERVICE_NAMES[id.split(
 
 const oauthMessages: Record<string, [string, 'notice' | 'error']> = {
   connected: ['Canal de YouTube conectado.', 'notice'],
+  pending: ['Google autorizó una cuenta. Comprueba el canal y su ID antes de confirmarlo: hasta entonces no se usa para nada.', 'notice'],
   denied: ['Cancelaste la autorización en Google.', 'error'],
   invalid_state: ['La autorización caducó o no coincide con tu sesión. Vuelve a intentarlo.', 'error'],
   no_channel: ['La cuenta de Google elegida no tiene canal de YouTube.', 'error'],
@@ -50,7 +51,7 @@ export default function ConnectorsPage() {
     const [db, providers, ch] = await Promise.all([
       supabase.from('connector_configs').select('id,provider,capability,enabled,updated_at').neq('provider', 'cerebro-editor').order('provider'),
       status,
-      supabase.from('channel_connections').select('id,external_account_name,status,scopes,updated_at').eq('provider', 'youtube').order('updated_at', { ascending: false }),
+      supabase.from('channel_connections').select('id,external_account_id,external_account_name,status,scopes,updated_at').eq('provider', 'youtube').order('updated_at', { ascending: false }),
     ])
     if (db.error) setError(db.error.message); else setRows((db.data ?? []) as Connector[])
     if (providers) setRuntime(providers.providers); else setError(v => v || 'No se pudo leer el estado de proveedores.')
@@ -87,6 +88,16 @@ export default function ConnectorsPage() {
 
   const oauthReady = runtime.some(p => p.id === 'youtube-oauth' && p.enabled)
   const connected = channels.find(c => c.status === 'connected')
+  const pending = channels.find(c => c.status === 'pending_confirmation')
+  const expired = !connected && channels.find(c => c.status === 'expired')
+  async function decide(c: Channel, decision: 'confirm' | 'discard') {
+    setError(''); setNotice('')
+    const r = await fetch('/api/oauth/youtube/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: c.id, channelId: c.external_account_id, decision }) })
+    const j = await r.json().catch(() => ({})) as { error?: string }
+    if (!r.ok) { setError(j.error ?? 'No se pudo completar.'); return }
+    setNotice(decision === 'confirm' ? `Canal confirmado: ${c.external_account_name ?? ''} (${c.external_account_id}).` : 'Autorización descartada. No se ha guardado ningún canal.')
+    await load()
+  }
   const ready = runtime.filter(p => p.health === 'ready' && p.enabled).length
 
   return <StudioShell title="Conectores">
@@ -97,16 +108,31 @@ export default function ConnectorsPage() {
     <h3>Canal de YouTube</h3>
     <section className="panel" style={{ margin: '10px 0 18px' }}>
       {!oauthReady ? <div><p className="muted">La conexión con YouTube todavía no está activada en este servidor. Quien administra Cerebro Studio debe completar su configuración; mientras tanto no puedes conectar tu canal.</p><AdminHint names={['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY']} /></div>
+        : pending ? <div role="region" aria-label="Confirmar canal de YouTube">
+          <p><b>¿Es este el canal correcto?</b></p>
+          <p>Canal: <b>{pending.external_account_name ?? 'sin nombre'}</b><br />ID del canal: <code>{pending.external_account_id}</code></p>
+          <p className="muted small">Comprueba el ID en YouTube Studio → Configuración → Canal → Configuración avanzada. Hasta que lo confirmes, esta autorización no se usa para leer ni para subir nada. {connected ? `Si confirmas, sustituirá a «${connected.external_account_name ?? connected.external_account_id}».` : ''}</p>
+          <div className="pageActions" style={{ marginTop: 10 }}>
+            <button type="button" onClick={() => void decide(pending, 'confirm')}>Confirmar este canal</button>
+            <button type="button" className="ghost" onClick={() => void decide(pending, 'discard')}>No es este: descartar</button>
+          </div>
+        </div>
         : connected ? <>
           <p><b>{connected.external_account_name ?? 'Canal conectado'}</b> · conectado el {new Date(connected.updated_at).toLocaleString()}</p>
+          <p className="muted small">ID del canal: <code>{connected.external_account_id}</code></p>
           <p className="muted small">Permisos: Analytics (solo lectura){connected.scopes.includes(UPLOAD_SCOPE) ? ' · subida de vídeos (cada publicación exige tu aprobación)' : ''}</p>
           <div className="pageActions" style={{ marginTop: 10 }}>
             {!connected.scopes.includes(UPLOAD_SCOPE) && <a className="buttonLink ghost" href="/api/oauth/youtube/start?scope=publish">Permitir subida de vídeos</a>}
+            <a className="buttonLink ghost" href="/api/oauth/youtube/start?scope=publish">Cambiar de cuenta o canal</a>
             <button type="button" className="ghost" onClick={() => void disconnect()}>Desconectar</button>
           </div>
         </> : <>
-          <p className="muted small">Conecta tu canal para importar YouTube Analytics. Solo se piden permisos de lectura; la subida de vídeos se autoriza aparte y cada publicación requiere tu aprobación.</p>
-          <div className="pageActions" style={{ marginTop: 10 }}><a className="buttonLink" href="/api/oauth/youtube/start?scope=analytics">Conectar canal de YouTube</a></div>
+          {expired && <p className="warnBox small">La autorización de «{expired.external_account_name ?? expired.external_account_id}» (ID <code>{expired.external_account_id}</code>) caducó o se revocó en Google: no se puede usar. Si la app de Google está en modo «Testing», caduca a los 7 días. Vuelve a conectar el canal.</p>}
+          <p className="muted small">Google te mostrará el selector de cuentas: elige la cuenta que administra el canal. Antes de usarlo verás su nombre e ID para confirmarlo. Cada publicación requiere además tu aprobación.</p>
+          <div className="pageActions" style={{ marginTop: 10 }}>
+            <a className="buttonLink" href="/api/oauth/youtube/start?scope=publish">Conectar canal (con permiso de subida)</a>
+            <a className="buttonLink ghost" href="/api/oauth/youtube/start?scope=analytics">Conectar solo lectura</a>
+          </div>
         </>}
     </section>
 
