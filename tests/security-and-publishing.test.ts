@@ -211,3 +211,21 @@ describe('approval seal', () => {
     expect(verifyApprovalSeal(base, undefined)).toBe(false)
   })
 })
+
+describe('expired or revoked Google authorization', () => {
+  it('marks the connection expired, explains the 7-day Testing expiry and never reaches YouTube', async () => {
+    const { accessTokenFor } = await import('@/lib/oauth/google')
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const updates: Array<Record<string, unknown>> = []
+    const chain = { eq: () => chain, then: (ok: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(ok) }
+    const db = { from: () => ({ update: (u: Record<string, unknown>) => { updates.push(u); return chain } }) }
+    const connection = { id: 'c1', owner_id: 'u1', token_ciphertext: encryptJson({ access_token: 'old', refresh_token: 'RT', expires_at: Date.now() - 1000, scope: '', token_type: 'Bearer' }) }
+    await expect(accessTokenFor(db as never, connection as never)).rejects.toThrow(/caduca a los 7 días[\s\S]*No se ha enviado nada a YouTube/)
+    expect(calls).toEqual(['https://oauth2.googleapis.com/token'])
+    expect(updates).toEqual([expect.objectContaining({ status: 'expired' })])
+  })
+})

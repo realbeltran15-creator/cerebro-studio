@@ -78,7 +78,7 @@ export async function accessTokenFor(db: SupabaseClient, connection: Connection)
   } catch (error) {
     if ((error as { code?: string }).code === 'invalid_grant') {
       await (serviceRoleClient() ?? db).from('channel_connections').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', connection.id).eq('owner_id', connection.owner_id)
-      throw new Error('Google revocó el acceso al canal. Vuelve a conectarlo.')
+      throw new Error('Google ya no acepta la autorización guardada del canal (se revocó o caducó: con la app de Google en modo «Testing» caduca a los 7 días). No se ha enviado nada a YouTube. Vuelve a conectar el canal en Conectores.')
     }
     throw error
   }
