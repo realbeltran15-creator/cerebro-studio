@@ -65,9 +65,12 @@ export default function ManualEditorPage() {
     setAssets((a ?? []) as EditorAsset[])
     if (parsed.editedManually) { setHistory(historyOf(parsed)); return }
     // First time in manual mode: move clip voices to the audio track with their real length.
+    const voices = [...new Set(parsed.clips.map(c => c.voiceAssetId).filter((x): x is string => Boolean(x)))]
+    // Nothing to move: open it as is, without a misleading notice or an "unsaved changes" state.
+    if (voices.length === 0) { setHistory(historyOf(toManual(parsed))); return }
     setBusy('convert')
     const durations: Record<string, number> = {}
-    for (const v of [...new Set(parsed.clips.map(c => c.voiceAssetId).filter((x): x is string => Boolean(x)))]) {
+    for (const v of voices) {
       durations[v] = await audioDurationMs(v).catch(() => 0) || 0
     }
     setHistory(historyOf(toManual(parsed, Object.fromEntries(Object.entries(durations).filter(([, ms]) => ms > 0)))))

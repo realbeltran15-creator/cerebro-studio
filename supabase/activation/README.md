@@ -85,3 +85,14 @@ Las pruebas se hicieron dentro de un bloque que siempre se revierte; después se
 | Crear una campaña a nombre de otro usuario | Denegado |
 | `research_reserve` | Correcta |
 | `research_lock` | El primer intento obtiene el bloqueo y el segundo no |
+
+## Verificación en Preview (21-10-2026, sesión real del propietario, sin publicar ni gastar)
+
+| Módulo | Qué se comprobó |
+|---|---|
+| Investigación | Una búsqueda real del motor 7 («historias reales increíbles», Mundial), con el coste previsto de 204 unidades y 2 búsquedas: 50 vídeos reales con sus métricas, un aviso de muestra insuficiente y el historial guardado en la cuenta. Los registros de la API muestran llamadas a `research_lock` y `research_reserve`, es decir, se usaron las funciones atómicas. Abrir la página cargó además las tendencias de España (2 unidades): **206 unidades en total**. |
+| Campañas | Crear una campaña la guarda en la tabla `campaigns`, y borrarla la elimina de la cuenta. |
+| Seguridad | La página de Conectores lee la conexión de YouTube usando solo columnas seguras. Se preparó un borrador y se aprobó: la aprobación la escribe el servidor y queda sellada. El trabajo se canceló **sin publicar**; quedan como registro de prueba un trabajo cancelado y una aprobación. |
+| Biblioteca | Muestra los 6 archivos del propietario y no muestra los de otros usuarios. |
+| Editor | Se abren los montajes guardados. El navegador del ordenador admite H.264 y AAC nativos para la conversión sin GPL. **Error corregido:** al abrir un montaje sin voces se mostraba un aviso falso de «voces movidas» y el estado «sin guardar». |
+| Automatizaciones | Comprobados la validación (falta de palabra clave), la creación en modo manual, la pausa y el borrado. No se ejecutó, para no gastar cuota. |

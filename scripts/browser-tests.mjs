@@ -626,6 +626,11 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('manual picker: the empty edit is stored as a manual draft in the chosen format', created?.status === 'draft' && created.output_format === '9:16' && created.composition.editedManually === true && created.composition.clips.length === 0, created)
   const tracks = await page.locator('[aria-label^="Pista de"]').evaluateAll(els => els.map(e => e.getAttribute('aria-label')))
   check('manual picker: separate tracks for video/images, voice, music and effects', ['Pista de vídeo', 'Pista de Voz', 'Pista de Música', 'Pista de Efectos'].every(t => tracks.includes(t)), tracks)
+  // An automatic edit with no voices opens in manual mode as it is: no "voices were moved" notice and nothing to save.
+  await page.goto('http://127.0.0.1:8798/editor/manual?job=job9')
+  await page.getByRole('button', { name: 'Guardar montaje' }).waitFor({ timeout: 20000 })
+  await page.waitForTimeout(500)
+  check('manual picker: an edit without voices opens without a false "voices moved" notice or unsaved state', (await page.getByText(/las voces pasaron a la pista/).count()) === 0 && (await page.getByText('Cambios sin guardar').count()) === 0)
   check('manual picker: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
