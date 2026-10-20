@@ -3,8 +3,7 @@ import { cookies } from 'next/headers'
 import { timingSafeEqual } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { exchangeCode, googleOAuthConfigured } from '@/lib/oauth/google'
-import { encryptJson } from '@/lib/security/tokens'
-import { serviceRoleClient } from '@/lib/supabase/admin'
+import { PENDING_COOKIE, PENDING_COOKIE_OPTIONS, sealPending } from '@/lib/oauth/pending'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,15 +35,11 @@ export async function GET(request: Request) {
     const channel = channelJson.items?.[0]
     if (!channel) return back('no_channel')
     const scopes = tokens.scope.split(' ').filter(Boolean)
-    const { error } = await (serviceRoleClient() ?? supabase).from('channel_connections').upsert({
-      owner_id: user.id, provider: 'youtube', external_account_id: channel.id, external_account_name: channel.snippet?.title ?? null,
-      // Not usable yet: the owner must confirm this exact channel (name and ID) in Conectores before it can read or upload.
-      scopes, status: 'pending_confirmation', token_ciphertext: encryptJson(tokens),
-      token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope, scope_set: scopeSet, has_refresh_token: Boolean(tokens.refresh_token), handle: channel.snippet?.customUrl ?? null, channels_in_account: channelJson.items?.length ?? 0 },
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'owner_id,provider,external_account_id' })
-    if (error) { console.error('YouTube connection save failed', { details: error.message }); return back('save_failed') }
-    return back('pending')
+    // Not saved yet: the authorization waits in an encrypted httpOnly cookie until the owner confirms this exact channel
+    // (name and ID) in Conectores. Nothing can read or upload with it before that.
+    const res = back('pending')
+    res.cookies.set(PENDING_COOKIE, sealPending({ ownerId: user.id, channelId: channel.id, channelName: channel.snippet?.title ?? null, handle: channel.snippet?.customUrl ?? null, scopes, scopeSet: scopeSet ?? 'analytics', tokens, createdAt: Date.now() }), PENDING_COOKIE_OPTIONS)
+    return res
   } catch (error) {
     console.error('YouTube OAuth failure', { details: error instanceof Error ? error.message : 'unknown' })
     return back('exchange_failed')

@@ -8,6 +8,7 @@ import { AdminHint } from '../components/admin-hint'
 
 type Connector = { id: string; provider: string; capability: string; enabled: boolean; updated_at: string }
 type Runtime = { id: string; capability: string; enabled: boolean; health: string }
+type Pending = { channelId: string; channelName: string | null; handle: string | null; canUpload: boolean; expiresAt: number }
 type Channel = { id: string; external_account_id: string; external_account_name: string | null; status: string; scopes: string[]; updated_at: string }
 
 /** Plain-language state of a service: what it means for the person using the app, not the internal health code. */
@@ -42,6 +43,7 @@ export default function ConnectorsPage() {
   const [notice, setNotice] = useState('')
   const [checks, setChecks] = useState<Record<string, string>>({})
   const [checking, setChecking] = useState('')
+  const [pending, setPending] = useState<Pending | null>(null)
 
   const load = useCallback(async () => {
     // A failed or non-JSON status response (network error, proxy error page) must show a message, not crash the page.
@@ -56,6 +58,7 @@ export default function ConnectorsPage() {
     if (db.error) setError(db.error.message); else setRows((db.data ?? []) as Connector[])
     if (providers) setRuntime(providers.providers); else setError(v => v || 'No se pudo leer el estado de proveedores.')
     setChannels((ch.data ?? []) as Channel[])
+    try { const r = await fetch('/api/oauth/youtube/pending', { cache: 'no-store' }); setPending(r.ok ? ((await r.json()) as { pending: Pending | null }).pending : null) } catch { setPending(null) }
   }, [supabase])
 
   useEffect(() => {
@@ -88,14 +91,13 @@ export default function ConnectorsPage() {
 
   const oauthReady = runtime.some(p => p.id === 'youtube-oauth' && p.enabled)
   const connected = channels.find(c => c.status === 'connected')
-  const pending = channels.find(c => c.status === 'pending_confirmation')
   const expired = !connected && channels.find(c => c.status === 'expired')
-  async function decide(c: Channel, decision: 'confirm' | 'discard') {
+  async function decide(p: Pending, decision: 'confirm' | 'discard') {
     setError(''); setNotice('')
-    const r = await fetch('/api/oauth/youtube/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: c.id, channelId: c.external_account_id, decision }) })
+    const r = await fetch('/api/oauth/youtube/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channelId: p.channelId, decision }) })
     const j = await r.json().catch(() => ({})) as { error?: string }
-    if (!r.ok) { setError(j.error ?? 'No se pudo completar.'); return }
-    setNotice(decision === 'confirm' ? `Canal confirmado: ${c.external_account_name ?? ''} (${c.external_account_id}).` : 'Autorización descartada. No se ha guardado ningún canal.')
+    if (!r.ok) { setError(j.error ?? 'No se pudo completar.'); await load(); return }
+    setNotice(decision === 'confirm' ? `Canal confirmado: ${p.channelName ?? ''} (${p.channelId}).` : 'Autorización descartada. No se ha guardado ningún canal.')
     await load()
   }
   const ready = runtime.filter(p => p.health === 'ready' && p.enabled).length
@@ -110,8 +112,8 @@ export default function ConnectorsPage() {
       {!oauthReady ? <div><p className="muted">La conexión con YouTube todavía no está activada en este servidor. Quien administra Cerebro Studio debe completar su configuración; mientras tanto no puedes conectar tu canal.</p><AdminHint names={['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'TOKEN_ENCRYPTION_KEY']} /></div>
         : pending ? <div role="region" aria-label="Confirmar canal de YouTube">
           <p><b>¿Es este el canal correcto?</b></p>
-          <p>Canal: <b>{pending.external_account_name ?? 'sin nombre'}</b><br />ID del canal: <code>{pending.external_account_id}</code></p>
-          <p className="muted small">Comprueba el ID en YouTube Studio → Configuración → Canal → Configuración avanzada. Hasta que lo confirmes, esta autorización no se usa para leer ni para subir nada. {connected ? `Si confirmas, sustituirá a «${connected.external_account_name ?? connected.external_account_id}».` : ''}</p>
+          <p>Canal: <b>{pending.channelName ?? 'sin nombre'}</b>{pending.handle ? ` (${pending.handle})` : ''}<br />ID del canal: <code>{pending.channelId}</code><br />Permiso de subida: {pending.canUpload ? 'sí' : 'no (solo lectura)'}</p>
+          <p className="muted small">Comprueba el ID en YouTube Studio → Configuración → Canal → Configuración avanzada. Hasta que lo confirmes no se guarda ni se usa para nada; si no lo confirmas en 15 minutos, se descarta sola. {connected ? `Si confirmas, sustituirá a «${connected.external_account_name ?? connected.external_account_id}».` : ''}</p>
           <div className="pageActions" style={{ marginTop: 10 }}>
             <button type="button" onClick={() => void decide(pending, 'confirm')}>Confirmar este canal</button>
             <button type="button" className="ghost" onClick={() => void decide(pending, 'discard')}>No es este: descartar</button>
