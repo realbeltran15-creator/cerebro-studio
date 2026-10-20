@@ -16,8 +16,10 @@
     "research:validate": "node scripts/validate-real.mjs"
   },
   "dependencies": {
+    "@mediabunny/aac-encoder": "1.61.3",
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
+    "mediabunny": "1.61.3",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",

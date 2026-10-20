@@ -7,6 +7,7 @@ import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, formatSize, t
 import { downloadText } from '@/lib/library'
 import { downloadCompositionMedia, saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
+import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
 import { Icon } from './studio-icon'
@@ -43,6 +44,11 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   const [saved, setSaved] = useState<{ blob: Blob; assetId: string; mimeType: string } | null>(null)
   const [converting, setConverting] = useState<number | null>(null)
   const convertConfig = transcodeConfigFromEnv()
+  // Free, GPL-free conversion with the browser's own encoders (WebCodecs). ffmpeg.wasm is only a fallback when its core URL is configured.
+  const [native, setNative] = useState<NativeSupport | null>(null)
+  useEffect(() => { let off = false; void nativeSupport().then(n => { if (!off) setNative(n) }); return () => { off = true } }, [])
+  const nativeOk = !!native?.video && native.audio !== 'none'
+  const canConvert = nativeOk || !!convertConfig
 
   useEffect(() => () => { abortReason.current = 'unmount'; abortRef.current?.abort() }, [])
   // Leaving or reloading the tab kills a real-time render: ask before losing it.
@@ -119,12 +125,20 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   }
 
   async function convert() {
-    if (!saved || !convertConfig || converting !== null) return
+    if (!saved || !canConvert || converting !== null) return
     setError(''); setConverting(0); setStatus('Convirtiendo a MP4 compatible (H.264 + AAC). Puede tardar; no cierres la pestaña…')
     try {
-      const out = await transcodeToCompatibleMp4(saved.blob, { config: convertConfig, onProgress: setConverting })
+      let out: Awaited<ReturnType<typeof transcodeToCompatibleMp4>> & { tool: string }
+      try {
+        if (!nativeOk) throw new Error('native unavailable')
+        out = await transcodeWithWebCodecs(saved.blob, { onProgress: setConverting })
+      } catch (e) {
+        if (!convertConfig) throw e
+        setConverting(0)
+        out = { ...(await transcodeToCompatibleMp4(saved.blob, { config: convertConfig, onProgress: setConverting })), tool: 'ffmpeg.wasm' }
+      }
       setStatus('Guardando el MP4 convertido en la Biblioteca…')
-      await saveDerivedVideo(supabase, { projectId, sourceAssetId: saved.assetId, blob: out.blob, mimeType: out.mimeType, codecs: out.codecs, tool: 'ffmpeg.wasm' })
+      await saveDerivedVideo(supabase, { projectId, sourceAssetId: saved.assetId, blob: out.blob, mimeType: out.mimeType, codecs: out.codecs, tool: out.tool })
       setDownload(d => { if (d) URL.revokeObjectURL(d.url); return { url: URL.createObjectURL(out.blob), name: `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-h264.mp4` } })
       setSaved(null)
       setStatus('MP4 compatible con Instagram guardado en la Biblioteca (H.264 + AAC). El original se conserva.')
@@ -156,9 +170,9 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
     </div>
     {saved && mode === 'idle' && !instagramReadiness(saved.mimeType).ok && <div className="warnBox small" role="status">
       <p>{instagramReadiness(saved.mimeType).reason}</p>
-      {convertConfig
+      {canConvert
         ? <div className="pageActions"><button type="button" className="ghost small" disabled={converting !== null} onClick={() => void convert()}>{converting !== null ? `Convirtiendo… ${Math.round(converting * 100)} %` : 'Convertir a MP4 compatible (H.264 + AAC)'}</button></div>
-        : <p className="muted small">La conversión en el navegador no está activada en este despliegue; renderiza con Chrome, Edge o Safari para obtener un MP4 compatible.</p>}
+        : <p className="muted small">{native === null ? 'Comprobando si este navegador puede convertir el vídeo…' : 'Este navegador no puede codificar H.264; renderiza con Chrome, Edge o Safari para obtener un MP4 compatible.'}</p>}
     </div>}
     {download && mode === 'idle' && !error && <p className="notice" role="status">Guardado en la Biblioteca. Siguiente: <Link className="open" href={`/repurpose?project=${projectId}`}>versión vertical</Link> · <Link className="open" href={`/youtube?project=${projectId}`}>preparar YouTube</Link> · <Link className="open" href={`/social?project=${projectId}`}>preparar Instagram / TikTok</Link>. Preparar no publica.</p>}
     <p className="muted small">«Vista previa» solo reproduce el montaje; «Renderizar y guardar» graba el vídeo y lo guarda en la Biblioteca. El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos): mantén la pestaña abierta y visible hasta que termine. Sin coste externo. Salida WebM (VP9/VP8 + Opus); el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>

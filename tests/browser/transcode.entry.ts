@@ -35,3 +35,20 @@ w.runTranscodeEmpty = async () => {
   try { await transcodeToCompatibleMp4(new Blob([]), { config: { baseUrl: 'https://example.invalid' } }); return { error: null } }
   catch (e) { return { error: e instanceof TranscodeError ? e.message : `other:${String(e)}` } }
 }
+
+// GPL-free path: the browser's own H.264 encoder (WebCodecs) + AAC (native, or the LGPL FFmpeg AAC encoder extension when the
+// browser has none, as in Firefox and on Linux). No ffmpeg core, no x264.
+import { nativeSupport, transcodeWithWebCodecs } from '@/lib/editor/webcodecs-transcode'
+w.runNativeTranscode = async (forceAacExtension = false) => {
+  const support = await nativeSupport()
+  if (!support.video) return { support }
+  const src = await recordSource()
+  const progress: number[] = []
+  const out = await transcodeWithWebCodecs(src, { onProgress: p => progress.push(p), forceAacExtension })
+  const bytes = new Uint8Array(await out.blob.arrayBuffer())
+  return { support, srcType: src.type, outSize: out.blob.size, tool: out.tool, codecs: mp4Codecs(bytes), head: String.fromCharCode(...bytes.slice(4, 8)), progressSeen: progress.length > 0 && progress.every(p => p >= 0 && p <= 1) }
+}
+w.runNativeGarbage = async () => {
+  try { await transcodeWithWebCodecs(new Blob([new Uint8Array(4000).fill(7)], { type: 'video/webm' })); return { error: null } }
+  catch (e) { return { error: e instanceof TranscodeError ? e.message : `other:${String(e)}` } }
+}

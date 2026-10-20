@@ -444,6 +444,17 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('transcode: an unreachable converter is reported with a readable message', typeof bad.error === 'string' && /No se pudo cargar el convertidor/.test(bad.error), bad)
   const empty = await page.evaluate(() => window.runTranscodeEmpty())
   check('transcode: an empty video is refused', /vacío/.test(empty.error ?? ''), empty)
+  // 10c. The GPL-free path (WebCodecs H.264 + AAC) on the same recorded WebM. No ffmpeg core is loaded.
+  const coreRequests = []
+  page.on('request', r => { if (/ffmpeg-core/.test(r.url())) coreRequests.push(r.url()) })
+  const n = await page.evaluate(() => window.runNativeTranscode())
+  if (!n.support.video) console.log('  (skip) this Chromium build cannot encode H.264 with WebCodecs', n.support)
+  else {
+    check('transcode (WebCodecs): WebM/VP9+Opus becomes MP4 H.264 + AAC, read from the file itself', n.srcType === 'video/webm' && n.head === 'ftyp' && n.codecs.video === 'h264' && n.codecs.audio === 'aac' && n.outSize > 2000, n)
+    check('transcode (WebCodecs): progress stays within 0..1 and the ffmpeg core was never requested', n.progressSeen && coreRequests.length === 0, { n, coreRequests })
+  }
+  const g = await page.evaluate(() => window.runNativeGarbage())
+  check('transcode (WebCodecs): a file that is not a video is refused with a readable message', typeof g.error === 'string' && !g.error.startsWith('other:'), g)
   check('transcode: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
