@@ -1,6 +1,6 @@
 # Seguridad: estado servidor-propietario y migraciones preparadas · rama `fase1-seguridad` · 18-10-2026
 
-**Las migraciones están preparadas y probadas solo en PostgreSQL local desechable. NO están aplicadas.** No se ha usado cuota, gastado créditos ni publicado nada.
+**ACTUALIZACIÓN 21-10-2026: las tres migraciones (seguridad, research_cache y campaigns) están APLICADAS y comprobadas en la base real.** El detalle está en `supabase/activation/README.md`. No se ha usado cuota, gastado créditos ni publicado nada.
 
 ## Qué corrige (código ya desplegable; compatible con la base actual)
 
@@ -34,4 +34,4 @@ Sin `SUPABASE_SERVICE_ROLE_KEY`, o antes de la migración, el código se comport
 4. En Preview: conectar y desconectar YouTube, aprobar un borrador y lanzar una automatización.
 5. Si algo falla, aplicar la reversión.
 
-`research_cache` (`20261013120000`) y `campaigns` (`20261015120000`) siguen preparadas y sin aplicar. Su prueba (`scripts/test-migrations.sh`) pasa.
+`research_cache` (`20261013120000`) y `campaigns` (`20261015120000`) también están aplicadas desde el 21-10-2026.

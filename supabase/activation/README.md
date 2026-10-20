@@ -1,4 +1,4 @@
-# Activación de migraciones pendientes · preparada el 20-10-2026 · AUTORIZADA el 21-10-2026 · NO APLICADA
+# Activación de migraciones · preparada el 20-10-2026 · APLICADA el 21-10-2026
 
 Requiere una autorización explícita del propietario: la base de datos es compartida entre Preview y Producción.
 
@@ -52,3 +52,36 @@ Si algo falla, aplicar la reversión de seguridad.
 - Como se pidió, **no se ejecutaron los pasos 2 y 3**.
 
 Para aplicarla hace falta otra vía: el SQL Editor de Supabase, ejecutando cada archivo en orden y después `post-check.sql`, o un conector de Supabase que no se quede bloqueado.
+
+## Aplicación del 21-10-2026 (SQL Editor de Supabase, proyecto Cerebro Studio `psbvqdaksrfrkxbewrll`)
+
+- **Antes de ejecutar:**
+  - Se volvió a leer el estado: idéntico a `pre-snapshot-2026-10-20.json`. Hay 56 permisos, las políticas `*_own`, 0 ejecuciones en curso, 2 conexiones y 10 proyectos.
+  - Se comprobó que el contenido cargado en el editor tenía el **mismo SHA-256** que cada archivo ensayado:
+    - `ee06666b…` (research_cache)
+    - `3bc8f395…` (campaigns)
+    - `51237be4…` (seguridad)
+- **Orden:** cada migración se ejecutó por separado y se comprobó antes de pasar a la siguiente. Las tres respondieron «Success» y su comprobación individual fue correcta.
+- **`post-check.sql`:** 13 de 13 en `true`.
+- **Historial:** registradas en `supabase_migrations.schema_migrations` con las versiones del repositorio `20261013120000`, `20261015120000` y `20261018120000`, para que no se vuelvan a ejecutar.
+- **Datos:** no se modificó ni se borró ninguna fila. Después de aplicar siguen igual las conexiones, los proyectos, la ejecución de automatización y los trabajos.
+
+### Permisos comprobados con el rol real del usuario (`authenticated`)
+
+Las pruebas se hicieron dentro de un bloque que siempre se revierte; después se confirmó que no quedó ninguna fila de prueba.
+
+| Prueba | Resultado |
+|---|---|
+| Insertar una aprobación | Denegado |
+| Crear un borrador de publicación | Permitido |
+| Autoaprobarlo o crearlo ya aprobado | Denegado |
+| Cancelarlo | Permitido |
+| Marcarlo como publicado | Denegado |
+| Leer las columnas seguras de las conexiones | Permitido |
+| Leer `token_ciphertext` | Denegado |
+| Modificar o borrar conexiones | Denegado |
+| Escribir en el registro de gasto | Denegado; leerlo, permitido |
+| Crear y leer una campaña propia | Permitido |
+| Crear una campaña a nombre de otro usuario | Denegado |
+| `research_reserve` | Correcta |
+| `research_lock` | El primer intento obtiene el bloqueo y el segundo no |
