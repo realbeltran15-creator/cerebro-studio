@@ -156,3 +156,43 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
     throw error
   }
 }
+
+export type VideoCheck = {
+  exists: boolean
+  videoId: string
+  channelId: string | null
+  channelTitle: string | null
+  privacyStatus: string | null
+  uploadStatus: string | null
+  /** True when the video belongs to the connected channel and is private, as the job asked. */
+  matches: boolean
+  checkedAt: string
+}
+
+/**
+ * Reads the uploaded video back from YouTube (videos.list, 1 quota unit) with the owner's own authorization and records the
+ * result on the job: it exists, which channel owns it and its real visibility. Read-only at YouTube; never uploads or edits.
+ */
+export async function verifyPublishedVideo(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db): Promise<VideoCheck> {
+  const { data } = await db.from('publication_jobs').select('id,status,payload,result').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
+  const job = data as { id: string; status: string; payload: YouTubePayload; result: Record<string, unknown> | null } | null
+  if (!job) throw new PublishError('Trabajo no encontrado.', 404)
+  const videoId = typeof job.result?.videoId === 'string' ? job.result.videoId : ''
+  if (!/^[\w-]{11}$/.test(videoId)) throw new PublishError('Este trabajo no tiene ningún vídeo subido que comprobar.', 409)
+  const connection = await youtubeConnection(db, ownerId)
+  if (!connection) throw new PublishError('Conecta y confirma tu canal en Conectores.', 409)
+  const token = await accessTokenFor(db, connection)
+  const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=status,snippet&id=${videoId}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+  if (!res.ok) throw new PublishError(`YouTube no respondió a la comprobación (${res.status}).`, 502)
+  const json = await res.json() as { items?: Array<{ id: string; snippet?: { channelId?: string; channelTitle?: string }; status?: { privacyStatus?: string; uploadStatus?: string } }> }
+  const v = json.items?.[0]
+  const expectedPrivacy = job.payload.publishAt ? 'private' : job.payload.privacyStatus ?? 'private'
+  const check: VideoCheck = {
+    exists: Boolean(v), videoId, channelId: v?.snippet?.channelId ?? null, channelTitle: v?.snippet?.channelTitle ?? null,
+    privacyStatus: v?.status?.privacyStatus ?? null, uploadStatus: v?.status?.uploadStatus ?? null,
+    matches: Boolean(v) && v?.snippet?.channelId === connection.external_account_id && v?.status?.privacyStatus === expectedPrivacy,
+    checkedAt: new Date().toISOString(),
+  }
+  await writer.from('publication_jobs').update({ result: { ...(job.result ?? {}), youtubeCheck: check } }).eq('id', job.id).eq('owner_id', ownerId)
+  return check
+}

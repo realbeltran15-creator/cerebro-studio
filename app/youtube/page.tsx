@@ -148,6 +148,16 @@ export default function YouTubePage() {
     } catch (e) { setError(e instanceof Error ? e.message : 'La publicación falló.') } finally { setBusy(''); await load(projectId) }
   }
 
+  async function verify(job: Job) {
+    setBusy(job.id); setError(''); setNotice('')
+    try {
+      const r = await fetch(`/api/publish/youtube/${job.id}/verify`, { method: 'POST' })
+      const json = await r.json() as { matches?: boolean; error?: string }
+      if (!r.ok) throw new Error(json.error ?? 'No se pudo comprobar.')
+      if (json.matches) setNotice('Comprobado en YouTube: el vídeo está en tu canal con la visibilidad aprobada.'); else setError('El vídeo en YouTube no coincide con lo aprobado (canal o visibilidad). Revísalo en YouTube Studio.')
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo comprobar.') } finally { setBusy(''); await load(projectId) }
+  }
+
   async function cancel(job: Job) {
     const { error: e } = await supabase.from('publication_jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', job.id).in('status', ['draft', 'awaiting_approval', 'approved'])
     if (e) setError(e.message); else await load(projectId)
@@ -230,6 +240,8 @@ export default function YouTubePage() {
           <span className="muted small" style={{ display: 'block' }}>{privacyLabels[j.payload?.privacyStatus ?? 'private']} · {new Date(j.created_at).toLocaleString()}{j.approved_at ? ` · aprobado ${new Date(j.approved_at).toLocaleString()}` : ''}</span>
           {typeof j.result?.lastError === 'string' && <span className="error small" style={{ display: 'block' }}>Último error: {j.result.lastError}</span>}
           {videoUrl && <a className="open" href={videoUrl} target="_blank" rel="noopener noreferrer">{videoUrl}</a>}
+          {(() => { const c = j.result?.youtubeCheck as { exists?: boolean; matches?: boolean; channelTitle?: string | null; channelId?: string | null; privacyStatus?: string | null; checkedAt?: string } | undefined
+            return c ? <span className={c.matches ? 'muted small' : 'error small'} style={{ display: 'block' }}>Comprobado en YouTube {c.checkedAt ? new Date(c.checkedAt).toLocaleString() : ''}: {c.exists ? `canal ${c.channelTitle ?? ''} (${c.channelId ?? '?'}) · visibilidad ${c.privacyStatus === 'private' ? 'privado' : c.privacyStatus === 'unlisted' ? 'no listado' : c.privacyStatus === 'public' ? 'público' : c.privacyStatus ?? '?'}${c.matches ? ' · correcto' : ' · NO coincide con lo aprobado'}` : 'el vídeo no existe o no es accesible con esta cuenta'}</span> : null })()}
         </div>
         <div className="pageActions">
           {['draft', 'awaiting_approval'].includes(j.status) && <>
@@ -238,6 +250,7 @@ export default function YouTubePage() {
           </>}
           {j.status === 'approved' && <button type="button" disabled={!canUpload || busy === j.id} title={canUpload ? undefined : 'Permite la subida de vídeos en Conectores'} onClick={() => void publish(j)}>{busy === j.id ? 'Subiendo…' : 'Publicar en YouTube'}</button>}
           {['draft', 'awaiting_approval', 'approved'].includes(j.status) && <button type="button" className="ghost" onClick={() => void cancel(j)}>Cancelar</button>}
+          {j.status === 'published' && videoUrl && <button type="button" className="ghost" disabled={busy === j.id} onClick={() => void verify(j)} title="Lee el vídeo en YouTube (1 unidad de cuota): canal y visibilidad">{busy === j.id ? 'Comprobando…' : 'Comprobar en YouTube'}</button>}
         </div>
       </div>
     })}</div>}

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { decryptJson, encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
 import { authUrl } from '@/lib/oauth/google'
-import { publishJob } from '@/lib/publication/youtube'
+import { publishJob, verifyPublishedVideo } from '@/lib/publication/youtube'
 import { approvalSeal, canonicalJson, verifyApprovalSeal } from '@/lib/publication/seal'
 
 beforeEach(() => {
@@ -236,5 +236,28 @@ describe('expired or revoked Google authorization', () => {
     await expect(accessTokenFor(db as never, connection as never)).rejects.toThrow(/caduca a los 7 días[\s\S]*No se ha enviado nada a YouTube/)
     expect(calls).toEqual(['https://oauth2.googleapis.com/token'])
     expect(updates).toEqual([expect.objectContaining({ status: 'expired' })])
+  })
+})
+
+describe('reading the uploaded video back from YouTube', () => {
+  const answer = (item: unknown) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ items: item ? [item] : [] }), { status: 200 })))
+  const published = () => { const s = state(); s.job.status = 'published'; s.job.result = { ...s.job.result, videoId: 'fwXRT029oSo' }; return s }
+  it('confirms a private video on the connected channel and records it on the job', async () => {
+    answer({ id: 'fwXRT029oSo', snippet: { channelId: 'ch', channelTitle: 'Canal' }, status: { privacyStatus: 'private', uploadStatus: 'processed' } })
+    const s = published()
+    const c = await verifyPublishedVideo(fakeDb(s), 'u1', 'j1')
+    expect(c).toMatchObject({ exists: true, channelId: 'ch', privacyStatus: 'private', matches: true })
+    expect(s.job.result.youtubeCheck.matches).toBe(true)
+  })
+  it('flags another channel or another visibility as not matching', async () => {
+    answer({ id: 'fwXRT029oSo', snippet: { channelId: 'other' }, status: { privacyStatus: 'private' } })
+    expect((await verifyPublishedVideo(fakeDb(published()), 'u1', 'j1')).matches).toBe(false)
+    answer({ id: 'fwXRT029oSo', snippet: { channelId: 'ch' }, status: { privacyStatus: 'public' } })
+    expect((await verifyPublishedVideo(fakeDb(published()), 'u1', 'j1')).matches).toBe(false)
+    answer(null)
+    expect(await verifyPublishedVideo(fakeDb(published()), 'u1', 'j1')).toMatchObject({ exists: false, matches: false })
+  })
+  it('refuses a job without an uploaded video', async () => {
+    await expect(verifyPublishedVideo(fakeDb(state()), 'u1', 'j1')).rejects.toThrow(/ningún vídeo subido/)
   })
 })
