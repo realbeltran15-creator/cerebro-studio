@@ -96,3 +96,16 @@ Las pruebas se hicieron dentro de un bloque que siempre se revierte; después se
 | Biblioteca | Muestra los 6 archivos del propietario y no muestra los de otros usuarios. |
 | Editor | Se abren los montajes guardados. El navegador del ordenador admite H.264 y AAC nativos para la conversión sin GPL. **Error corregido:** al abrir un montaje sin voces se mostraba un aviso falso de «voces movidas» y el estado «sin guardar». |
 | Automatizaciones | Comprobados la validación (falta de palabra clave), la creación en modo manual, la pausa y el borrado. No se ejecutó, para no gastar cuota. |
+
+## Publicación de YouTube: validada con una subida real privada (21-10-2026)
+
+| Comprobación | Resultado |
+|---|---|
+| Canal autorizado | Umbral del Hito (@umbraldelhito), ID `UCkrMO0K_VDw8BDXPFpuXQvw`, confirmado por el propietario. El ID coincide con el de la conexión anterior. |
+| Trabajo | «Prueba privada de Cerebro Studio». Vídeo de 88 s generado con IA (voz e imágenes, licencia `generated`). Contenido sintético declarado. |
+| Subida | Una sola subida: vídeo `fwXRT029oSo`, https://www.youtube.com/watch?v=fwXRT029oSo |
+| Comprobación en YouTube (`videos.list`) | El vídeo existe, pertenece al canal `UCkrMO0K_VDw8BDXPFpuXQvw`, su visibilidad es **privado** y el estado de subida es `processed`. Coincide con lo aprobado. |
+| Estado en Cerebro Studio | El trabajo figura como publicado y guarda el enlace y la comprobación (`result.youtubeCheck`). |
+| Cuota | Unas 1.603 unidades de la API de YouTube. 1.600 de `videos.insert` según la tabla oficial de costes; 2 de `channels.list` (al volver de cada uno de los dos intentos de conexión en que Google aceptó la cuenta); 1 de la comprobación. Gasto: 0 €. |
+| Incidencias corregidas | 1) La autorización anterior había caducado (modo «Testing», 7 días): ahora se muestra un mensaje claro. 2) `redirect_uri_mismatch`: se registró la dirección de retorno de la Preview en el cliente OAuth. 3) La conexión nueva no se podía guardar por la restricción de estados de la tabla: la autorización espera cifrada hasta que el propietario confirma el canal. |
+| Pendiente (decisión del propietario) | Mientras la app de Google siga en modo «Testing», la autorización caducará cada 7 días. Pasarla a «Producción» requiere la verificación de Google para el permiso de subida. |
