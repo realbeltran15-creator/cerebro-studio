@@ -80,7 +80,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('manual: voices moved to the voice track', await page.locator('[aria-label="Pista de Voz"] > div').count() === 2)
   await clips.nth(1).click()
   await page.getByPlaceholder(/1 –/).fill('1.5')
-  await page.getByRole('button', { name: 'Dividir' }).click()
+  await page.getByRole('button', { name: 'Dividir', exact: true }).click()
   check('manual: split creates a clip', await clips.count() === 4)
   const box = await page.locator('[aria-label="Cambiar duración"]').first().boundingBox()
   await page.mouse.move(box.x + 4, box.y + 20); await page.mouse.down(); await page.mouse.move(box.x + 44, box.y + 20, { steps: 8 }); await page.mouse.up()
@@ -131,6 +131,115 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const out = final.assets.find(a => a.source_provider === 'browser-render')
   check('manual: render completed and saved', final.render_jobs.some(j => j.status === 'completed' && j.output_asset_id === out?.id) && out.provenance.settings.editedManually === true, final.render_jobs)
   check('manual: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 2b. Manual editor, new tools: real waveforms and beats, cuts on the beat, effects on the cuts, SRT/VTT, a reference video, comparison and a long montage.
+{
+  const server = serve(8810, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'manual-editor-pro.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 }, acceptDownloads: true })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  page.on('dialog', d => d.accept())
+  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
+  await page.goto('http://127.0.0.1:8810/editor/manual?job=job1')
+  await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
+  // Music with a click every 500 ms goes on the music track.
+  await page.locator('label', { hasText: /^Audio/ }).locator('select').selectOption('beat')
+  await page.locator('label', { hasText: /^Pista/ }).locator('select').selectOption('music')
+  await clips.first().click()
+  await page.getByRole('button', { name: /Añadir al inicio/ }).click()
+  await page.locator('[aria-label="Pista de Música"] svg[data-waveform]').first().waitFor({ timeout: 60000 })
+  // The music is quiet noise with a loud click every 500 ms: a real waveform has tall columns at the clicks and flat ones in between.
+  const wf = await page.evaluate(() => { const d = document.querySelector('[aria-label="Pista de Música"] svg[data-waveform] path')?.getAttribute('d') ?? ''; const ys = [...d.matchAll(/,(-?[\d.]+)/g)].map(m => Number(m[1])); const top = ys.slice(0, ys.length / 2); return { tall: top.filter(y => y < 5).length, flat: top.filter(y => y > 12).length, cols: top.length } })
+  check('editor-pro: a real waveform is drawn on the music track (tall columns at the clicks, flat between them)', wf.tall >= 5 && wf.tall <= wf.cols / 2 && wf.flat >= wf.cols / 2, wf)
+  check('editor-pro: voice tracks get their own waveform', await page.locator('[aria-label="Pista de Voz"] svg[data-waveform]').count() >= 1)
+  await page.getByText(/~12\d BPM|~11[89] BPM/).first().waitFor({ timeout: 30000 })
+  check('editor-pro: the tempo is measured from the music (~120 BPM) and beats are marked on the timeline', (await page.locator('[data-beat]').count()) >= 8)
+  // Two image clips without voice at the end: a cut next to a voice is never moved, this one can be. A margin of 300 ms always reaches a beat (they are 500 ms apart).
+  await page.locator('label', { hasText: /^Clip de imagen o vídeo/ }).locator('select').selectOption('img')
+  await page.getByRole('button', { name: /^Añadir clip/ }).click()
+  await page.locator('label', { hasText: /^Clip de imagen o vídeo/ }).locator('select').selectOption('img')
+  await page.getByRole('button', { name: /^Añadir clip/ }).click()
+  await page.getByLabel(/^Margen/).evaluate(el => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, '300'); el.dispatchEvent(new Event('input', { bubbles: true })) })
+  const before = await page.getByText(/cortes caen en un pulso/).textContent()
+  await page.getByRole('button', { name: 'Mover los cortes al pulso' }).click()
+  await page.getByText(/\d+ cortes? movidos? al pulso/).waitFor()
+  const after = await page.getByText(/cortes caen en un pulso/).textContent()
+  const okBefore = Number(/(\d+) de/.exec(before)?.[1]), okAfter = Number(/(\d+) de/.exec(after)?.[1])
+  check('editor-pro: moving the cuts to the beat puts more cuts on a beat and says what moved', okAfter > okBefore && /Puedes deshacerlo/.test(await page.locator('.notice').first().textContent()), [before, after])
+  await page.getByRole('button', { name: 'Deshacer' }).click()
+  check('editor-pro: the sync is one undoable step', (await page.getByText(/cortes caen en un pulso/).textContent()) === before)
+  await page.getByRole('button', { name: 'Rehacer' }).click()
+  // Effects on the cuts, then the style learns them.
+  await page.locator('label', { hasText: /^Efecto/ }).locator('select').selectOption('sfx1')
+  await page.getByRole('button', { name: 'Poner en los cortes' }).click()
+  await page.getByText(/colocado en \d+ corte/).waitFor()
+  const nCuts = (await clips.count()) - 1
+  check('editor-pro: one effect per cut on the effects track', (await page.locator('[aria-label="Pista de Efectos"] > div').count()) === nCuts, nCuts)
+  // Subtitles from an SRT file.
+  const srt = '1\n00:00:00,500 --> 00:00:01,800\nPrimer subtítulo\n\n2\n00:00:02,400 --> 00:00:04,000\nSegundo <i>subtítulo</i>\n'
+  await page.locator('input[type=file][accept*=".srt"]').setInputFiles({ name: 'prueba.srt', mimeType: 'text/plain', buffer: Buffer.from(srt) })
+  await page.getByText(/2 subtítulos \(SRT\)/).waitFor()
+  await page.getByRole('button', { name: 'Colocar en el montaje' }).click()
+  await page.getByRole('table', { name: 'Lista de subtítulos' }).waitFor()
+  check('editor-pro: SRT cues listed with their times', (await page.getByRole('table', { name: 'Lista de subtítulos' }).locator('tbody tr').count()) >= 2)
+  await page.getByLabel('Texto del subtítulo 1').fill('Editado a mano')
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Descargar .srt' }).click()])
+  const srtOut = await (async () => { const st = await dl.createReadStream(); let t = ''; for await (const c of st) t += c; return t })()
+  check('editor-pro: the edited caption is exported as a valid SRT', /00:00:00,500 --> 00:00:01,800\nEditado a mano/.test(srtOut) && /Segundo subtítulo/.test(srtOut), srtOut)
+  // Save and inspect what was stored.
+  await page.getByRole('button', { name: 'Guardar montaje' }).click(); await page.getByText('Montaje guardado.').waitFor()
+  const stored = (await db()).render_jobs.find(j => j.id === 'job1').composition
+  check('editor-pro: effects are tagged and saved, cues are saved on the clips, the automatic snapshot is kept', stored.audioClips.filter(a => a.origin === 'cut-sfx').length === nCuts && stored.clips.some(k => k.cues?.length) && stored.autoSnapshot?.clips.length === 3, [stored.audioClips.length, stored.autoSnapshot])
+  // Reference video: analysed locally; only numbers come out.
+  await page.locator('input[type=file][accept="video/*"]').last().setInputFiles({ name: 'ref.webm', mimeType: 'video/webm', buffer: Buffer.from(await page.evaluate(async () => Array.from(new Uint8Array(await window.__REF.arrayBuffer())))) })
+  await page.getByLabel('Resultado de la referencia').waitFor({ timeout: 120000 })
+  const refText = await page.getByLabel('Resultado de la referencia').textContent()
+  const cutsPerMin = Number(/(\d+(?:[.,]\d+)?) cortes\/min/.exec(refText)?.[1].replace(',', '.'))
+  check('editor-pro: the reference video was analysed (three cuts in 7 s ≈ 25 cuts/min)', cutsPerMin >= 17 && cutsPerMin <= 34, refText)
+  await page.getByRole('button', { name: 'Guardar como estilo' }).first().click()
+  await page.getByText(/guardado en tu cuenta; aparece en/).waitFor()
+  const styles = (await db()).connector_configs?.[0]?.config?.styles ?? []
+  const refStyle = styles.find(x => x.source === 'referencia')
+  check('editor-pro: the reference became a style with only numbers (no file name, no media)', !!refStyle && !JSON.stringify(refStyle).match(/ref\.webm|mi-referencia|blob:|data:/), refStyle)
+  await page.locator('select').filter({ has: page.locator('option', { hasText: 'referencia' }) }).selectOption({ index: 0 })
+  check('editor-pro: the reference style is listed next to the learned ones', (await page.getByText(/· referencia/).count()) >= 1)
+  // Comparison with the automatic montage this one came from.
+  await page.getByText('Comparar mi montaje con el automático').click()
+  await page.getByLabel('Comparar con').selectOption('snapshot')
+  await page.locator('svg[aria-label^="Cortes de"]').waitFor()
+  check('editor-pro: the comparison draws both montages and lists the differences', (await page.locator('svg[aria-label^="Cortes de"] rect').count()) >= 6 && (await page.getByText('Diferencias').count()) === 1)
+  check('editor-pro: no page errors', errors.length === 0, errors)
+  await page.close()
+  // A 400-clip montage: only the visible part is in the page, and scrolling shows the end.
+  const long = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  const lerrors = []; long.on('pageerror', e => lerrors.push(e.message))
+  await long.addInitScript(() => { window.__WANT_JOB = 'long' })
+  await long.goto('http://127.0.0.1:8810/editor/manual?job=long')
+  await long.locator('[aria-label="Pista de vídeo"] > div').first().waitFor({ timeout: 20000 })
+  const drawn = await long.locator('[aria-label="Pista de vídeo"] > div[draggable]').count()
+  check('editor-pro: a 400-clip montage draws only the clips on screen', drawn > 5 && drawn < 80, drawn)
+  await long.evaluate(() => { const el = document.querySelector('section.panel[style*="overflow-x"]'); el.scrollLeft = el.scrollWidth })
+  await long.locator('[aria-label="Pista de vídeo"] > div[draggable]', { hasText: '400' }).first().waitFor({ timeout: 10000 })
+  const drawnEnd = await long.locator('[aria-label="Pista de vídeo"] > div[draggable]').count()
+  check('editor-pro: scrolling to the end draws the last clips and still only a few', drawnEnd < 80 && lerrors.length === 0, [drawnEnd, lerrors])
+  await long.close(); server.close()
+}
+
+// 2c. The real analysis worker on 10 minutes of audio: correct results, a responsive page meanwhile, and cancellation that works.
+{
+  const worker = (await build({ entryPoints: [path.join(root, 'lib/editor/analysis.worker.ts')], bundle: true, write: false, format: 'iife', logLevel: 'error', alias: { '@': root } })).outputFiles[0].text
+  const server = serve(8811, { 'worker.js': worker, 'h.js': await bundle(path.join(dir, 'analysis-worker.harness.ts')) })
+  const page = await browser.newPage()
+  const errors = []; page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8811/')
+  const r = await page.evaluate(() => window.runTest(600))
+  check('analysis worker: 10 minutes of audio measured (duration, peaks, tempo)', Math.abs(r.durationMs - 600000) < 200 && r.peaks > 29900 && r.bpm > 118 && r.bpm < 122 && r.beats > 1100, r)
+  check('analysis worker: the page stayed responsive while it ran (no gap above 250 ms between 10 ms timers)', r.ticks > 20 && r.maxGap < 250, { maxGap: r.maxGap, ticks: r.ticks, elapsed: r.elapsed })
+  check('analysis worker: progress is reported and a cancelled run stops', r.progressSteps > 5 && r.cancelled === true, r)
+  check('analysis worker: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 

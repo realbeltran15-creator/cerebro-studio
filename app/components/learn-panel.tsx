@@ -11,7 +11,7 @@ import { loadStyles, saveStyles } from '@/lib/editor/styles-store'
  * and applies that style to other edits in one click (undoable). It replays measured habits —
  * it does not invent content or decide creatively.
  */
-export function LearnPanel({ composition, kindOf, onApply }: { composition: Composition; kindOf: (id: string | null) => VisualKind; onApply: (next: Composition, changes: string[]) => void }) {
+export function LearnPanel({ composition, kindOf, onApply, beatsMs, refreshKey = 0 }: { composition: Composition; kindOf: (id: string | null) => VisualKind; onApply: (next: Composition, changes: string[]) => void; /** Beats of the montage's music (timeline ms), when it has been analysed: lets a style learn and replay «cuts on the beat». */ beatsMs?: readonly number[]; /** Changes when another panel saved a style (a reference), so the list reloads. */ refreshKey?: number }) {
   const supabase = getSupabaseBrowserClient()
   const [styles, setStyles] = useState<EditStyle[]>([])
   const [recording, setRecording] = useState(false)
@@ -24,7 +24,7 @@ export function LearnPanel({ composition, kindOf, onApply }: { composition: Comp
   const start = useRef<Composition | null>(null)
   const last = useRef<Composition>(composition)
 
-  useEffect(() => { void loadStyles(supabase).then(s => { setStyles(s); setChosen(s[0]?.name ?? '') }) }, [supabase])
+  useEffect(() => { void loadStyles(supabase).then(s => { setStyles(s); setChosen(c => (s.some(x => x.name === c) ? c : s[0]?.name ?? '')) }) }, [supabase, refreshKey])
 
   useEffect(() => {
     if (recording && composition !== last.current) {
@@ -38,7 +38,7 @@ export function LearnPanel({ composition, kindOf, onApply }: { composition: Comp
   function stopRec() {
     setRecording(false)
     if (!start.current) return
-    const s = learnStyle(start.current, composition, kindOf, name)
+    const s = learnStyle(start.current, composition, kindOf, name, beatsMs)
     setLearned(s); setTarget(styles[0]?.name ?? '')
   }
 
@@ -62,7 +62,7 @@ export function LearnPanel({ composition, kindOf, onApply }: { composition: Comp
   function applyChosen() {
     const s = styles.find(x => x.name === chosen)
     if (!s) return
-    const r = applyStyle(composition, s, kindOf)
+    const r = applyStyle(composition, s, kindOf, { beatsMs })
     onApply(r.composition, r.changes)
   }
 
@@ -88,7 +88,7 @@ export function LearnPanel({ composition, kindOf, onApply }: { composition: Comp
     </div>}
 
     {styles.length > 0 && <div className="field-row" style={{ alignItems: 'end' }}>
-      <label>Estilo<select value={chosen} onChange={e => setChosen(e.target.value)}>{styles.map(s => <option key={s.name} value={s.name}>{s.name} · {s.samples} sesión{s.samples === 1 ? '' : 'es'}</option>)}</select></label>
+      <label>Estilo<select value={chosen} onChange={e => setChosen(e.target.value)}>{styles.map(s => <option key={s.name} value={s.name}>{s.name} · {s.source === 'referencia' ? 'referencia' : `${s.samples} sesión${s.samples === 1 ? '' : 'es'}`}</option>)}</select></label>
       <button type="button" disabled={!current || recording} onClick={applyChosen}>Aplicar a este montaje</button>
       <button type="button" className="ghost" disabled={!current} onClick={() => current && void remove(current.name)}>Borrar estilo</button>
     </div>}

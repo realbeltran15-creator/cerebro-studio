@@ -5,11 +5,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { audioStartMs, CAPTION_STYLES, type CaptionStyle, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { audioStartMs, clipStarts, CAPTION_STYLES, type CaptionStyle, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
 import { addAudioClip, addClip, commit, fromClip, deleteAudioClip, deleteClip, duplicateClip, historyOf, moveAudioClip, moveClip, redo, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { LearnPanel } from '../../components/learn-panel'
+import { WaveformSvg } from '../../components/waveform-view'
+import { EditorSyncPanel } from '../../components/editor-sync-panel'
+import { summarizeBeats, type BeatSummary } from '@/lib/editor/beat-summary'
+import { EditorSubtitlesPanel } from '../../components/editor-subtitles-panel'
+import { EditorReferencePanel } from '../../components/editor-reference-panel'
+import { EditorComparePanel } from '../../components/editor-compare-panel'
+import { analyzeAsset, type AssetAnalysis } from '@/lib/editor/analysis-assets'
+import { nearestBeat } from '@/lib/editor/sync'
 import { ManualPicker } from '../../components/manual-picker'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
@@ -45,11 +53,39 @@ export default function ManualEditorPage() {
   const [importLicense, setImportLicense] = useState<LicenseStatus>('owned')
   const [importNotes, setImportNotes] = useState('')
   const [dropping, setDropping] = useState(false)
+  // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
+  const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
+  const requested = useRef(new Set<string>())
+  const [showBeats, setShowBeats] = useState(true)
+  const [snap, setSnap] = useState(true)
+  const [toleranceMs, setToleranceMs] = useState(150)
+  const [stylesKey, setStylesKey] = useState(0)
+  // What part of the timeline is on screen: long montages only draw (and measure) that part.
+  const scroller = useRef<HTMLElement | null>(null)
+  const [view, setView] = useState({ left: 0, width: 1200 })
 
   const comp = history?.present ?? null
   const apply = useCallback((next: (c: Composition) => Composition) => {
     setHistory(h => (h ? commit(h, next(h.present)) : h)); setDirty(true); setNotice('')
   }, [])
+
+  // Ask for the analysis of every audio file the montage uses (each file once; two at a time; kept in this browser for the next visit).
+  const audioIds = useMemo(() => [...new Set([comp?.musicAssetId, ...(comp?.audioClips ?? []).map(a => a.assetId)].filter((x): x is string => Boolean(x)))].sort().join(','), [comp])
+  useEffect(() => {
+    for (const id of audioIds ? audioIds.split(',') : []) {
+      if (requested.current.has(id)) continue
+      requested.current.add(id)
+      setAnalyses(a => ({ ...a, [id]: 'loading' }))
+      analyzeAsset(id).then(r => setAnalyses(a => ({ ...a, [id]: r })), () => { requested.current.delete(id); setAnalyses(a => ({ ...a, [id]: 'error' })) })
+    }
+  }, [audioIds])
+
+  // Beats of the music, on the montage's timeline (music clips on the track, plus the global background music).
+  const beats: BeatSummary = useMemo(() => summarizeBeats(comp, analyses), [comp, analyses])
+
+  const measureView = useCallback(() => { const el = scroller.current; if (el) setView(v => (v.left === el.scrollLeft && v.width === el.clientWidth ? v : { left: el.scrollLeft, width: el.clientWidth })) }, [])
+  const loaded = history !== null
+  useEffect(() => { measureView(); window.addEventListener('resize', measureView); return () => window.removeEventListener('resize', measureView) }, [measureView, loaded])
 
   const load = useCallback(async () => {
     const id = new URLSearchParams(window.location.search).get('job')
@@ -164,13 +200,14 @@ export default function ManualEditorPage() {
   const visuals = useMemo(() => assets.filter(a => visualTypes.includes(a.asset_type)), [assets])
   const audios = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type) || musicTypes.includes(a.asset_type)), [assets])
   const typeOf = (id: string | null) => (id ? assets.find(a => a.id === id)?.asset_type ?? 'image' : 'none')
+  const kindOfAsset = (id: string | null): 'video' | 'image' | 'other' => { const t = id ? assets.find(a => a.id === id)?.asset_type : undefined; return t === 'video' ? 'video' : t && visualTypes.includes(t) ? 'image' : 'other' }
   const label = (id: string | null) => { const a = id ? assets.find(x => x.id === id) : undefined; return a ? assetLabel(a) : 'Sin visual' }
 
   // Pointer drag on the right edge of a clip changes its duration; on an audio block it moves it.
-  const drag = useRef<{ kind: 'resize' | 'move'; id: string; startX: number; startValue: number } | null>(null)
+  const drag = useRef<{ kind: 'resize' | 'move'; id: string; startX: number; startValue: number; clipStartMs: number } | null>(null)
   function onPointerDown(e: ReactPointerEvent, kind: 'resize' | 'move', id: string, startValue: number) {
     e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId)
-    drag.current = { kind, id, startX: e.clientX, startValue }
+    drag.current = { kind, id, startX: e.clientX, startValue, clipStartMs: kind === 'resize' && comp ? clipStarts(comp)[comp.clips.findIndex(k => k.id === id)] ?? 0 : 0 }
     // Snapshot for undo: the drag then replaces `present` live without one entry per pixel.
     setHistory(h => (h ? { past: [...h.past, h.present].slice(-100), present: h.present, future: [] } : h))
   }
@@ -178,10 +215,13 @@ export default function ManualEditorPage() {
     const d = drag.current
     if (!d) return
     const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000
+    // Magnet: within ~14 px (and never more than the chosen margin) the edge jumps to the nearest beat of the music.
+    const pull = Math.min(toleranceMs, 14 / pxPerSec * 1000)
+    const magnet = (ms: number) => (snap && beats.beatsMs.length ? nearestBeat(ms, beats.beatsMs, pull) ?? ms : ms)
     // Live update without pushing a history entry per pixel: replace the present snapshot.
     setHistory(h => {
       if (!h) return h
-      const next = d.kind === 'resize' ? updateClip(h.present, d.id, { durationMs: d.startValue + deltaMs }) : moveAudioClip(h.present, d.id, d.startValue + deltaMs)
+      const next = d.kind === 'resize' ? updateClip(h.present, d.id, { durationMs: magnet(d.clipStartMs + d.startValue + deltaMs) - d.clipStartMs }) : moveAudioClip(h.present, d.id, magnet(d.startValue + deltaMs))
       return { ...h, present: next }
     })
     setDirty(true)
@@ -204,6 +244,18 @@ export default function ManualEditorPage() {
   const selAudio = selection?.kind === 'audio' ? (comp.audioClips ?? []).find(a => a.id === selection.id) ?? null : null
   const width = Math.max(total / 1000 * pxPerSec, 600)
   const rows: Array<{ key: AudioClip['kind']; label: string }> = [{ key: 'voice', label: 'Voz' }, { key: 'music', label: 'Música' }, { key: 'sfx', label: 'Efectos' }]
+  // Long montages: only the clips on screen (plus a margin) are drawn; spacers keep the timeline the same length. Small montages draw everything.
+  const windowed = (() => {
+    if (comp.clips.length <= 120) return { from: 0, to: comp.clips.length, before: 0, after: 0 }
+    const margin = 600, lo = (view.left - margin) / pxPerSec * 1000, hi = (view.left + view.width + margin) / pxPerSec * 1000
+    const st = clipStarts(comp); let from = 0, to = comp.clips.length
+    while (from < to - 1 && st[from] + comp.clips[from].durationMs < lo) from++
+    while (to > from + 1 && st[to - 1] > hi) to--
+    const px = (a: number, b: number) => comp.clips.slice(a, b).reduce((t, k) => t + k.durationMs, 0) / 1000 * pxPerSec
+    return { from, to, before: px(0, from), after: px(to, comp.clips.length) }
+  })()
+  const loMs = (view.left - 200) / pxPerSec * 1000, hiMs = (view.left + view.width + 200) / pxPerSec * 1000
+  const nextBeatRel = selClip ? (() => { const st = clipStarts(comp)[comp.clips.findIndex(k => k.id === selClip.id)]; const b = beats.beatsMs.find(t => t - st >= MIN_CLIP_MS && st + selClip.durationMs - t >= MIN_CLIP_MS); return b === undefined ? null : b - st })() : null
 
   return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
     {error && <p className="error" role="alert">{error}</p>}
@@ -228,7 +280,7 @@ export default function ManualEditorPage() {
       </div>
     </div>
 
-    <section className="panel" style={{ marginBottom: 12, overflowX: 'auto', outline: dropping ? '2px dashed var(--accent, #7c4fe0)' : undefined }} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+    <section ref={scroller} onScroll={measureView} className="panel" style={{ marginBottom: 12, overflowX: 'auto', outline: dropping ? '2px dashed var(--accent, #7c4fe0)' : undefined }} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={() => setDropping(false)}
       onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
       <div style={{ width, position: 'relative' }}>
@@ -236,7 +288,8 @@ export default function ManualEditorPage() {
           {Array.from({ length: Math.ceil(total / 1000 / 5) + 1 }, (_, i) => <span key={i} style={{ position: 'absolute', left: i * 5 * pxPerSec }}>{i * 5}s</span>)}
         </div>
         <div style={{ display: 'flex', height: 64, marginTop: 4 }} aria-label="Pista de vídeo">
-          {comp.clips.map((clip, i) => <div key={clip.id} draggable
+          {windowed.before > 0 && <div aria-hidden style={{ width: windowed.before, flex: 'none' }} />}
+          {comp.clips.map((clip, i) => i < windowed.from || i >= windowed.to ? null : <div key={clip.id} draggable
             onDragStart={e => { if (drag.current) { e.preventDefault(); return } setDragId(clip.id) }} onDragOver={e => e.preventDefault()}
             onDrop={() => { if (dragId && dragId !== clip.id) apply(c => moveClip(c, dragId, i)); setDragId(null) }}
             onClick={() => setSelection({ kind: 'clip', id: clip.id })}
@@ -245,15 +298,19 @@ export default function ManualEditorPage() {
             <b>{i + 1}</b> {label(clip.visualAssetId)}<br />{secs(clip.durationMs)} s{clip.transition === 'cut' ? ' · corte' : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}
             <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => onPointerDown(e, 'resize', clip.id, clip.durationMs)} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />
           </div>)}
+          {windowed.after > 0 && <div aria-hidden style={{ width: windowed.after, flex: 'none' }} />}
         </div>
         {rows.map(row => <div key={row.key} style={{ position: 'relative', height: 34, marginTop: 6, background: 'var(--bg-2)', borderRadius: 6 }} aria-label={`Pista de ${row.label}`}>
-          <span className="muted small" style={{ position: 'absolute', left: 4, top: 8, pointerEvents: 'none' }}>{row.label}</span>
+          <span className="muted small" style={{ position: 'absolute', left: 4, top: 8, pointerEvents: 'none', zIndex: 2 }}>{row.label}</span>
+          {row.key === 'music' && showBeats && beats.beatsMs.filter(t => t >= loMs && t <= hiMs).slice(0, 1500).map(t => <span key={t} data-beat="true" aria-hidden style={{ position: 'absolute', left: t / 1000 * pxPerSec, top: 0, bottom: 0, width: 1, background: '#8ab4ff', opacity: 0.7, pointerEvents: 'none', zIndex: 3 }} />)}
           {(comp.audioClips ?? []).filter(a => a.kind === row.key).map(a => {
             const start = audioStartMs(comp, a)
+            const an = analyses[a.assetId]
             return <div key={a.id} onClick={() => setSelection({ kind: 'audio', id: a.id })} onPointerDown={e => onPointerDown(e, 'move', a.id, start)}
               style={{ position: 'absolute', left: start / 1000 * pxPerSec, width: Math.max(a.durationMs / 1000 * pxPerSec, 8), top: 3, height: 28, background: kindColor[a.kind], opacity: a.muted ? 0.4 : 1, borderRadius: 5, color: '#fff', fontSize: 11, padding: '6px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === a.id ? '2px solid #fff' : 'none', whiteSpace: 'nowrap' }}
               title={`${label(a.assetId)} · ${secs(start)}–${secs(start + a.durationMs)} s${a.linkedClipId ? ' · enlazado a su clip' : ''}`}>
-              {a.linkedClipId ? '🔗 ' : ''}{label(a.assetId)}
+              {typeof an === 'object' && an.waveform && <WaveformSvg w={an.waveform} fromMs={a.trimInMs} toMs={a.trimInMs + a.durationMs} width={Math.max(a.durationMs / 1000 * pxPerSec, 8)} height={28} />}
+              <span style={{ position: 'relative' }}>{a.linkedClipId ? '🔗 ' : ''}{label(a.assetId)}{an === 'loading' ? ' · midiendo…' : ''}</span>
             </div>
           })}
         </div>)}
@@ -297,7 +354,7 @@ export default function ManualEditorPage() {
 
       <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1}` : selAudio ? 'Audio' : 'Selecciona un clip'}</h3>
-        {selClip && <ClipInspector clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt}
+        {selClip && <ClipInspector clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
           onChange={p => apply(c => updateClip(c, selClip.id, p))}
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
           onSplit={ms => { apply(c => splitClip(c, selClip.id, ms)); setSplitAt('') }}
@@ -334,7 +391,12 @@ export default function ManualEditorPage() {
       </section>
     </div>
 
-    <LearnPanel composition={comp} kindOf={id => { const t = assets.find(a => a.id === id)?.asset_type; return t === 'video' ? 'video' : t && visualTypes.includes(t) ? 'image' : 'other' }}
+    <EditorSyncPanel comp={comp} assets={assets} beats={beats} showBeats={showBeats} setShowBeats={setShowBeats} snap={snap} setSnap={setSnap} toleranceMs={toleranceMs} setToleranceMs={setToleranceMs}
+      isVideo={k => typeOf(k.visualAssetId) === 'video'} apply={apply} onNotice={setNotice} />
+    <EditorSubtitlesPanel comp={comp} apply={apply} onNotice={setNotice} />
+    <EditorReferencePanel comp={comp} kindOf={kindOfAsset} beatsMs={beats.beatsMs} apply={apply} onNotice={setNotice} onStylesChanged={() => setStylesKey(k => k + 1)} />
+    <EditorComparePanel comp={comp} jobId={job.id} projectId={job.project_id} beatsMs={beats.beatsMs} />
+    <LearnPanel composition={comp} beatsMs={beats.beatsMs} refreshKey={stylesKey} kindOf={kindOfAsset}
       onApply={(next, changes) => { apply(() => next); setNotice(`Estilo aplicado (puedes deshacerlo): ${changes.join(' ')}`) }} />
 
     {selClip && comp.clips[0]?.id !== selClip.id && <label className="pill" style={{ marginBottom: 8 }}><input type="checkbox" checked={previewFromSelected} onChange={e => setPreviewFromSelected(e.target.checked)} /> Vista previa desde el clip seleccionado (sin render)</label>}
@@ -344,8 +406,8 @@ export default function ManualEditorPage() {
   </StudioShell>
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, onChange, onTrim, onSplit, onDuplicate, onDelete, onMove }: {
-  clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onTrim, onSplit, onDuplicate, onDelete, onMove }: {
+  clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
   onChange: (p: Partial<Clip>) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
 }) {
   const splitMs = Math.round(Number(splitAt) * 1000)
@@ -378,6 +440,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, onChange, 
     <div className="field-row" style={{ alignItems: 'end' }}>
       <label>Dividir en (s desde el inicio del clip)<input type="number" min={1} step={0.1} value={splitAt} onChange={e => setSplitAt(e.target.value)} placeholder={`1 – ${secs(clip.durationMs - MIN_CLIP_MS)}`} /></label>
       <button type="button" className="ghost" disabled={!canSplit} onClick={() => onSplit(splitMs)}>Dividir</button>
+      <button type="button" className="ghost" disabled={nextBeatMs === null} title="Divide el clip en el primer pulso de la música que deja al menos 1 s a cada lado" onClick={() => nextBeatMs !== null && onSplit(nextBeatMs)}>Dividir en el siguiente pulso</button>
     </div>
     <div className="pageActions">
       <button type="button" className="ghost" onClick={() => onMove(-1)}>← Mover</button>

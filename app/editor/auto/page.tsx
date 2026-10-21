@@ -1,13 +1,14 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { assetLabel, musicTypes, signedUrl, type EditorAsset } from '@/lib/editor/client'
 import { autoComposition, defaultAutoEdit, detectShots, findSilences, planSegments, summarize, type AutoEditOptions, type Interval } from '@/lib/editor/auto-edit'
 import { frameDifferences, loudness } from '@/lib/editor/analyze'
+import { startAnalysis, type AnalysisHandle } from '@/lib/editor/analysis-client'
 import { applyStyle, type EditStyle } from '@/lib/editor/style'
 import { loadStyles } from '@/lib/editor/styles-store'
 import type { Composition } from '@/lib/editor/composition'
@@ -29,6 +30,8 @@ export default function AutoEditPage() {
   const [useCaptions, setUseCaptions] = useState(true)
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [progress, setProgress] = useState('')
+  const running = useRef<AnalysisHandle | null>(null)
+  const [canCancel, setCanCancel] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [created, setCreated] = useState<{ jobId: string; comp: Composition; changes: string[] } | null>(null)
@@ -68,12 +71,25 @@ export default function AutoEditPage() {
     if (!videoId) return
     setBusy(true); setError(''); setCreated(null); setAnalysis(null)
     try {
-      setProgress('Descargando el vídeo de la nube…')
-      const blob = await (await fetch(await signedUrl(videoId))).blob()
-      setProgress('Midiendo el audio (silencios)…')
-      const a = await loudness(blob, 50)
-      const f = await frameDifferences(blob, 4, p => setProgress(`Buscando cambios de plano… ${Math.round(p * 100)} %`))
-      setAnalysis({ durationMs: f.durationMs || a.durationMs, rms: a.rms, diffs: f.diffs })
+      // Preferred path: the file is read in pieces and analysed in a background worker, so a long video neither fills the memory nor freezes the page.
+      const url = await signedUrl(videoId)
+      let result: { durationMs: number; rms: number[]; diffs: number[] } | null = null
+      try {
+        const h = startAnalysis({ kind: 'url', url }, { rms: { windowMs: 50 }, frames: { fps: 4 } }, (f, stage) => setProgress(`${stage === 'audio' ? 'Midiendo el audio (silencios)' : 'Buscando cambios de plano'}… ${Math.round(f * 100)} %`))
+        running.current = h; setCanCancel(true)
+        setProgress('Analizando el vídeo en segundo plano…')
+        const r = await h.promise
+        if (r.diffs?.length) result = { durationMs: r.durationMs, rms: r.rms ?? [], diffs: r.diffs }
+      } catch (e) { if ((e as Error)?.name === 'AbortError') { setProgress(''); setBusy(false); return } /* this browser could not read it that way: use the classic path below */ } finally { running.current = null; setCanCancel(false) }
+      if (!result) {
+        setProgress('Descargando el vídeo de la nube…')
+        const blob = await (await fetch(url)).blob()
+        setProgress('Midiendo el audio (silencios)…')
+        const a = await loudness(blob, 50)
+        const f = await frameDifferences(blob, 4, p => setProgress(`Buscando cambios de plano… ${Math.round(p * 100)} %`))
+        result = { durationMs: f.durationMs || a.durationMs, rms: a.rms, diffs: f.diffs }
+      }
+      setAnalysis(result)
       setProgress('')
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo analizar el vídeo.'); setProgress('') } finally { setBusy(false) }
   }
@@ -141,7 +157,7 @@ export default function AutoEditPage() {
       </div>
       {styles.length === 0 && <p className="muted small">Consejo: en el <Link className="open" href="/editor">editor manual</Link> pulsa «Grabar mi forma de editar» y Cerebro aprenderá tu estilo para aplicarlo aquí.</p>}
       <div className="pageActions">
-        <button type="button" disabled={!videoId || busy} onClick={() => void analyze()}>{busy && progress ? progress : 'Analizar vídeo'}</button>
+        <button type="button" disabled={!videoId || busy} onClick={() => void analyze()}>{busy && progress ? progress : 'Analizar vídeo'}</button>{busy && canCancel && <button type="button" className="ghost" onClick={() => running.current?.cancel()}>Cancelar análisis</button>}
         {plan && <button type="button" disabled={busy || !plan.segments.length} onClick={() => void create()}>Crear montaje ({plan.clips} clips)</button>}
       </div>
       {plan && <p className="small">Duración {secs(analysis!.durationMs)} → <b>{secs(plan.kept)}</b> · {plan.silences.length} silencios quitados ({secs(plan.removed)}) · {plan.shots.length} cambios de plano · {plan.clips} clips{analysis!.rms.length === 0 ? ' · el vídeo no tiene audio: no se quitan silencios' : ''}</p>}

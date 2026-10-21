@@ -103,8 +103,9 @@ export default function CalendarPage() {
       <div className="pageActions"><button type="button" className="ghost small" onClick={() => move(-1)} aria-label="Mes anterior">←</button><button type="button" className="ghost small" onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }) }}>Hoy</button><button type="button" className="ghost small" onClick={() => move(1)} aria-label="Mes siguiente">→</button></div>
     </div>
     <div className="calendarGrid" role="grid" aria-label={`Calendario de ${months[cursor.m]} ${cursor.y}`}>
-      {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(d => <div key={d} className="calHead" role="columnheader">{d}</div>)}
-      {grid.map(c => {
+      {/* Rows are layout-neutral (display: contents) but give the grid the structure screen readers need: row > columnheader / gridcell. */}
+      <div role="row" style={{ display: 'contents' }}>{['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(d => <div key={d} className="calHead" role="columnheader">{d}</div>)}</div>
+      {Array.from({ length: Math.ceil(grid.length / 7) }, (_, w) => grid.slice(w * 7, w * 7 + 7)).map((week, w) => <div key={w} role="row" style={{ display: 'contents' }}>{week.map(c => {
         const items = byDay.get(c.key) ?? []
         return <div key={c.key} role="gridcell" className={`calDay${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${items.length ? ' busy' : ''}`} aria-label={`${c.day} ${items.length ? `· ${items.length} publicaciones` : ''}`}>
           <span className="calNum">{c.day}</span>
@@ -112,7 +113,7 @@ export default function CalendarPage() {
             {platformNames[j.platform as Platform]?.slice(0, 2) ?? '?'} · {titleOf(j)}
           </Link>)}
         </div>
-      })}
+      })}</div>)}
     </div>
     <p className="muted small">Leyenda: <span className="calItem kind-published">publicado</span> <span className="calItem kind-scheduled">programado en YouTube (lo publica YouTube)</span> <span className="calItem kind-planned">fecha prevista (recordatorio)</span></p>
 

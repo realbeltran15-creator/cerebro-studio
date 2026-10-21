@@ -26,7 +26,8 @@ export function toManual(c: Composition, voiceDurations: Record<string, number> 
     }
     return { ...clip, voiceAssetId: null }
   })
-  return { ...c, clips, audioClips, editedManually: true }
+  const autoSnapshot = c.autoSnapshot ?? { takenAt: new Date().toISOString(), clips: c.clips.map(k => ({ durationMs: k.durationMs, transition: k.transition ?? 'fade', hasText: Boolean(k.text?.content), muted: k.muted === true })), sfx: audioClips.filter(a => a.kind === 'sfx').length, musicVolume: c.musicVolume, subtitles: c.subtitles }
+  return { ...c, clips, audioClips, editedManually: true, autoSnapshot }
 }
 
 export function moveClip(c: Composition, clipId: string, toIndex: number): Composition {

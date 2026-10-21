@@ -55,6 +55,17 @@ export type AudioClip = {
   durationMs: number
   volume: number
   muted: boolean
+  /** Set when the clip was placed by «efectos en los cortes», so those (and only those) can be removed or replaced in one go. */
+  origin?: 'cut-sfx'
+}
+
+/** What the automatic edit looked like when the montage was first opened by hand: just the numbers needed to compare it with the manual result later. */
+export type AutoSnapshot = {
+  takenAt: string
+  clips: Array<{ durationMs: number; transition: Transition; hasText: boolean; muted: boolean }>
+  sfx: number
+  musicVolume: number
+  subtitles: boolean
 }
 
 export type Composition = {
@@ -79,6 +90,8 @@ export type Composition = {
   origin?: { kind: 'repurpose'; sourceJobId: string } | null
   /** True once opened in the manual editor: the automatic editor no longer re-syncs it with the storyboard. */
   editedManually?: boolean
+  /** The automatic version this montage came from (taken once, when it first became manual). */
+  autoSnapshot?: AutoSnapshot | null
 }
 
 export type SceneLike = { id: string; position: number; duration_ms: number; narration: string | null }
@@ -143,6 +156,7 @@ function parseAudioClip(a: unknown): AudioClip | null {
     linkedClipId: idOf(v.linkedClipId), offsetMs: clamp(v.offsetMs, 0, MAX_CLIP_MS, 0), startMs: clamp(v.startMs, 0, 20 * 60_000, 0),
     trimInMs: clamp(v.trimInMs, 0, 60 * 60_000, 0), durationMs: clamp(v.durationMs, 100, 20 * 60_000, 5000),
     volume: clamp(v.volume, 0, 2, 1), muted: v.muted === true,
+    ...(v.origin === 'cut-sfx' ? { origin: 'cut-sfx' as const } : {}),
   }
 }
 
@@ -202,7 +216,17 @@ export function parseComposition(value: unknown): Composition | null {
     hookMs: clamp(v.hookMs ?? 3000, 1000, 8000, 3000),
     origin: v.origin && v.origin.kind === 'repurpose' && typeof v.origin.sourceJobId === 'string' ? v.origin : null,
     editedManually: v.editedManually === true,
+    autoSnapshot: parseSnapshot(v.autoSnapshot),
   }
+}
+
+function parseSnapshot(raw: unknown): AutoSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null
+  const v = raw as Partial<AutoSnapshot>
+  if (!Array.isArray(v.clips) || v.clips.length === 0 || v.clips.length > 5000) return null
+  const clips = v.clips.flatMap(k => { const d = Number((k as { durationMs?: unknown })?.durationMs); return Number.isFinite(d) && d > 0 ? [{ durationMs: Math.round(d), transition: (k as { transition?: unknown }).transition === 'cut' ? 'cut' as const : 'fade' as const, hasText: (k as { hasText?: unknown }).hasText === true, muted: (k as { muted?: unknown }).muted === true }] : [] })
+  if (!clips.length) return null
+  return { takenAt: typeof v.takenAt === 'string' ? v.takenAt : '', clips, sfx: clamp(v.sfx, 0, 10000, 0), musicVolume: clamp(v.musicVolume, 0, 1, 0.25), subtitles: v.subtitles !== false }
 }
 
 /** Absolute start of an audio clip on the timeline (linked clips follow their visual clip). */

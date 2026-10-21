@@ -8,7 +8,9 @@
  * Recording the editor's own actions is exact; a screen recording would only give pixels.
  */
 import type { Clip, Composition, TextOverlay, Transition } from './composition'
-import { splitClip, addAudioClip } from './timeline'
+import { splitClip } from './timeline'
+import { alignmentOfTimes, cutTimes, syncCutsToBeats } from './sync'
+import { defaultCutSfx, setCutSfx } from './cut-sfx'
 
 export type VisualKind = 'image' | 'video' | 'other'
 
@@ -24,7 +26,12 @@ export type EditStyle = {
   text: { narrationAsText: boolean; position: TextOverlay['position'] | null; sizePct: number | null }
   clipAudio: { muteVideo: boolean; volume: number }
   mix: { musicVolume: number; duckMusic: boolean; subtitles: boolean; hookMs: number | null }
-  sfxOnCuts: { assetId: string; volume: number } | null
+  /** Effect placed on the cuts. `offsetMs`/`preMs` (after / before the cut) and `every` (1 = all cuts) are optional so styles saved earlier keep working. */
+  sfxOnCuts: { assetId: string; volume: number; offsetMs?: number; preMs?: number; every?: number } | null
+  /** Cuts follow the beat of the music (measured when the style was learned). Optional: styles saved earlier do not have it. */
+  sync?: { snapToBeats: boolean; toleranceMs: number }
+  /** Where the style comes from. Reference styles hold only numbers measured on a reference video, never its content. */
+  source?: 'sesion' | 'referencia'
   observations: string[]
 }
 
@@ -37,7 +44,7 @@ const secs = (ms: number) => `${(ms / 1000).toLocaleString('es-ES', { maximumFra
 /** Start (ms) of each clip on the timeline. */
 function clipStarts(c: Composition) { let t = 0; return c.clips.map(k => { const s = t; t += k.durationMs; return s }) }
 
-export function learnStyle(before: Composition | null, after: Composition, kindOf: (assetId: string | null) => VisualKind, name = 'Mi estilo'): EditStyle {
+export function learnStyle(before: Composition | null, after: Composition, kindOf: (assetId: string | null) => VisualKind, name = 'Mi estilo', beatsMs?: readonly number[]): EditStyle {
   const clips = after.clips
   const durations = clips.map(c => c.durationMs)
   const obs: string[] = []
@@ -79,17 +86,28 @@ export function learnStyle(before: Composition | null, after: Composition, kindO
   const volume = round(median(videoClips.map(c => c.volume ?? 1)) || 1, 0.05)
   if (muteVideo) obs.push('Silencias el audio original de los vídeos.')
 
-  // SFX placed at (almost) every cut: a recurring "whoosh" or "hit".
+  // SFX placed at (almost) every cut: a recurring "whoosh" or "hit". Its timing against the cut is measured too (after, or leading in).
   const starts = clipStarts(after)
   const sfx = (after.audioClips ?? []).filter(a => a.kind === 'sfx')
-  const atCut = sfx.filter(a => {
-    const t = a.linkedClipId ? (starts[after.clips.findIndex(c => c.id === a.linkedClipId)] ?? -1) + a.offsetMs : a.startMs
-    return starts.slice(1).some(s => Math.abs(s - t) <= 400)
-  })
+  const timeOf = (a: (typeof sfx)[number]) => a.linkedClipId ? (starts[after.clips.findIndex(c => c.id === a.linkedClipId)] ?? -1) + a.offsetMs : a.startMs
+  const missOf = (t: number) => { const cuts = starts.slice(1); const near = cuts.reduce<number | null>((b, s0) => (b === null || Math.abs(s0 - t) < Math.abs(b - t) ? s0 : b), null); return near === null ? null : t - near }
+  const atCut = sfx.filter(a => { const m = missOf(timeOf(a)); return m !== null && Math.abs(m) <= 600 })
   const sfxAsset = mode(atCut.map(a => a.assetId))
-  const sfxOnCuts = sfxAsset && clips.length > 1 && atCut.filter(a => a.assetId === sfxAsset).length >= Math.max(1, (clips.length - 1) / 2)
-    ? { assetId: sfxAsset, volume: round(median(atCut.filter(a => a.assetId === sfxAsset).map(a => a.volume)), 0.05) } : null
-  if (sfxOnCuts) obs.push('Pones un efecto de sonido en cada corte.')
+  const picked = atCut.filter(a => a.assetId === sfxAsset)
+  const sfxOnCuts = sfxAsset && clips.length > 1 && picked.length >= Math.max(1, (clips.length - 1) / 2)
+    ? (() => {
+      const miss = median(picked.map(a => missOf(timeOf(a)) ?? 0))
+      const cutsWith = new Set(picked.map(a => Math.round((timeOf(a) - (missOf(timeOf(a)) ?? 0)))))
+      const every = cutsWith.size && (clips.length - 1) / cutsWith.size >= 1.6 ? 2 : 1
+      return { assetId: sfxAsset, volume: round(median(picked.map(a => a.volume)), 0.05), ...(miss >= 25 ? { offsetMs: round(miss, 50) } : {}), ...(miss <= -25 ? { preMs: round(-miss, 50) } : {}), ...(every === 2 ? { every } : {}) }
+    })() : null
+  if (sfxOnCuts) obs.push(`Pones un efecto de sonido ${sfxOnCuts.every === 2 ? 'en uno de cada dos cortes' : 'en cada corte'}${sfxOnCuts.preMs ? `, ${sfxOnCuts.preMs} ms antes del corte` : sfxOnCuts.offsetMs ? `, ${sfxOnCuts.offsetMs} ms después del corte` : ''}.`)
+
+  // Cuts on the beat of the music (only when the music was analysed).
+  const align = beatsMs?.length ? alignmentOfTimes(cutTimes(after), beatsMs, 120) : null
+  const sync = align && align.cuts >= 3 && align.share !== null ? { snapToBeats: align.share >= 0.5, toleranceMs: Math.min(250, Math.max(120, Math.round((align.medianMissMs ?? 100) * 2))) } : undefined
+  if (sync?.snapToBeats && align) obs.push(`Cortas con el pulso de la música (${align.onBeat} de ${align.cuts} cortes caen en un pulso).`)
+  else if (sync && align) obs.push(`Tus cortes no siguen el pulso de la música (${align.onBeat} de ${align.cuts} caen en un pulso).`)
 
   obs.push(`Música al ${Math.round(after.musicVolume * 100)} %${after.duckMusic ? ', bajando bajo la voz' : ''}; subtítulos ${after.subtitles ? 'activados' : 'desactivados'}.`)
 
@@ -102,6 +120,8 @@ export function learnStyle(before: Composition | null, after: Composition, kindO
     clipAudio: { muteVideo, volume },
     mix: { musicVolume: after.musicVolume, duckMusic: after.duckMusic, subtitles: after.subtitles, hookMs: after.hookText ? after.hookMs ?? null : null },
     sfxOnCuts,
+    ...(sync ? { sync } : {}),
+    source: 'sesion',
     observations: obs,
   }
 }
@@ -122,13 +142,14 @@ export function mergeStyles(prev: EditStyle, next: EditStyle): EditStyle {
     clipAudio: { muteVideo: next.clipAudio.muteVideo, volume: round(w(prev.clipAudio.volume, next.clipAudio.volume), 0.05) },
     mix: { ...next.mix, musicVolume: round(w(prev.mix.musicVolume, next.mix.musicVolume), 0.05) },
     sfxOnCuts: next.sfxOnCuts ?? prev.sfxOnCuts,
+    ...(next.sync ?? prev.sync ? { sync: next.sync ?? prev.sync } : {}),
   }
 }
 
 const hasVoice = (c: Composition, clip: Clip) => Boolean(clip.voiceAssetId) || (c.audioClips ?? []).some(a => a.kind === 'voice' && a.linkedClipId === clip.id)
 
 /** Applies a learned style. Never invents content (text comes from the clip's own narration) and never cuts under a voice. */
-export function applyStyle(input: Composition, s: EditStyle, kindOf: (assetId: string | null) => VisualKind): { composition: Composition; changes: string[] } {
+export function applyStyle(input: Composition, s: EditStyle, kindOf: (assetId: string | null) => VisualKind, opts: { beatsMs?: readonly number[] } = {}): { composition: Composition; changes: string[] } {
   let c: Composition = structuredClone(input)
   const changes: string[] = []
   const target = Math.max(500, s.pacing.medianClipMs)
@@ -184,15 +205,20 @@ export function applyStyle(input: Composition, s: EditStyle, kindOf: (assetId: s
   if (s.mix.hookMs && c.hookText) c.hookMs = s.mix.hookMs
   changes.push(`Música al ${Math.round(s.mix.musicVolume * 100)} %, subtítulos ${s.mix.subtitles ? 'sí' : 'no'}.`)
 
+  // Cuts on the beat go before the effects, so the effects follow the final cuts.
+  if (s.sync?.snapToBeats) {
+    if (opts.beatsMs?.length) {
+      const r = syncCutsToBeats(c, opts.beatsMs, { toleranceMs: s.sync.toleranceMs, isVideo: k => kindOf(k.visualAssetId) === 'video' })
+      c = r.composition
+      changes.push(`${r.moved.length} cortes movidos al pulso de la música (${r.alreadyOn} ya estaban en él${r.skipped.length ? `, ${r.skipped.length} no se pudieron mover` : ''}).`)
+    } else changes.push('Tu estilo corta con el pulso de la música, pero este montaje no tiene música analizada: analiza la pista de música y vuelve a aplicarlo.')
+  }
+
   if (s.sfxOnCuts) {
-    const existing = new Set((c.audioClips ?? []).filter(a => a.kind === 'sfx' && a.assetId === s.sfxOnCuts!.assetId).map(a => a.linkedClipId))
-    let n = 0
-    for (const k of c.clips.slice(1)) {
-      if (existing.has(k.id)) continue
-      c = addAudioClip(c, { assetId: s.sfxOnCuts.assetId, kind: 'sfx', linkedClipId: k.id, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 1000, volume: s.sfxOnCuts.volume, muted: false })
-      n++
-    }
-    if (n) changes.push(`Efecto de sonido en ${n} cortes.`)
+    const already = new Set((c.audioClips ?? []).filter(a => a.kind === 'sfx' && a.assetId === s.sfxOnCuts!.assetId && a.origin !== 'cut-sfx').map(a => a.linkedClipId).filter((x): x is string => Boolean(x)))
+    const r = setCutSfx(c, { ...defaultCutSfx(s.sfxOnCuts.assetId), volume: s.sfxOnCuts.volume, offsetMs: s.sfxOnCuts.offsetMs ?? 0, preMs: s.sfxOnCuts.preMs ?? 0, every: s.sfxOnCuts.every ?? 1 }, already)
+    c = r.composition
+    if (r.added) changes.push(`Efecto de sonido en ${r.added} cortes.`)
   }
   c.editedManually = true
   return { composition: c, changes }

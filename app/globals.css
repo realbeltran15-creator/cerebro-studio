@@ -419,7 +419,8 @@ textarea.viText{width:100%;min-height:70px}
 .calendarGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 8px; }
 .calHead { font-size: 12px; font-weight: 700; text-align: center; color: var(--muted, #8a8f98); padding: 4px 0; }
 .calDay { min-height: 86px; border: 1px solid var(--line, rgba(127,127,127,.25)); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
-.calDay.out { opacity: .45; }
+.calDay.out { background: transparent; border-style: dashed; }
+.calDay.out .calNum { color: var(--faint); font-weight: 600; }
 .calDay.today { outline: 2px solid var(--accent, #6d5efc); }
 .calNum { font-size: 12px; font-weight: 700; }
 .calItem { display: block; font-size: 11px; line-height: 1.25; padding: 2px 4px; border-radius: 4px; text-decoration: none; color: inherit; background: rgba(127,127,127,.14); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
