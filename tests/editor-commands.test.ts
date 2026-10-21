@@ -91,3 +91,28 @@ describe('fragments', () => {
     expect(r.composition.textClips![0].startMs).toBe(11000)
   })
 })
+
+describe('audio mix and automation', () => {
+  it('solo and mute decide each track level', async () => {
+    const { trackGains } = await import('@/lib/editor/composition')
+    expect(trackGains(undefined)).toEqual({ video: 1, voice: 1, music: 1, sfx: 1 })
+    expect(trackGains({ music: { gain: 0.5, muted: false, solo: false }, sfx: { gain: 1, muted: true, solo: false } })).toEqual({ video: 1, voice: 1, music: 0.5, sfx: 0 })
+    expect(trackGains({ voice: { gain: 1.2, muted: false, solo: true } })).toEqual({ video: 0, voice: 1.2, music: 0, sfx: 0 })
+  })
+  it('fades and envelope points combine; breakpoints follow them', async () => {
+    const { envelopeAt, envelopeBreakpoints } = await import('@/lib/editor/composition')
+    const a = { durationMs: 10000, fadeInMs: 1000, fadeOutMs: 2000, envelope: [{ atMs: 4000, gain: 1 }, { atMs: 6000, gain: 0.5 }] }
+    expect(envelopeAt(a, 500)).toBeCloseTo(0.5)
+    expect(envelopeAt(a, 5000)).toBeCloseTo(0.75)
+    expect(envelopeAt(a, 9000)).toBeCloseTo(0.25)
+    expect(envelopeBreakpoints(a).map(p => p.atMs)).toEqual([0, 1000, 4000, 6000, 8000, 10000])
+  })
+  it('«baja la música al 20 % en el fragmento» automates only that stretch', () => {
+    const r = run('baja la música al 20 %', { range: { startMs: 5000, endMs: 9000 } })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const m = r.composition.audioClips![0]
+    expect(m.volume).toBe(0.5) // the clip's own level is unchanged
+    expect(m.envelope).toEqual([{ atMs: 4700, gain: 1 }, { atMs: 5000, gain: 0.4 }, { atMs: 9000, gain: 0.4 }, { atMs: 9300, gain: 1 }])
+  })
+})

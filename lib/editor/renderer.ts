@@ -1,5 +1,5 @@
 import { applyGainPlan, musicClipGainPlan, musicGainPlan } from './audio-plan'
-import { activeTextClips, audioStartMs, clipCaptions, clipStarts, formatSize, preferredBitrate, TEXT_FONTS, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
+import { activeTextClips, envelopeBreakpoints, trackGains, audioStartMs, clipCaptions, clipStarts, formatSize, preferredBitrate, TEXT_FONTS, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
 import { BLENDS, cameraAt, effectiveCamera, textFrame, transitionFrame, type TextFrame } from './motion'
 
 /**
@@ -190,6 +190,9 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   const out = record ? audio.createMediaStreamDestination() : null
   const master = audio.createGain()
   master.connect(out ?? audio.destination)
+  // One bus per kind of sound (mixer: level, mute, solo), all into the master.
+  const levels = trackGains(composition.mix)
+  const bus = Object.fromEntries((['video', 'voice', 'music', 'sfx'] as const).map(k => { const g = audio.createGain(); g.gain.value = levels[k]; g.connect(master); return [k, g] })) as Record<'video' | 'voice' | 'music' | 'sfx', GainNode>
   const buffers = new Map<string, AudioBuffer>()
   const decode = async (id: string | null) => {
     if (!id || buffers.has(id)) return
@@ -210,7 +213,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
           const gain = audio.createGain()
           gain.gain.value = clip.muted ? 0 : clip.volume ?? 1
           audio.createMediaElementSource(loaded.el).connect(gain)
-          gain.connect(master)
+          gain.connect(bus.video)
           videos.set(clip.id, { el: loaded.el, url: loaded.url, gain })
         }
       }
@@ -234,7 +237,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     if (!buf) return
     const node = audio.createBufferSource()
     node.buffer = buf
-    node.connect(master)
+    node.connect(bus.voice)
     const start = t0 + starts[i] / 1000, dur = Math.min(buf.duration, clip.durationMs / 1000)
     node.start(start, 0, dur)
     voiceWindows.push({ start, end: start + dur })
@@ -257,7 +260,11 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const gain = audio.createGain()
     if (a.kind === 'music' && composition.duckMusic) applyGainPlan(gain.gain, musicClipGainPlan({ volume: a.volume, start, end: start + dur, voices: voiceWindows }))
     else gain.gain.value = a.volume
-    node.connect(gain); gain.connect(master)
+    // Volume automation (fades and points) on its own node, so it multiplies the ducking instead of fighting it.
+    const env = audio.createGain()
+    const pts = envelopeBreakpoints(a)
+    if (pts.some(p => p.gain !== 1)) { env.gain.setValueAtTime(pts[0].gain, start); for (const p of pts.slice(1)) env.gain.linearRampToValueAtTime(p.gain, start + p.atMs / 1000) }
+    node.connect(env); env.connect(gain); gain.connect(bus[a.kind])
     node.start(start, offset, dur)
     sources.push(node)
   }
@@ -268,7 +275,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const gain = audio.createGain()
     const end = t0 + total / 1000
     applyGainPlan(gain.gain, musicGainPlan({ base: composition.musicVolume, t0, end, duck: composition.duckMusic, voices: voiceWindows }))
-    node.connect(gain); gain.connect(master)
+    node.connect(gain); gain.connect(bus.music)
     node.start(t0); node.stop(end + 0.1)
     sources.push(node)
   }

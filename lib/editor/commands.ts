@@ -6,8 +6,8 @@
  * Scope of an instruction: the marked fragment if there is one, else the selected clip, else the clip under the playhead;
  * «todo», «todas las imágenes», «todos los vídeos» widen it.
  */
-import { clipStarts, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type CameraKind, type Clip, type Composition, type OutputFormat, type Transition } from './composition'
-import { addAudioClip, addTextClip, deleteClip, duplicateClip, setSpeed, splitClip, updateClip } from './timeline'
+import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type CameraKind, type Clip, type Composition, type OutputFormat, type Transition } from './composition'
+import { addAudioClip, addTextClip, deleteClip, duplicateClip, setLevelBetween, setSpeed, splitClip, updateClip } from './timeline'
 import { clipIdsInRange, deleteRange, isolateRange, type Range } from './range'
 
 export type CommandAsset = { id: string; label: string; type: string; durationMs?: number | null }
@@ -160,6 +160,20 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
       let n = 0
       const next = { ...c, clips: c.clips.map(k => (ids.has(k.id) && ctx.isVideo(k) ? (n++, { ...k, ...(mute !== null ? { muted: mute } : { volume: setVol(k.volume ?? 1), muted: false }) }) : k)) }
       return n ? ok(next, `Audio original de ${n} vídeo${n === 1 ? '' : 's'} ${mute ? 'silenciado' : mute === false ? 'activado' : `al ${Math.round(setVol(1) * 100)} %`}.`) : fail('No hay clips de vídeo en esa parte.')
+    }
+    // With a marked fragment, the level changes only there (volume automation with short ramps); the rest keeps its level.
+    if (ctx.range && mute === null) {
+      const r = ctx.range
+      let k = 0
+      const target = (a: AudioClip) => Math.min(2, Math.max(0, pct !== null ? pct / Math.max(0.01, a.volume) : envelopeAt(a, Math.max(0, r.startMs - audioStartMs(c, a))) * (rel ?? 1)))
+      const audioClips = (c.audioClips ?? []).map(a => {
+        const s0 = audioStartMs(c, a)
+        if (a.kind !== track || s0 >= r.endMs || s0 + a.durationMs <= r.startMs) return a
+        k++
+        return setLevelBetween(a, r.startMs - s0, r.endMs - s0, target(a))
+      })
+      const name = track === 'music' ? 'Música' : track === 'voice' ? 'Voz' : 'Efectos'
+      return k ? ok({ ...c, audioClips }, `${name} ${pct !== null ? `al ${Math.round(pct * 100)} %` : rel! > 1 ? 'más alta' : 'más baja'} solo en el fragmento ${fmt(r.startMs)}–${fmt(r.endMs)} (automatización de volumen en ${k} clip${k === 1 ? '' : 's'}).`) : fail(`No hay ${name.toLowerCase()} en la pista dentro del fragmento.`)
     }
     let n = 0
     const audioClips = (c.audioClips ?? []).map(a => (a.kind === track ? (n++, { ...a, ...(mute !== null ? { muted: mute } : { volume: setVol(a.volume), muted: false }) }) : a))

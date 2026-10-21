@@ -467,3 +467,6 @@ textarea.viText{width:100%;min-height:70px}
 .rangeOverlay{position:absolute;top:0;bottom:0;background:rgba(124,79,224,.18);border-left:2px solid #b49cff;border-right:2px solid #b49cff;pointer-events:none;z-index:1}
 .markIn{position:absolute;top:0;bottom:0;width:2px;background:#b49cff;pointer-events:none;z-index:1}
 .materialList li.selected{border-color:#b49cff;box-shadow:inset 0 0 0 1px #b49cff}
+.mixerStrip{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;padding:10px 14px}
+.mixerTrack{display:flex;align-items:center;gap:6px}
+.mixerTrack input[type=range]{width:110px}

@@ -45,3 +45,30 @@ async function img(color: string) { const oc = new OffscreenCanvas(1600, 900); c
   } })
   return s
 }
+
+function tone(seconds: number, freq: number, rate = 22050) {
+  const n = Math.floor(seconds * rate), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf)
+  const w = (o: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)) }
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true)
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true)
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(2 * Math.PI * freq * i / rate) * 0.4 * 32767, true)
+  return new Blob([buf], { type: 'audio/wav' })
+}
+
+/** Voice (220 Hz) and music (440 Hz) for 4 s; the music has an automation point that takes it to 0 from 2 s. Returns each tone's energy per half. */
+;(window as any).runMix = async (mix: unknown) => {
+  const media = new Map<string, any>([['vo', { kind: 'audio', blob: tone(4.5, 220) }], ['mu', { kind: 'audio', blob: tone(4.5, 440) }], ['black', { kind: 'image', blob: await (() => { const oc = new OffscreenCanvas(64, 36); oc.getContext('2d')!.fillRect(0, 0, 64, 36); return oc.convertToBlob({ type: 'image/png' }) })() }]])
+  const base = emptyComposition('sb', 'Mezcla')
+  base.fadeMs = 0; base.subtitles = false; base.duckMusic = false
+  base.clips = [{ id: 'a', sceneId: 'a', position: 1, narration: null, visualAssetId: 'black', voiceAssetId: null, durationMs: 4000, motion: 'none' }]
+  base.audioClips = [
+    { id: 'v', assetId: 'vo', kind: 'voice', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 4000, volume: 1, muted: false },
+    { id: 'm', assetId: 'mu', kind: 'music', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 4000, volume: 1, muted: false, envelope: [{ atMs: 1800, gain: 1 }, { atMs: 2000, gain: 0 }] },
+  ]
+  base.mix = mix as never
+  const comp = parseComposition(JSON.parse(JSON.stringify(base)))!
+  const res = await renderComposition({ composition: comp, canvas: document.createElement('canvas'), media, record: true })
+  const ab = await new AudioContext().decodeAudioData(await res.blob!.arrayBuffer()), ch = ab.getChannelData(0), rate = ab.sampleRate
+  const g = (a: number, b: number, f: number) => { const k = 2 * Math.cos(2 * Math.PI * f / rate); let s1 = 0, s2 = 0; for (let i = Math.floor(a * rate); i < Math.floor(b * rate); i++) { const s0 = ch[i] + k * s1 - s2; s2 = s1; s1 = s0 } return Math.round(Math.sqrt(s1 * s1 + s2 * s2 - k * s1 * s2) / ((b - a) * rate) * 1000) / 1000 }
+  return { voice: [g(0.4, 1.6, 220), g(2.4, 3.6, 220)], music: [g(0.4, 1.6, 440), g(2.4, 3.6, 440)] }
+}

@@ -1,4 +1,4 @@
-import { audioStartMs, clipStarts, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
+import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
 
 /**
  * Pure editing operations for the manual (timeline) editor. Every function returns a new composition,
@@ -196,4 +196,25 @@ export function fromClip(c: Composition, clipId: string): Composition {
     return [{ ...a, startMs: Math.max(a.startMs - offset, 0), trimInMs: a.trimInMs + cut, durationMs: a.durationMs - cut }]
   })
   return { ...c, clips: c.clips.slice(i), audioClips, hookText: null }
+}
+
+// ---------- Volume automation ----------
+/**
+ * Sets an audio clip's level to `gain` between `fromMs` and `toMs` (clip-relative), with `rampMs` ramps in and out. Points outside
+ * keep their values (the level just before and after the stretch is preserved); points inside are replaced.
+ */
+export function setLevelBetween(a: AudioClip, fromMs: number, toMs: number, gain: number, rampMs = 300): AudioClip {
+  const from = Math.max(0, Math.min(fromMs, a.durationMs)), to = Math.max(from, Math.min(toMs, a.durationMs))
+  if (to - from < 50) return a
+  const g = Math.min(2, Math.max(0, gain))
+  const base = { ...a, fadeInMs: 0, fadeOutMs: 0 }
+  const before = Math.max(0, from - rampMs), after = Math.min(a.durationMs, to + rampMs)
+  const keep = (a.envelope ?? []).filter(p => p.atMs < before || p.atMs > after)
+  const pts = [
+    ...keep,
+    ...(from > 0 ? [{ atMs: before, gain: envelopeAt(base, before) }] : []),
+    { atMs: from, gain: g }, { atMs: to, gain: g },
+    ...(to < a.durationMs ? [{ atMs: after, gain: envelopeAt(base, after) }] : []),
+  ].sort((x, y) => x.atMs - y.atMs)
+  return { ...a, envelope: pts.filter((p, i) => i === 0 || p.atMs !== pts[i - 1].atMs).slice(0, 64) }
 }

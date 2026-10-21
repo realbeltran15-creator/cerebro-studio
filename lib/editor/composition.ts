@@ -83,6 +83,49 @@ export type AudioClip = {
   muted: boolean
   /** Set when the clip was placed by «efectos en los cortes», so those (and only those) can be removed or replaced in one go. */
   origin?: 'cut-sfx'
+  /** Volume automation: fade in/out (ms) and points (time from the clip start, gain multiplier 0–2), joined linearly. */
+  fadeInMs?: number
+  fadeOutMs?: number
+  envelope?: EnvelopePoint[]
+}
+export type EnvelopePoint = { atMs: number; gain: number }
+
+/** Independent level of each kind of sound in the final mix. Solo on any track silences the tracks without solo. */
+export type TrackKind = 'video' | 'voice' | 'music' | 'sfx'
+export type TrackState = { gain: number; muted: boolean; solo: boolean }
+export const TRACK_LABELS: Record<TrackKind, string> = { video: 'Audio de los vídeos', voice: 'Voz', music: 'Música', sfx: 'Efectos' }
+const FLAT: TrackState = { gain: 1, muted: false, solo: false }
+
+/** Effective gain of each track (mute and solo applied). */
+export function trackGains(mix: Partial<Record<TrackKind, TrackState>> | undefined): Record<TrackKind, number> {
+  const kinds: TrackKind[] = ['video', 'voice', 'music', 'sfx']
+  const st = (k: TrackKind) => mix?.[k] ?? FLAT
+  const solo = kinds.some(k => st(k).solo)
+  return Object.fromEntries(kinds.map(k => [k, st(k).muted || (solo && !st(k).solo) ? 0 : st(k).gain])) as Record<TrackKind, number>
+}
+
+/** Gain multiplier of an audio clip at `ms` from its start: envelope points (linear between them, flat at the ends) × fade in × fade out. */
+export function envelopeAt(a: Pick<AudioClip, 'durationMs' | 'fadeInMs' | 'fadeOutMs' | 'envelope'>, ms: number): number {
+  const pts = a.envelope ?? []
+  let g = 1
+  if (pts.length) {
+    if (ms <= pts[0].atMs) g = pts[0].gain
+    else if (ms >= pts[pts.length - 1].atMs) g = pts[pts.length - 1].gain
+    else { const i = pts.findIndex(p => p.atMs > ms); const p0 = pts[i - 1], p1 = pts[i]; g = p0.gain + (p1.gain - p0.gain) * (ms - p0.atMs) / Math.max(1, p1.atMs - p0.atMs) }
+  }
+  const fi = a.fadeInMs ?? 0, fo = a.fadeOutMs ?? 0
+  if (fi > 0 && ms < fi) g *= Math.max(0, ms / fi)
+  if (fo > 0 && ms > a.durationMs - fo) g *= Math.max(0, (a.durationMs - ms) / fo)
+  return g
+}
+
+/** The automation as a list of (time, multiplier) breakpoints to schedule (envelope points plus fade corners), inside the clip. */
+export function envelopeBreakpoints(a: Pick<AudioClip, 'durationMs' | 'fadeInMs' | 'fadeOutMs' | 'envelope'>): EnvelopePoint[] {
+  const times = new Set<number>([0, a.durationMs])
+  for (const p of a.envelope ?? []) if (p.atMs > 0 && p.atMs < a.durationMs) times.add(p.atMs)
+  if ((a.fadeInMs ?? 0) > 0) times.add(Math.min(a.fadeInMs!, a.durationMs))
+  if ((a.fadeOutMs ?? 0) > 0) times.add(Math.max(0, a.durationMs - a.fadeOutMs!))
+  return [...times].sort((x, y) => x - y).map(t => ({ atMs: t, gain: envelopeAt(a, t) }))
 }
 
 /** What the automatic edit looked like when the montage was first opened by hand: just the numbers needed to compare it with the manual result later. */
@@ -122,6 +165,8 @@ export type Composition = {
   textClips?: TextClip[]
   exportSettings?: ExportSettings
   styleRef?: StyleRef | null
+  /** Level, mute and solo of each kind of sound. */
+  mix?: Partial<Record<TrackKind, TrackState>>
 }
 
 export type SceneLike = { id: string; position: number; duration_ms: number; narration: string | null }
@@ -134,6 +179,8 @@ export const formatSize: Record<OutputFormat, { width: number; height: number }>
 
 export const MIN_CLIP_MS = 1000
 export const MAX_CLIP_MS = 120000
+/** Longest position on the timeline the editor stores (4 h): long-form edits of 90 min or more fit with room to spare. */
+export const MAX_TIMELINE_MS = 4 * 3600_000
 
 const clampMs = (ms: number) => Math.min(Math.max(Math.round(ms), MIN_CLIP_MS), MAX_CLIP_MS)
 
@@ -203,10 +250,13 @@ function parseAudioClip(a: unknown): AudioClip | null {
   if (!assetId || typeof v.id !== 'string') return null
   return {
     id: v.id, assetId, kind: v.kind === 'music' || v.kind === 'sfx' ? v.kind : 'voice',
-    linkedClipId: idOf(v.linkedClipId), offsetMs: clamp(v.offsetMs, 0, MAX_CLIP_MS, 0), startMs: clamp(v.startMs, 0, 20 * 60_000, 0),
-    trimInMs: clamp(v.trimInMs, 0, 60 * 60_000, 0), durationMs: clamp(v.durationMs, 100, 20 * 60_000, 5000),
+    linkedClipId: idOf(v.linkedClipId), offsetMs: clamp(v.offsetMs, 0, MAX_CLIP_MS, 0), startMs: clamp(v.startMs, 0, MAX_TIMELINE_MS, 0),
+    trimInMs: clamp(v.trimInMs, 0, MAX_TIMELINE_MS, 0), durationMs: clamp(v.durationMs, 100, MAX_TIMELINE_MS, 5000),
     volume: clamp(v.volume, 0, 2, 1), muted: v.muted === true,
     ...(v.origin === 'cut-sfx' ? { origin: 'cut-sfx' as const } : {}),
+    ...(Number(v.fadeInMs) > 0 ? { fadeInMs: clamp(v.fadeInMs, 0, 60_000, 0) } : {}),
+    ...(Number(v.fadeOutMs) > 0 ? { fadeOutMs: clamp(v.fadeOutMs, 0, 60_000, 0) } : {}),
+    ...(Array.isArray(v.envelope) && v.envelope.length ? { envelope: v.envelope.flatMap(p => { const at = Number(p?.atMs), g = Number(p?.gain); return Number.isFinite(at) && Number.isFinite(g) && at >= 0 ? [{ atMs: Math.round(at), gain: Math.min(2, Math.max(0, g)) }] : [] }).sort((x, y) => x.atMs - y.atMs).slice(0, 64) } : {}),
   }
 }
 
@@ -272,7 +322,18 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
     textClips: (Array.isArray(v.textClips) ? v.textClips : []).flatMap(t => { const p = parseTextClip(t); return p ? [p] : [] }).slice(0, 300),
     exportSettings: { quality: v.exportSettings?.quality === 'high' ? 'high' : 'normal' },
     styleRef: parseStyleRef(v.styleRef, depth),
+    mix: parseMix(v.mix),
   }
+}
+
+function parseMix(m: unknown): Partial<Record<TrackKind, TrackState>> | undefined {
+  if (!m || typeof m !== 'object') return undefined
+  const out: Partial<Record<TrackKind, TrackState>> = {}
+  for (const k of ['video', 'voice', 'music', 'sfx'] as const) {
+    const t = (m as Record<string, Partial<TrackState> | undefined>)[k]
+    if (t && typeof t === 'object') out[k] = { gain: clamp(t.gain, 0, 2, 1), muted: t.muted === true, solo: t.solo === true }
+  }
+  return out
 }
 
 function parseStyleRef(r: unknown, depth: number): StyleRef | null {

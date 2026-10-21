@@ -1334,6 +1334,12 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
   const cam = await page.evaluate(() => window.runCamera())
   check('motion: a pan right starts on the left of the image and ends on the right', red(cam.start) && blue(cam.end), cam)
   check('motion: a coloured title on the text track shows only during its own time', cam.title > 500 && cam.titleGone === 0, cam)
+  const plain = await page.evaluate(() => window.runMix(undefined))
+  check('audio: a volume automation point silences the music from 2 s while the voice continues', plain.music[0] > 0.03 && plain.music[1] < plain.music[0] * 0.1 && plain.voice[1] > 0.03, plain)
+  const solo = await page.evaluate(() => window.runMix({ music: { gain: 1, muted: false, solo: true } }))
+  check('audio: solo on the music track silences the voice track in the export', solo.voice[0] < solo.music[0] * 0.1 && solo.music[0] > 0.03, solo)
+  const low = await page.evaluate(() => window.runMix({ voice: { gain: 0.25, muted: false, solo: false } }))
+  check('audio: the voice track level scales the voice only', low.voice[0] < plain.voice[0] * 0.4 && low.music[0] > plain.music[0] * 0.7, { low, plain })
   await page.close(); server.close()
 }
 

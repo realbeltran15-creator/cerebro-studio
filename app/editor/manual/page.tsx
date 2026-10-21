@@ -5,8 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { audioStartMs, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
-import { addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
+import { audioStartMs, envelopeBreakpoints, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { setLevelBetween, addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
@@ -441,6 +441,7 @@ export default function ManualEditorPage() {
           </div>
           <label>Volumen ({Math.round(selAudio.volume * 100)}%)<input type="range" min={0} max={2} step={0.05} value={selAudio.volume} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { volume: Number(e.target.value) }))} /></label>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={selAudio.muted} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { muted: e.target.checked }))} /> Silenciar</label>
+          <AutomationEditor a={selAudio} startMs={audioStartMs(comp, selAudio)} playheadMs={playheadMs} range={range} onChange={p => apply(c => updateAudioClip(c, selAudio.id, p))} />
           <div className="pageActions">
             {selAudio.linkedClipId === null && <span className="muted small">Para enlazarlo a un clip, bórralo y añádelo con ese clip seleccionado.</span>}
             <button type="button" className="ghost" onClick={() => { apply(c => deleteAudioClip(c, selAudio.id)); setSelection(null) }}>Eliminar audio</button>
@@ -462,6 +463,7 @@ export default function ManualEditorPage() {
       </section>
     </div>
 
+    <MixerStrip comp={comp} onChange={mix => apply(c => ({ ...c, mix }))} />
     <section ref={scroller} onScroll={measureView} className="panel" style={{ marginBottom: 12, overflowX: 'auto', outline: dropping ? '2px dashed var(--accent, #7c4fe0)' : undefined }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} aria-label="Línea de tiempo"
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={() => setDropping(false)}
       onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
@@ -507,6 +509,7 @@ export default function ManualEditorPage() {
               style={{ position: 'absolute', left: start / 1000 * pxPerSec, width: Math.max(a.durationMs / 1000 * pxPerSec, 8), top: 3, height: 28, background: kindColor[a.kind], opacity: a.muted ? 0.4 : 1, borderRadius: 5, color: '#fff', fontSize: 11, padding: '6px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === a.id ? '2px solid #fff' : 'none', whiteSpace: 'nowrap' }}
               title={`${label(a.assetId)} · ${secs(start)}–${secs(start + a.durationMs)} s${a.linkedClipId ? ' · enlazado a su clip' : ''}`}>
               {typeof an === 'object' && an.waveform && <WaveformSvg w={an.waveform} fromMs={a.trimInMs} toMs={a.trimInMs + a.durationMs} width={Math.max(a.durationMs / 1000 * pxPerSec, 8)} height={28} />}
+              {(a.envelope?.length || a.fadeInMs || a.fadeOutMs) ? <svg aria-label="Automatización de volumen" width={Math.max(a.durationMs / 1000 * pxPerSec, 8)} height={28} style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}><polyline fill="none" stroke="#ffe08a" strokeWidth={1.5} points={envelopeBreakpoints(a).map(p => `${p.atMs / 1000 * pxPerSec},${26 - Math.min(2, p.gain) / 2 * 24}`).join(' ')} /></svg> : null}
               <span style={{ position: 'relative' }}>{a.linkedClipId ? '🔗 ' : ''}{label(a.assetId)}{an === 'loading' ? ' · midiendo…' : ''}</span>
             </div>
           })}
@@ -612,4 +615,47 @@ function TextInspector({ t, onChange, onDuplicate, onDelete }: { t: TextClip; on
       <button type="button" className="ghost" onClick={onDelete}>Eliminar texto</button>
     </div>
   </>
+}
+
+function MixerStrip({ comp, onChange }: { comp: Composition; onChange: (mix: NonNullable<Composition['mix']>) => void }) {
+  const kinds: TrackKind[] = ['voice', 'music', 'sfx', 'video']
+  const st = (k: TrackKind): TrackState => comp.mix?.[k] ?? { gain: 1, muted: false, solo: false }
+  const set = (k: TrackKind, p: Partial<TrackState>) => onChange({ ...(comp.mix ?? {}), [k]: { ...st(k), ...p } })
+  return <section className="panel mixerStrip" aria-label="Mezclador" style={{ marginBottom: 12 }}>
+    <b className="small">Mezcla</b>
+    {kinds.map(k => <div key={k} className="mixerTrack" role="group" aria-label={`Pista ${TRACK_LABELS[k]}`}>
+      <span className="small">{TRACK_LABELS[k]}</span>
+      <input type="range" min={0} max={2} step={0.05} value={st(k).gain} aria-label={`Nivel de ${TRACK_LABELS[k]}`} onChange={e => set(k, { gain: Number(e.target.value) })} />
+      <span className="small muted" style={{ width: 38, textAlign: 'right' }}>{Math.round(st(k).gain * 100)}%</span>
+      <button type="button" className={st(k).muted ? 'small' : 'ghost small'} aria-pressed={st(k).muted} title="Silenciar la pista" onClick={() => set(k, { muted: !st(k).muted })}>M</button>
+      <button type="button" className={st(k).solo ? 'small' : 'ghost small'} aria-pressed={st(k).solo} title="Escuchar solo esta pista" onClick={() => set(k, { solo: !st(k).solo })}>S</button>
+    </div>)}
+  </section>
+}
+
+function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: AudioClipT; startMs: number; playheadMs: number; range: Range | null; onChange: (p: Partial<AudioClipT>) => void }) {
+  const pts = a.envelope ?? []
+  const rel = Math.min(Math.max(playheadMs - startMs, 0), a.durationMs)
+  const setPt = (i: number, p: Partial<{ atMs: number; gain: number }>) => onChange({ envelope: pts.map((x, n) => (n === i ? { ...x, ...p } : x)).sort((x, y) => x.atMs - y.atMs) })
+  const inRange = range && range.endMs > startMs && range.startMs < startMs + a.durationMs
+  return <details open={pts.length > 0 || Boolean(a.fadeInMs || a.fadeOutMs)} className="small">
+    <summary><b>Automatización de volumen</b></summary>
+    <div className="field-row" style={{ marginTop: 6 }}>
+      <label>Entrada gradual (s)<input type="number" min={0} max={60} step={0.1} value={secs(a.fadeInMs ?? 0)} onChange={e => onChange({ fadeInMs: Math.max(0, Number(e.target.value) * 1000) })} /></label>
+      <label>Salida gradual (s)<input type="number" min={0} max={60} step={0.1} value={secs(a.fadeOutMs ?? 0)} onChange={e => onChange({ fadeOutMs: Math.max(0, Number(e.target.value) * 1000) })} /></label>
+    </div>
+    <table className="table small" aria-label="Puntos de volumen"><tbody>
+      {pts.map((p, i) => <tr key={i}>
+        <td><label>En (s)<input type="number" min={0} step={0.1} value={secs(p.atMs)} aria-label={`Tiempo del punto ${i + 1}`} onChange={e => setPt(i, { atMs: Math.min(a.durationMs, Math.max(0, Number(e.target.value) * 1000)) })} style={{ width: 80 }} /></label></td>
+        <td><label>Nivel (%)<input type="number" min={0} max={200} step={5} value={Math.round(p.gain * 100)} aria-label={`Nivel del punto ${i + 1}`} onChange={e => setPt(i, { gain: Math.min(2, Math.max(0, Number(e.target.value) / 100)) })} style={{ width: 70 }} /></label></td>
+        <td><button type="button" className="ghost small" aria-label={`Quitar el punto ${i + 1}`} onClick={() => onChange({ envelope: pts.filter((_, n) => n !== i) })}>✕</button></td>
+      </tr>)}
+    </tbody></table>
+    <div className="pageActions">
+      <button type="button" className="ghost small" onClick={() => onChange({ envelope: [...pts, { atMs: Math.round(rel), gain: 1 }].sort((x, y) => x.atMs - y.atMs) })}>Añadir punto en el cabezal</button>
+      {inRange && <button type="button" className="ghost small" onClick={() => onChange({ envelope: setLevelBetween(a, range!.startMs - startMs, range!.endMs - startMs, 0.3).envelope })}>Bajar al 30 % en el fragmento</button>}
+      {pts.length > 0 && <button type="button" className="ghost small" onClick={() => onChange({ envelope: [] })}>Quitar puntos</button>}
+    </div>
+    <p className="muted">Los puntos multiplican el volumen del clip y se unen en línea recta; también se aplican sobre la bajada automática bajo la voz.</p>
+  </details>
 }
