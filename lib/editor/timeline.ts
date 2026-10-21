@@ -1,4 +1,4 @@
-import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
+import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MAX_TIMELINE_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
 
 /**
  * Pure editing operations for the manual (timeline) editor. Every function returns a new composition,
@@ -224,7 +224,7 @@ export function setLevelBetween(a: AudioClip, fromMs: number, toMs: number, gain
  * with straight cuts that play the whole file, so nothing is lost and each piece can be edited on its own.
  */
 export function addVideo(c: Composition, assetId: string, durationMs: number, index = c.clips.length): Composition {
-  const total = Math.max(MIN_CLIP_MS, Math.round(durationMs))
+  const total = Math.min(MAX_TIMELINE_MS, Math.max(MIN_CLIP_MS, Math.round(Number.isFinite(durationMs) ? durationMs : MIN_CLIP_MS)))
   if (total <= MAX_CLIP_MS) return addClip(c, assetId, total, index)
   const pieces = Math.ceil(total / MAX_CLIP_MS)
   const len = Math.ceil(total / pieces)
