@@ -218,3 +218,22 @@ export function setLevelBetween(a: AudioClip, fromMs: number, toMs: number, gain
   ].sort((x, y) => x.atMs - y.atMs)
   return { ...a, envelope: pts.filter((p, i) => i === 0 || p.atMs !== pts[i - 1].atMs).slice(0, 64) }
 }
+
+/**
+ * Adds a video of any length: up to MAX_CLIP_MS it is one clip; a longer one (a 90-minute recording) becomes consecutive pieces
+ * with straight cuts that play the whole file, so nothing is lost and each piece can be edited on its own.
+ */
+export function addVideo(c: Composition, assetId: string, durationMs: number, index = c.clips.length): Composition {
+  const total = Math.max(MIN_CLIP_MS, Math.round(durationMs))
+  if (total <= MAX_CLIP_MS) return addClip(c, assetId, total, index)
+  const pieces = Math.ceil(total / MAX_CLIP_MS)
+  const len = Math.ceil(total / pieces)
+  let out = c
+  for (let p = 0; p < pieces; p++) {
+    const d = Math.min(len, total - p * len)
+    if (d < MIN_CLIP_MS) break
+    out = addClip(out, assetId, d, index + p)
+    out = updateClip(out, out.clips[index + p].id, { trimInMs: p * len, transition: p < pieces - 1 ? 'cut' : 'fade' })
+  }
+  return out
+}

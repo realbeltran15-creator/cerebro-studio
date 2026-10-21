@@ -6,7 +6,7 @@ import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { audioStartMs, envelopeBreakpoints, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
-import { setLevelBetween, addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
+import { addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
@@ -21,6 +21,7 @@ import { EditorComparePanel } from '../../components/editor-compare-panel'
 import { analyzeAsset, type AssetAnalysis } from '@/lib/editor/analysis-assets'
 import { nearestBeat } from '@/lib/editor/sync'
 import { COMMAND_EXAMPLES, runInstruction } from '@/lib/editor/commands'
+import { clearLocalDraft, draftDiffers, loadLocalDraft, saveLocalDraft, type LocalDraft } from '@/lib/editor/local-draft'
 import { acceptProposal, DEFAULT_PREFS, detectCorrection, loadPrefs, PREF_LABELS, savePrefs, type EditPreferences, type Proposal, type Watch } from '@/lib/editor/preferences'
 import { deleteRange, isolateRange, normRange, type Range } from '@/lib/editor/range'
 import { effectiveCamera } from '@/lib/editor/motion'
@@ -75,6 +76,10 @@ export default function ManualEditorPage() {
   const [proposal, setProposal] = useState<Proposal | null>(null)
   // How the montage was when it was opened: corrections can be compared with it even without an automatic version.
   const [sessionStart, setSessionStart] = useState<Composition | null>(null)
+  // Recovery and automatic saving.
+  const [recovery, setRecovery] = useState<LocalDraft | null>(null)
+  const [autoSave, setAutoSave] = useState(true)
+  const [lastAutoSave, setLastAutoSave] = useState<string | null>(null)
   const [matTab, setMatTab] = useState<'visual' | 'audio'>('visual')
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
@@ -134,6 +139,8 @@ export default function ManualEditorPage() {
     const parsed = parseComposition(row.composition)
     if (!parsed) { setError('El montaje guardado no es válido.'); return }
     setJob(row); setSavedAt(row.updated_at)
+    // A local copy with changes that never reached the cloud (closed tab, crash): offer it, never apply it silently.
+    void loadLocalDraft(row.id).then(d => { const c = d ? parseComposition(d.composition) : null; if (d && c && draftDiffers({ ...d, composition: c }, parsed)) setRecovery({ ...d, composition: c }) })
     const { data: a } = await supabase.from('assets').select('id,asset_type,storage_path,license_status,source_provider,provenance,created_at').eq('project_id', row.project_id).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
     setAssets((a ?? []) as EditorAsset[])
     if (parsed.editedManually) { setHistory(historyOf(parsed)); return }
@@ -159,7 +166,25 @@ export default function ManualEditorPage() {
     if (e) throw new Error(e.message)
     if (!data?.length) throw new SaveConflictError()
     setSavedAt((data[0] as { updated_at: string }).updated_at); setDirty(false)
+    void clearLocalDraft(job.id)
   }, [job, comp, savedAt, supabase])
+
+  // Every change is copied locally a moment later (recovery after a crash); with automatic saving on, dirty changes reach the cloud every minute.
+  useEffect(() => {
+    if (!job || !comp || !dirty) return
+    const t = setTimeout(() => { void saveLocalDraft({ jobId: job.id, composition: comp, savedAt: new Date().toISOString(), baseUpdatedAt: savedAt }) }, 1500)
+    return () => clearTimeout(t)
+  }, [job, comp, dirty, savedAt])
+  const saveRef = useRef(save)
+  saveRef.current = save
+  useEffect(() => {
+    if (!autoSave || !dirty) return
+    const t = setTimeout(() => {
+      if (drag.current || busy) return
+      void saveRef.current().then(() => setLastAutoSave(new Date().toLocaleTimeString()), e => { setAutoSave(false); setError(`Guardado automático detenido: ${e instanceof Error ? e.message : 'error al guardar'}`) })
+    }, 60_000)
+    return () => clearTimeout(t)
+  }, [autoSave, dirty, comp, busy])
 
   async function saveClick() {
     setError(''); setBusy('save')
@@ -254,7 +279,8 @@ export default function ManualEditorPage() {
       const { data: a } = await supabase.from('assets').select('id,asset_type,storage_path,license_status,source_provider,provenance,created_at').eq('project_id', job.project_id).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
       setAssets((a ?? []) as EditorAsset[])
       apply(c => added.reduce((acc, f) => {
-        if (f.kind === 'video' || f.kind === 'image') return addClip(acc, f.id, f.kind === 'video' ? f.ms ?? 5000 : 5000)
+        if (f.kind === 'video') return addVideo(acc, f.id, f.ms ?? 5000)
+        if (f.kind === 'image') return addClip(acc, f.id, 5000)
         const ms = f.ms ?? 10_000
         return addAudioClip(acc, { assetId: f.id, kind: f.kind === 'voice' ? 'voice' : f.kind === 'sfx' ? 'sfx' : 'music', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: f.kind === 'music' ? Math.min(ms, Math.max(totalDurationMs(acc), 1000)) : ms, volume: f.kind === 'music' ? 0.5 : 1, muted: false })
       }, c))
@@ -315,7 +341,7 @@ export default function ManualEditorPage() {
       const starts = clipStarts(c)
       const index = c.clips.findIndex((k, i) => starts[i] + k.durationMs / 2 > atMs)
       const ms = a.asset_type === 'video' ? await audioDurationMs(id).catch(() => 5000) || 5000 : 5000
-      apply(x => addClip(x, id, ms, index < 0 ? x.clips.length : index))
+      apply(x => (a.asset_type === 'video' ? addVideo(x, id, ms, index < 0 ? x.clips.length : index) : addClip(x, id, ms, index < 0 ? x.clips.length : index)))
       return
     }
     if (visualTypes.includes(a.asset_type) && a.asset_type !== 'video') { setError('Una imagen no tiene audio: arrástrala a la pista de vídeo.'); return }
@@ -351,18 +377,29 @@ export default function ManualEditorPage() {
     return { from, to, before: px(0, from), after: px(to, comp.clips.length) }
   })()
   const loMs = (view.left - 200) / pxPerSec * 1000, hiMs = (view.left + view.width + 200) / pxPerSec * 1000
+  // Long montages also draw only the audio and text blocks near the visible part.
+  const many = comp.clips.length > 120 || (comp.audioClips?.length ?? 0) > 150 || (comp.textClips?.length ?? 0) > 150
+  const onScreen = (start: number, dur: number) => !many || (start + dur >= loMs - 30_000 && start <= hiMs + 30_000)
   const nextBeatRel = selClip ? (() => { const st = starts[comp.clips.findIndex(k => k.id === selClip.id)]; const b = beats.beatsMs.find(t => t - st >= MIN_CLIP_MS && st + selClip.durationMs - t >= MIN_CLIP_MS); return b === undefined ? null : b - st })() : null
 
   return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor/style?project=${job.project_id}`}>Editar con mi estilo</Link><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
 
+    {recovery && <div className="panel warning" role="alert" aria-label="Recuperar cambios" style={{ marginBottom: 12 }}>
+      <b>Hay cambios sin guardar de este montaje</b> (copia local del {new Date(recovery.savedAt).toLocaleString()}){recovery.baseUpdatedAt !== savedAt ? '. Ojo: el montaje se guardó después desde otro sitio; si recuperas, al guardar se te avisará del conflicto.' : '.'}
+      <div className="pageActions" style={{ marginTop: 6 }}>
+        <button type="button" className="small" onClick={() => { setHistory(h => (h ? commit(h, recovery.composition) : h)); setDirty(true); setRecovery(null); setNotice('Cambios recuperados. Guarda para conservarlos (Ctrl+Z vuelve a la versión guardada).') }}>Recuperar cambios</button>
+        <button type="button" className="ghost small" onClick={() => { if (job) void clearLocalDraft(job.id); setRecovery(null) }}>Descartar copia</button>
+      </div>
+    </div>}
     <div className="editorBar panel" style={{ marginBottom: 12 }}>
       <div className="stats">
         <span className="pill">{comp.clips.length} clips</span>
         <span className="pill info">{fmt(total)}</span>
         {comp.styleRef && <span className="pill" title="Estilo con el que se creó o se re-estiló">Estilo: {comp.styleRef.profileName}</span>}
         {dirty && <span className="pill warn">Cambios sin guardar</span>}
+        <label className="pill small" title="Guarda en la nube cada minuto si hay cambios (con el mismo control de conflictos)"><input type="checkbox" checked={autoSave} onChange={e => setAutoSave(e.target.checked)} /> Guardado automático{lastAutoSave ? ` · ${lastAutoSave}` : ''}</label>
         <label className="small">Formato{' '}
           <select value={comp.format} onChange={e => apply(c => ({ ...c, format: e.target.value as OutputFormat }))}>
             <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option>
@@ -428,7 +465,7 @@ export default function ManualEditorPage() {
             <label>Clip de imagen o vídeo
               <select value={addAsset} onChange={e => setAddAsset(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
             </label>
-            <button type="button" className="ghost" disabled={!addAsset} onClick={() => { const at = selClip ? comp.clips.findIndex(c => c.id === selClip.id) + 1 : comp.clips.length; apply(c => addClip(c, addAsset, 5000, at)); setAddAsset('') }}>Añadir clip {selClip ? 'tras el seleccionado' : 'al final'}</button>
+            <button type="button" className="ghost" disabled={!addAsset} onClick={() => void (async () => { const at = selClip ? comp.clips.findIndex(c => c.id === selClip.id) + 1 : comp.clips.length; const id = addAsset; setAddAsset(''); if (typeOf(id) === 'video') { const ms = await audioDurationMs(id).catch(() => 5000) || 5000; apply(c => addVideo(c, id, ms, at)) } else apply(c => addClip(c, id, 5000, at)) })()}>Añadir clip {selClip ? 'tras el seleccionado' : 'al final'}</button>
             <label>Audio
               <select value={addAudio} onChange={e => setAddAudio(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{audios.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
             </label>
@@ -522,7 +559,7 @@ export default function ManualEditorPage() {
         </div>
         <div style={{ position: 'relative', height: 30, marginTop: 6, background: 'var(--bg-2)', borderRadius: 6 }} aria-label="Pista de Texto">
           <span className="muted small" style={{ position: 'absolute', left: 4, top: 6, pointerEvents: 'none' }}>Texto</span>
-          {(comp.textClips ?? []).map(t => <div key={t.id} onClick={() => setSelection({ kind: 'text', id: t.id })} onPointerDown={e => onPointerDown(e, 'textMove', t.id, t.startMs)}
+          {(comp.textClips ?? []).filter(t => onScreen(t.startMs, t.durationMs)).map(t => <div key={t.id} onClick={() => setSelection({ kind: 'text', id: t.id })} onPointerDown={e => onPointerDown(e, 'textMove', t.id, t.startMs)}
             style={{ position: 'absolute', left: t.startMs / 1000 * pxPerSec, width: Math.max(t.durationMs / 1000 * pxPerSec, 10), top: 3, height: 24, background: kindColor.text, borderRadius: 5, color: '#fff', fontSize: 11, padding: '4px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === t.id ? '2px solid #fff' : 'none', whiteSpace: 'nowrap' }}
             title={`${t.content} · ${secs(t.startMs)}–${secs(t.startMs + t.durationMs)} s`}>
             T {t.content}
@@ -534,6 +571,7 @@ export default function ManualEditorPage() {
           {row.key === 'music' && showBeats && beats.beatsMs.filter(t => t >= loMs && t <= hiMs).slice(0, 1500).map(t => <span key={t} data-beat="true" aria-hidden style={{ position: 'absolute', left: t / 1000 * pxPerSec, top: 0, bottom: 0, width: 1, background: '#8ab4ff', opacity: 0.7, pointerEvents: 'none', zIndex: 3 }} />)}
           {(comp.audioClips ?? []).filter(a => a.kind === row.key).map(a => {
             const start = audioStartMs(comp, a)
+            if (!onScreen(start, a.durationMs)) return null
             const an = analyses[a.assetId]
             return <div key={a.id} onClick={() => setSelection({ kind: 'audio', id: a.id })} onPointerDown={e => onPointerDown(e, 'move', a.id, start)}
               style={{ position: 'absolute', left: start / 1000 * pxPerSec, width: Math.max(a.durationMs / 1000 * pxPerSec, 8), top: 3, height: 28, background: kindColor[a.kind], opacity: a.muted ? 0.4 : 1, borderRadius: 5, color: '#fff', fontSize: 11, padding: '6px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === a.id ? '2px solid #fff' : 'none', whiteSpace: 'nowrap' }}

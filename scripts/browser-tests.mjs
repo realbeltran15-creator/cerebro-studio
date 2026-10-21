@@ -1444,6 +1444,14 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   check('preferences: the next «zoom lento» uses the preference', (await page.getByLabel(/^Intensidad \(/).inputValue()) === '0.05')
   await say('haz magia')
   check('instructions: an unknown instruction is reported with examples, nothing changes', (await page.getByText(/No he entendido la instrucción\. Ejemplos/).count()) === 1 && (await clips.count()) === n)
+  // Recovery: unsaved changes survive closing the tab and are offered (not applied) when the montage is opened again.
+  await say('formato cuadrado')
+  await page.waitForTimeout(2200)
+  await page.reload()
+  await page.getByRole('alert', { name: 'Recuperar cambios' }).waitFor({ timeout: 20000 })
+  check('recovery: the editor offers the unsaved changes after reopening', (await page.locator('label', { hasText: /^Formato/ }).locator('select').inputValue()) === '16:9')
+  await page.getByRole('button', { name: 'Recuperar cambios' }).click()
+  check('recovery: recovering restores them as unsaved changes', (await page.locator('label', { hasText: /^Formato/ }).locator('select').inputValue()) === '1:1' && (await page.getByText('Cambios sin guardar').count()) === 1)
   check('instructions: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }

@@ -1,5 +1,5 @@
-import { addAudioClip, addClip } from './timeline'
-import { emptyComposition, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Composition, type OutputFormat } from './composition'
+import { addAudioClip, addClip, addVideo } from './timeline'
+import { emptyComposition, MAX_CLIP_MS, MAX_TIMELINE_MS, MIN_CLIP_MS, type AudioClip, type Composition, type OutputFormat } from './composition'
 
 /**
  * Starts a manual edit from files already in the Library: videos and images go to the picture track in the order given,
@@ -25,10 +25,9 @@ export function compositionFromAssets(input: { title: string; format: OutputForm
   let c: Composition = { ...emptyComposition(`manual-${globalThis.crypto.randomUUID()}`, input.title, input.format), editedManually: true }
   for (const a of input.assets) {
     if (visual.has(a.asset_type)) {
-      const ms = a.asset_type === 'video' ? a.durationMs ?? IMAGE_MS : IMAGE_MS
-      c = addClip(c, a.id, Math.min(Math.max(ms, MIN_CLIP_MS), MAX_CLIP_MS))
+      c = a.asset_type === 'video' ? addVideo(c, a.id, a.durationMs ?? IMAGE_MS) : addClip(c, a.id, Math.min(Math.max(IMAGE_MS, MIN_CLIP_MS), MAX_CLIP_MS))
     } else if (audioKind[a.asset_type]) {
-      c = addAudioClip(c, { assetId: a.id, kind: audioKind[a.asset_type], linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: Math.min(Math.max(a.durationMs ?? 10_000, 500), 20 * 60_000), volume: audioKind[a.asset_type] === 'music' ? 0.5 : 1, muted: false })
+      c = addAudioClip(c, { assetId: a.id, kind: audioKind[a.asset_type], linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: Math.min(Math.max(a.durationMs ?? 10_000, 500), MAX_TIMELINE_MS), volume: audioKind[a.asset_type] === 'music' ? 0.5 : 1, muted: false })
     }
   }
   return c

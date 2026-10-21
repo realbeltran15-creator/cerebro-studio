@@ -140,3 +140,20 @@ describe('preferences learned from corrections (with confirmation)', () => {
     expect(b.ok && b.watch).toEqual([])
   })
 })
+
+describe('long videos', () => {
+  it('a 95-minute video is laid out as consecutive pieces that play the whole file', async () => {
+    const { addVideo } = await import('@/lib/editor/timeline')
+    const { emptyComposition, compositionIssues, MAX_CLIP_MS } = await import('@/lib/editor/composition')
+    const c = addVideo(emptyComposition('s', 'Largo'), 'vid', 95 * 60_000)
+    expect(totalDurationMs(c)).toBe(95 * 60_000)
+    expect(c.clips.every(k => k.durationMs <= MAX_CLIP_MS && k.visualAssetId === 'vid')).toBe(true)
+    c.clips.forEach((k, i) => { if (i) expect(k.trimInMs).toBe((c.clips[i - 1].trimInMs ?? 0) + c.clips[i - 1].durationMs) })
+    expect(c.clips.slice(0, -1).every(k => k.transition === 'cut')).toBe(true)
+    const parsed = parseComposition(JSON.parse(JSON.stringify(c)))!
+    expect(parsed.clips.at(-1)!.trimInMs).toBe(c.clips.at(-1)!.trimInMs) // trims beyond 60 min survive saving
+    const issues = compositionIssues(parsed)
+    expect(issues.some(i => i.blocking)).toBe(false)
+    expect(issues.find(i => /Montaje largo \(95 min\)/.test(i.message))).toBeTruthy()
+  })
+})

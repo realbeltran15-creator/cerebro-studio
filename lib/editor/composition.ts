@@ -233,7 +233,7 @@ function parseTextClip(t: unknown): TextClip | null {
   const base = parseText(t)
   const v = (t ?? {}) as Partial<TextClip>
   if (!base || typeof v.id !== 'string' || !v.id) return null
-  return { ...base, id: v.id.slice(0, 60), startMs: Math.round(clamp(v.startMs, 0, 3 * 3600_000, 0)), durationMs: Math.round(clamp(v.durationMs, 300, MAX_CLIP_MS, 3000)) }
+  return { ...base, id: v.id.slice(0, 60), startMs: Math.round(clamp(v.startMs, 0, MAX_TIMELINE_MS, 0)), durationMs: Math.round(clamp(v.durationMs, 300, MAX_TIMELINE_MS, 3000)) }
 }
 
 export function parseCamera(c: unknown): CameraMove | null {
@@ -284,7 +284,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       focusX: clamp(c.focusX, 0, 1, 0.5),
       focusY: clamp(c.focusY, 0, 1, 0.5),
       zoom: clamp(c.zoom, 1, 3, 1),
-      trimInMs: clamp(c.trimInMs, 0, 60 * 60_000, 0),
+      trimInMs: clamp(c.trimInMs, 0, MAX_TIMELINE_MS, 0),
       volume: clamp(c.volume, 0, 2, 1),
       muted: c.muted === true,
       transition: typeof c.transition === 'string' && c.transition in TRANSITIONS ? c.transition : 'fade',
@@ -388,7 +388,9 @@ export function compositionIssues(c: Composition): CompositionIssue[] {
     if (!clip.visualAssetId) issues.push({ sceneId: clip.sceneId, message: `${label} ${i + 1}: sin imagen ni vídeo (se renderizará en negro).`, blocking: false })
     if (!c.editedManually && !clip.voiceAssetId && !voicedClips.has(clip.id) && clip.narration?.trim()) issues.push({ sceneId: clip.sceneId, message: `${label} ${i + 1}: tiene narración pero no voz asignada.`, blocking: false })
   })
-  if (totalDurationMs(c) > 20 * 60 * 1000) issues.push({ message: 'El montaje supera 20 minutos: el render en el navegador no está pensado para esa duración.', blocking: true })
+  const total = totalDurationMs(c)
+  if (total > MAX_TIMELINE_MS) issues.push({ message: 'El montaje supera 4 horas: divídelo en partes.', blocking: true })
+  else if (total > 20 * 60 * 1000) issues.push({ message: `Montaje largo (${Math.round(total / 60000)} min): la exportación en el navegador va en tiempo real (tarda lo mismo que dura) y necesita la pestaña abierta y visible; usa «Descargar a mi equipo», porque la Biblioteca solo admite archivos de hasta 50 MB.`, blocking: false })
   return issues
 }
 
