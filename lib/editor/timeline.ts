@@ -237,3 +237,25 @@ export function addVideo(c: Composition, assetId: string, durationMs: number, in
   }
   return out
 }
+
+/** A point on an automation lane of `width`×`height` px for a clip of `durationMs`: x → time, y → gain (top = 200 %, bottom = 0). */
+export function envelopePointAt(x: number, y: number, width: number, height: number, durationMs: number): { atMs: number; gain: number } {
+  const atMs = Math.round(Math.min(Math.max(x / Math.max(1, width), 0), 1) * durationMs)
+  const gain = Math.round(Math.min(Math.max(2 * (1 - y / Math.max(1, height)), 0), 2) * 100) / 100
+  return { atMs, gain }
+}
+
+/** Moves envelope point `i`, keeping it between its neighbours (points never cross) and inside the clip. */
+export function moveEnvelopePoint(a: AudioClip, i: number, p: { atMs: number; gain: number }): AudioClip {
+  const pts = [...(a.envelope ?? [])]
+  if (!pts[i]) return a
+  const lo = i > 0 ? pts[i - 1].atMs + 10 : 0, hi = i < pts.length - 1 ? pts[i + 1].atMs - 10 : a.durationMs
+  pts[i] = { atMs: Math.round(Math.min(Math.max(p.atMs, lo), Math.max(lo, hi))), gain: Math.min(Math.max(p.gain, 0), 2) }
+  return { ...a, envelope: pts }
+}
+
+/** Adds a point (kept sorted; at most 64). */
+export function addEnvelopePoint(a: AudioClip, p: { atMs: number; gain: number }): AudioClip {
+  const pts = [...(a.envelope ?? []).filter(x => Math.abs(x.atMs - p.atMs) > 5), { atMs: Math.round(p.atMs), gain: Math.min(Math.max(p.gain, 0), 2) }].sort((x, y) => x.atMs - y.atMs)
+  return { ...a, envelope: pts.slice(0, 64) }
+}

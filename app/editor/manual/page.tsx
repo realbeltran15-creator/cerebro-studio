@@ -6,7 +6,7 @@ import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { audioStartMs, envelopeBreakpoints, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
-import { addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
+import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
@@ -581,6 +581,12 @@ export default function ManualEditorPage() {
             </div>
           })}
         </div>)}
+        {selAudio && <AutomationLane key={selAudio.id} a={selAudio} startMs={audioStartMs(comp, selAudio)} pxPerSec={pxPerSec} label={label(selAudio.assetId)}
+          waveform={(() => { const an = analyses[selAudio.assetId]; return typeof an === 'object' && an.waveform ? an.waveform : null })()}
+          onBegin={() => setHistory(h => (h ? { past: [...h.past, h.present].slice(-100), present: h.present, future: [] } : h))}
+          onLive={next => { setHistory(h => (h ? { ...h, present: updateAudioClip(h.present, next.id, { envelope: next.envelope }) } : h)); setDirty(true) }}
+          onEnd={() => setHistory(h => (h && h.past.length && h.past[h.past.length - 1] === h.present ? { ...h, past: h.past.slice(0, -1) } : h))}
+          onCommit={next => apply(c => updateAudioClip(c, next.id, { envelope: next.envelope }))} />}
         {comp.musicAssetId && <p className="muted small" style={{ marginTop: 6 }}>Música de fondo global: {label(comp.musicAssetId)} ({Math.round(comp.musicVolume * 100)}%, {comp.duckMusic ? 'baja bajo la voz' : 'sin ducking'})</p>}
       </div>
       {range && <div className="pageActions" role="group" aria-label="Fragmento" style={{ marginTop: 8 }}>
@@ -725,4 +731,40 @@ function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: Audi
     </div>
     <p className="muted">Los puntos multiplican el volumen del clip y se unen en línea recta; también se aplican sobre la bajada automática bajo la voz.</p>
   </details>
+}
+
+/**
+ * Volume automation lane under the tracks for the selected audio clip: its real waveform with the envelope on top.
+ * Drag a point (time and level), double-click the lane to add one, double-click a point to remove it. One drag = one undo step.
+ */
+function AutomationLane({ a, startMs, pxPerSec, label, waveform, onBegin, onLive, onEnd, onCommit }: {
+  a: AudioClipT; startMs: number; pxPerSec: number; label: string; waveform: import('@/lib/editor/waveform').Waveform | null
+  onBegin: () => void; onLive: (a: AudioClipT) => void; onEnd: () => void; onCommit: (a: AudioClipT) => void
+}) {
+  const H = 72
+  const width = Math.max(a.durationMs / 1000 * pxPerSec, 8)
+  const svg = useRef<SVGSVGElement | null>(null)
+  const dragging = useRef<{ i: number; base: AudioClipT } | null>(null)
+  const pts = a.envelope ?? []
+  const xy = (e: { clientX: number; clientY: number }) => { const r = svg.current!.getBoundingClientRect(); return envelopePointAt(e.clientX - r.left, e.clientY - r.top, r.width, r.height, a.durationMs) }
+  const yOf = (g: number) => H - Math.min(2, g) / 2 * H
+  const line = envelopeBreakpoints(a).map(p => `${p.atMs / 1000 * pxPerSec},${yOf(p.gain)}`).join(' ')
+  return <div className="automationLane" style={{ position: 'relative', height: H + 18, marginTop: 6 }} aria-label={`Volumen de ${label}`}>
+    <span className="muted small" style={{ position: 'absolute', left: 4, top: 0 }}>Volumen de «{label}» · arrastra los puntos · doble clic para añadir o quitar</span>
+    <div style={{ position: 'absolute', left: startMs / 1000 * pxPerSec, top: 16, width, height: H, background: 'rgba(154,91,15,.25)', borderRadius: 5, overflow: 'hidden' }}>
+      {waveform && <WaveformSvg w={waveform} fromMs={a.trimInMs} toMs={a.trimInMs + a.durationMs} width={width} height={H} opacity={0.35} />}
+      <svg ref={svg} width={width} height={H} role="img" aria-label="Puntos de volumen" style={{ position: 'absolute', left: 0, top: 0, cursor: 'crosshair', touchAction: 'none' }}
+        onDoubleClick={e => { if ((e.target as Element).tagName !== 'circle') onCommit(addEnvelopePoint(a, xy(e))) }}
+        onPointerMove={e => { const d = dragging.current; if (d) onLive(moveEnvelopePoint(d.base, d.i, xy(e))) }}
+        onPointerUp={() => { if (dragging.current) { dragging.current = null; onEnd() } }}>
+        <line x1={0} x2={width} y1={yOf(1)} y2={yOf(1)} stroke="rgba(255,255,255,.25)" strokeDasharray="3 3" />
+        <polyline fill="none" stroke="#ffe08a" strokeWidth={2} points={line} />
+        {pts.map((p, i) => <circle key={i} data-point={i} cx={p.atMs / 1000 * pxPerSec} cy={yOf(p.gain)} r={6} fill="#ffe08a" stroke="#000" style={{ cursor: 'grab' }}
+          onPointerDown={e => { e.stopPropagation(); (e.target as Element).setPointerCapture(e.pointerId); dragging.current = { i, base: a }; onBegin() }}
+          onDoubleClick={e => { e.stopPropagation(); onCommit({ ...a, envelope: pts.filter((_, n) => n !== i) }) }}>
+          <title>{`${Math.round(p.atMs / 100) / 10} s · ${Math.round(p.gain * 100)} %`}</title>
+        </circle>)}
+      </svg>
+    </div>
+  </div>
 }

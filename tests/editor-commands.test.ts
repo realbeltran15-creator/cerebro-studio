@@ -177,3 +177,14 @@ describe('export plan', () => {
     expect(exportPlan({ ...short, exportSettings: { quality: 'normal' as const, videoKbps: 3000, destination: 'download' as const } }).videoBps).toBe(3_000_000)
   })
 })
+
+describe('draggable volume points', () => {
+  it('positions map to time and level; points never cross; adding keeps them sorted', async () => {
+    const { envelopePointAt, moveEnvelopePoint, addEnvelopePoint } = await import('@/lib/editor/timeline')
+    expect(envelopePointAt(50, 36, 100, 72, 10000)).toEqual({ atMs: 5000, gain: 1 })
+    expect(envelopePointAt(-5, 200, 100, 72, 10000)).toEqual({ atMs: 0, gain: 0 })
+    const a = { id: 'm', assetId: 'x', kind: 'music' as const, linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 10000, volume: 1, muted: false, envelope: [{ atMs: 2000, gain: 1 }, { atMs: 6000, gain: 0.5 }] }
+    expect(moveEnvelopePoint(a, 0, { atMs: 9000, gain: 3 }).envelope).toEqual([{ atMs: 5990, gain: 2 }, { atMs: 6000, gain: 0.5 }])
+    expect(addEnvelopePoint(a, { atMs: 4000, gain: 0.2 }).envelope!.map(p => p.atMs)).toEqual([2000, 4000, 6000])
+  })
+})
