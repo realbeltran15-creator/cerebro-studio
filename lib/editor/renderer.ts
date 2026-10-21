@@ -1,6 +1,6 @@
-import { applyGainPlan, musicGainPlan } from './audio-plan'
-import { audioStartMs, clipCaptions, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
-import { BLENDS, textFrame, transitionFrame, type TextFrame } from './motion'
+import { applyGainPlan, musicClipGainPlan, musicGainPlan } from './audio-plan'
+import { activeTextClips, audioStartMs, clipCaptions, clipStarts, formatSize, preferredBitrate, TEXT_FONTS, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
+import { BLENDS, cameraAt, effectiveCamera, textFrame, transitionFrame, type TextFrame } from './motion'
 
 /**
  * Browser renderer: draws the composition on a canvas, mixes audio with WebAudio and,
@@ -146,7 +146,7 @@ function drawText(ctx: CanvasRenderingContext2D, t: TextOverlay, w: number, h: n
   const size = Math.round(Math.min(w, h) * (t.sizePct / 100) * 1.6)
   ctx.save()
   ctx.globalAlpha = f.alpha
-  ctx.font = `800 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
+  ctx.font = `800 ${size}px ${TEXT_FONTS[t.font ?? 'sans'].css}`
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
   // Lines are laid out on the full text so a typewriter animation never re-wraps while typing.
   const lines = wrap(ctx, t.content, w * 0.86)
@@ -154,7 +154,7 @@ function drawText(ctx: CanvasRenderingContext2D, t: TextOverlay, w: number, h: n
   const blockH = lines.length * lineH
   const top = (t.position === 'top' ? h * 0.1 : t.position === 'center' ? (h - blockH) / 2 : h * 0.72 - blockH) + f.offsetY * h
   if (f.scale !== 1) { const cy = top + blockH / 2; ctx.translate(w / 2, cy); ctx.scale(f.scale, f.scale); ctx.translate(-w / 2, -cy) }
-  ctx.lineWidth = Math.max(3, size * 0.1); ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#fff'
+  ctx.lineWidth = Math.max(3, size * 0.1); ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = t.color ?? '#fff'
   let budget = f.visibleChars ?? Infinity
   lines.forEach((l, i) => {
     if (budget <= 0) return
@@ -240,22 +240,25 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     voiceWindows.push({ start, end: start + dur })
     sources.push(node)
   })
-  for (const a of audioClips) {
+  // Voices first, so music clips on the audio track can be ducked under them like the background music.
+  const placed = audioClips.flatMap(a => {
     const buf = buffers.get(a.assetId)
-    if (!buf) continue
+    if (!buf) return []
     const startMs = audioStartMs(composition, a)
-    if (startMs >= total) continue
+    if (startMs >= total) return []
     const offset = Math.min(a.trimInMs / 1000, buf.duration)
     const dur = Math.min(a.durationMs / 1000, buf.duration - offset, (total - startMs) / 1000)
-    if (dur <= 0) continue
+    return dur > 0 ? [{ a, buf, offset, dur, start: t0 + startMs / 1000 }] : []
+  })
+  for (const p of placed) if (p.a.kind === 'voice') voiceWindows.push({ start: p.start, end: p.start + p.dur })
+  for (const { a, buf, offset, dur, start } of placed) {
     const node = audio.createBufferSource()
     node.buffer = buf
     const gain = audio.createGain()
-    gain.gain.value = a.volume
+    if (a.kind === 'music' && composition.duckMusic) applyGainPlan(gain.gain, musicClipGainPlan({ volume: a.volume, start, end: start + dur, voices: voiceWindows }))
+    else gain.gain.value = a.volume
     node.connect(gain); gain.connect(master)
-    const start = t0 + startMs / 1000
     node.start(start, offset, dur)
-    if (a.kind === 'voice') voiceWindows.push({ start, end: start + dur })
     sources.push(node)
   }
   const musicBuf = composition.musicAssetId ? buffers.get(composition.musicAssetId) : undefined
@@ -281,7 +284,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const stream = canvas.captureStream(0)
     videoTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
     out.stream.getAudioTracks().forEach(t => stream.addTrack(t))
-    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBitrateFor(total), audioBitsPerSecond: 128_000 })
+    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBitrateFor(total, undefined, preferredBitrate(composition.exportSettings?.quality)), audioBitsPerSecond: 128_000 })
     recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     recorder.start(1000)
   }
@@ -295,9 +298,11 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const c = composition.clips[k]
     const zoom = c.zoom ?? 1
     const v = videos.get(c.id)
-    if (v) { drawCover(ctx, v.el, v.el.videoWidth || width, v.el.videoHeight || height, width, height, zoom, c.focusX, c.focusY); return }
+    const cam = cameraAt(effectiveCamera(c, !v), progress)
+    const fx = cam.focusX ?? c.focusX, fy = cam.focusY ?? c.focusY
+    if (v) { drawCover(ctx, v.el, v.el.videoWidth || width, v.el.videoHeight || height, width, height, zoom * cam.zoom, fx, fy); return }
     const bitmap = c.visualAssetId ? images.get(c.visualAssetId) : undefined
-    if (bitmap) drawCover(ctx, bitmap, bitmap.width, bitmap.height, width, height, zoom * (c.motion === 'kenburns' ? 1 + 0.08 * progress : 1), c.focusX, c.focusY)
+    if (bitmap) drawCover(ctx, bitmap, bitmap.width, bitmap.height, width, height, zoom * cam.zoom, fx, fy)
   }
 
   await new Promise<void>(resolve => {
@@ -316,12 +321,12 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
         if (activeClipId !== clip.id) {
           if (activeClipId) videos.get(activeClipId)?.el.pause()
           activeClipId = clip.id
-          if (video) { if (!primed.has(clip.id)) video.el.currentTime = (clip.trimInMs ?? 0) / 1000; primed.delete(clip.id); void video.el.play() }
+          if (video) { if (!primed.has(clip.id)) video.el.currentTime = (clip.trimInMs ?? 0) / 1000; primed.delete(clip.id); video.el.playbackRate = clip.speed ?? 1; void video.el.play() }
         }
         if (video) {
           // A clip longer than the rest of its source loops back to the trim point.
           const trimIn = (clip.trimInMs ?? 0) / 1000
-          if (video.el.ended || (video.el.duration && video.el.currentTime >= video.el.duration - 0.04)) { video.el.currentTime = trimIn; void video.el.play() }
+          if (video.el.ended || (video.el.duration && video.el.currentTime >= video.el.duration - 0.04)) { video.el.currentTime = trimIn; video.el.playbackRate = clip.speed ?? 1; void video.el.play() }
         }
         const fade = composition.fadeMs
         const kind = clip.transition ?? 'fade'
@@ -345,6 +350,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
           ctx.restore()
         }
         if (clip.text) drawText(ctx, clip.text, width, height, textFrame(clip.text.animation, local, clip.durationMs, clip.text.content.length))
+        for (const t of activeTextClips(composition, now)) drawText(ctx, t, width, height, textFrame(t.animation, now - t.startMs, t.durationMs, t.content.length))
         const cap = captions[i].find(c => local >= c.startMs && local < c.endMs)
         if (cap) drawCaption(ctx, cap.text, width, height, composition.captionStyle ?? 'box', (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs))
         if (composition.hookText && now < (composition.hookMs ?? 3000)) {

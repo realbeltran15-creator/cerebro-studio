@@ -123,3 +123,23 @@ export function summarize(durationMs: number, segments: Interval[]) {
   const kept = segments.reduce((a, s) => a + s.end - s.start, 0)
   return { kept, removed: Math.max(0, durationMs - kept), clips: segments.length }
 }
+
+/**
+ * Music beats (ms) from RMS windows: onsets where loudness rises clearly above its recent level, at least `minGapMs` apart.
+ * A simple energy-flux detector: good on music with a clear pulse (lo-fi, pop, electronic), weaker on ambient pads.
+ */
+export function musicBeats(rms: number[], windowMs: number, minGapMs = 280): number[] {
+  if (rms.length < 8) return []
+  const flux = rms.map((v, i) => Math.max(0, v - (rms[i - 1] ?? v)))
+  const beats: number[] = []
+  const span = Math.max(4, Math.round(1500 / windowMs))
+  for (let i = 1; i < flux.length - 1; i++) {
+    const lo = Math.max(0, i - span), hi = Math.min(flux.length, i + span)
+    let sum = 0
+    for (let k = lo; k < hi; k++) sum += flux[k]
+    const mean = sum / (hi - lo)
+    const t = i * windowMs
+    if (flux[i] > mean * 1.8 && flux[i] >= flux[i - 1] && flux[i] >= flux[i + 1] && flux[i] > 0.01 && (!beats.length || t - beats[beats.length - 1] >= minGapMs)) beats.push(t)
+  }
+  return beats
+}

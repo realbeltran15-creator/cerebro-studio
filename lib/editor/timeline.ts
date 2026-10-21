@@ -1,4 +1,4 @@
-import { audioStartMs, clipStarts, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition } from './composition'
+import { audioStartMs, clipStarts, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
 
 /**
  * Pure editing operations for the manual (timeline) editor. Every function returns a new composition,
@@ -74,7 +74,7 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   const clip = c.clips[i]
   if (atMs < MIN_CLIP_MS || clip.durationMs - atMs < MIN_CLIP_MS) return c
   const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut', ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
-  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
+  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)
   // Subtitles: keep the narration on the first half only (it was timed to the whole clip).
@@ -119,6 +119,31 @@ export function updateAudioClip(c: Composition, id: string, patch: Partial<Omit<
 
 export function deleteAudioClip(c: Composition, id: string): Composition {
   return { ...c, audioClips: (c.audioClips ?? []).filter(a => a.id !== id) }
+}
+
+// ---------- Text track ----------
+const clampText = (t: TextClip): TextClip => ({ ...t, startMs: Math.max(0, Math.round(t.startMs)), durationMs: Math.min(Math.max(Math.round(t.durationMs), 300), MAX_CLIP_MS), content: t.content.slice(0, 200) })
+export function addTextClip(c: Composition, t: Omit<TextClip, 'id'>): Composition {
+  return { ...c, textClips: [...(c.textClips ?? []), clampText({ ...t, id: newId('text') })] }
+}
+export function updateTextClip(c: Composition, id: string, patch: Partial<Omit<TextClip, 'id'>>): Composition {
+  return { ...c, textClips: (c.textClips ?? []).map(t => (t.id === id ? clampText({ ...t, ...patch }) : t)) }
+}
+export function deleteTextClip(c: Composition, id: string): Composition {
+  return { ...c, textClips: (c.textClips ?? []).filter(t => t.id !== id) }
+}
+export function duplicateTextClip(c: Composition, id: string): Composition {
+  const t = (c.textClips ?? []).find(x => x.id === id)
+  return t ? addTextClip(c, { ...t, startMs: t.startMs + t.durationMs }) : c
+}
+
+/** Changes a video clip's speed keeping the same stretch of source: faster = shorter on the timeline. */
+export function setSpeed(c: Composition, clipId: string, speed: number): Composition {
+  const clip = c.clips.find(k => k.id === clipId)
+  if (!clip) return c
+  const next = Math.min(Math.max(Math.round(speed * 100) / 100, 0.25), 4)
+  const sourceMs = clip.durationMs * (clip.speed ?? 1)
+  return updateClip(c, clipId, { speed: next, durationMs: sourceMs / next, ...(clip.cues ? { cues: clip.cues.map(q => ({ ...q, startMs: Math.round(q.startMs * (clip.speed ?? 1) / next), endMs: Math.round(q.endMs * (clip.speed ?? 1) / next) })) } : {}) })
 }
 
 /** Moves an audio clip to an absolute time; this unlinks it from its visual clip. */

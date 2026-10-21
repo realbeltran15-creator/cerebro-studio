@@ -32,6 +32,20 @@ export function musicGainPlan(input: { base: number; t0: number; end: number; du
   return events.sort((a, b) => a.time - b.time)
 }
 
+/** A music clip on the audio track: plays at its own volume (no global fade-in/out) and dips under any voice that overlaps it. */
+export function musicClipGainPlan(input: { volume: number; start: number; end: number; voices: Array<{ start: number; end: number }> }): GainEvent[] {
+  const { volume, start, end } = input
+  const ducked = volume * DUCK_RATIO
+  const inside = input.voices.filter(w => w.end > start && w.start < end).sort((a, b) => a.start - b.start)
+  const at = (t: number) => inside.some(w => t >= w.start - DUCK_LEAD_S && t < w.end)
+  const events: GainEvent[] = [{ type: 'set', value: at(start) ? ducked : volume, time: start }]
+  for (const w of inside) {
+    if (w.start - DUCK_LEAD_S > start) events.push({ type: 'target', value: ducked, time: w.start - DUCK_LEAD_S, timeConstant: 0.08 })
+    if (w.end < end) events.push({ type: 'target', value: volume, time: w.end, timeConstant: 0.25 })
+  }
+  return events.sort((a, b) => a.time - b.time)
+}
+
 export function applyGainPlan(param: AudioParam, events: GainEvent[]) {
   for (const e of events) {
     if (e.type === 'set') param.setValueAtTime(e.value, e.time)

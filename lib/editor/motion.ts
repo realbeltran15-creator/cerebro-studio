@@ -2,7 +2,7 @@
  * Pure maths for transitions and text animations, shared by the renderer (canvas) and the tests.
  * Transitions happen inside the last `fadeMs` of the outgoing clip, so the total duration never changes.
  */
-import type { TextAnimation, Transition } from './composition'
+import type { CameraMove, TextAnimation, Transition } from './composition'
 
 /** How the outgoing (A) and incoming (B) clips are drawn at progress t (0 → 1) of the transition. */
 export type TransitionFrame = {
@@ -61,4 +61,29 @@ export function textFrame(anim: TextAnimation | undefined, localMs: number, dura
     }
     default: return shown
   }
+}
+
+export type CameraFrame = { zoom: number; focusX: number | null; focusY: number | null }
+/**
+ * Camera movement at progress p (0 → 1) of a clip: a zoom multiplier and, for pans, the crop focus on that axis
+ * (pans zoom in by `amount` so there is room to travel). Linear, so cuts inside a movement stay continuous.
+ */
+export function cameraAt(cam: CameraMove | null | undefined, rawP: number): CameraFrame {
+  const p = clamp01(rawP)
+  if (!cam || cam.kind === 'none') return { zoom: 1, focusX: null, focusY: null }
+  const a = cam.amount
+  switch (cam.kind) {
+    case 'zoom_in': return { zoom: 1 + a * p, focusX: null, focusY: null }
+    case 'zoom_out': return { zoom: 1 + a * (1 - p), focusX: null, focusY: null }
+    case 'pan_right': return { zoom: 1 + a, focusX: p, focusY: null }
+    case 'pan_left': return { zoom: 1 + a, focusX: 1 - p, focusY: null }
+    case 'pan_down': return { zoom: 1 + a, focusX: null, focusY: p }
+    case 'pan_up': return { zoom: 1 + a, focusX: null, focusY: 1 - p }
+  }
+}
+
+/** The camera a clip really uses: its own, or the legacy slow zoom of images (motion = kenburns). */
+export function effectiveCamera(clip: { camera?: CameraMove | null; motion: 'kenburns' | 'none' }, isImage: boolean): CameraMove | null {
+  if (clip.camera) return clip.camera
+  return isImage && clip.motion === 'kenburns' ? { kind: 'zoom_in', amount: 0.08 } : null
 }

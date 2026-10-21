@@ -14,7 +14,25 @@ export const TEXT_ANIMATIONS: Record<TextAnimation, string> = { none: 'Sin anima
 /** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
 export type CaptionStyle = 'box' | 'bold' | 'karaoke'
 export const CAPTION_STYLES: Record<CaptionStyle, string> = { box: 'Clásico (caja)', bold: 'Grande y en negrita', karaoke: 'Palabra a palabra (resaltada)' }
-export type TextOverlay = { content: string; position: 'top' | 'center' | 'bottom'; sizePct: number; animation?: TextAnimation }
+export type TextFont = 'sans' | 'serif' | 'condensed' | 'mono'
+export const TEXT_FONTS: Record<TextFont, { label: string; css: string }> = {
+  sans: { label: 'Sans (moderna)', css: 'system-ui, -apple-system, Segoe UI, sans-serif' },
+  serif: { label: 'Serif (clásica)', css: 'Georgia, "Times New Roman", serif' },
+  condensed: { label: 'Condensada (impacto)', css: 'Impact, "Arial Narrow", "Roboto Condensed", sans-serif' },
+  mono: { label: 'Monoespaciada', css: 'ui-monospace, Menlo, Consolas, monospace' },
+}
+export type TextOverlay = { content: string; position: 'top' | 'center' | 'bottom'; sizePct: number; animation?: TextAnimation; font?: TextFont; /** #rrggbb */ color?: string }
+/** A title or text on its own track, independent of the clips: it has its own start and duration on the timeline. */
+export type TextClip = TextOverlay & { id: string; startMs: number; durationMs: number }
+
+/** Camera movement over the clip (images and videos). amount = how far it moves (0.02–0.5 of the frame). */
+export type CameraKind = 'none' | 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'pan_up' | 'pan_down'
+export const CAMERA_MOVES: Record<CameraKind, string> = { none: 'Fija', zoom_in: 'Acercar', zoom_out: 'Alejar', pan_left: 'Panorámica a la izquierda', pan_right: 'Panorámica a la derecha', pan_up: 'Subir', pan_down: 'Bajar' }
+export type CameraMove = { kind: CameraKind; amount: number }
+
+export type ExportSettings = { quality: 'normal' | 'high' }
+/** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
+export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
 
 export type Clip = {
   /** Unique within the composition. Automatic edits use the scene id; manual edits may duplicate/split. */
@@ -43,6 +61,10 @@ export type Clip = {
   text?: TextOverlay | null
   /** Timed captions relative to the clip start (e.g. from a transcript). When present they replace the evenly spread narration. */
   cues?: Array<{ startMs: number; endMs: number; text: string }>
+  /** Playback speed of a video clip (0.25–4). The clip consumes durationMs × speed of its source. */
+  speed?: number
+  /** Camera movement. When absent, the legacy `motion` applies (kenburns = slow zoom in on images). */
+  camera?: CameraMove | null
 }
 
 /** Independent audio on the timeline: voice-over, music or effects. */
@@ -96,6 +118,10 @@ export type Composition = {
   editedManually?: boolean
   /** The automatic version this montage came from (taken once, when it first became manual). */
   autoSnapshot?: AutoSnapshot | null
+  /** Titles and texts on their own track. */
+  textClips?: TextClip[]
+  exportSettings?: ExportSettings
+  styleRef?: StyleRef | null
 }
 
 export type SceneLike = { id: string; position: number; duration_ms: number; narration: string | null }
@@ -142,12 +168,32 @@ const clamp = (n: unknown, min: number, max: number, fallback: number) => {
 }
 const idOf = (x: unknown) => (typeof x === 'string' && x ? x : null)
 
+const HEX = /^#[0-9a-f]{6}$/i
 function parseText(t: unknown): TextOverlay | null {
   if (!t || typeof t !== 'object') return null
   const v = t as Partial<TextOverlay>
   const content = typeof v.content === 'string' ? v.content.trim().slice(0, 200) : ''
   if (!content) return null
-  return { content, position: v.position === 'top' || v.position === 'center' ? v.position : 'bottom', sizePct: clamp(v.sizePct, 2, 15, 6), animation: typeof v.animation === 'string' && v.animation in TEXT_ANIMATIONS ? v.animation : 'none' }
+  return {
+    content, position: v.position === 'top' || v.position === 'center' ? v.position : 'bottom', sizePct: clamp(v.sizePct, 2, 15, 6),
+    animation: typeof v.animation === 'string' && v.animation in TEXT_ANIMATIONS ? v.animation : 'none',
+    font: typeof v.font === 'string' && v.font in TEXT_FONTS ? v.font : 'sans',
+    color: typeof v.color === 'string' && HEX.test(v.color) ? v.color.toLowerCase() : '#ffffff',
+  }
+}
+
+function parseTextClip(t: unknown): TextClip | null {
+  const base = parseText(t)
+  const v = (t ?? {}) as Partial<TextClip>
+  if (!base || typeof v.id !== 'string' || !v.id) return null
+  return { ...base, id: v.id.slice(0, 60), startMs: Math.round(clamp(v.startMs, 0, 3 * 3600_000, 0)), durationMs: Math.round(clamp(v.durationMs, 300, MAX_CLIP_MS, 3000)) }
+}
+
+export function parseCamera(c: unknown): CameraMove | null {
+  if (!c || typeof c !== 'object') return null
+  const v = c as Partial<CameraMove>
+  if (typeof v.kind !== 'string' || !(v.kind in CAMERA_MOVES)) return null
+  return { kind: v.kind, amount: clamp(v.amount, 0.02, 0.5, 0.12) }
 }
 
 function parseAudioClip(a: unknown): AudioClip | null {
@@ -165,7 +211,7 @@ function parseAudioClip(a: unknown): AudioClip | null {
 }
 
 /** Parses whatever is stored in jsonb into a valid composition, or null. Older compositions get defaults. */
-export function parseComposition(value: unknown): Composition | null {
+export function parseComposition(value: unknown, depth = 0): Composition | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const v = value as Partial<Composition>
   if (typeof v.storyboardId !== 'string' || !Array.isArray(v.clips)) return null
@@ -193,6 +239,8 @@ export function parseComposition(value: unknown): Composition | null {
       muted: c.muted === true,
       transition: typeof c.transition === 'string' && c.transition in TRANSITIONS ? c.transition : 'fade',
       text: parseText(c.text),
+      speed: clamp(c.speed, 0.25, 4, 1),
+      camera: parseCamera(c.camera),
       ...(Array.isArray(c.cues) ? { cues: parseCues(c.cues, clampMs(Number(c.durationMs) || 5000)) } : {}),
     } satisfies Clip]
   })
@@ -221,6 +269,21 @@ export function parseComposition(value: unknown): Composition | null {
     origin: v.origin && v.origin.kind === 'repurpose' && typeof v.origin.sourceJobId === 'string' ? v.origin : null,
     editedManually: v.editedManually === true,
     autoSnapshot: parseSnapshot(v.autoSnapshot),
+    textClips: (Array.isArray(v.textClips) ? v.textClips : []).flatMap(t => { const p = parseTextClip(t); return p ? [p] : [] }).slice(0, 300),
+    exportSettings: { quality: v.exportSettings?.quality === 'high' ? 'high' : 'normal' },
+    styleRef: parseStyleRef(v.styleRef, depth),
+  }
+}
+
+function parseStyleRef(r: unknown, depth: number): StyleRef | null {
+  if (!r || typeof r !== 'object') return null
+  const v = r as Partial<StyleRef>
+  if (typeof v.profileId !== 'string' || typeof v.profileName !== 'string') return null
+  return {
+    profileId: v.profileId.slice(0, 60), profileName: v.profileName.slice(0, 80), version: Math.max(1, Math.round(Number(v.version) || 1)),
+    appliedAt: typeof v.appliedAt === 'string' ? v.appliedAt : new Date(0).toISOString(),
+    // The baseline is the automatic result as built (one level deep: a baseline never carries its own baseline).
+    baseline: depth === 0 && v.baseline ? parseComposition(v.baseline, 1) : null,
   }
 }
 
@@ -346,3 +409,11 @@ function stampMs(ms: number, sep: ',' | '.') {
 }
 export const cuesToSrt = (cues: CaptionCue[]) => cues.map((q, i) => `${i + 1}\n${stampMs(q.startMs, ',')} --> ${stampMs(q.endMs, ',')}\n${q.text}\n`).join('\n')
 export const cuesToVtt = (cues: CaptionCue[]) => `WEBVTT\n\n${cues.map(q => `${stampMs(q.startMs, '.')} --> ${stampMs(q.endMs, '.')}\n${q.text}\n`).join('\n')}`
+
+/** Preferred video bitrate for the export quality (still capped by videoBitrateFor's size budget). */
+export const preferredBitrate = (q: ExportSettings['quality'] | undefined) => (q === 'high' ? 5_000_000 : 2_500_000)
+
+/** Text clips visible at `ms` on the timeline. */
+export function activeTextClips(c: Pick<Composition, 'textClips'>, ms: number) {
+  return (c.textClips ?? []).filter(t => ms >= t.startMs && ms < t.startMs + t.durationMs)
+}
