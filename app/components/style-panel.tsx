@@ -14,7 +14,7 @@ import { loadProfiles, saveProfiles, type ProfilesState } from '@/lib/editor/pro
  *  · «Comparar con el montaje automático»: when this montage was built or re-styled by a style, lists what the owner corrected; only the corrections they tick are added to the style.
  * Rules and measurements only: nothing is learned behind the owner's back.
  */
-export function StylePanel({ composition, kindOf, onApply, refreshKey = 0 }: { composition: Composition; kindOf: (id: string | null) => VisualKind; onApply: (next: Composition, changes: string[]) => void; /** Changes when another panel saved a style (reload). */ refreshKey?: number }) {
+export function StylePanel({ composition, kindOf, onApply, refreshKey = 0, sessionStart = null }: { composition: Composition; kindOf: (id: string | null) => VisualKind; onApply: (next: Composition, changes: string[]) => void; /** Changes when another panel saved a style (reload). */ refreshKey?: number; /** The montage as it was when opened: corrections can be compared with it when there is no automatic version. */ sessionStart?: Composition | null }) {
   const supabase = getSupabaseBrowserClient()
   const [state, setState] = useState<ProfilesState>({ profiles: [], updatedAt: null, external: [], legacy: false })
   const [loaded, setLoaded] = useState(false)
@@ -31,6 +31,7 @@ export function StylePanel({ composition, kindOf, onApply, refreshKey = 0 }: { c
   // Compare
   const [corrPick, setCorrPick] = useState<Record<string, boolean>>({})
   const [confirmIncorporate, setConfirmIncorporate] = useState(false)
+  const [learnInto, setLearnInto] = useState('')
 
   const reload = useCallback(async () => {
     try { const s = await loadProfiles(supabase); setState(s); setLoaded(true) } catch (e) { setErr(e instanceof Error ? e.message : 'No se pudieron leer tus estilos.') }
@@ -80,8 +81,11 @@ export function StylePanel({ composition, kindOf, onApply, refreshKey = 0 }: { c
 
   // Compare with the automatic version this montage started from.
   const ref = composition.styleRef
-  const refProfile = ref ? all.find(p => p.id === ref.profileId) ?? null : null
-  const corrections = useMemo(() => (ref?.baseline && refProfile ? diffMontages(ref.baseline, composition, refProfile, kindOf) : []), [ref, refProfile, composition, kindOf])
+  // Without a style-built automatic version, the owner compares with the montage as it was when opened, and picks the style to teach.
+  const openRef = !ref && sessionStart ? { profileId: learnInto, profileName: all.find(p => p.id === learnInto)?.name ?? '', version: all.find(p => p.id === learnInto)?.version ?? 1, appliedAt: '', baseline: sessionStart } : null
+  const cmp = ref ?? openRef
+  const refProfile = cmp ? all.find(p => p.id === cmp.profileId) ?? null : null
+  const corrections = useMemo(() => (cmp?.baseline && refProfile ? diffMontages(cmp.baseline, composition, refProfile, kindOf) : []), [cmp?.baseline, refProfile, composition, kindOf])
   const learnable = corrections.filter(c => c.patches.length)
   const picked = learnable.filter(c => corrPick[c.id])
 
@@ -135,11 +139,16 @@ export function StylePanel({ composition, kindOf, onApply, refreshKey = 0 }: { c
       </div>
     </div>
 
-    {ref && <div className="styleBox" aria-label="Comparar con el montaje automático" style={{ marginTop: 12 }}>
-      <h4>Comparar con el montaje automático</h4>
-      <p className="muted small">Montaje creado con «{ref.profileName}» v{ref.version} el {new Date(ref.appliedAt).toLocaleString()}. Estos son tus cambios desde entonces; solo se añaden al estilo los que marques.</p>
-      {!ref.baseline ? <p className="muted small">No se guardó el montaje automático de partida.</p>
-        : !refProfile ? <p className="muted small">El estilo «{ref.profileName}» ya no existe.</p>
+    {cmp === openRef && sessionStart && <div className="styleBox" aria-label="Aprender de mis correcciones" style={{ marginTop: 12 }}>
+      <h4>Aprender de mis correcciones</h4>
+      <p className="muted small">Compara este montaje con cómo estaba al abrirlo y lleva a un estilo solo los cambios que marques.</p>
+      <label>Estilo al que enseñar<select aria-label="Estilo al que enseñar" value={learnInto} onChange={e => { setLearnInto(e.target.value); setCorrPick({}); setConfirmIncorporate(false) }}><option value="">— Elige</option>{[...state.profiles, ...presets].map(p => <option key={p.id} value={p.id}>{p.name}{p.source === 'preset' ? ' (plantilla)' : ` · v${p.version}`}</option>)}</select></label>
+    </div>}
+    {cmp && (cmp === ref || learnInto) && <div className="styleBox" aria-label="Comparar con el montaje automático" style={{ marginTop: 12 }}>
+      <h4>{cmp === ref ? 'Comparar con el montaje automático' : 'Mis correcciones desde que lo abrí'}</h4>
+      {cmp === ref && <p className="muted small">Montaje creado con «{ref.profileName}» v{ref.version} el {new Date(ref.appliedAt).toLocaleString()}. Estos son tus cambios desde entonces; solo se añaden al estilo los que marques.</p>}
+      {!cmp.baseline ? <p className="muted small">No se guardó el montaje automático de partida.</p>
+        : !refProfile ? <p className="muted small">El estilo «{cmp.profileName}» ya no existe.</p>
         : corrections.length === 0 ? <p className="muted small">Todavía no has corregido nada.</p>
         : <>
           <ul className="plainList small">{corrections.map(c => <li key={c.id}>

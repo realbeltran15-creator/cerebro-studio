@@ -21,6 +21,7 @@ import { EditorComparePanel } from '../../components/editor-compare-panel'
 import { analyzeAsset, type AssetAnalysis } from '@/lib/editor/analysis-assets'
 import { nearestBeat } from '@/lib/editor/sync'
 import { COMMAND_EXAMPLES, runInstruction } from '@/lib/editor/commands'
+import { acceptProposal, DEFAULT_PREFS, detectCorrection, loadPrefs, PREF_LABELS, savePrefs, type EditPreferences, type Proposal, type Watch } from '@/lib/editor/preferences'
 import { deleteRange, isolateRange, normRange, type Range } from '@/lib/editor/range'
 import { effectiveCamera } from '@/lib/editor/motion'
 import { ManualPicker } from '../../components/manual-picker'
@@ -67,6 +68,13 @@ export default function ManualEditorPage() {
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null)
   const [instruction, setInstruction] = useState('')
   const [instructionLog, setInstructionLog] = useState<Array<{ text: string; done: string[] }>>([])
+  // Preferences used by the instruction bar; a proposal appears when the owner corrects the result of an instruction by hand.
+  const [prefs, setPrefs] = useState<EditPreferences>(DEFAULT_PREFS)
+  const [prefsAt, setPrefsAt] = useState<string | null>(null)
+  const [watches, setWatches] = useState<Watch[]>([])
+  const [proposal, setProposal] = useState<Proposal | null>(null)
+  // How the montage was when it was opened: corrections can be compared with it even without an automatic version.
+  const [sessionStart, setSessionStart] = useState<Composition | null>(null)
   const [matTab, setMatTab] = useState<'visual' | 'audio'>('visual')
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
@@ -100,6 +108,20 @@ export default function ManualEditorPage() {
 
   const measureView = useCallback(() => { const el = scroller.current; if (el) setView(v => (v.left === el.scrollLeft && v.width === el.clientWidth ? v : { left: el.scrollLeft, width: el.clientWidth })) }, [])
   const loaded = history !== null
+  useEffect(() => { void loadPrefs(supabase).then(r => { setPrefs(r.prefs); setPrefsAt(r.updatedAt) }).catch(() => undefined) }, [supabase])
+  useEffect(() => { if (history && !sessionStart) setSessionStart(history.present) }, [history, sessionStart])
+  useEffect(() => {
+    if (!comp || proposal || !watches.length) return
+    for (const w of watches) { const p = detectCorrection(comp, w); if (p) { setProposal(p); return } }
+  }, [comp, watches, proposal])
+  async function answerProposal(yes: boolean) {
+    const p = proposal
+    if (!p) return
+    setProposal(null); setWatches(ws => ws.filter(w => w !== p.watch))
+    if (!yes) return
+    try { const next = acceptProposal(prefs, p); const at = await savePrefs(supabase, next, prefsAt); setPrefs(next); setPrefsAt(at); setNotice(`Preferencia guardada: ${PREF_LABELS[p.key].label} = ${PREF_LABELS[p.key].show(p.to)}. Se usará la próxima vez que pidas «${PREF_LABELS[p.key].phrase}».`) }
+    catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar la preferencia.') }
+  }
   useEffect(() => { measureView(); window.addEventListener('resize', measureView); return () => window.removeEventListener('resize', measureView) }, [measureView, loaded])
 
   const load = useCallback(async () => {
@@ -179,12 +201,13 @@ export default function ManualEditorPage() {
     const r = runInstruction(history.present, text, {
       playheadMs, range, selectedClipId: selection?.kind === 'clip' ? selection.id : null, selectedAssetId: selectedAsset, beatsMs: beats.beatsMs,
       assets: assets.map(a => ({ id: a.id, label: assetLabel(a), type: a.asset_type, durationMs: durationOf(a.id) })),
-      isVideo: k => kinds[k.visualAssetId ?? ''] === 'video',
+      isVideo: k => kinds[k.visualAssetId ?? ''] === 'video', prefs,
     })
     if (!r.ok) { setError(`${r.message} Ejemplos: «${COMMAND_EXAMPLES.slice(0, 4).join('», «')}».`); return }
     setError('')
     apply(() => r.composition)
     setInstructionLog(l => [{ text, done: r.done }, ...l].slice(0, 8))
+    if (r.watch?.length) setWatches(ws => [...r.watch!, ...ws].slice(0, 20))
     setNotice(`${r.done.join(' ')} (Ctrl+Z para deshacer)`)
     setInstruction('')
   }
@@ -365,6 +388,13 @@ export default function ManualEditorPage() {
         <datalist id="ed-instr-examples">{COMMAND_EXAMPLES.map(x => <option key={x} value={x} />)}</datalist>
         <button type="submit" disabled={!instruction.trim()}>Hacer</button>
       </div>
+      {proposal && <div className="styleBox" role="group" aria-label="Propuesta de preferencia" style={{ marginTop: 8 }}>
+        <span className="small">Has cambiado «{PREF_LABELS[proposal.key].phrase}» de <b>{PREF_LABELS[proposal.key].show(proposal.from)}</b> a <b>{PREF_LABELS[proposal.key].show(proposal.to)}</b>. ¿Uso {PREF_LABELS[proposal.key].show(proposal.to)} la próxima vez?</span>
+        <div className="pageActions"><button type="button" className="small" onClick={() => void answerProposal(true)}>Guardar como preferencia</button><button type="button" className="ghost small" onClick={() => void answerProposal(false)}>No, solo esta vez</button></div>
+      </div>}
+      <details className="small"><summary>Mis preferencias ({prefs.history.length} cambios confirmados)</summary>
+        <ul className="plainList">{(Object.keys(PREF_LABELS) as Array<keyof typeof PREF_LABELS>).map(k => <li key={k}>{PREF_LABELS[k].label}: <b>{PREF_LABELS[k].show(prefs[k])}</b>{prefs[k] !== DEFAULT_PREFS[k] ? <span className="muted"> (por defecto {PREF_LABELS[k].show(DEFAULT_PREFS[k])})</span> : null}</li>)}</ul>
+      </details>
       {instructionLog.length > 0 && <details className="small"><summary>Últimas instrucciones ({instructionLog.length})</summary><ul className="plainList">{instructionLog.map((l, i) => <li key={i}><button type="button" className="ghost small" onClick={() => runText(l.text)} title="Repetir">↻</button> «{l.text}» → {l.done.join(' ')}</li>)}</ul></details>}
     </form>
 
@@ -529,7 +559,7 @@ export default function ManualEditorPage() {
     <EditorSyncPanel comp={comp} assets={assets} beats={beats} showBeats={showBeats} setShowBeats={setShowBeats} snap={snap} setSnap={setSnap} toleranceMs={toleranceMs} setToleranceMs={setToleranceMs}
       isVideo={k => typeOf(k.visualAssetId) === 'video'} apply={apply} onNotice={setNotice} />
     <EditorSubtitlesPanel comp={comp} apply={apply} onNotice={setNotice} />
-    <StylePanel composition={comp} kindOf={kindOf} refreshKey={stylesKey} onApply={(next, changes) => { apply(() => next); setNotice(`${changes.join(' ')} (puedes deshacerlo)`) }} />
+    <StylePanel composition={comp} kindOf={kindOf} refreshKey={stylesKey} sessionStart={sessionStart} onApply={(next, changes) => { apply(() => next); setNotice(`${changes.join(' ')} (puedes deshacerlo)`) }} />
     <MontageTemplatePanel composition={comp} typeOf={id => assets.find(a => a.id === id)?.asset_type ?? 'other'} />
     <EditorReferencePanel comp={comp} kindOf={kindOf} beatsMs={beats.beatsMs} apply={apply} onNotice={setNotice} onStylesChanged={() => setStylesKey(k => k + 1)} />
     <EditorComparePanel comp={comp} jobId={job.id} projectId={job.project_id} beatsMs={beats.beatsMs} />

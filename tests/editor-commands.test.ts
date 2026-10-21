@@ -116,3 +116,27 @@ describe('audio mix and automation', () => {
     expect(m.envelope).toEqual([{ atMs: 4700, gain: 1 }, { atMs: 5000, gain: 0.4 }, { atMs: 9000, gain: 0.4 }, { atMs: 9300, gain: 1 }])
   })
 })
+
+describe('preferences learned from corrections (with confirmation)', () => {
+  it('an instruction is watched; a deliberate correction becomes a proposal; accepting changes the next result', async () => {
+    const { detectCorrection, acceptProposal, DEFAULT_PREFS, parsePrefs } = await import('@/lib/editor/preferences')
+    const r = run('haz un zoom lento', { selectedClipId: 'a' })
+    expect(r.ok && r.watch).toEqual([{ key: 'zoomSlow', value: 0.08, target: { kind: 'clips', ids: ['a'] } }])
+    if (!r.ok) return
+    expect(detectCorrection(r.composition, r.watch![0])).toBeNull()
+    const corrected = { ...r.composition, clips: r.composition.clips.map(k => (k.id === 'a' ? { ...k, camera: { kind: 'zoom_in' as const, amount: 0.05 } } : k)) }
+    const p = detectCorrection(corrected, r.watch![0])!
+    expect(p).toMatchObject({ key: 'zoomSlow', from: 0.08, to: 0.05 })
+    const prefs = acceptProposal(DEFAULT_PREFS, p, 't')
+    expect(prefs.zoomSlow).toBe(0.05); expect(prefs.history).toEqual([{ at: 't', key: 'zoomSlow', from: 0.08, to: 0.05 }])
+    const again = run('haz un zoom lento', { selectedClipId: 'c', prefs })
+    expect(again.ok && again.composition.clips.find(k => k.id === 'c')!.camera?.amount).toBe(0.05)
+    expect(parsePrefs({ zoomSlow: 9, musicVolume: 'x' })).toMatchObject({ zoomSlow: 0.5, musicVolume: 0.3 })
+  })
+  it('music placed without a volume is watched, with a volume it is not', () => {
+    const a = run('pon esta música desde el segundo 1', { selectedAssetId: 'mus2' })
+    expect(a.ok && a.watch?.[0]).toMatchObject({ key: 'musicVolume', value: 0.3, target: { kind: 'audio' } })
+    const b = run('pon esta música desde el segundo 1 al 50 %', { selectedAssetId: 'mus2' })
+    expect(b.ok && b.watch).toEqual([])
+  })
+})

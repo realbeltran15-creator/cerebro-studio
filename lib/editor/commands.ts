@@ -9,6 +9,7 @@
 import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type CameraKind, type Clip, type Composition, type OutputFormat, type Transition } from './composition'
 import { addAudioClip, addTextClip, deleteClip, duplicateClip, setLevelBetween, setSpeed, splitClip, updateClip } from './timeline'
 import { clipIdsInRange, deleteRange, isolateRange, type Range } from './range'
+import { DEFAULT_PREFS, type EditPreferences, type Watch } from './preferences'
 
 export type CommandAsset = { id: string; label: string; type: string; durationMs?: number | null }
 export type CommandContext = {
@@ -20,8 +21,10 @@ export type CommandContext = {
   assets: CommandAsset[]
   beatsMs: readonly number[]
   isVideo: (clip: Clip) => boolean
+  /** The owner's confirmed preferences (defaults when absent). */
+  prefs?: EditPreferences
 }
-export type CommandResult = { ok: true; composition: Composition; done: string[] } | { ok: false; message: string }
+export type CommandResult = { ok: true; composition: Composition; done: string[]; /** Values set by default, watched to propose a preference if the owner corrects them. */ watch?: Watch[] } | { ok: false; message: string }
 
 export const COMMAND_EXAMPLES = [
   'corta aquí', 'corta en 1:20', 'borra este fragmento', 'duplica el clip',
@@ -100,18 +103,22 @@ export function runInstruction(c0: Composition, text: string, ctx: CommandContex
   if (!parts.length) return { ok: false, message: 'Escribe una instrucción.' }
   let c = c0
   const done: string[] = []
+  const watch: Watch[] = []
   for (const part of parts) {
     const r = runOne(c, part, ctx)
     if (!r.ok) return { ok: false, message: parts.length > 1 ? `«${part}»: ${r.message}` : r.message }
-    c = r.composition; done.push(...r.done)
+    c = r.composition; done.push(...r.done); watch.push(...(r.watch ?? []))
   }
-  return { ok: true, composition: c, done }
+  return { ok: true, composition: c, done, watch }
 }
 
 function runOne(c: Composition, text: string, ctx: CommandContext): CommandResult {
   const s = fold(text)
   const total = totalDurationMs(c)
-  const ok = (composition: Composition, ...d: string[]): CommandResult => ({ ok: true, composition, done: d })
+  const P = ctx.prefs ?? DEFAULT_PREFS
+  let watch: Watch[] = []
+  const ok = (composition: Composition, ...d: string[]): CommandResult => ({ ok: true, composition, done: d, watch })
+  const newId = <T extends { id: string }>(before: T[] | undefined, after: T[] | undefined) => (after ?? []).find(x => !(before ?? []).some(y => y.id === x.id))?.id
   const fail = (message: string): CommandResult => ({ ok: false, message })
 
   // ---- Texts and titles: «pon el título "X" en el segundo 5 durante 3 segundos (arriba)»
@@ -119,10 +126,14 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
     const content = /[«"“']([^»"”']+)[»"”']/.exec(text)?.[1]?.trim()
     if (!content) return fail('Pon el texto entre comillas, por ejemplo: pon el título «Capítulo 1».')
     const at = timeAfter(s, /\b(?:en|desde|a partir de)\b(?: el)?/) ?? ctx.range?.startMs ?? ctx.playheadMs
-    const dur = timeAfter(s, /\bdurante\b/) ?? (ctx.range ? ctx.range.endMs - ctx.range.startMs : 3000)
+    const givenDur = timeAfter(s, /\bdurante\b/) ?? (ctx.range ? ctx.range.endMs - ctx.range.startMs : null)
+    const dur = givenDur ?? P.textMs
     const position = /\barriba\b/.test(s) ? 'top' : /\babajo\b/.test(s) ? 'bottom' : 'center'
     const isTitle = /\btitulo\b/.test(s)
-    return ok(addTextClip(c, { content, startMs: Math.min(at, Math.max(0, total - 300)), durationMs: dur, position, sizePct: isTitle ? 10 : 6, animation: 'fade', font: 'sans', color: '#ffffff' }),
+    const next = addTextClip(c, { content, startMs: Math.min(at, Math.max(0, total - 300)), durationMs: dur, position, sizePct: isTitle ? P.titleSizePct : P.textSizePct, animation: 'fade', font: 'sans', color: '#ffffff' })
+    const tid = newId(c.textClips, next.textClips)
+    if (tid) watch = [...(givenDur === null ? [{ key: 'textMs' as const, value: dur, target: { kind: 'text' as const, id: tid, field: 'durationMs' as const } }] : []), { key: isTitle ? 'titleSizePct' as const : 'textSizePct' as const, value: isTitle ? P.titleSizePct : P.textSizePct, target: { kind: 'text' as const, id: tid, field: 'sizePct' as const } }]
+    return ok(next,
       `${isTitle ? 'Título' : 'Texto'} «${content}» en ${fmt(at)} durante ${fmt(dur)}.`)
   }
 
@@ -140,8 +151,12 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
     const end = /\bhasta el final\b/.test(s) ? total : timeAfter(s, /\bhasta\b(?: el)?/) ?? (ctx.range && !/\bdesde\b/.test(s) ? ctx.range.endMs : null)
     const own = a.durationMs ?? null
     const durationMs = Math.max(500, Math.min(end !== null ? end - start : own ?? total - start, total - start, own ?? Infinity))
-    const vol = percent(s) ?? (kind === 'music' ? 0.3 : 1)
-    return ok(addAudioClip(c, { assetId: a.id, kind, linkedClipId: null, offsetMs: 0, startMs: start, trimInMs: 0, durationMs, volume: vol, muted: false }),
+    const prefKey = kind === 'music' ? 'musicVolume' as const : kind === 'voice' ? 'voiceVolume' as const : 'sfxVolume' as const
+    const vol = percent(s) ?? P[prefKey]
+    const next = addAudioClip(c, { assetId: a.id, kind, linkedClipId: null, offsetMs: 0, startMs: start, trimInMs: 0, durationMs, volume: vol, muted: false })
+    const aid = newId(c.audioClips, next.audioClips)
+    if (aid && percent(s) === null) watch = [{ key: prefKey, value: vol, target: { kind: 'audio', id: aid } }]
+    return ok(next,
       `${kind === 'music' ? 'Música' : kind === 'voice' ? 'Voz' : 'Efecto'} «${a.label}» de ${fmt(start)} a ${fmt(start + durationMs)} al ${Math.round(vol * 100)} %.`)
   }
 
@@ -232,10 +247,12 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
   if (cam) {
     const sc = scope(c, s, ctx)
     if (!sc.ids.length) return fail('Selecciona un clip, marca un fragmento o pon el cabezal sobre un clip.')
-    const amount = /\b(muy lento|muy suave)\b/.test(s) ? 0.05 : /\b(lento|suave|ligero|poco)\b/.test(s) ? 0.08 : /\b(rapido|fuerte|intenso|mucho|dramatico)\b/.test(s) ? 0.25 : 0.12
+    const speedKey = /\b(muy lento|muy suave)\b/.test(s) ? null : /\b(lento|suave|ligero|poco)\b/.test(s) ? 'zoomSlow' as const : /\b(rapido|fuerte|intenso|mucho|dramatico)\b/.test(s) ? 'zoomFast' as const : 'zoomNormal' as const
+    const amount = speedKey ? P[speedKey] : Math.max(0.02, P.zoomSlow * 0.6)
     const ids = new Set(sc.ids)
+    if (speedKey && cam !== 'none') watch = [{ key: speedKey, value: amount, target: { kind: 'clips', ids: sc.ids } }]
     return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, camera: { kind: cam, amount } } : k)) },
-      cam === 'none' ? `Sin movimiento de cámara en ${sc.label}.` : `${({ zoom_in: 'Zoom', zoom_out: 'Alejamiento', pan_left: 'Panorámica a la izquierda', pan_right: 'Panorámica a la derecha', pan_up: 'Subida de cámara', pan_down: 'Bajada de cámara' } as Record<string, string>)[cam]} ${amount <= 0.08 ? 'lento' : amount >= 0.25 ? 'rápido' : ''} en ${sc.label}.`.replace(/\s+en/, ' en'))
+      cam === 'none' ? `Sin movimiento de cámara en ${sc.label}.` : `${({ zoom_in: 'Zoom', zoom_out: 'Alejamiento', pan_left: 'Panorámica a la izquierda', pan_right: 'Panorámica a la derecha', pan_up: 'Subida de cámara', pan_down: 'Bajada de cámara' } as Record<string, string>)[cam]} ${speedKey === 'zoomSlow' || !speedKey ? 'lento' : speedKey === 'zoomFast' ? 'rápido' : ''} en ${sc.label}.`.replace(/\s+en/, ' en'))
   }
 
   // ---- Transitions
