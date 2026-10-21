@@ -13,6 +13,14 @@ Preparado por Claude. **No se ha enviado ninguna solicitud de verificación ni s
 
 El correo de contacto se muestra si existe `NEXT_PUBLIC_CONTACT_EMAIL`; está pendiente de que el propietario decida cuál usar.
 
+> **Bloqueo comprobado el 21-10-2026: la Preview está protegida por «Vercel Authentication».**
+> - Un visitante sin sesión en Vercel recibe un 302 hacia el inicio de sesión de Vercel, en todas las páginas, también en `/legal/*` y `/api/meta/*`.
+> - Por tanto, los revisores de Google, Meta y TikTok **no pueden ver** estas páginas en la Preview, y Meta **no puede llamar** a los callbacks.
+> - Producción (`https://cerebro-studio.vercel.app`) sí es pública (200), pero sigue en `main` sin estas páginas.
+> - Hay dos salidas, ambas decisión del propietario:
+>   - publicar estas páginas en Producción (merge o despliegue de `main`);
+>   - quitar la protección de las Preview en Vercel → Settings → Deployment Protection, cosa que expone todas las ramas de Preview.
+
 ---
 
 ## 1. Google OAuth (YouTube)
@@ -193,4 +201,5 @@ Ninguno es restringido, así que **no hace falta la evaluación de seguridad CAS
 2. **Google:** poner los enlaces de página principal, privacidad y términos en la pantalla de consentimiento (cambio que no afecta a los usuarios).
 3. **Correo de contacto público:** valor de `NEXT_PUBLIC_CONTACT_EMAIL` para las páginas legales.
 4. **Meta y TikTok:** crear las apps y añadir sus credenciales en Vercel (Preview).
-5. **Dominio propio y despliegue en Producción:** solo si se va a pedir la verificación de Google o la auditoría de TikTok.
+5. **Hacer públicas las páginas legales y los callbacks de Meta** (hoy la Preview exige iniciar sesión en Vercel): desplegarlas en Producción o quitar la protección de las Preview. Hace falta antes de cualquier revisión y antes de configurar los callbacks en Meta.
+6. **Dominio propio:** solo si se va a pedir la verificación de Google o la auditoría de TikTok.
