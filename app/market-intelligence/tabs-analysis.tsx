@@ -6,6 +6,7 @@ import { GuidedPanel } from './guided-panel'
 import { useResearch } from './research-context'
 import { keyOf, marketLabel } from '@/lib/research/markets'
 import { keywordsCsv } from '@/lib/research/export'
+import { PatternsPanel } from './patterns-panel'
 import { fmtNumber } from '@/lib/research/format'
 import { analysisExclusions, forTab, type TabId } from '@/lib/research/filters'
 import type { TopicAnalysis } from '@/lib/research/topic-analysis'
@@ -100,6 +101,7 @@ function KeywordDetail({ a }: { a: TopicAnalysis }) {
       <article><h3>Shorts y vídeos largos</h3><p className="small">Shorts (inferidos por duración): {a.byFormat.short.count} entre los más vistos, {a.byFormat.short.recentCount} recientes · mediana {a.byFormat.short.medianViewsPerDay ?? '—'} vistas/día.</p><p className="small">Vídeos de más de 1 min: {a.byFormat.long.count} entre los más vistos, {a.byFormat.long.recentCount} recientes · mediana {a.byFormat.long.medianViewsPerDay ?? '—'} vistas/día.</p></article>
     </div>
     <button type="button" className="ghost" onClick={() => { const url = URL.createObjectURL(new Blob([`﻿${keywordsCsv(a)}`], { type: 'text/csv;charset=utf-8' })); const l = document.createElement('a'); l.href = url; l.download = `palabras-clave-${a.topic.replace(/\W+/g, '-')}.csv`; l.click(); URL.revokeObjectURL(url) }} style={{ marginTop: 10 }}>Exportar palabras clave (CSV)</button>
+    <PatternsPanel a={a} />
   </div>
 }
 
