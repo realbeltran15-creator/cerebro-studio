@@ -421,7 +421,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/editor/style', 'app/editor/style/page', '/editor/style'], ['/editor/styles', 'app/editor/styles/page', '/editor/styles'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
+    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/editor/style', 'app/editor/style/page', '/editor/style'], ['/editor/styles', 'app/editor/styles/page', '/editor/styles'], ['/editor/templates', 'app/editor/templates/page', '/editor/templates'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   for (const [name, mod, url, params] of pages) {
@@ -1425,6 +1425,32 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   await say('haz magia')
   check('instructions: an unknown instruction is reported with examples, nothing changes', (await page.getByText(/No he entendido la instrucción\. Ejemplos/).count()) === 1 && (await clips.count()) === n)
   check('instructions: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 20. Plantillas de montaje: a saved structure filled with other files becomes a new draft with the same tracks and timing.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/editor/templates/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const tpl = { kind: 'montage_template', id: 'tpl-1', name: 'Mi Short', createdAt: '2026-10-21T00:00:00Z', slots: [{ key: 'slot:visual-1', kind: 'visual', label: 'Visual 1', uses: 2, sourceType: 'image', needsMs: 3000 }, { key: 'slot:music-1', kind: 'music', label: 'Música 1', uses: 1, sourceType: 'music', needsMs: 6000 }],
+    composition: { version: 1, storyboardId: 's', title: 'Mi Short', format: '9:16', fadeMs: 300, clips: [{ id: 'a', sceneId: 'a', position: 1, durationMs: 3000, visualAssetId: 'slot:visual-1', transition: 'wipe' }, { id: 'b', sceneId: 'b', position: 2, durationMs: 3000, visualAssetId: 'slot:visual-1' }], audioClips: [{ id: 'm', assetId: 'slot:music-1', kind: 'music', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 6000, volume: 0.4, muted: false }], textClips: [{ id: 't', content: 'HOLA', startMs: 0, durationMs: 2000, position: 'center', sizePct: 9 }] } }
+  const seed = `
+window.__DB.render_jobs = []
+window.__DB.connector_configs = [{ id: 'cc1', owner_id: 'u1', provider: 'cerebro-editor', capability: 'montage_templates', enabled: true, priority: 0, config: { templates: [${JSON.stringify(tpl)}] }, updated_at: '2026-10-21T00:00:00Z' }]
+window.__DB.assets.push({ id: 'img9', owner_id: 'u1', project_id: 'p1', asset_type: 'image', storage_path: 'u1/p1/i.png', license_status: 'owned', provenance: { title: 'Playa' }, created_at: '2026-10-02T00:00:00Z' })
+window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_type: 'music', storage_path: 'u1/p1/m.mp3', license_status: 'owned', provenance: { title: 'Ritmo' }, created_at: '2026-10-02T00:00:00Z' })`
+  const server = serve(8813, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + seed, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8813/editor/templates?project=p1')
+  await page.getByLabel('Archivo para Visual 1').selectOption('img9')
+  await page.getByLabel('Archivo para Música 1').selectOption('mus9')
+  await page.getByRole('button', { name: 'Crear montaje con esta plantilla' }).click()
+  await page.getByText(/Montaje creado con la plantilla «Mi Short»/).waitFor({ timeout: 10000 })
+  const c = (await page.evaluate(() => window.__DB.render_jobs))[0]?.composition
+  check('templates: the new montage keeps the structure with my files', c && c.format === '9:16' && c.clips.map(k => k.visualAssetId).join() === 'img9,img9' && c.clips[0].transition === 'wipe' && c.audioClips[0].assetId === 'mus9' && c.audioClips[0].volume === 0.4 && c.textClips[0].content === 'HOLA', c)
+  check('templates: opens in the manual editor', (await page.getByRole('link', { name: /Abrir en el editor manual/ }).count()) === 1)
+  check('templates: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 

@@ -10,6 +10,7 @@ import { addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, 
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
+import { MontageTemplatePanel } from '../../components/montage-template-panel'
 import { LearnPanel } from '../../components/learn-panel'
 import { WaveformSvg } from '../../components/waveform-view'
 import { EditorSyncPanel } from '../../components/editor-sync-panel'
@@ -526,6 +527,7 @@ export default function ManualEditorPage() {
       isVideo={k => typeOf(k.visualAssetId) === 'video'} apply={apply} onNotice={setNotice} />
     <EditorSubtitlesPanel comp={comp} apply={apply} onNotice={setNotice} />
     <StylePanel composition={comp} kindOf={kindOf} refreshKey={stylesKey} onApply={(next, changes) => { apply(() => next); setNotice(`${changes.join(' ')} (puedes deshacerlo)`) }} />
+    <MontageTemplatePanel composition={comp} typeOf={id => assets.find(a => a.id === id)?.asset_type ?? 'other'} />
     <EditorReferencePanel comp={comp} kindOf={kindOf} beatsMs={beats.beatsMs} apply={apply} onNotice={setNotice} onStylesChanged={() => setStylesKey(k => k + 1)} />
     <EditorComparePanel comp={comp} jobId={job.id} projectId={job.project_id} beatsMs={beats.beatsMs} />
     <LearnPanel composition={comp} beatsMs={beats.beatsMs} refreshKey={stylesKey} kindOf={kindOf}
