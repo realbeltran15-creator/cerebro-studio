@@ -1331,6 +1331,9 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
   check('motion: slide brings the next clip in from the right', red(slide.left) && blue(slide.right) && blue(slide.after), slide)
   const dissolve = await page.evaluate(() => window.runMotion('dissolve'))
   check('motion: dissolve mixes both clips (no black frame)', dissolve.mid[0] > 60 && dissolve.mid[2] > 60, dissolve)
+  const cam = await page.evaluate(() => window.runCamera())
+  check('motion: a pan right starts on the left of the image and ends on the right', red(cam.start) && blue(cam.end), cam)
+  check('motion: a coloured title on the text track shows only during its own time', cam.title > 500 && cam.titleGone === 0, cam)
   await page.close(); server.close()
 }
 

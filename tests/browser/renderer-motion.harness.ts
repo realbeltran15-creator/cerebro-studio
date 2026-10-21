@@ -23,3 +23,25 @@ async function img(color: string) { const oc = new OffscreenCanvas(1600, 900); c
   } })
   return s
 }
+
+/** Pans right across an image whose left half is red and right half blue; a yellow title sits on the text track for the first second. */
+;(window as any).runCamera = async () => {
+  const oc = new OffscreenCanvas(1600, 900); const x = oc.getContext('2d')!
+  x.fillStyle = '#ff0000'; x.fillRect(0, 0, 800, 900); x.fillStyle = '#0000ff'; x.fillRect(800, 0, 800, 900)
+  const media = new Map<string, any>([['split', { kind: 'image', blob: await oc.convertToBlob({ type: 'image/png' }) }]])
+  const base = emptyComposition('sb', 'Cámara')
+  base.fadeMs = 0; base.subtitles = false
+  base.clips = [{ id: 'a', sceneId: 'a', position: 1, narration: null, visualAssetId: 'split', voiceAssetId: null, durationMs: 2500, motion: 'none', camera: { kind: 'pan_right', amount: 0.5 } }]
+  base.textClips = [{ id: 't', content: 'TÍTULO', startMs: 0, durationMs: 1000, position: 'top', sizePct: 12, color: '#ffff00', font: 'condensed', animation: 'none' }]
+  const comp = parseComposition(JSON.parse(JSON.stringify(base)))!
+  const canvas = document.createElement('canvas')
+  const ctx = () => canvas.getContext('2d')!
+  const px = (fx: number, fy: number) => { const d = ctx().getImageData(Math.floor(canvas.width * fx), Math.floor(canvas.height * fy), 1, 1).data; return [d[0], d[1], d[2]] }
+  const yellow = () => { const d = ctx().getImageData(0, 0, canvas.width, Math.floor(canvas.height * 0.3)).data; let n = 0; for (let k = 0; k < d.length; k += 4) if (d[k] > 200 && d[k + 1] > 200 && d[k + 2] < 80) n++; return n }
+  const s: Record<string, unknown> = {}
+  await renderComposition({ composition: comp, canvas, media, record: false, onProgress: t => {
+    if (s.start === undefined && t > 150 && t < 500) { s.start = px(0.62, 0.6); s.title = yellow() }
+    if (s.end === undefined && t > 2150 && t < 2450) { s.end = px(0.38, 0.6); s.titleGone = yellow() }
+  } })
+  return s
+}
