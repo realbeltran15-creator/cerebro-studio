@@ -13,16 +13,22 @@ export class ProfilesConflictError extends Error {
   constructor() { super('Tus estilos cambiaron en otra pestaña o dispositivo. Recarga para ver la versión actual antes de guardar.') }
 }
 
-export type ProfilesState = { profiles: EditProfile[]; updatedAt: string | null; /** Styles of the first «Aprende de mí» version, shown converted until the owner saves. */ legacy: boolean }
+export type ProfilesState = {
+  profiles: EditProfile[]; updatedAt: string | null
+  /** Styles recorded with «Aprende de mí» or measured from a reference video (the other style store), converted on the fly: usable, never saved here unless the owner copies one. */
+  external: EditProfile[]
+  /** Kept for compatibility: true when the owner has no saved profiles yet but has «Aprende de mí» styles. */
+  legacy: boolean
+}
 
 export async function loadProfiles(db: SupabaseClient): Promise<ProfilesState> {
   const { data, error } = await db.from('connector_configs').select('config,updated_at').eq('provider', KEY.provider).eq('capability', KEY.capability).maybeSingle()
   if (error) throw new Error(error.message)
   const row = data as { config?: { profiles?: unknown[] }; updated_at?: string } | null
   const profiles = (row?.config?.profiles ?? []).flatMap(p => { const x = parseProfile(p); return x ? [x] : [] })
-  if (row) return { profiles, updatedAt: row.updated_at ?? null, legacy: false }
   const old = await loadStyles(db).catch(() => [])
-  return { profiles: old.map(fromLegacyStyle), updatedAt: null, legacy: old.length > 0 }
+  const external = old.map(fromLegacyStyle).filter(e => !profiles.some(p => p.id === e.id))
+  return { profiles, updatedAt: row?.updated_at ?? null, external, legacy: !row && old.length > 0 }
 }
 
 export async function saveProfiles(db: SupabaseClient, profiles: EditProfile[], prevUpdatedAt: string | null): Promise<string> {

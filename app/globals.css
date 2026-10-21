@@ -448,3 +448,19 @@ textarea.viText{width:100%;min-height:70px}
 .wfStep.failed .wfDot,.wfStep.blocked .wfDot{background:var(--bad)} .wfStep.done{color:var(--text)}
 .workflowDetail table{width:100%;border-collapse:collapse} .workflowDetail td,.workflowDetail th{padding:6px 8px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
 @media (max-width:720px){.workflowSteps{grid-template-columns:repeat(4,1fr)}.workflowDetail td:nth-child(3){display:none}}
+/* Manual editor: materials | viewer | properties, multitrack timeline below */
+.editorLayout{display:grid;grid-template-columns:250px minmax(0,1fr) 340px;gap:12px;margin-bottom:12px;align-items:start}
+.editorMaterials{display:flex;flex-direction:column;gap:8px;max-height:640px;overflow:auto}
+.editorProps{max-height:640px;overflow:auto}
+.materialList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.materialList li[draggable]{display:flex;gap:8px;align-items:center;padding:4px;border-radius:8px;border:1px solid var(--line);cursor:grab;background:var(--panel-2)}
+.materialList li[draggable]:hover{border-color:var(--line-2)}
+.matThumb{flex:none;width:52px;height:32px;border-radius:5px;display:grid;place-items:center;color:#fff;font-size:12px}
+.matName{display:flex;flex-direction:column;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#ff5a6e;pointer-events:none;z-index:2}
+.stylePanel{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.styleGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.styleBox{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.styleBox h4{margin:0}
+.styleResult ul{margin:4px 0 8px 18px}
+@media (max-width:1100px){.editorLayout{grid-template-columns:1fr}.editorMaterials,.editorProps{max-height:none}.styleGrid{grid-template-columns:1fr}}

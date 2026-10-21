@@ -155,7 +155,7 @@ export default function AutoEditPage() {
         <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={useCaptions} disabled={!subtitle} onChange={e => setUseCaptions(e.target.checked)} /> Subtítulos de la transcripción</label>
         {videoId && !subtitle && <button type="button" className="ghost" disabled={busy} onClick={() => void transcribeNow()}>Transcribir para subtítulos</button>}
       </div>
-      {styles.length === 0 && <p className="muted small">Consejo: en el <Link className="open" href="/editor">editor manual</Link> pulsa «Grabar mi forma de editar» y Cerebro aprenderá tu estilo para aplicarlo aquí.</p>}
+      <p className="muted small">Para montar varios vídeos, imágenes, música y voz con uno de tus estilos usa <Link className="open" href={`/editor/style?project=${projectId}`}>Editar con mi estilo</Link>.</p>
       <div className="pageActions">
         <button type="button" disabled={!videoId || busy} onClick={() => void analyze()}>{busy && progress ? progress : 'Analizar vídeo'}</button>{busy && canCancel && <button type="button" className="ghost" onClick={() => running.current?.cancel()}>Cancelar análisis</button>}
         {plan && <button type="button" disabled={busy || !plan.segments.length} onClick={() => void create()}>Crear montaje ({plan.clips} clips)</button>}

@@ -166,9 +166,11 @@ export function parseProfile(v: unknown, depth = 0): EditProfile | null {
 
 /** Converts a style saved by the first «Aprende de mí» version into a profile (nothing is lost: its notes are kept). */
 export function fromLegacyStyle(s: EditStyle): EditProfile {
+  const isRef = s.source === 'referencia'
   const pattern: Transition = s.transitions.pattern === 'alternate' ? 'fade' : s.transitions.pattern
   return parseProfile({
-    ...base({ id: `legacy-${s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}`, name: s.name, description: 'Importado de «Aprende de mí».', format: s.format ?? '16:9' }),
+    ...base({ id: `legacy-${s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}`, name: s.name, description: isRef ? 'Medido de un vídeo de referencia (solo números).' : 'Grabado con «Aprende de mí».', format: s.format ?? '16:9' }),
+    rhythm: { syncToMusic: s.sync?.snapToBeats === true, beatsPerCut: 1 },
     source: 'learned', sessions: s.samples,
     pacing: { videoClipMs: s.pacing.medianClipMs, imageClipMs: s.pacing.medianClipMs, minClipMs: Math.max(MIN_CLIP_MS, s.pacing.minClipMs), maxClipMs: Math.max(s.pacing.maxClipMs, MIN_CLIP_MS), splitLong: s.pacing.splitLong, removeSilences: false, cutOnShots: true, fitToVoice: false },
     transitions: { betweenMaterials: pattern, onShotChange: pattern, withinTake: pattern === 'fade' ? 'fade' : 'cut', durationMs: s.transitions.fadeMs },
@@ -571,3 +573,34 @@ export function restoreVersion(p: EditProfile, version: number): EditProfile {
   return old ? reviseProfile(p, { ...old, previous: undefined } as EditProfile, `Restaurada la versión ${version}.`) : p
 }
 
+
+// ---------------------------------------------------------------- readable parameter differences
+const LABELS: Array<[string, string, (v: unknown) => string]> = [
+  ['format', 'Formato', v => String(v)],
+  ['pacing.videoClipMs', 'Duración de clips de vídeo', v => secs(Number(v))], ['pacing.imageClipMs', 'Duración de imágenes', v => secs(Number(v))],
+  ['pacing.minClipMs', 'Clip mínimo', v => secs(Number(v))], ['pacing.maxClipMs', 'Clip máximo', v => secs(Number(v))],
+  ['pacing.splitLong', 'Dividir tomas largas', v => (v ? 'sí' : 'no')], ['pacing.removeSilences', 'Quitar silencios', v => (v ? 'sí' : 'no')],
+  ['pacing.cutOnShots', 'Cortar en cambios de plano', v => (v ? 'sí' : 'no')], ['pacing.fitToVoice', 'Ajustar a la narración', v => (v ? 'sí' : 'no')],
+  ['rhythm.syncToMusic', 'Cortes al ritmo de la música', v => (v ? 'sí' : 'no')], ['rhythm.beatsPerCut', 'Pulsos por corte', v => String(v)],
+  ['transitions.betweenMaterials', 'Transición entre materiales', v => TRANSITIONS[v as Transition]], ['transitions.withinTake', 'Transición dentro de una toma', v => TRANSITIONS[v as Transition]],
+  ['transitions.onShotChange', 'Transición en cambio de plano', v => TRANSITIONS[v as Transition]], ['transitions.durationMs', 'Duración de transiciones', v => `${v} ms`],
+  ['camera.images', 'Cámara en imágenes', v => CAMERA_MOVES[v as CameraKind]], ['camera.videos', 'Cámara en vídeos', v => CAMERA_MOVES[v as CameraKind]],
+  ['camera.amount', 'Intensidad de cámara', v => `${Math.round(Number(v) * 100)} %`], ['camera.alternate', 'Alternar dirección', v => (v ? 'sí' : 'no')],
+  ['speed.video', 'Velocidad de vídeos', v => `${v}×`],
+  ['audio.videoVolume', 'Audio de los vídeos', v => pct(Number(v))], ['audio.muteVideo', 'Silenciar audio de vídeos', v => (v ? 'sí' : 'no')],
+  ['audio.musicVolume', 'Música', v => pct(Number(v))], ['audio.voiceVolume', 'Voz', v => pct(Number(v))], ['audio.sfxVolume', 'Efectos', v => pct(Number(v))],
+  ['audio.duckMusic', 'Música baja bajo la voz', v => (v ? 'sí' : 'no')], ['audio.loopMusic', 'Repetir música', v => (v ? 'sí' : 'no')],
+  ['subtitles.enabled', 'Subtítulos', v => (v ? 'sí' : 'no')], ['subtitles.style', 'Estilo de subtítulos', v => CAPTION_STYLES[v as CaptionStyle]],
+  ['text.font', 'Tipografía', v => TEXT_FONTS[v as TextFont].label], ['text.color', 'Color del texto', v => String(v)], ['text.position', 'Posición del texto', v => (v === 'top' ? 'arriba' : v === 'center' ? 'centro' : 'abajo')],
+  ['text.sizePct', 'Tamaño del texto', v => `${v} %`], ['text.animation', 'Animación del texto', v => TEXT_ANIMATIONS[v as TextAnimation]],
+  ['structure.intro.title', 'Título inicial', v => (v ? 'sí' : 'no')], ['structure.intro.titleMs', 'Duración del título', v => secs(Number(v))],
+  ['structure.intro.hook', 'Gancho en pantalla', v => (v ? 'sí' : 'no')], ['structure.intro.hookMs', 'Duración del gancho', v => secs(Number(v))],
+  ['structure.outro.endCard', 'Cierre con texto', v => (v ? 'sí' : 'no')], ['structure.outro.endCardText', 'Texto de cierre', v => String(v) || '—'], ['structure.outro.endCardMs', 'Duración del cierre', v => secs(Number(v))],
+  ['export.quality', 'Calidad de exportación', v => (v === 'high' ? 'alta' : 'normal')],
+]
+const get = (o: unknown, path: string) => path.split('.').reduce<unknown>((x, k) => (x && typeof x === 'object' ? (x as Record<string, unknown>)[k] : undefined), o)
+
+/** Parameter-by-parameter differences between two profiles, in words (used before overwriting a style). */
+export function profileDifferences(a: EditProfile, b: EditProfile) {
+  return LABELS.flatMap(([path, label, show]) => { const x = get(a, path), y = get(b, path); return JSON.stringify(x) === JSON.stringify(y) ? [] : [{ path, label, before: show(x), after: show(y), value: y }] })
+}
