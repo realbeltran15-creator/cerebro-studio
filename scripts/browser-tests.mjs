@@ -1095,6 +1095,36 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.close(); server.close()
 }
 
+// 13. Biblioteca: own tags and collections are saved in the owner's settings row; filters by tag, automatic tag and collection.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/library/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8')
+  const server = serve(8803, { 'setup.js': setup, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8803/library')
+  await page.locator('.thumb').first().waitFor({ timeout: 15000 })
+  const total = await page.locator('.thumb').count()
+  await page.locator('.thumb').first().click()
+  await page.getByLabel('Nueva etiqueta').fill('#Intro Lofi')
+  await page.getByRole('button', { name: 'Añadir', exact: true }).click()
+  await page.getByRole('button', { name: 'Quitar etiqueta intro lofi' }).waitFor({ timeout: 5000 })
+  await page.getByLabel('Nueva colección').fill('Para el canal')
+  await page.getByRole('button', { name: 'Crear colección' }).click()
+  await page.locator('aside').getByLabel('Para el canal').check()
+  await page.waitForTimeout(300)
+  const row = await page.evaluate(() => (window.__DB.connector_configs ?? []).find(r => r.provider === 'cerebro-library'))
+  check('library: tags and collections are saved in the owner settings row', row?.config?.collections?.[0]?.name === 'Para el canal' && Object.values(row?.config?.tags ?? {}).flat().includes('intro lofi') && row.config.collections[0].assetIds.length === 1, row?.config)
+  check('library: choosing the new collection filters the grid to its file', (await page.locator('.thumb').count()) === 1)
+  await page.locator('#lib-collection').selectOption('')
+  await page.locator('#lib-tag').selectOption('intro lofi')
+  check('library: filtering by an own tag shows only tagged files', (await page.locator('.thumb').count()) === 1 && total > 1, total)
+  check('library: automatic tags are offered as filters', (await page.locator('#lib-tag option', { hasText: 'subido' }).count()) + (await page.locator('#lib-tag option', { hasText: 'generado con IA' }).count()) >= 1)
+  check('library: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

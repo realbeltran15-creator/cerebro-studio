@@ -9,6 +9,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { modelById } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
 import { deletionCheck, describeAsset, downloadText, LIBRARY_PAGE, originOf, type AssetReferences, type LibraryAsset } from '@/lib/library'
+import { addTag, allTags, autoTags, createCollection, deleteCollection, EMPTY_ORG, forgetAsset, loadOrg, relatedAssets, removeTag, saveOrg, toggleInCollection, type LibraryOrg } from '@/lib/library-org'
 import { deleteAsset, uploadKindFor, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Project = { id: string; name: string }
@@ -35,6 +36,19 @@ export default function LibraryPage() {
 
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  // Tags and collections (one settings row per owner; see lib/library-org.ts).
+  const [org, setOrg] = useState<LibraryOrg>(EMPTY_ORG)
+  const [orgState, setOrgState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [tagFilter, setTagFilter] = useState('')
+  const [collectionFilter, setCollectionFilter] = useState('')
+  const [newTag, setNewTag] = useState('')
+  const [newCollection, setNewCollection] = useState('')
+  useEffect(() => { void loadOrg(supabase).then(setOrg).catch(() => setOrgState('error')) }, [supabase])
+  async function changeOrg(next: LibraryOrg) {
+    const prev = org
+    setOrg(next); setOrgState('saving')
+    try { await saveOrg(supabase, next); setOrgState('idle') } catch (e) { setOrg(prev); setOrgState('error'); setError(e instanceof Error ? `No se pudo guardar la organización: ${e.message}` : 'No se pudo guardar la organización.') }
+  }
   const COLS = 'id,asset_type,project_id,storage_path,source_provider,source_url,license_status,provenance,created_at'
   useEffect(() => {
     void (async () => {
@@ -111,6 +125,7 @@ export default function LibraryPage() {
       if (!check.allowed) { setConfirmDelete({ id: a.id, check }); return }
       await deleteAsset(supabase, a)
       setAssets(list => list.filter(x => x.id !== a.id)); setSelected(null); setConfirmDelete(null); setNotice('Archivo borrado.')
+      if (org.tags[a.id] || org.collections.some(c => c.assetIds.includes(a.id))) void changeOrg(forgetAsset(org, a.id))
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo borrar.') }
     finally { setBusy('') }
   }
@@ -126,9 +141,13 @@ export default function LibraryPage() {
 
   const visible = useMemo(() => {
     const term = q.trim().toLowerCase()
+    const inCollection = collectionFilter ? new Set(org.collections.find(c => c.id === collectionFilter)?.assetIds ?? []) : null
     return assets.filter(a => (!type || a.asset_type === type) && (!origin || originOf(a) === origin) && (!projectId || a.project_id === projectId)
-      && (!term || JSON.stringify(a.provenance ?? {}).toLowerCase().includes(term)))
-  }, [assets, type, origin, projectId, q])
+      && (!tagFilter || (org.tags[a.id] ?? []).includes(tagFilter) || autoTags(a).includes(tagFilter))
+      && (!inCollection || inCollection.has(a.id))
+      && (!term || JSON.stringify(a.provenance ?? {}).toLowerCase().includes(term) || (org.tags[a.id] ?? []).some(t => t.includes(term)) || autoTags(a).some(t => t.includes(term))))
+  }, [assets, type, origin, projectId, q, tagFilter, collectionFilter, org])
+  const tagOptions = useMemo(() => [...new Set([...allTags(org), ...assets.flatMap(autoTags)])].sort((a, b) => a.localeCompare(b, 'es')), [org, assets])
   useEffect(() => { visible.slice(0, 24).filter(a => a.asset_type === 'image' || a.asset_type === 'thumbnail').forEach(a => { if (!urls[a.id]) void url(a.id) }) }, [visible]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function transcribeAsset(a: LibraryAsset) {
@@ -148,8 +167,9 @@ export default function LibraryPage() {
   const kinds = [...new Set(assets.map(a => a.asset_type))]
   const subtitleOf = (id: string) => assets.find(x => x.asset_type === 'subtitle' && x.provenance?.sourceAssetId === id)
   const d = selected ? describeAsset(selected) : null
-  const usedIn = selected ? assets.filter(a => Array.isArray(a.provenance?.inputs) && (a.provenance.inputs as Array<{ id?: string }>).some(i => i.id === selected.id)) : []
-  const madeFrom = selected && Array.isArray(selected.provenance?.inputs) ? (selected.provenance.inputs as Array<{ id?: string }>).map(i => assets.find(a => a.id === i.id)).filter((x): x is LibraryAsset => Boolean(x)) : []
+  const related = selected ? relatedAssets(selected, assets) : { madeFrom: [], derived: [] }
+  const usedIn = related.derived
+  const madeFrom = related.madeFrom
 
   function preview(a: LibraryAsset, large: boolean) {
     const u = urls[a.id]
@@ -185,7 +205,15 @@ export default function LibraryPage() {
         <label htmlFor="lib-type">Tipo<select id="lib-type" value={type} onChange={e => setType(e.target.value)}><option value="">Todos</option>{kinds.map(k => <option key={k} value={k}>{typeLabels[k] ?? k}</option>)}</select></label>
         <label htmlFor="lib-origin">Origen<select id="lib-origin" value={origin} onChange={e => setOrigin(e.target.value)}><option value="">Todos</option>{Object.entries(originLabels).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
         <label htmlFor="lib-project">Proyecto<select id="lib-project" value={projectId} onChange={e => setProjectId(e.target.value)}><option value="">Todos</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        <label htmlFor="lib-tag">Etiqueta<select id="lib-tag" value={tagFilter} onChange={e => setTagFilter(e.target.value)}><option value="">Todas</option>{tagOptions.map(t => <option key={t} value={t}>{t}</option>)}</select></label>
+        <label htmlFor="lib-collection">Colección<select id="lib-collection" value={collectionFilter} onChange={e => setCollectionFilter(e.target.value)}><option value="">Todas</option>{org.collections.map(c => <option key={c.id} value={c.id}>{c.name} ({c.assetIds.length})</option>)}</select></label>
       </div>
+      <form className="pageActions" style={{ marginBottom: 10 }} onSubmit={e => { e.preventDefault(); const id = crypto.randomUUID(); const next = createCollection(org, newCollection, id); if (next !== org) { void changeOrg(next); setCollectionFilter(id) } setNewCollection('') }}>
+        <input aria-label="Nueva colección" placeholder="Nueva colección (p. ej. «Intro lofi»)" value={newCollection} onChange={e => setNewCollection(e.target.value)} maxLength={80} style={{ maxWidth: 280 }} />
+        <button type="submit" className="ghost small" disabled={!newCollection.trim()}>Crear colección</button>
+        {collectionFilter && <button type="button" className="ghost small danger" onClick={() => { if (window.confirm('¿Borrar esta colección? Los archivos no se borran.')) { void changeOrg(deleteCollection(org, collectionFilter)); setCollectionFilter('') } }}>Borrar colección</button>}
+        {orgState === 'saving' && <span className="muted small">Guardando…</span>}
+      </form>
       <p className="muted small" style={{ marginBottom: 10 }}>{visible.length} de {assets.length}{hasMore ? '+' : ''} archivos cargados. Pulsa uno para ver cómo se creó.{hasMore && <> <button type="button" className="linkish" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? 'Cargando…' : 'Cargar más'}</button></>}</p>
 
       <div className="libLayout">
@@ -195,7 +223,7 @@ export default function LibraryPage() {
             return (
               <button key={a.id} type="button" className={selected?.id === a.id ? 'thumb active' : 'thumb'} onClick={() => { setSelected(a); void url(a.id) }} title={info.title}>
                 {preview(a, false)}
-                <span><b>{typeLabels[a.asset_type] ?? a.asset_type}</b> · {originLabels[originOf(a)]}<br />{info.title.slice(0, 48)}</span>
+                <span><b>{typeLabels[a.asset_type] ?? a.asset_type}</b> · {originLabels[originOf(a)]}<br />{info.title.slice(0, 48)}{(org.tags[a.id] ?? []).length > 0 && <><br /><small className="muted">#{(org.tags[a.id] ?? []).slice(0, 3).join(' #')}</small></>}</span>
               </button>
             )
           })}
@@ -220,6 +248,16 @@ export default function LibraryPage() {
               <dt>Licencia</dt><dd>{licenseLabels[selected.license_status] ?? selected.license_status}{d.license ? ` · ${d.license}` : ''}</dd>
               {d.attribution && <><dt>Atribución</dt><dd>{d.attribution}</dd></>}
               {d.sourceUrl && <><dt>Original</dt><dd><a className="open" href={d.sourceUrl} target="_blank" rel="noopener noreferrer">Ver fuente ↗</a></dd></>}
+              <dt>Etiquetas</dt><dd>
+                <span className="muted small">{autoTags(selected).join(' · ')}</span>
+                <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>{(org.tags[selected.id] ?? []).map(t => <button key={t} type="button" className="pill" aria-label={`Quitar etiqueta ${t}`} onClick={() => void changeOrg(removeTag(org, selected.id, t))}>#{t} ✕</button>)}</span>
+                <form style={{ display: 'flex', gap: 6, marginTop: 6 }} onSubmit={e => { e.preventDefault(); if (newTag.trim()) void changeOrg(addTag(org, selected.id, newTag)); setNewTag('') }}>
+                  <input aria-label="Nueva etiqueta" list="lib-tag-list" value={newTag} onChange={e => setNewTag(e.target.value)} placeholder="Añadir etiqueta" maxLength={40} />
+                  <datalist id="lib-tag-list">{allTags(org).map(t => <option key={t} value={t} />)}</datalist>
+                  <button type="submit" className="ghost small" disabled={!newTag.trim()}>Añadir</button>
+                </form>
+              </dd>
+              {org.collections.length > 0 && <><dt>Colecciones</dt><dd style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{org.collections.map(c => <label key={c.id} className="pill"><input type="checkbox" checked={c.assetIds.includes(selected.id)} onChange={() => void changeOrg(toggleInCollection(org, c.id, selected.id))} /> {c.name}</label>)}</dd></>}
               {madeFrom.length > 0 && <><dt>Hecho con</dt><dd>{madeFrom.map(a => <button key={a.id} type="button" className="linkish" onClick={() => setSelected(a)}>{describeAsset(a).title.slice(0, 30)}</button>)}</dd></>}
               {usedIn.length > 0 && <><dt>Versiones derivadas</dt><dd>{usedIn.map(a => <button key={a.id} type="button" className="linkish" onClick={() => setSelected(a)}>{describeAsset(a).title.slice(0, 30)}</button>)}</dd></>}
             </dl>
