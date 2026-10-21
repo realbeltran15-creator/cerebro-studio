@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { audioStartMs, clipStarts, CAPTION_STYLES, type CaptionStyle, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { audioStartMs, clipStarts, CAPTION_STYLES, type CaptionStyle, TEXT_ANIMATIONS, type TextAnimation, TRANSITIONS, type Transition, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
 import { addAudioClip, addClip, commit, fromClip, deleteAudioClip, deleteClip, duplicateClip, historyOf, moveAudioClip, moveClip, redo, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
@@ -295,7 +295,7 @@ export default function ManualEditorPage() {
             onClick={() => setSelection({ kind: 'clip', id: clip.id })}
             style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumbs[clip.visualAssetId ?? ''] ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumbs[clip.visualAssetId ?? '']}) center / cover` : kindColor[typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: 'grab', outline: selection?.id === clip.id ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
             title={`${label(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
-            <b>{i + 1}</b> {label(clip.visualAssetId)}<br />{secs(clip.durationMs)} s{clip.transition === 'cut' ? ' · corte' : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}
+            <b>{i + 1}</b> {label(clip.visualAssetId)}<br />{secs(clip.durationMs)} s{clip.transition && clip.transition !== 'fade' ? ` · ${TRANSITIONS[clip.transition].toLowerCase()}` : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}
             <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => onPointerDown(e, 'resize', clip.id, clip.durationMs)} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />
           </div>)}
           {windowed.after > 0 && <div aria-hidden style={{ width: windowed.after, flex: 'none' }} />}
@@ -386,7 +386,7 @@ export default function ManualEditorPage() {
         <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={comp.duckMusic} onChange={e => apply(c => ({ ...c, duckMusic: e.target.checked }))} /> Bajar música bajo la voz</label>
         <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={comp.subtitles} onChange={e => apply(c => ({ ...c, subtitles: e.target.checked }))} /> Subtítulos (texto de cada clip)</label>
         {comp.subtitles && <label>Estilo de subtítulos<select value={comp.captionStyle ?? 'box'} onChange={e => apply(c => ({ ...c, captionStyle: e.target.value as CaptionStyle }))}>{(Object.keys(CAPTION_STYLES) as CaptionStyle[]).map(k => <option key={k} value={k}>{CAPTION_STYLES[k]}</option>)}</select></label>}
-        <label>Duración de los fundidos (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
+        <label>Duración de las transiciones (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
         <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
       </section>
     </div>
@@ -419,7 +419,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
     <div className="field-row">
       <label>Duración (s)<input type="number" min={MIN_CLIP_MS / 1000} max={MAX_CLIP_MS / 1000} step={0.1} value={secs(clip.durationMs)} onChange={e => onChange({ durationMs: Number(e.target.value) * 1000 })} /></label>
       {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
-      <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}><option value="fade">Fundido</option><option value="cut">Corte</option></select></label>
+      <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
     </div>
     <div className="field-row">
       <label>Zoom ({(clip.zoom ?? 1).toFixed(2)}×)<input type="range" min={1} max={3} step={0.05} value={clip.zoom ?? 1} onChange={e => onChange({ zoom: Number(e.target.value) })} /></label>
@@ -436,6 +436,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
       <label>Texto en pantalla<input value={clip.text?.content ?? ''} maxLength={200} onChange={e => onChange({ text: e.target.value ? { content: e.target.value, position: clip.text?.position ?? 'center', sizePct: clip.text?.sizePct ?? 6 } : null })} /></label>
       <label>Posición del texto<select value={clip.text?.position ?? 'center'} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, position: e.target.value as 'top' | 'center' | 'bottom' } })}><option value="top">Arriba</option><option value="center">Centro</option><option value="bottom">Abajo</option></select></label>
       <label>Tamaño<input type="range" min={2} max={15} step={0.5} value={clip.text?.sizePct ?? 6} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, sizePct: Number(e.target.value) } })} /></label>
+      <label>Animación del texto<select value={clip.text?.animation ?? 'none'} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, animation: e.target.value as TextAnimation } })}>{(Object.keys(TEXT_ANIMATIONS) as TextAnimation[]).map(a => <option key={a} value={a}>{TEXT_ANIMATIONS[a]}</option>)}</select></label>
     </div>
     <div className="field-row" style={{ alignItems: 'end' }}>
       <label>Dividir en (s desde el inicio del clip)<input type="number" min={1} step={0.1} value={splitAt} onChange={e => setSplitAt(e.target.value)} placeholder={`1 – ${secs(clip.durationMs - MIN_CLIP_MS)}`} /></label>

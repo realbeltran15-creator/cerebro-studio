@@ -1,5 +1,6 @@
 import { applyGainPlan, musicGainPlan } from './audio-plan'
 import { audioStartMs, clipCaptions, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
+import { BLENDS, textFrame, transitionFrame, type TextFrame } from './motion'
 
 /**
  * Browser renderer: draws the composition on a canvas, mixes audio with WebAudio and,
@@ -140,17 +141,30 @@ function drawBoldCaption(ctx: CanvasRenderingContext2D, text: string, w: number,
   ctx.restore()
 }
 
-function drawText(ctx: CanvasRenderingContext2D, t: TextOverlay, w: number, h: number) {
+function drawText(ctx: CanvasRenderingContext2D, t: TextOverlay, w: number, h: number, f: TextFrame = { alpha: 1, scale: 1, offsetY: 0, visibleChars: null }) {
+  if (f.alpha <= 0) return
   const size = Math.round(Math.min(w, h) * (t.sizePct / 100) * 1.6)
   ctx.save()
+  ctx.globalAlpha = f.alpha
   ctx.font = `800 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+  // Lines are laid out on the full text so a typewriter animation never re-wraps while typing.
   const lines = wrap(ctx, t.content, w * 0.86)
   const lineH = size * 1.15
   const blockH = lines.length * lineH
-  const top = t.position === 'top' ? h * 0.1 : t.position === 'center' ? (h - blockH) / 2 : h * 0.72 - blockH
+  const top = (t.position === 'top' ? h * 0.1 : t.position === 'center' ? (h - blockH) / 2 : h * 0.72 - blockH) + f.offsetY * h
+  if (f.scale !== 1) { const cy = top + blockH / 2; ctx.translate(w / 2, cy); ctx.scale(f.scale, f.scale); ctx.translate(-w / 2, -cy) }
   ctx.lineWidth = Math.max(3, size * 0.1); ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#fff'
-  lines.forEach((l, i) => { const y = top + i * lineH + lineH / 2; ctx.strokeText(l, w / 2, y); ctx.fillText(l, w / 2, y) })
+  let budget = f.visibleChars ?? Infinity
+  lines.forEach((l, i) => {
+    if (budget <= 0) return
+    const shown = budget >= l.length ? l : l.slice(0, budget)
+    budget -= l.length + 1
+    const y = top + i * lineH + lineH / 2
+    // Typed text keeps its final position: measure the full line and draw the visible part from its left edge.
+    if (shown !== l) { const x = w / 2 - ctx.measureText(l).width / 2; ctx.textAlign = 'left'; ctx.strokeText(shown, x, y); ctx.fillText(shown, x, y); ctx.textAlign = 'center' }
+    else { ctx.strokeText(l, w / 2, y); ctx.fillText(l, w / 2, y) }
+  })
   ctx.restore()
 }
 
@@ -275,6 +289,16 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   const captions = composition.clips.map(c => (composition.subtitles ? clipCaptions(c) : []))
   let activeClipId: string | null = null
   const last = composition.clips.length - 1
+  /** Next-clip videos already seeked to their trim point for a blending transition. */
+  const primed = new Set<string>()
+  const drawVisual = (k: number, progress: number) => {
+    const c = composition.clips[k]
+    const zoom = c.zoom ?? 1
+    const v = videos.get(c.id)
+    if (v) { drawCover(ctx, v.el, v.el.videoWidth || width, v.el.videoHeight || height, width, height, zoom, c.focusX, c.focusY); return }
+    const bitmap = c.visualAssetId ? images.get(c.visualAssetId) : undefined
+    if (bitmap) drawCover(ctx, bitmap, bitmap.width, bitmap.height, width, height, zoom * (c.motion === 'kenburns' ? 1 + 0.08 * progress : 1), c.focusX, c.focusY)
+  }
 
   await new Promise<void>(resolve => {
     const frame = () => {
@@ -288,34 +312,49 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
         const clip = composition.clips[i]
         const local = now - starts[i]
         const progress = local / clip.durationMs
-        const zoom = clip.zoom ?? 1
         const video = videos.get(clip.id)
         if (activeClipId !== clip.id) {
           if (activeClipId) videos.get(activeClipId)?.el.pause()
           activeClipId = clip.id
-          if (video) { video.el.currentTime = (clip.trimInMs ?? 0) / 1000; void video.el.play() }
+          if (video) { if (!primed.has(clip.id)) video.el.currentTime = (clip.trimInMs ?? 0) / 1000; primed.delete(clip.id); void video.el.play() }
         }
         if (video) {
           // A clip longer than the rest of its source loops back to the trim point.
           const trimIn = (clip.trimInMs ?? 0) / 1000
           if (video.el.ended || (video.el.duration && video.el.currentTime >= video.el.duration - 0.04)) { video.el.currentTime = trimIn; void video.el.play() }
-          drawCover(ctx, video.el, video.el.videoWidth || width, video.el.videoHeight || height, width, height, zoom, clip.focusX, clip.focusY)
-        } else {
-          const bitmap = clip.visualAssetId ? images.get(clip.visualAssetId) : undefined
-          if (bitmap) drawCover(ctx, bitmap, bitmap.width, bitmap.height, width, height, zoom * (clip.motion === 'kenburns' ? 1 + 0.08 * progress : 1), clip.focusX, clip.focusY)
         }
-        if (clip.text) drawText(ctx, clip.text, width, height)
+        const fade = composition.fadeMs
+        const kind = clip.transition ?? 'fade'
+        const blending = fade > 0 && i < last && BLENDS.has(kind) && clip.durationMs - local < fade
+        const tf = blending ? transitionFrame(kind, 1 - (clip.durationMs - local) / fade) : null
+        ctx.save()
+        if (tf && tf.aScale !== 1) { ctx.translate(width / 2, height / 2); ctx.scale(tf.aScale, tf.aScale); ctx.translate(-width / 2, -height / 2) }
+        drawVisual(i, progress)
+        ctx.restore()
+        if (tf) {
+          // The incoming clip is drawn from its first frame (a video waits paused at its trim point and starts playing when its turn comes).
+          const next = composition.clips[i + 1]
+          const nv = videos.get(next.id)
+          if (nv && !primed.has(next.id)) { nv.el.currentTime = (next.trimInMs ?? 0) / 1000; primed.add(next.id) }
+          ctx.save()
+          ctx.globalAlpha = tf.bAlpha
+          if (tf.bReveal < 1) { ctx.beginPath(); ctx.rect(0, 0, width * tf.bReveal, height); ctx.clip() }
+          if (tf.bOffsetX) ctx.translate(width * tf.bOffsetX, 0)
+          ctx.fillStyle = '#000'; ctx.fillRect(0, 0, width, height)
+          drawVisual(i + 1, 0)
+          ctx.restore()
+        }
+        if (clip.text) drawText(ctx, clip.text, width, height, textFrame(clip.text.animation, local, clip.durationMs, clip.text.content.length))
         const cap = captions[i].find(c => local >= c.startMs && local < c.endMs)
         if (cap) drawCaption(ctx, cap.text, width, height, composition.captionStyle ?? 'box', (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs))
         if (composition.hookText && now < (composition.hookMs ?? 3000)) {
           const hookMs = composition.hookMs ?? 3000
           drawHook(ctx, composition.hookText, width, height, Math.min(1, (hookMs - now) / 400))
         }
-        // Fade through black at clip boundaries, except where a cut was chosen.
-        const fade = composition.fadeMs
+        // Fade through black at clip boundaries where «fundido a negro» was chosen (and at the very start and end).
         if (fade > 0) {
-          const fadeIn = i === 0 || composition.clips[i - 1].transition !== 'cut'
-          const fadeOut = i === last || clip.transition !== 'cut'
+          const fadeIn = i === 0 || (composition.clips[i - 1].transition ?? 'fade') === 'fade'
+          const fadeOut = i === last || kind === 'fade'
           const edge = Math.min(fadeIn ? local : Infinity, fadeOut ? clip.durationMs - local : Infinity)
           if (edge < fade) { ctx.fillStyle = `rgba(0,0,0,${1 - edge / fade})`; ctx.fillRect(0, 0, width, height) }
         }

@@ -1295,6 +1295,22 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 16. Transitions draw the next clip during the last fadeMs of the outgoing one (real canvas render in Chromium).
+{
+  const server = serve(8806, { 'r.js': await bundle(path.join(dir, 'renderer-motion.harness.ts')) })
+  const page = await browser.newPage()
+  await page.goto('http://127.0.0.1:8806/')
+  await page.addScriptTag({ url: '/r.js' })
+  const red = c => c[0] > 60 && c[2] < 40 && c[1] < 40, blue = c => c[2] > 200 && c[0] < 60
+  const wipe = await page.evaluate(() => window.runMotion('wipe'))
+  check('motion: wipe reveals the next clip from the left halfway through', red(wipe.before) && blue(wipe.left) && red(wipe.right) && blue(wipe.after), wipe)
+  const slide = await page.evaluate(() => window.runMotion('slide'))
+  check('motion: slide brings the next clip in from the right', red(slide.left) && blue(slide.right) && blue(slide.after), slide)
+  const dissolve = await page.evaluate(() => window.runMotion('dissolve'))
+  check('motion: dissolve mixes both clips (no black frame)', dissolve.mid[0] > 60 && dissolve.mid[2] > 60, dissolve)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

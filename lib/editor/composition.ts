@@ -6,11 +6,15 @@
 
 export type OutputFormat = '16:9' | '9:16' | '1:1'
 
-export type Transition = 'fade' | 'cut'
+/** fade = through black; cut = none; dissolve/slide/wipe/zoom blend into the next clip during the last fadeMs of this one. */
+export type Transition = 'fade' | 'cut' | 'dissolve' | 'slide' | 'wipe' | 'zoom'
+export const TRANSITIONS: Record<Transition, string> = { fade: 'Fundido a negro', dissolve: 'Disolvencia', slide: 'Deslizar', wipe: 'Cortinilla', zoom: 'Zoom', cut: 'Corte' }
+export type TextAnimation = 'none' | 'fade' | 'pop' | 'slide' | 'typewriter'
+export const TEXT_ANIMATIONS: Record<TextAnimation, string> = { none: 'Sin animación', fade: 'Aparecer', pop: 'Rebote', slide: 'Subir', typewriter: 'Máquina de escribir' }
 /** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
 export type CaptionStyle = 'box' | 'bold' | 'karaoke'
 export const CAPTION_STYLES: Record<CaptionStyle, string> = { box: 'Clásico (caja)', bold: 'Grande y en negrita', karaoke: 'Palabra a palabra (resaltada)' }
-export type TextOverlay = { content: string; position: 'top' | 'center' | 'bottom'; sizePct: number }
+export type TextOverlay = { content: string; position: 'top' | 'center' | 'bottom'; sizePct: number; animation?: TextAnimation }
 
 export type Clip = {
   /** Unique within the composition. Automatic edits use the scene id; manual edits may duplicate/split. */
@@ -143,7 +147,7 @@ function parseText(t: unknown): TextOverlay | null {
   const v = t as Partial<TextOverlay>
   const content = typeof v.content === 'string' ? v.content.trim().slice(0, 200) : ''
   if (!content) return null
-  return { content, position: v.position === 'top' || v.position === 'center' ? v.position : 'bottom', sizePct: clamp(v.sizePct, 2, 15, 6) }
+  return { content, position: v.position === 'top' || v.position === 'center' ? v.position : 'bottom', sizePct: clamp(v.sizePct, 2, 15, 6), animation: typeof v.animation === 'string' && v.animation in TEXT_ANIMATIONS ? v.animation : 'none' }
 }
 
 function parseAudioClip(a: unknown): AudioClip | null {
@@ -187,7 +191,7 @@ export function parseComposition(value: unknown): Composition | null {
       trimInMs: clamp(c.trimInMs, 0, 60 * 60_000, 0),
       volume: clamp(c.volume, 0, 2, 1),
       muted: c.muted === true,
-      transition: c.transition === 'cut' ? 'cut' : 'fade',
+      transition: typeof c.transition === 'string' && c.transition in TRANSITIONS ? c.transition : 'fade',
       text: parseText(c.text),
       ...(Array.isArray(c.cues) ? { cues: parseCues(c.cues, clampMs(Number(c.durationMs) || 5000)) } : {}),
     } satisfies Clip]
