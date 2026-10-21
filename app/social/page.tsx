@@ -12,7 +12,8 @@ import type { ProjectRow } from '@/lib/types/database'
 type Platform = 'instagram' | 'tiktok'
 type Job = { id: string; platform: Platform; status: string; created_at: string; approved_at: string | null; payload: SocialPayload; result: Record<string, unknown> | null }
 type Asset = { id: string; license_status: string; storage_path: string | null; provenance: Record<string, unknown> | null; created_at: string }
-type Conn = { provider: Platform; external_account_name: string | null; scopes: string[]; status: string }
+type Conn = { provider: Platform; external_account_id: string; external_account_name: string | null; scopes: string[]; status: string }
+type Creator = { nickname: string | null; username: string | null; privacyOptions: string[]; commentDisabled: boolean; duetDisabled: boolean; stitchDisabled: boolean; maxDurationSec: number | null; accountId?: string; error?: string }
 type Status = { platform: Platform; configured: boolean; env: string[] }
 
 const names: Record<Platform, string> = { instagram: 'Instagram (Reels)', tiktok: 'TikTok' }
@@ -26,7 +27,8 @@ const mimeOf = (a?: Asset) => {
 }
 const isMp4 = (a?: Asset) => /^video\/(mp4|quicktime)/i.test(mimeOf(a))
 
-const emptyForm = { platform: 'instagram' as Platform, videoAssetId: '', caption: '', privacyLevel: 'SELF_ONLY' as NonNullable<SocialPayload['privacyLevel']>, shareToFeed: true, isAigc: true, disableComment: false, disableDuet: false, disableStitch: false }
+// TikTok Content Sharing Guidelines: no default privacy, interactions OFF by default, commercial disclosure OFF by default.
+const emptyForm = { platform: 'instagram' as Platform, videoAssetId: '', caption: '', privacyLevel: '' as SocialPayload['privacyLevel'] | '', shareToFeed: true, isAigc: true, allowComment: false, allowDuet: false, allowStitch: false, commercial: false, brandOrganic: false, brandContent: false }
 
 export default function SocialPage() {
   const supabase = getSupabaseBrowserClient()
@@ -43,10 +45,11 @@ export default function SocialPage() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [creator, setCreator] = useState<Creator | null>(null)
 
   const loadConnections = useCallback(async () => {
     const [{ data }, s] = await Promise.all([
-      supabase.from('channel_connections').select('provider,external_account_name,scopes,status').in('provider', ['instagram', 'tiktok']).eq('status', 'connected'),
+      supabase.from('channel_connections').select('provider,external_account_id,external_account_name,scopes,status').in('provider', ['instagram', 'tiktok']).eq('status', 'connected'),
       fetch('/api/social/status').then(r => r.ok ? r.json() as Promise<{ platforms: Status[] }> : { platforms: [] }).catch(() => ({ platforms: [] as Status[] })),
     ])
     setConns((data ?? []) as Conn[]); setStatus(s.platforms)
@@ -76,6 +79,14 @@ export default function SocialPage() {
   }, [supabase])
   useEffect(() => { if (projectId) { setForm(emptyForm); setEditing(null); void load(projectId) } }, [projectId, load])
   useEffect(() => { if (!editing) setForm(f => ({ ...f, videoAssetId: f.videoAssetId || videos[0]?.id || '' })) }, [videos, editing])
+  // TikTok requires reading the creator's latest info whenever the post form is shown (nickname, privacy options, interactions, length).
+  const ttConnected = conns.some(c => c.provider === 'tiktok')
+  useEffect(() => {
+    if (form.platform !== 'tiktok' || !ttConnected) return
+    let off = false
+    void fetch('/api/social/tiktok/creator', { cache: 'no-store' }).then(r => r.json() as Promise<Creator>).then(c => { if (!off) setCreator(c) }).catch(() => { if (!off) setCreator({ nickname: null, username: null, privacyOptions: [], commentDisabled: false, duetDisabled: false, stitchDisabled: false, maxDurationSec: null, error: 'No se pudo leer tu cuenta de TikTok.' }) })
+    return () => { off = true }
+  }, [form.platform, ttConnected])
 
   const conn = (p: Platform) => conns.find(c => c.provider === p) ?? null
   const cfg = (p: Platform) => status.find(s => s.platform === p)
@@ -94,13 +105,18 @@ export default function SocialPage() {
   function payload(): SocialPayload {
     const base: SocialPayload = { videoAssetId: form.videoAssetId || undefined, caption: form.caption.trim() }
     return form.platform === 'instagram' ? { ...base, shareToFeed: form.shareToFeed }
-      : { ...base, privacyLevel: form.privacyLevel, isAigc: form.isAigc, disableComment: form.disableComment, disableDuet: form.disableDuet, disableStitch: form.disableStitch }
+      : { ...base, privacyLevel: form.privacyLevel || undefined, isAigc: form.isAigc, disableComment: !form.allowComment, disableDuet: !form.allowDuet, disableStitch: !form.allowStitch, brandOrganic: form.commercial && form.brandOrganic, brandContent: form.commercial && form.brandContent }
   }
 
   async function save(e: FormEvent) {
     e.preventDefault(); setError(''); setNotice('')
     if (!form.videoAssetId) { setError('Elige el vídeo. Si no hay ninguno, renderízalo en el Editor o en Repurposing.'); return }
     if (form.caption.length > 2200) { setError('El texto supera 2.200 caracteres.'); return }
+    if (form.platform === 'tiktok') {
+      if (!form.privacyLevel) { setError('Elige quién puede ver el vídeo en TikTok.'); return }
+      if (form.commercial && !form.brandOrganic && !form.brandContent) { setError('Indica si promocionas tu marca, contenido de marca o ambos (o desactiva la divulgación comercial).'); return }
+      if (form.commercial && form.brandContent && form.privacyLevel === 'SELF_ONLY') { setError('El contenido de marca no puede ser privado en TikTok.'); return }
+    }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setError('La sesión ha caducado.'); return }
     const { error: err } = editing
@@ -113,7 +129,7 @@ export default function SocialPage() {
 
   function edit(j: Job) {
     setEditing(j.id)
-    setForm({ ...emptyForm, platform: j.platform, videoAssetId: j.payload.videoAssetId ?? '', caption: j.payload.caption ?? '', privacyLevel: j.payload.privacyLevel ?? 'SELF_ONLY', shareToFeed: j.payload.shareToFeed !== false, isAigc: j.payload.isAigc !== false, disableComment: Boolean(j.payload.disableComment), disableDuet: Boolean(j.payload.disableDuet), disableStitch: Boolean(j.payload.disableStitch) })
+    setForm({ ...emptyForm, platform: j.platform, videoAssetId: j.payload.videoAssetId ?? '', caption: j.payload.caption ?? '', privacyLevel: j.payload.privacyLevel ?? '', shareToFeed: j.payload.shareToFeed !== false, isAigc: j.payload.isAigc !== false, allowComment: j.payload.disableComment === false, allowDuet: j.payload.disableDuet === false, allowStitch: j.payload.disableStitch === false, commercial: Boolean(j.payload.brandOrganic || j.payload.brandContent), brandOrganic: Boolean(j.payload.brandOrganic), brandContent: Boolean(j.payload.brandContent) })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -122,8 +138,8 @@ export default function SocialPage() {
     const inputs = Array.isArray(v?.provenance?.inputs) ? v!.provenance!.inputs as Array<{ license: string }> : []
     const byLicense = inputs.reduce<Record<string, number>>((m, i) => ({ ...m, [i.license]: (m[i.license] ?? 0) + 1 }), {})
     return [
-      `Cuenta: ${conn(j.platform)?.external_account_name ?? 'sin conectar'} (${names[j.platform]})`,
-      j.platform === 'tiktok' ? `Privacidad: ${ttPrivacy[j.payload.privacyLevel ?? 'SELF_ONLY']}` : `Reel ${j.payload.shareToFeed === false ? 'solo en la pestaña Reels' : 'también en el feed'} (Instagram publica siempre en público)`,
+      `Cuenta: ${conn(j.platform) ? `${conn(j.platform)!.external_account_name ?? 'sin nombre'} (ID ${conn(j.platform)!.external_account_id})` : 'sin conectar'} (${names[j.platform]})`,
+      j.platform === 'tiktok' ? `Privacidad: ${j.payload.privacyLevel ? ttPrivacy[j.payload.privacyLevel] : 'sin elegir'}${j.payload.brandContent ? ' · contenido de marca' : ''}${j.payload.brandOrganic ? ' · tu marca' : ''}` : `Reel ${j.payload.shareToFeed === false ? 'solo en la pestaña Reels' : 'también en el feed'} (Instagram publica siempre en público)`,
       `Vídeo: ${String(v?.provenance?.title ?? j.payload.videoAssetId)} · licencia ${v?.license_status ?? '?'}${j.platform === 'instagram' && v && !isMp4(v) ? ' · ⚠ no es MP4' : ''}`,
       `Entradas: ${Object.entries(byLicense).map(([k, n]) => `${n} ${k}`).join(', ') || 'sin registro'}`,
       j.platform === 'tiktok' ? `Etiqueta de contenido IA: ${j.payload.isAigc === false ? 'no' : 'sí'}` : 'Instagram: añade en el texto si el contenido es generado con IA',
@@ -143,11 +159,14 @@ export default function SocialPage() {
   }
 
   async function publish(j: Job) {
-    const where = j.platform === 'instagram' ? 'como Reel público en Instagram' : `en TikTok (${ttPrivacy[j.payload.privacyLevel ?? 'SELF_ONLY'].toLowerCase()})`
-    if (!window.confirm(`Se publicará el vídeo ${where}. ¿Continuar?`)) return
+    const c = conn(j.platform)
+    if (!c) { setError(`Conecta tu cuenta de ${names[j.platform]}.`); return }
+    const where = j.platform === 'instagram' ? 'como Reel público en Instagram' : `en TikTok (${j.payload.privacyLevel ? ttPrivacy[j.payload.privacyLevel].toLowerCase() : 'sin privacidad elegida'})`
+    // The destination is confirmed by name AND ID on every publication; the server refuses if another account is connected.
+    if (!window.confirm(`Se publicará el vídeo ${where} en la cuenta:\n\n${c.external_account_name ?? 'sin nombre'}\nID: ${c.external_account_id}\n\n${j.platform === 'tiktok' ? 'Al publicar, aceptas la Confirmación de uso de música de TikTok.\n\n' : ''}¿Es la cuenta correcta?`)) return
     setBusy(j.id); setError(''); setNotice('')
     try {
-      const r = await fetch(`/api/publish/social/${j.id}/publish`, { method: 'POST' })
+      const r = await fetch(`/api/publish/social/${j.id}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: c.external_account_id }) })
       const json = await r.json() as { url?: string; mediaId?: string; error?: string; pending?: boolean }
       if (r.status === 202 || json.pending) setNotice(json.error ?? 'Sigue procesándose. Vuelve a pulsar «Publicar» en unos minutos.')
       else if (!r.ok) throw new Error(json.error ?? 'La publicación falló.')
@@ -173,9 +192,9 @@ export default function SocialPage() {
         return <section key={p} className="panel" aria-label={names[p]}>
           <div className="cardHead"><h3>{names[p]}</h3><span className={c ? 'pill ok' : s?.configured ? 'pill' : 'pill warn'}>{c ? 'Conectado' : s?.configured ? 'Sin conectar' : 'Preparado para integración'}</span></div>
           {c ? <>
-            <p className="small">Cuenta: <b>{c.external_account_name ?? 'conectada'}</b></p>
+            <p className="small">Cuenta: <b>{c.external_account_name ?? 'conectada'}</b><br /><span className="muted">ID: <code>{c.external_account_id}</code></span></p>
             {!c.scopes.includes(publishScope[p]) && <p className="error small">Falta el permiso de publicación ({publishScope[p]}). Vuelve a conectar.</p>}
-            <div className="pageActions"><a className="button ghost" href={`/api/oauth/${p}/start`}>Reconectar</a><button type="button" className="ghost" disabled={busy === p} onClick={() => void disconnect(p)}>Desconectar</button></div>
+            <div className="pageActions"><a className="button ghost" href={`/api/oauth/${p}/start`}>Cambiar de cuenta</a><button type="button" className="ghost" disabled={busy === p} onClick={() => void disconnect(p)}>Desconectar</button></div>
           </> : s?.configured ? <a className="button" href={`/api/oauth/${p}/start`}>Conectar {names[p]}</a>
             : <p className="muted small">Falta configurar en el servidor: {s?.env.join(', ') ?? '…'}. {p === 'instagram' ? 'Requiere app de Meta con «Instagram API with Instagram Login» y cuenta profesional.' : 'Requiere app de TikTok for Developers con Login Kit y Content Posting API.'}</p>}
         </section>
@@ -194,12 +213,25 @@ export default function SocialPage() {
         {igFormatProblem && <p className="error small" role="alert">{igReady?.reason} También puedes publicarlo en TikTok.</p>}
         {igReady?.ok && igReady.unknown && <p className="warnBox small">No se registró el códec de este MP4. Instagram necesita H.264 o HEVC con audio AAC; si lo rechaza, vuelve a renderizarlo en Chrome, Edge o Safari.</p>}
         <label>Texto / título ({form.caption.length}/2200)<textarea rows={4} value={form.caption} onChange={e => setForm({ ...form, caption: e.target.value })} maxLength={2200} placeholder="Descripción, hashtags y créditos de música o material con licencia." /></label>
-        {form.platform === 'tiktok' ? <div className="pageActions">
-          <label>Privacidad<select value={form.privacyLevel} onChange={e => setForm({ ...form, privacyLevel: e.target.value as typeof form.privacyLevel })}>{Object.entries(ttPrivacy).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-          <label className="pill"><input type="checkbox" checked={form.isAigc} onChange={e => setForm({ ...form, isAigc: e.target.checked })} /> Etiquetar como contenido generado con IA</label>
-          <label className="pill"><input type="checkbox" checked={form.disableComment} onChange={e => setForm({ ...form, disableComment: e.target.checked })} /> Sin comentarios</label>
-          <label className="pill"><input type="checkbox" checked={form.disableDuet} onChange={e => setForm({ ...form, disableDuet: e.target.checked })} /> Sin dúos</label>
-          <label className="pill"><input type="checkbox" checked={form.disableStitch} onChange={e => setForm({ ...form, disableStitch: e.target.checked })} /> Sin stitch</label>
+        {form.platform === 'tiktok' ? <div role="group" aria-label="Opciones de TikTok" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {creator?.error ? <p className="error small">{creator.error}</p> : creator ? <p className="small">Publicarás como <b>{creator.nickname ?? creator.username ?? 'tu cuenta'}</b>{creator.maxDurationSec ? ` · duración máxima ${creator.maxDurationSec} s` : ''}</p> : conn('tiktok') ? <p className="muted small">Leyendo tu cuenta de TikTok…</p> : <p className="muted small">Conecta TikTok para ver tus opciones de publicación.</p>}
+          <label>¿Quién puede ver este vídeo?<select value={form.privacyLevel} onChange={e => setForm({ ...form, privacyLevel: e.target.value as typeof form.privacyLevel })} required>
+            <option value="" disabled>— Elige una opción</option>
+            {(creator?.privacyOptions?.length ? creator.privacyOptions : []).filter((v): v is keyof typeof ttPrivacy => v in ttPrivacy).map(v => <option key={v} value={v} disabled={form.commercial && form.brandContent && v === 'SELF_ONLY'}>{ttPrivacy[v]}</option>)}
+          </select></label>
+          <div className="pageActions">
+            <label className="pill"><input type="checkbox" checked={form.allowComment && !creator?.commentDisabled} disabled={Boolean(creator?.commentDisabled)} onChange={e => setForm({ ...form, allowComment: e.target.checked })} /> Permitir comentarios</label>
+            <label className="pill"><input type="checkbox" checked={form.allowDuet && !creator?.duetDisabled} disabled={Boolean(creator?.duetDisabled)} onChange={e => setForm({ ...form, allowDuet: e.target.checked })} /> Permitir dúos</label>
+            <label className="pill"><input type="checkbox" checked={form.allowStitch && !creator?.stitchDisabled} disabled={Boolean(creator?.stitchDisabled)} onChange={e => setForm({ ...form, allowStitch: e.target.checked })} /> Permitir stitch</label>
+            <label className="pill"><input type="checkbox" checked={form.isAigc} onChange={e => setForm({ ...form, isAigc: e.target.checked })} /> Etiquetar como contenido generado con IA</label>
+          </div>
+          <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={form.commercial} onChange={e => setForm({ ...form, commercial: e.target.checked, brandOrganic: e.target.checked && form.brandOrganic, brandContent: e.target.checked && form.brandContent })} /> Divulgar contenido comercial</label>
+          {form.commercial && <div className="pageActions">
+            <label className="pill"><input type="checkbox" checked={form.brandOrganic} onChange={e => setForm({ ...form, brandOrganic: e.target.checked })} /> Tu marca</label>
+            <label className="pill"><input type="checkbox" checked={form.brandContent} onChange={e => setForm({ ...form, brandContent: e.target.checked, privacyLevel: e.target.checked && form.privacyLevel === 'SELF_ONLY' ? '' : form.privacyLevel })} /> Contenido de marca</label>
+            <span className="muted small">{form.brandContent ? 'Se etiquetará como «Colaboración pagada».' : form.brandOrganic ? 'Se etiquetará como «Contenido promocional».' : 'Elige al menos una opción.'}</span>
+          </div>}
+          <p className="muted small">Al publicar, aceptas la Confirmación de uso de música de TikTok{form.commercial && form.brandContent ? ' y la Política de contenido de marca' : ''}.</p>
         </div> : <div className="pageActions"><label className="pill"><input type="checkbox" checked={form.shareToFeed} onChange={e => setForm({ ...form, shareToFeed: e.target.checked })} /> Mostrar también en el feed del perfil</label></div>}
         <div><button><Icon name="plus" size={16} />{editing ? 'Guardar borrador' : 'Preparar (sin publicar)'}</button></div>
       </form>

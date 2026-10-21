@@ -229,6 +229,7 @@ export default function Home() {
           <Link className="buttonLink ghost small" href="/automations">Abrir</Link>
         </section>
       </div>
+      <footer className="muted small" style={{ marginTop: 28, display: 'flex', gap: 14, flexWrap: 'wrap' }}><span>Cerebro Studio</span><Link href="/legal/privacidad">Privacidad / Privacy</Link><Link href="/legal/terminos">Términos / Terms</Link><Link href="/legal/eliminar-datos">Eliminar datos / Data deletion</Link></footer>
     </StudioShell>
   )
 }

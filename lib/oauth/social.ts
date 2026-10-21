@@ -31,7 +31,8 @@ export const redirectUri = (origin: string, p: SocialPlatform) => `${origin}/api
 export function socialAuthUrl(p: SocialPlatform, origin: string, state: string) {
   if (p === 'instagram') {
     const u = new URL('https://www.instagram.com/oauth/authorize')
-    u.search = new URLSearchParams({ client_id: env.instagram.id(), redirect_uri: redirectUri(origin, p), response_type: 'code', scope: SOCIAL_SCOPES.instagram.join(','), state }).toString()
+    // force_reauth: Instagram asks for the account again instead of silently reusing the one logged in, so the owner can pick another.
+    u.search = new URLSearchParams({ client_id: env.instagram.id(), redirect_uri: redirectUri(origin, p), response_type: 'code', scope: SOCIAL_SCOPES.instagram.join(','), state, force_reauth: 'true' }).toString()
     return u.toString()
   }
   const u = new URL('https://www.tiktok.com/v2/auth/authorize/')
@@ -39,8 +40,8 @@ export function socialAuthUrl(p: SocialPlatform, origin: string, state: string) 
   return u.toString()
 }
 
-export type SocialTokens = { access_token: string; refresh_token?: string; expires_at: number; refresh_expires_at?: number; scope: string; account_id: string }
-export type SocialAccount = { id: string; name: string | null }
+export type SocialTokens = { access_token: string; refresh_token?: string; expires_at: number; refresh_expires_at?: number; scope: string; account_id: string; app_scoped_id?: string | null }
+export type SocialAccount = { id: string; name: string | null; /** Instagram app-scoped user ID (Meta callbacks may use it). */ appScopedId?: string | null }
 
 async function json(r: Response) {
   const j = await r.json().catch(() => ({})) as Record<string, unknown>
@@ -61,11 +62,11 @@ export async function exchangeSocialCode(p: SocialPlatform, origin: string, code
     if (!shortToken) throw new Error('Instagram no devolvió un token.')
     const long = await json(await fetch(`https://graph.instagram.com/access_token?${new URLSearchParams({ grant_type: 'ig_exchange_token', client_secret: env.instagram.secret(), access_token: shortToken })}`, { cache: 'no-store' }))
     const token = String(long.access_token ?? shortToken)
-    const me = await json(await fetch(`https://graph.instagram.com/me?${new URLSearchParams({ fields: 'user_id,username', access_token: token })}`, { cache: 'no-store' }))
+    const me = await json(await fetch(`https://graph.instagram.com/me?${new URLSearchParams({ fields: 'id,user_id,username', access_token: token })}`, { cache: 'no-store' }))
     const accountId = String(me.user_id ?? short.user_id ?? '')
     if (!accountId) throw new Error('No se pudo identificar la cuenta de Instagram.')
     const permissions = Array.isArray(short.permissions) ? (short.permissions as string[]).join(',') : String(short.permissions ?? SOCIAL_SCOPES.instagram.join(','))
-    return { tokens: { access_token: token, expires_at: Date.now() + Number(long.expires_in ?? 3600) * 1000, scope: permissions, account_id: accountId }, account: { id: accountId, name: typeof me.username === 'string' ? me.username : null } }
+    return { tokens: { access_token: token, expires_at: Date.now() + Number(long.expires_in ?? 3600) * 1000, scope: permissions, account_id: accountId, app_scoped_id: typeof me.id === 'string' ? me.id : null }, account: { id: accountId, name: typeof me.username === 'string' ? me.username : null, appScopedId: typeof me.id === 'string' ? me.id : null } }
   }
   const t = await json(await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, cache: 'no-store',
@@ -112,7 +113,7 @@ export async function socialAccessToken(db: SupabaseClient, c: SocialConnection)
       }))
       next = { ...t, access_token: String(r.access_token), refresh_token: String(r.refresh_token ?? t.refresh_token), expires_at: Date.now() + Number(r.expires_in ?? 86400) * 1000 }
     }
-    await (serviceRoleClient() ?? db).from('channel_connections').update({ token_ciphertext: encryptJson(next), token_metadata: { expires_at: next.expires_at, scope: next.scope }, updated_at: new Date().toISOString() }).eq('id', c.id).eq('owner_id', c.owner_id)
+    await (serviceRoleClient() ?? db).from('channel_connections').update({ token_ciphertext: encryptJson(next), token_metadata: { expires_at: next.expires_at, scope: next.scope, app_scoped_id: next.app_scoped_id ?? null }, updated_at: new Date().toISOString() }).eq('id', c.id).eq('owner_id', c.owner_id)
     return next.access_token
   } catch {
     if (t.expires_at > Date.now()) return t.access_token

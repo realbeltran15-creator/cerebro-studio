@@ -34,9 +34,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ plat
     const scopes = tokens.scope.split(/[ ,]+/).filter(Boolean)
     const { error } = await (serviceRoleClient() ?? supabase).from('channel_connections').upsert({
       owner_id: user.id, provider: p, external_account_id: account.id, external_account_name: account.name, scopes, status: 'connected',
-      token_ciphertext: encryptJson(tokens), token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope }, updated_at: new Date().toISOString(),
+      token_ciphertext: encryptJson(tokens), token_metadata: { expires_at: tokens.expires_at, scope: tokens.scope, app_scoped_id: account.appScopedId ?? null }, updated_at: new Date().toISOString(),
     }, { onConflict: 'owner_id,provider,external_account_id' })
     if (error) { console.error(`${p} connection save failed`, { details: error.message }); return back('save_failed') }
+    // One usable account per platform: a different account connected before stops being usable (never reused silently).
+    await (serviceRoleClient() ?? supabase).from('channel_connections').update({ status: 'revoked', token_ciphertext: null, updated_at: new Date().toISOString() })
+      .eq('owner_id', user.id).eq('provider', p).neq('external_account_id', account.id).in('status', ['connected', 'expired', 'error'])
     return back('connected')
   } catch (error) {
     console.error(`${p} OAuth failure`, { details: error instanceof Error ? error.message : 'unknown' })

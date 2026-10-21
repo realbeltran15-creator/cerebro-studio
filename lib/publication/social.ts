@@ -15,14 +15,19 @@ import { approvalStillValid, STALE_APPROVAL_MESSAGE } from './approval'
  *            POST /{ig-user}/media_publish. The video must be MP4 and reachable by Instagram: a
  *            short-lived signed URL of the private bucket is used.
  * TikTok: creator_info/query → video/init (FILE_UPLOAD, chunks) → PUT upload_url → status/fetch.
- *         Unaudited apps can only post with privacy SELF_ONLY.
+ *         Unaudited apps can only post with privacy SELF_ONLY. Interactions are OFF unless the owner allowed them, and the
+ *         creator's own settings always win (Content Sharing Guidelines).
  */
 
 export type SocialPayload = {
   videoAssetId?: string
   caption?: string
-  /** TikTok privacy; must be one of the creator's allowed options. Default SELF_ONLY. */
+  /** TikTok privacy; must be one of the creator's allowed options and chosen by the owner (TikTok forbids a default). */
   privacyLevel?: 'SELF_ONLY' | 'MUTUAL_FOLLOW_FRIENDS' | 'FOLLOWER_OF_CREATOR' | 'PUBLIC_TO_EVERYONE'
+  /** TikTok commercial content disclosure: promoting the creator's own business («Tu marca»). */
+  brandOrganic?: boolean
+  /** TikTok commercial content disclosure: paid partnership («Contenido de marca»). Cannot be private. */
+  brandContent?: boolean
   disableComment?: boolean
   disableDuet?: boolean
   disableStitch?: boolean
@@ -44,6 +49,10 @@ export function validateSocialPayload(platform: SocialPlatform, p: SocialPayload
   if (platform === 'instagram' && caption.length > 2200) return 'Instagram admite hasta 2.200 caracteres en el texto.'
   if (platform === 'tiktok' && [...caption].length > 2200) return 'TikTok admite hasta 2.200 caracteres en el título.'
   if (platform === 'instagram' && (caption.match(/#/g) ?? []).length > 30) return 'Instagram admite como máximo 30 hashtags.'
+  if (platform === 'tiktok') {
+    if (!p.privacyLevel) return 'Elige quién puede ver el vídeo en TikTok (no hay opción por defecto).'
+    if (p.brandContent && p.privacyLevel === 'SELF_ONLY') return 'El contenido de marca no puede publicarse en privado en TikTok.'
+  }
   return null
 }
 
@@ -57,7 +66,8 @@ async function videoAsset(db: SupabaseClient, ownerId: string, assetId: string) 
   const a = data as { asset_type: string; storage_path: string | null; provenance: Record<string, unknown> | null } | null
   if (!a?.storage_path || a.asset_type !== 'video') throw new SocialPublishError('El vídeo elegido no existe.', 404)
   const mime = typeof a.provenance?.mimeType === 'string' ? a.provenance.mimeType : a.storage_path.endsWith('.webm') ? 'video/webm' : 'video/mp4'
-  return { path: a.storage_path, mime }
+  const durationMs = typeof a.provenance?.durationMs === 'number' ? a.provenance.durationMs : null
+  return { path: a.storage_path, mime, durationMs }
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -125,10 +135,12 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string, 
   let publishId = typeof job.result?.publishId === 'string' ? job.result.publishId : null
   if (!publishId) {
     const creator = await ttJson(await fetch(`${TT}/creator_info/query/`, { method: 'POST', headers }))
-    const options = Array.isArray(creator.privacy_level_options) ? creator.privacy_level_options as string[] : ['SELF_ONLY']
-    const privacy = job.payload.privacyLevel ?? 'SELF_ONLY'
-    if (!options.includes(privacy)) throw new SocialPublishError(`Privacidad no permitida para esta cuenta. Opciones: ${options.join(', ')}.`, 409)
+    const options = Array.isArray(creator.privacy_level_options) ? creator.privacy_level_options as string[] : []
+    const privacy = job.payload.privacyLevel
+    if (!privacy || !options.includes(privacy)) throw new SocialPublishError(`Privacidad no permitida para esta cuenta. Opciones: ${options.join(', ') || 'ninguna'}.`, 409)
     const v = await videoAsset(db, job.owner_id, job.payload.videoAssetId!)
+    const maxSec = Number(creator.max_video_post_duration_sec ?? 0)
+    if (maxSec > 0 && v.durationMs && v.durationMs / 1000 > maxSec) throw new SocialPublishError(`El vídeo dura ${Math.round(v.durationMs / 1000)} s y esta cuenta de TikTok admite como máximo ${maxSec} s.`, 409)
     let file: Blob
     try { file = await downloadObject(db, job.owner_id, v.path) } catch { throw new SocialPublishError('No se pudo leer el vídeo.', 502) }
     const uploadMime = v.mime.split(';')[0]
@@ -137,7 +149,7 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string, 
     const init = await ttJson(await fetch(`${TT}/video/init/`, {
       method: 'POST', headers,
       body: JSON.stringify({
-        post_info: { title: job.payload.caption ?? '', privacy_level: privacy, disable_comment: job.payload.disableComment ?? false, disable_duet: job.payload.disableDuet ?? false, disable_stitch: job.payload.disableStitch ?? false, is_aigc: job.payload.isAigc !== false },
+        post_info: { title: job.payload.caption ?? '', privacy_level: privacy, disable_comment: creator.comment_disabled === true || (job.payload.disableComment ?? true), disable_duet: creator.duet_disabled === true || (job.payload.disableDuet ?? true), disable_stitch: creator.stitch_disabled === true || (job.payload.disableStitch ?? true), brand_content_toggle: job.payload.brandContent === true, brand_organic_toggle: job.payload.brandOrganic === true, is_aigc: job.payload.isAigc !== false },
         source_info: { source: 'FILE_UPLOAD', video_size: size, chunk_size: chunkSize, total_chunk_count: count },
       }),
     }))
@@ -167,7 +179,8 @@ async function publishTikTok(db: SupabaseClient, job: SocialJob, token: string, 
 }
 
 /** `writer` writes the job's status/result (service role after the RLS hardening migration); `db` reads with the owner's session. */
-export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db) {
+/** `expectedAccountId`: the account ID the owner confirmed on screen for this publication; the server refuses any other account. */
+export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobId: string, writer: SupabaseClient = db, expectedAccountId?: string) {
   const { data } = await db.from('publication_jobs').select('id,owner_id,project_id,platform,status,idempotency_key,payload,result,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
   const job = data as SocialJob | null
   if (!job || (job.platform !== 'instagram' && job.platform !== 'tiktok')) throw new SocialPublishError('Trabajo de publicación no encontrado.', 404)
@@ -201,6 +214,9 @@ export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobI
   if (!connection) throw new SocialPublishError(`Conecta tu cuenta de ${platform === 'instagram' ? 'Instagram' : 'TikTok'} en Redes sociales.`, 409)
   const needed = platform === 'instagram' ? SOCIAL_SCOPES.instagram[1] : SOCIAL_SCOPES.tiktok[1]
   if (!connection.scopes.includes(needed)) throw new SocialPublishError(`La conexión no tiene el permiso ${needed}. Vuelve a conectar la cuenta.`, 409)
+  if (expectedAccountId !== undefined && connection.external_account_id !== expectedAccountId) {
+    throw new SocialPublishError(`La cuenta conectada (${connection.external_account_name ?? 'sin nombre'}, ID ${connection.external_account_id}) no es la que confirmaste. No se ha publicado nada.`, 409)
+  }
 
   const { data: claimed } = await writer.from('publication_jobs').update({ status: 'publishing', updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId).eq('status', 'approved').select('id')
   if (!claimed?.length) throw new SocialPublishError('La publicación ya está en curso.', 409)
@@ -208,7 +224,7 @@ export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobI
     const token = await socialAccessToken(db, connection)
     const r = platform === 'instagram' ? await publishInstagram(db, job, token, connection.external_account_id, writer) : await publishTikTok(db, job, token, writer)
     const { data: latest } = await db.from('publication_jobs').select('result').eq('id', job.id).maybeSingle()
-    const result = { ...((latest?.result as Record<string, unknown> | null) ?? {}), mediaId: r.mediaId, url: r.url, publishedAt: new Date().toISOString(), privacy: platform === 'tiktok' ? job.payload.privacyLevel ?? 'SELF_ONLY' : null }
+    const result = { ...((latest?.result as Record<string, unknown> | null) ?? {}), mediaId: r.mediaId, url: r.url, publishedAt: new Date().toISOString(), privacy: platform === 'tiktok' ? job.payload.privacyLevel ?? null : null }
     await writer.from('publication_jobs').update({ status: 'published', result, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     return { mediaId: r.mediaId, url: r.url, alreadyPublished: false }
   } catch (error) {
@@ -216,5 +232,17 @@ export async function publishSocialJob(db: SupabaseClient, ownerId: string, jobI
     const { data: latest } = await db.from('publication_jobs').select('result').eq('id', job.id).maybeSingle()
     await writer.from('publication_jobs').update({ status: 'approved', result: { ...((latest?.result as Record<string, unknown> | null) ?? {}), lastError: message.slice(0, 500), failedAt: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', job.id).eq('owner_id', ownerId)
     throw error
+  }
+}
+
+/** What TikTok requires showing before a post (Content Sharing Guidelines): nickname, allowed privacy options, disabled interactions, max length. */
+export type TikTokCreatorInfo = { nickname: string | null; username: string | null; privacyOptions: string[]; commentDisabled: boolean; duetDisabled: boolean; stitchDisabled: boolean; maxDurationSec: number | null }
+export async function tiktokCreatorInfo(token: string): Promise<TikTokCreatorInfo> {
+  const c = await ttJson(await fetch(`${TT}/creator_info/query/`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8' } }))
+  return {
+    nickname: typeof c.creator_nickname === 'string' ? c.creator_nickname : null, username: typeof c.creator_username === 'string' ? c.creator_username : null,
+    privacyOptions: Array.isArray(c.privacy_level_options) ? (c.privacy_level_options as unknown[]).filter((x): x is string => typeof x === 'string') : [],
+    commentDisabled: c.comment_disabled === true, duetDisabled: c.duet_disabled === true, stitchDisabled: c.stitch_disabled === true,
+    maxDurationSec: typeof c.max_video_post_duration_sec === 'number' ? c.max_video_post_duration_sec : null,
   }
 }

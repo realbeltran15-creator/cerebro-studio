@@ -116,6 +116,7 @@ describe('social OAuth and publishing guards', () => {
     expect(ig.origin + ig.pathname).toBe('https://www.instagram.com/oauth/authorize')
     expect(ig.searchParams.get('scope')).toBe(SOCIAL_SCOPES.instagram.join(','))
     expect(ig.searchParams.get('redirect_uri')).toBe('https://app.test/api/oauth/instagram/callback')
+    expect(ig.searchParams.get('force_reauth')).toBe('true')
     const tt = new URL(socialAuthUrl('tiktok', 'https://app.test', 'nonce'))
     expect(tt.origin + tt.pathname).toBe('https://www.tiktok.com/v2/auth/authorize/')
     expect(tt.searchParams.get('client_key')).toBe('tt-key')
@@ -124,7 +125,11 @@ describe('social OAuth and publishing guards', () => {
   it('validates payloads per platform', () => {
     expect(validateSocialPayload('tiktok', {})).toMatch(/vídeo/)
     expect(validateSocialPayload('instagram', { videoAssetId: 'v', caption: '#a '.repeat(31) })).toMatch(/30 hashtags/)
-    expect(validateSocialPayload('tiktok', { videoAssetId: 'v', caption: 'ok' })).toBeNull()
+    // TikTok Content Sharing Guidelines: the owner must choose the privacy (no default); branded content cannot be private.
+    expect(validateSocialPayload('tiktok', { videoAssetId: 'v', caption: 'ok' })).toMatch(/quién puede ver/)
+    expect(validateSocialPayload('tiktok', { videoAssetId: 'v', caption: 'ok', privacyLevel: 'SELF_ONLY' })).toBeNull()
+    expect(validateSocialPayload('tiktok', { videoAssetId: 'v', privacyLevel: 'SELF_ONLY', brandContent: true })).toMatch(/marca no puede publicarse en privado/)
+    expect(validateSocialPayload('tiktok', { videoAssetId: 'v', privacyLevel: 'PUBLIC_TO_EVERYONE', brandContent: true })).toBeNull()
   })
   it('computes TikTok chunks within the documented limits', () => {
     expect(tiktokChunks(10 * 1024 * 1024)).toEqual({ chunkSize: 10 * 1024 * 1024, count: 1 })
