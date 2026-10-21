@@ -442,12 +442,12 @@ export default function ManualEditorPage() {
           <button type="button" role="tab" aria-selected={matTab === 'visual'} className={matTab === 'visual' ? 'small' : 'ghost small'} onClick={() => setMatTab('visual')}>Vídeo e imagen</button>
           <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Audio</button>
         </div>
-        <ul className="materialList">
-          {materials.map(a => <li key={a.id} draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
+        <ul className="materialList" role="listbox" aria-label="Materiales del proyecto">
+          {materials.map(a => <li key={a.id} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
             <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
             <span className="matName">{assetLabel(a)}<small className="muted">{a.asset_type}</small></span>
           </li>)}
-          {!materials.length && <li className="muted small">Nada todavía. Importa archivos abajo.</li>}
+          {!materials.length && <li role="option" aria-selected={false} aria-disabled="true" className="muted small">Nada todavía. Importa archivos abajo.</li>}
         </ul>
         <p className="muted small">Arrastra un material a la pista de vídeo o a una pista de audio; se coloca donde lo sueltas.</p>
         <details open={assets.length === 0}><summary className="small"><b>Importar o añadir</b></summary>
@@ -485,7 +485,7 @@ export default function ManualEditorPage() {
         {selClip && comp.clips[0]?.id !== selClip.id && <label className="pill" style={{ marginBottom: 8 }}><input type="checkbox" checked={previewFromSelected} onChange={e => setPreviewFromSelected(e.target.checked)} /> Vista previa desde el clip seleccionado (sin render)</label>}
         {previewFromSelected && selClip && comp.clips[0]?.id !== selClip.id
           ? <RenderPanel key={`preview-${selClip.id}`} projectId={job.project_id} composition={fromClip(comp, selClip.id)} assets={assets} previewOnly />
-          : <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} />}
+          : <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} />}
       </div>
 
       <section className="panel editorProps" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-label="Propiedades">
@@ -524,8 +524,7 @@ export default function ManualEditorPage() {
           {comp.subtitles && <label>Estilo de subtítulos<select value={comp.captionStyle ?? 'box'} onChange={e => apply(c => ({ ...c, captionStyle: e.target.value as CaptionStyle }))}>{(Object.keys(CAPTION_STYLES) as CaptionStyle[]).map(k => <option key={k} value={k}>{CAPTION_STYLES[k]}</option>)}</select></label>}
           <label>Duración de las transiciones (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
           <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
-          <label>Calidad de exportación<select value={comp.exportSettings?.quality ?? 'normal'} onChange={e => apply(c => ({ ...c, exportSettings: { quality: e.target.value === 'high' ? 'high' : 'normal' } }))}><option value="normal">Normal (2,5 Mbit/s)</option><option value="high">Alta (5 Mbit/s, si cabe en 50 MB)</option></select></label>
-          <p className="muted small">Selecciona un clip, un audio o un texto en la línea de tiempo para editarlo.</p>
+                    <p className="muted small">Selecciona un clip, un audio o un texto en la línea de tiempo para editarlo.</p>
         </>}
       </section>
     </div>

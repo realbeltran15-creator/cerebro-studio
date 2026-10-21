@@ -30,7 +30,16 @@ export type CameraKind = 'none' | 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_rig
 export const CAMERA_MOVES: Record<CameraKind, string> = { none: 'Fija', zoom_in: 'Acercar', zoom_out: 'Alejar', pan_left: 'Panorámica a la izquierda', pan_right: 'Panorámica a la derecha', pan_up: 'Subir', pan_down: 'Bajar' }
 export type CameraMove = { kind: CameraKind; amount: number }
 
-export type ExportSettings = { quality: 'normal' | 'high' }
+export type ExportResolution = '480' | '720' | '1080'
+export type ExportSettings = {
+  quality: 'normal' | 'high'
+  /** Short side of the frame. Absent = the editor's classic sizes (formatSize). */
+  resolution?: ExportResolution
+  /** Exact video bitrate in kbit/s (overrides quality). */
+  videoKbps?: number | null
+  /** library = uploaded to the Biblioteca (50 MB limit, bitrate reduced to fit); download = saved to the computer only (no limit). */
+  destination?: 'library' | 'download'
+}
 /** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
 export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
 
@@ -320,7 +329,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
     editedManually: v.editedManually === true,
     autoSnapshot: parseSnapshot(v.autoSnapshot),
     textClips: (Array.isArray(v.textClips) ? v.textClips : []).flatMap(t => { const p = parseTextClip(t); return p ? [p] : [] }).slice(0, 300),
-    exportSettings: { quality: v.exportSettings?.quality === 'high' ? 'high' : 'normal' },
+    exportSettings: parseExport(v.exportSettings),
     styleRef: parseStyleRef(v.styleRef, depth),
     mix: parseMix(v.mix),
   }
@@ -479,4 +488,40 @@ export const preferredBitrate = (q: ExportSettings['quality'] | undefined) => (q
 /** Text clips visible at `ms` on the timeline. */
 export function activeTextClips(c: Pick<Composition, 'textClips'>, ms: number) {
   return (c.textClips ?? []).filter(t => ms >= t.startMs && ms < t.startMs + t.durationMs)
+}
+
+function parseExport(e: Partial<ExportSettings> | undefined): ExportSettings {
+  const out: ExportSettings = { quality: e?.quality === 'high' ? 'high' : 'normal' }
+  if (e?.resolution === '480' || e?.resolution === '720' || e?.resolution === '1080') out.resolution = e.resolution
+  const k = Number(e?.videoKbps)
+  if (Number.isFinite(k) && k >= 200 && k <= 20000) out.videoKbps = Math.round(k)
+  if (e?.destination === 'download') out.destination = 'download'
+  return out
+}
+
+export const LIBRARY_MAX_BYTES = 50 * 1024 * 1024
+const BITRATES: Record<ExportResolution, { normal: number; high: number }> = { '480': { normal: 1_200_000, high: 2_000_000 }, '720': { normal: 2_500_000, high: 5_000_000 }, '1080': { normal: 5_000_000, high: 8_000_000 } }
+
+/** Frame size for a format at a resolution (even numbers, as encoders need). */
+export function frameSize(format: OutputFormat, resolution?: ExportResolution) {
+  if (!resolution) return formatSize[format]
+  const short = Number(resolution), long = Math.round(short * 16 / 9 / 2) * 2
+  return format === '16:9' ? { width: long, height: short } : format === '9:16' ? { width: short, height: long } : { width: short, height: short }
+}
+
+/**
+ * What the export will be: frame size, bitrates and the estimated file size. For the Biblioteca the video bitrate is lowered
+ * if needed so the file fits in 50 MB (and the plan says so); downloads keep the chosen bitrate.
+ */
+export function exportPlan(c: Pick<Composition, 'clips' | 'format' | 'exportSettings'>) {
+  const e = c.exportSettings ?? { quality: 'normal' }
+  const total = totalDurationMs(c)
+  const { width, height } = frameSize(c.format, e.resolution)
+  const wanted = e.videoKbps ? e.videoKbps * 1000 : e.resolution ? BITRATES[e.resolution][e.quality] : preferredBitrate(e.quality)
+  const audioBps = 128_000
+  const destination = e.destination ?? 'library'
+  const videoBps = destination === 'library' ? videoBitrateFor(total, LIBRARY_MAX_BYTES, wanted) : wanted
+  const estimatedBytes = Math.round((videoBps + audioBps) * Math.max(total, 1) / 8000)
+  const reduced = destination === 'library' && videoBps < wanted
+  return { width, height, videoBps, audioBps, wantedBps: wanted, destination, estimatedBytes, reduced, durationMs: total, /** Even at the minimum bitrate a long montage may not fit in the Library: then it can only be downloaded. */ fitsLibrary: estimatedBytes <= LIBRARY_MAX_BYTES }
 }

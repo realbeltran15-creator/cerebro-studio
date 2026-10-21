@@ -157,3 +157,23 @@ describe('long videos', () => {
     expect(issues.find(i => /Montaje largo \(95 min\)/.test(i.message))).toBeTruthy()
   })
 })
+
+describe('export plan', () => {
+  it('size, bitrate and estimate follow the settings; the Library caps at 50 MB, downloads do not', async () => {
+    const { exportPlan, frameSize } = await import('@/lib/editor/composition')
+    expect(frameSize('16:9', '1080')).toEqual({ width: 1920, height: 1080 })
+    expect(frameSize('9:16', '480')).toEqual({ width: 480, height: 854 })
+    const short = { ...comp(), exportSettings: { quality: 'high' as const, resolution: '1080' as const } }
+    const p = exportPlan(short)
+    expect([p.width, p.height, p.videoBps, p.reduced]).toEqual([1920, 1080, 8_000_000, false])
+    expect(p.estimatedBytes).toBe(Math.round((8_000_000 + 128_000) * 20000 / 8000))
+    const long = { ...short, clips: short.clips.map(k => ({ ...k, durationMs: 30 * 60_000 })) } // 90 min
+    const lib = exportPlan(long)
+    expect(lib.reduced).toBe(true); expect(lib.fitsLibrary).toBe(false) // 90 min cannot fit in 50 MB even at the minimum bitrate
+    const ten = exportPlan({ ...short, clips: short.clips.map(k => ({ ...k, durationMs: 200_000 })) })
+    expect([ten.reduced, ten.fitsLibrary]).toEqual([true, true]); expect(ten.estimatedBytes).toBeLessThanOrEqual(50 * 1024 * 1024)
+    const dl = exportPlan({ ...long, exportSettings: { ...long.exportSettings, destination: 'download' as const } })
+    expect([dl.videoBps, dl.reduced]).toEqual([8_000_000, false])
+    expect(exportPlan({ ...short, exportSettings: { quality: 'normal' as const, videoKbps: 3000, destination: 'download' as const } }).videoBps).toBe(3_000_000)
+  })
+})

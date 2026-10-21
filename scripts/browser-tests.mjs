@@ -1452,6 +1452,16 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   check('recovery: the editor offers the unsaved changes after reopening', (await page.locator('label', { hasText: /^Formato/ }).locator('select').inputValue()) === '16:9')
   await page.getByRole('button', { name: 'Recuperar cambios' }).click()
   check('recovery: recovering restores them as unsaved changes', (await page.locator('label', { hasText: /^Formato/ }).locator('select').inputValue()) === '1:1' && (await page.getByText('Cambios sin guardar').count()) === 1)
+  // Export: 480p downloaded to the computer, not uploaded; the montage keeps the export settings.
+  await page.getByLabel('Resolución').selectOption('480')
+  await page.getByLabel('Destino').selectOption('download')
+  check('export: the estimate follows the settings (the montage is square by now)', /480×480/.test(await page.locator('[aria-label="Estimación"]').textContent()))
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 90000 }), page.getByRole('button', { name: 'Renderizar y descargar' }).click()])
+  await page.getByText(/se ha descargado a tu equipo y no se ha subido/).waitFor({ timeout: 30000 })
+  const fin = await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
+  const done = fin.render_jobs.find(j => j.status === 'completed')
+  check('export: downloaded at 480p without uploading to the Library', /480p\.(webm|mp4)$/.test(dl.suggestedFilename()) && done?.output_manifest?.destination === 'download' && done.output_manifest.height === 480 && !fin.assets.some(x => x.source_provider === 'browser-render'), [dl.suggestedFilename(), done?.output_manifest])
+  check('export: the settings are saved with the montage', fin.render_jobs.find(j => j.id === 'job1')?.composition?.exportSettings?.resolution === '480')
   check('instructions: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }

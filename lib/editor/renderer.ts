@@ -1,5 +1,5 @@
 import { applyGainPlan, musicClipGainPlan, musicGainPlan } from './audio-plan'
-import { activeTextClips, envelopeBreakpoints, trackGains, audioStartMs, clipCaptions, clipStarts, formatSize, preferredBitrate, TEXT_FONTS, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
+import { activeTextClips, envelopeBreakpoints, exportPlan, trackGains, audioStartMs, clipCaptions, clipStarts, TEXT_FONTS, totalDurationMs, type CaptionStyle, type Composition, type TextOverlay } from './composition'
 import { BLENDS, cameraAt, effectiveCamera, textFrame, transitionFrame, type TextFrame } from './motion'
 
 /**
@@ -172,7 +172,9 @@ type ClipVideo = { el: HTMLVideoElement; url: string; gain: GainNode }
 
 export async function renderComposition(opts: RenderOptions): Promise<RenderResult> {
   const { composition, canvas, media, record, onProgress, signal } = opts
-  const { width, height } = formatSize[composition.format]
+  // Same plan as the export controls: the size and bitrate shown before rendering are the ones used.
+  const plan = exportPlan(composition)
+  const { width, height } = plan
   canvas.width = width; canvas.height = height
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('El navegador no permite dibujar en canvas.')
@@ -291,7 +293,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     const stream = canvas.captureStream(0)
     videoTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
     out.stream.getAudioTracks().forEach(t => stream.addTrack(t))
-    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBitrateFor(total, undefined, preferredBitrate(composition.exportSettings?.quality)), audioBitsPerSecond: 128_000 })
+    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: plan.videoBps, audioBitsPerSecond: 128_000 })
     recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     recorder.start(1000)
   }

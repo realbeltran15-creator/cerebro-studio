@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, formatSize, totalDurationMs, type Composition } from '@/lib/editor/composition'
+import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, type Composition, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
 import { downloadText } from '@/lib/library'
 import { downloadCompositionMedia, saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
@@ -18,7 +18,7 @@ const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms %
  * Preview and browser render for a composition. Before rendering it asks the parent to persist
  * the composition, then records a snapshot in its own render_jobs row.
  */
-export function RenderPanel({ projectId, composition, assets, beforeRender, onRendered, previewOnly, autoStart }: {
+export function RenderPanel({ projectId, composition: given, assets, beforeRender, onRendered, previewOnly, autoStart, onExportSettings }: {
   projectId: string
   composition: Composition
   assets: EditorAsset[]
@@ -28,7 +28,16 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   previewOnly?: boolean
   /** Start the recorded render by itself once when the panel opens (the Shorts approval screen). Needs a visible tab. */
   autoStart?: boolean
+  /** Export settings changed in this panel (the manual editor stores them with the montage). */
+  onExportSettings?: (e: ExportSettings) => void
 }) {
+  // Export settings chosen here apply to this render (and are passed up to be saved with the montage when the parent wants them).
+  const [exp, setExp] = useState<ExportSettings>(given.exportSettings ?? { quality: 'normal' })
+  const givenExp = JSON.stringify(given.exportSettings ?? null)
+  useEffect(() => { if (given.exportSettings) setExp(given.exportSettings) }, [givenExp]) // eslint-disable-line react-hooks/exhaustive-deps
+  const composition: Composition = { ...given, exportSettings: exp }
+  const plan = exportPlan(composition)
+  const setExport = (p: Partial<ExportSettings>) => { const next = { ...exp, ...p }; setExp(next); onExportSettings?.(next) }
   const supabase = getSupabaseBrowserClient()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -64,7 +73,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
   const issues = compositionIssues(composition)
   const blocking = issues.some(i => i.blocking)
   const total = totalDurationMs(composition)
-  const { width, height } = formatSize[composition.format]
+  const { width, height } = plan
   useEffect(() => {
     if (!autoStart || previewOnly || autoStarted.current || blocking || composition.clips.length === 0 || !recordingSupported()) return
     autoStarted.current = true
@@ -103,7 +112,16 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         setStatus(`${reason} No se ha guardado ningún vídeo.`)
         return
       }
-      if (record && result.blob && jobId) {
+      if (record && result.blob && jobId && plan.destination === 'download') {
+        // Download only: the file stays on this computer (no 50 MB limit); the render job records it without uploading anything.
+        const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}-${plan.height}p.${containerOf(result.mimeType)}`
+        const url = URL.createObjectURL(result.blob)
+        setDownload({ url, name })
+        await supabase.from('render_jobs').update({ status: 'completed', error: null, output_manifest: { destination: 'download', bytes: result.blob.size, mimeType: result.mimeType, width: plan.width, height: plan.height, videoBps: plan.videoBps }, updated_at: new Date().toISOString() }).eq('id', jobId)
+        const a = document.createElement('a'); a.href = url; a.download = name; a.click()
+        setStatus(`Vídeo listo (${Math.round(result.blob.size / 1048576 * 10) / 10} MB): se ha descargado a tu equipo y no se ha subido a la Biblioteca.`)
+        onRendered?.()
+      } else if (record && result.blob && jobId) {
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}.${containerOf(result.mimeType)}`
         setDownload({ url: URL.createObjectURL(result.blob), name })
         setMode('saving'); setStatus('Guardando el vídeo en la nube…')
@@ -151,6 +169,15 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
       <h3>Vista previa y exportación</h3>
       <span className="pill">{composition.format} · {width}×{height} · {fmt(total)}</span>
     </div>
+    {!previewOnly && <div className="field-row exportControls" role="group" aria-label="Exportación" style={{ alignItems: 'end' }}>
+      <label>Resolución<select aria-label="Resolución" value={exp.resolution ?? ''} onChange={e => setExport({ resolution: (e.target.value || undefined) as ExportResolution | undefined })}><option value="">Estándar</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></label>
+      <label>Calidad<select aria-label="Calidad" value={exp.videoKbps ? 'custom' : exp.quality} onChange={e => e.target.value === 'custom' ? setExport({ videoKbps: Math.round(plan.wantedBps / 1000) }) : setExport({ quality: e.target.value === 'high' ? 'high' : 'normal', videoKbps: null })}><option value="normal">Normal</option><option value="high">Alta</option><option value="custom">Personalizada</option></select></label>
+      {exp.videoKbps ? <label>Vídeo (kbit/s)<input aria-label="Bitrate de vídeo" type="number" min={200} max={20000} step={100} value={exp.videoKbps} onChange={e => setExport({ videoKbps: Math.min(20000, Math.max(200, Number(e.target.value) || 200)) })} style={{ width: 100 }} /></label> : null}
+      <label>Destino<select aria-label="Destino" value={plan.destination} onChange={e => setExport({ destination: e.target.value === 'download' ? 'download' : 'library' })}><option value="library">Biblioteca (máx. 50 MB)</option><option value="download">Descargar a mi equipo</option></select></label>
+      <span className="small muted" aria-label="Estimación">{width}×{height} · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
+    </div>}
+    {!previewOnly && plan.destination === 'library' && !plan.fitsLibrary && <p className="warnBox small" role="alert">Este montaje no cabe en la Biblioteca ({Math.round(LIBRARY_MAX_BYTES / 1048576)} MB) ni con la calidad mínima. Elige «Descargar a mi equipo».</p>}
+    {!previewOnly && plan.reduced && plan.fitsLibrary && <p className="warnBox small">Para caber en {Math.round(LIBRARY_MAX_BYTES / 1048576)} MB la calidad baja a {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 })} Mbit/s (pedías {(plan.wantedBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })}). Elige «Descargar a mi equipo» para conservarla.</p>}
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
     {mode !== 'idle' && progress.total > 0 && <progress value={progress.elapsed} max={progress.total} style={{ width: '100%' }} aria-label="Progreso" />}
     {status && <p className="muted small" role="status">{status}</p>}
@@ -160,7 +187,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
     <div className="pageActions">
       {mode === 'idle' ? <>
         <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>
-        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported()} onClick={() => void run(true)}><Icon name="video" size={16} />Renderizar y guardar</button>}
+        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || (plan.destination === 'library' && !plan.fitsLibrary)} onClick={() => void run(true)}><Icon name="video" size={16} />{plan.destination === 'download' ? 'Renderizar y descargar' : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}
       {compositionCues(composition).length > 0 && <>
@@ -174,7 +201,7 @@ export function RenderPanel({ projectId, composition, assets, beforeRender, onRe
         ? <div className="pageActions"><button type="button" className="ghost small" disabled={converting !== null} onClick={() => void convert()}>{converting !== null ? `Convirtiendo… ${Math.round(converting * 100)} %` : 'Convertir a MP4 compatible (H.264 + AAC)'}</button></div>
         : <p className="muted small">{native === null ? 'Comprobando si este navegador puede convertir el vídeo…' : 'Este navegador no puede codificar H.264; renderiza con Chrome, Edge o Safari para obtener un MP4 compatible.'}</p>}
     </div>}
-    {download && mode === 'idle' && !error && <p className="notice" role="status">Guardado en la Biblioteca. Siguiente: <Link className="open" href={`/repurpose?project=${projectId}`}>versión vertical</Link> · <Link className="open" href={`/youtube?project=${projectId}`}>preparar YouTube</Link> · <Link className="open" href={`/social?project=${projectId}`}>preparar Instagram / TikTok</Link>. Preparar no publica.</p>}
+    {download && mode === 'idle' && !error && plan.destination !== 'download' && <p className="notice" role="status">Guardado en la Biblioteca. Siguiente: <Link className="open" href={`/repurpose?project=${projectId}`}>versión vertical</Link> · <Link className="open" href={`/youtube?project=${projectId}`}>preparar YouTube</Link> · <Link className="open" href={`/social?project=${projectId}`}>preparar Instagram / TikTok</Link>. Preparar no publica.</p>}
     <p className="muted small">«Vista previa» solo reproduce el montaje; «Renderizar y guardar» graba el vídeo y lo guarda en la Biblioteca. El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos): mantén la pestaña abierta y visible hasta que termine. Sin coste externo. Salida WebM (VP9/VP8 + Opus); el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>
   </section>
 }
