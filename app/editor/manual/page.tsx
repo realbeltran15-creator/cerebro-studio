@@ -19,6 +19,8 @@ import { EditorReferencePanel } from '../../components/editor-reference-panel'
 import { EditorComparePanel } from '../../components/editor-compare-panel'
 import { analyzeAsset, type AssetAnalysis } from '@/lib/editor/analysis-assets'
 import { nearestBeat } from '@/lib/editor/sync'
+import { COMMAND_EXAMPLES, runInstruction } from '@/lib/editor/commands'
+import { deleteRange, isolateRange, normRange, type Range } from '@/lib/editor/range'
 import { effectiveCamera } from '@/lib/editor/motion'
 import { ManualPicker } from '../../components/manual-picker'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
@@ -57,6 +59,13 @@ export default function ManualEditorPage() {
   const [importNotes, setImportNotes] = useState('')
   const [dropping, setDropping] = useState(false)
   const [playheadMs, setPlayheadMs] = useState(0)
+  // Marked fragment («entrada»/«salida»): instructions and fragment actions apply only to it.
+  const [range, setRange] = useState<Range | null>(null)
+  const [markIn, setMarkIn] = useState<number | null>(null)
+  const rangeDrag = useRef<{ startMs: number; left: number } | null>(null)
+  const [selectedAsset, setSelectedAsset] = useState<string | null>(null)
+  const [instruction, setInstruction] = useState('')
+  const [instructionLog, setInstructionLog] = useState<Array<{ text: string; done: string[] }>>([])
   const [matTab, setMatTab] = useState<'visual' | 'audio'>('visual')
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
@@ -140,6 +149,9 @@ export default function ManualEditorPage() {
       if ((e.target as HTMLElement)?.closest('input,textarea,select')) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); setHistory(h => (h ? (e.shiftKey ? redo(h) : undo(h)) : h)); setDirty(true) }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); setHistory(h => (h ? redo(h) : h)); setDirty(true) }
+      if (e.key === 'i' || e.key === 'I') markAt('in')
+      if (e.key === 'o' || e.key === 'O') markAt('out')
+      if (e.key === 'Escape') { setRange(null); setMarkIn(null) }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
         e.preventDefault()
         apply(c => (selection.kind === 'clip' ? deleteClip(c, selection.id) : selection.kind === 'text' ? deleteTextClip(c, selection.id) : deleteAudioClip(c, selection.id)))
@@ -148,7 +160,33 @@ export default function ManualEditorPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [apply, selection])
+  }, [apply, selection, playheadMs, markIn, range]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** «Marcar entrada» / «Marcar salida» at the playhead. */
+  function markAt(which: 'in' | 'out') {
+    const total = history ? totalDurationMs(history.present) : 0
+    if (which === 'in') { setMarkIn(playheadMs); setRange(r => (r && r.endMs > playheadMs ? normRange({ startMs: playheadMs, endMs: r.endMs }, total) : null)); return }
+    const from = range?.startMs ?? markIn ?? 0
+    setRange(normRange({ startMs: from, endMs: playheadMs }, total)); setMarkIn(null)
+  }
+
+  /** Runs a written instruction as one undoable step and says what it did. */
+  function runText(text: string) {
+    if (!history || !text.trim()) return
+    const kinds = Object.fromEntries(assets.map(a => [a.id, a.asset_type]))
+    const durationOf = (id: string) => { const an = analyses[id]; if (typeof an === 'object' && an.durationMs) return an.durationMs; const p = assets.find(a => a.id === id)?.provenance ?? {}; return typeof p.durationMs === 'number' ? p.durationMs : typeof p.durationSeconds === 'number' ? p.durationSeconds * 1000 : null }
+    const r = runInstruction(history.present, text, {
+      playheadMs, range, selectedClipId: selection?.kind === 'clip' ? selection.id : null, selectedAssetId: selectedAsset, beatsMs: beats.beatsMs,
+      assets: assets.map(a => ({ id: a.id, label: assetLabel(a), type: a.asset_type, durationMs: durationOf(a.id) })),
+      isVideo: k => kinds[k.visualAssetId ?? ''] === 'video',
+    })
+    if (!r.ok) { setError(`${r.message} Ejemplos: «${COMMAND_EXAMPLES.slice(0, 4).join('», «')}».`); return }
+    setError('')
+    apply(() => r.composition)
+    setInstructionLog(l => [{ text, done: r.done }, ...l].slice(0, 8))
+    setNotice(`${r.done.join(' ')} (Ctrl+Z para deshacer)`)
+    setInstruction('')
+  }
 
   useEffect(() => {
     if (!dirty) return
@@ -310,12 +348,24 @@ export default function ManualEditorPage() {
       </div>
       <div className="pageActions">
         <button type="button" className="ghost" disabled={!splitPlayheadOk} title="Divide el clip que está bajo el cabezal" onClick={() => apply(c => splitClip(c, c.clips[underPlayhead].id, playheadMs - starts[underPlayhead]))}>Cortar en el cabezal</button>
+        <button type="button" className="ghost" title="Tecla I" onClick={() => markAt('in')}>Marcar entrada</button>
+        <button type="button" className="ghost" title="Tecla O" onClick={() => markAt('out')}>Marcar salida</button>
         <button type="button" className="ghost" onClick={() => { const at = Math.min(playheadMs, Math.max(0, total - 1000)); apply(c => addTextClip(c, { content: 'Texto', startMs: at, durationMs: 3000, position: 'center', sizePct: 7, animation: 'fade', font: 'sans', color: '#ffffff' })) }}>Añadir texto</button>
         <button type="button" className="ghost" disabled={!history?.past.length} onClick={() => { setHistory(h => (h ? undo(h) : h)); setDirty(true) }} title="Ctrl+Z">Deshacer</button>
         <button type="button" className="ghost" disabled={!history?.future.length} onClick={() => { setHistory(h => (h ? redo(h) : h)); setDirty(true) }} title="Ctrl+Shift+Z">Rehacer</button>
         <button type="button" onClick={() => void saveClick()} disabled={!dirty || busy === 'save'}>{busy === 'save' ? 'Guardando…' : 'Guardar montaje'}</button>
       </div>
     </div>
+
+    <form className="panel instructionBar" style={{ marginBottom: 12 }} onSubmit={e => { e.preventDefault(); runText(instruction) }} aria-label="Instrucciones">
+      <label htmlFor="ed-instr" className="small"><b>Dile al editor qué hacer</b> {range ? <span className="pill info">Se aplica al fragmento {secs(range.startMs)}–{secs(range.endMs)} s</span> : selection?.kind === 'clip' ? <span className="pill">Se aplica al clip seleccionado</span> : <span className="muted">· se aplica al clip bajo el cabezal</span>}</label>
+      <div className="field-row" style={{ alignItems: 'center' }}>
+        <input id="ed-instr" list="ed-instr-examples" value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="p. ej. pon esta música desde el minuto 2 · corta aquí · haz un zoom lento · cambia de imagen siguiendo el ritmo" style={{ flex: 1 }} />
+        <datalist id="ed-instr-examples">{COMMAND_EXAMPLES.map(x => <option key={x} value={x} />)}</datalist>
+        <button type="submit" disabled={!instruction.trim()}>Hacer</button>
+      </div>
+      {instructionLog.length > 0 && <details className="small"><summary>Últimas instrucciones ({instructionLog.length})</summary><ul className="plainList">{instructionLog.map((l, i) => <li key={i}><button type="button" className="ghost small" onClick={() => runText(l.text)} title="Repetir">↻</button> «{l.text}» → {l.done.join(' ')}</li>)}</ul></details>}
+    </form>
 
     <div className="editorLayout">
       <aside className="panel editorMaterials" aria-label="Materiales">
@@ -325,7 +375,7 @@ export default function ManualEditorPage() {
           <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Audio</button>
         </div>
         <ul className="materialList">
-          {materials.map(a => <li key={a.id} draggable onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
+          {materials.map(a => <li key={a.id} draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
             <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
             <span className="matName">{assetLabel(a)}<small className="muted">{a.asset_type}</small></span>
           </li>)}
@@ -415,10 +465,15 @@ export default function ManualEditorPage() {
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={() => setDropping(false)}
       onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); setDropping(false); void importFiles(Array.from(e.dataTransfer.files)) } }}>
       <div style={{ width, position: 'relative' }}>
-        <div className="muted small timelineRuler" style={{ position: 'relative', height: 18, cursor: 'pointer' }} onClick={e => setPlayheadMs(Math.max(0, Math.min(total, ((e.clientX - e.currentTarget.getBoundingClientRect().left) / pxPerSec) * 1000)))} title="Haz clic para mover el cabezal">
+        <div className="muted small timelineRuler" style={{ position: 'relative', height: 18, cursor: 'pointer' }} title="Clic: mover el cabezal · Mayús + arrastrar: marcar un fragmento"
+          onPointerDown={e => { const left = e.currentTarget.getBoundingClientRect().left; const ms = Math.max(0, Math.min(total, ((e.clientX - left) / pxPerSec) * 1000)); if (e.shiftKey) { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); rangeDrag.current = { startMs: ms, left }; setRange(null) } else setPlayheadMs(ms) }}
+          onPointerMove={e => { const d = rangeDrag.current; if (!d) return; e.stopPropagation(); const ms = Math.max(0, Math.min(total, ((e.clientX - d.left) / pxPerSec) * 1000)); setRange(normRange({ startMs: d.startMs, endMs: ms }, total)) }}
+          onPointerUp={e => { if (rangeDrag.current) { e.stopPropagation(); rangeDrag.current = null } }}>
           {Array.from({ length: Math.ceil(total / 1000 / 5) + 1 }, (_, i) => <span key={i} style={{ position: 'absolute', left: i * 5 * pxPerSec }}>{i * 5}s</span>)}
         </div>
         <div className="playhead" style={{ left: playheadMs / 1000 * pxPerSec }} aria-hidden="true" />
+        {range && <div className="rangeOverlay" style={{ position: 'absolute', top: 0, bottom: 0, left: range.startMs / 1000 * pxPerSec, width: (range.endMs - range.startMs) / 1000 * pxPerSec }} aria-label={`Fragmento marcado ${secs(range.startMs)}–${secs(range.endMs)} s`} />}
+        {!range && markIn !== null && <div className="markIn" style={{ left: markIn / 1000 * pxPerSec }} aria-hidden="true" />}
         <div style={{ display: 'flex', height: 64, marginTop: 4 }} aria-label="Pista de vídeo" onDragOver={allowAsset} onDrop={e => void dropAsset(e, 'video', e.currentTarget)}>
           {windowed.before > 0 && <div aria-hidden style={{ width: windowed.before, flex: 'none' }} />}
           {comp.clips.map((clip, i) => i < windowed.from || i >= windowed.to ? null : <div key={clip.id} draggable
@@ -457,6 +512,13 @@ export default function ManualEditorPage() {
         </div>)}
         {comp.musicAssetId && <p className="muted small" style={{ marginTop: 6 }}>Música de fondo global: {label(comp.musicAssetId)} ({Math.round(comp.musicVolume * 100)}%, {comp.duckMusic ? 'baja bajo la voz' : 'sin ducking'})</p>}
       </div>
+      {range && <div className="pageActions" role="group" aria-label="Fragmento" style={{ marginTop: 8 }}>
+        <span className="pill info">Fragmento {secs(range.startMs)}–{secs(range.endMs)} s ({secs(range.endMs - range.startMs)} s)</span>
+        <button type="button" className="ghost small" onClick={() => { const r = isolateRange(comp, range); apply(() => r.composition); setRange(r.range); setNotice(`Fragmento separado en ${r.ids.length} clip${r.ids.length === 1 ? '' : 's'} propios.`) }}>Separar en clips</button>
+        <button type="button" className="ghost small" onClick={() => { const r = deleteRange(comp, range); if (!r.removedMs) { setError('El fragmento no contiene clips completos.'); return } apply(() => r.composition); setRange(null); setNotice(`Fragmento eliminado (${secs(r.removedMs)} s); lo que venía después se adelanta y la música sigue sincronizada. Ctrl+Z para deshacer.`) }}>Eliminar fragmento</button>
+        <button type="button" className="ghost small" onClick={() => setRange(null)}>Quitar selección (Esc)</button>
+        <span className="muted small">Las instrucciones se aplican solo a este fragmento.</span>
+      </div>}
       <p className="muted small" style={{ marginTop: 8 }}>Arrastra los clips para reordenarlos y su borde derecho para cambiar la duración; arrastra audios y textos para moverlos. Haz clic en la regla para mover el cabezal. Supr borra la selección; Ctrl+Z / Ctrl+Shift+Z deshacen y rehacen.</p>
     </section>
 

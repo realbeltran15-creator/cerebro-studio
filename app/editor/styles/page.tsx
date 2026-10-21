@@ -15,6 +15,7 @@ import { loadProfiles, MAX_PROFILES, saveProfiles } from '@/lib/editor/profiles-
 export default function StylesLibraryPage() {
   const supabase = getSupabaseBrowserClient()
   const [profiles, setProfiles] = useState<EditProfile[]>([])
+  const [external, setExternal] = useState<EditProfile[]>([])
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [selected, setSelected] = useState('')
   const [draft, setDraft] = useState<EditProfile | null>(null)
@@ -24,7 +25,7 @@ export default function StylesLibraryPage() {
   const [busy, setBusy] = useState(false)
 
   const reload = useCallback(async () => {
-    try { const s = await loadProfiles(supabase); setProfiles(s.profiles); setUpdatedAt(s.updatedAt); setSelected(x => x || s.profiles[0]?.id || '') } catch (e) { setError(e instanceof Error ? e.message : 'No se pudieron leer tus estilos.') }
+    try { const s = await loadProfiles(supabase); setProfiles(s.profiles); setExternal(s.external); setUpdatedAt(s.updatedAt); setSelected(x => x || s.profiles[0]?.id || '') } catch (e) { setError(e instanceof Error ? e.message : 'No se pudieron leer tus estilos.') }
   }, [supabase])
   useEffect(() => { void reload() }, [reload])
 
@@ -67,6 +68,11 @@ export default function StylesLibraryPage() {
         <h3>Mis estilos ({profiles.length})</h3>
         <ul className="plainList">{profiles.map(p => <li key={p.id}><button type="button" className={p.id === selected ? 'small' : 'ghost small'} aria-pressed={p.id === selected} onClick={() => setSelected(p.id)} style={{ width: '100%', textAlign: 'left' }}>{p.name} · v{p.version}</button></li>)}</ul>
         {!profiles.length && <p className="muted small">Todavía no tienes estilos.</p>}
+        {external.length > 0 && <>
+          <h4 style={{ marginTop: 14 }}>Grabados o de referencia</h4>
+          <p className="muted small">Estilos de «Aprende de mí» y de vídeos de referencia. Se pueden aplicar tal cual; cópialos para editar sus parámetros.</p>
+          <ul className="plainList">{external.map(p => <li key={p.id}><button type="button" className="ghost small" onClick={() => addFrom(p)} disabled={busy} title={p.description} style={{ width: '100%', textAlign: 'left' }}>Copiar «{p.name}»</button></li>)}</ul>
+        </>}
         <h4 style={{ marginTop: 14 }}>Crear desde una plantilla</h4>
         <ul className="plainList">{presetProfiles().map(p => <li key={p.id}><button type="button" className="ghost small" onClick={() => addFrom(p)} disabled={busy} title={p.description} style={{ width: '100%', textAlign: 'left' }}>+ {p.name}</button></li>)}</ul>
       </aside>

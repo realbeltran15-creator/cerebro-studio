@@ -1393,6 +1393,41 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   await page.close(); server.close()
 }
 
+// 19. Edición por instrucciones y fragmentos: written instructions run real timeline operations; a marked fragment scopes them.
+{
+  const server = serve(8812, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  await page.goto('http://127.0.0.1:8812/editor/manual?job=job1')
+  await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
+  const say = async t => { await page.getByLabel('Dile al editor qué hacer').fill(t); await page.getByRole('button', { name: 'Hacer', exact: true }).click() }
+  await say('haz un zoom lento en todo')
+  await page.locator('.notice').getByText(/Zoom lento en todo el montaje/).waitFor()
+  await say('pon la música «musica» desde el segundo 2 al 40 %')
+  await page.locator('.notice').getByText(/Música «Musica[^»]*» de 2\.0 s/).waitFor()
+  check('instructions: a music clip starts where asked', (await page.locator('[aria-label="Pista de Música"] > div').count()) === 1)
+  const ruler = page.locator('.timelineRuler')
+  await ruler.scrollIntoViewIfNeeded()
+  const at = async s => { const box = await ruler.boundingBox(); await page.mouse.click(box.x + s * 40, box.y + 8) }
+  await at(1.0); await page.keyboard.press('i'); await at(3.5); await page.keyboard.press('o')
+  await page.locator('.rangeOverlay').waitFor()
+  check('fragments: I and O mark a fragment shown on the timeline', /Fragmento 1(\.0)?–3\.5 s/.test(await page.getByRole('group', { name: 'Fragmento' }).textContent()))
+  await say('transición de cortinilla')
+  await page.locator('.notice').getByText(/Transición «cortinilla» en el fragmento/).waitFor()
+  const n = await clips.count()
+  await page.getByRole('button', { name: 'Eliminar fragmento' }).click()
+  await page.getByText(/Fragmento eliminado/).waitFor()
+  check('fragments: deleting a fragment removes only that part', (await clips.count()) <= n && (await page.locator('.pill.info').first().textContent()) !== '0:07.0')
+  await page.getByRole('button', { name: 'Deshacer' }).click()
+  check('fragments: undo restores it in one step', (await clips.count()) === n)
+  await say('haz magia')
+  check('instructions: an unknown instruction is reported with examples, nothing changes', (await page.getByText(/No he entendido la instrucción\. Ejemplos/).count()) === 1 && (await clips.count()) === n)
+  check('instructions: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')
