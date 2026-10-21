@@ -398,7 +398,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
+    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   for (const [name, mod, url, params] of pages) {
@@ -1259,6 +1259,39 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByText(/Fecha prevista: /).waitFor({ timeout: 10000 })
   check('calendar: the planned draft appears on today in the grid', (await page.locator('.calDay.today .calItem').count()) === 1 && (await page.getByRole('heading', { name: 'Sin fecha (1)' }).count()) === 1)
   check('calendar: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 15. Flujos de producción: states come from the project's rows; the montage review is an explicit approval that is saved; a cost limit warns.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/workflows/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const seed = `
+window.__DB.scripts = [{ id: 's1', owner_id: 'u1', project_id: 'p1', status: 'approved', source_opportunity_id: null, idea: 'Historia real' }]
+window.__DB.storyboards = [{ id: 'b1', owner_id: 'u1', project_id: 'p1' }]
+window.__DB.scenes = [{ id: 'sc1', owner_id: 'u1', storyboard_id: 'b1', position: 1 }]
+window.__DB.render_jobs = []
+window.__DB.publication_jobs = []
+window.__DB.assets.push({ id: 'img1', owner_id: 'u1', project_id: 'p1', asset_type: 'image', storage_path: 'u1/p1/i.png', license_status: 'generated', provenance: { cost: { amount: 0.5, currency: 'USD', reported: true } }, created_at: '2026-10-01T00:00:00Z' })
+window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_type: 'video', storage_path: 'u1/p1/r.mp4', license_status: 'generated', provenance: { purpose: 'render' }, created_at: '2026-10-02T00:00:00Z' })`
+  const server = serve(8805, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + seed, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8805/workflows')
+  const card = page.locator('article.workflowCard').filter({ has: page.locator('.wfStep.needs_approval') }).first()
+  await card.waitFor({ timeout: 10000 })
+  check('workflows: script and storyboard done from real rows; materials and montage wait for approval', (await card.locator('.wfStep.done').count()) >= 3 && (await card.locator('.wfStep.needs_approval').count()) === 2)
+  await card.getByRole('button', { name: 'Ver detalle' }).click()
+  const montageRow = card.locator('tr').filter({ hasText: 'Montaje' })
+  await montageRow.getByRole('button', { name: 'Dar visto bueno' }).click()
+  await page.getByText(/Montaje de «.*» aprobado/).waitFor({ timeout: 10000 })
+  const saved = await page.evaluate(() => (window.__DB.connector_configs ?? []).find(r => r.provider === 'cerebro-workflows')?.config)
+  check('workflows: the montage approval is stored with its date', Boolean(saved && Object.values(saved.projects).some(p => p.approvals?.montage)), saved)
+  await card.getByLabel(/Límite de coste de/).fill('0.2')
+  await card.getByRole('button', { name: 'Guardar límite' }).click()
+  await card.getByText(/por encima del límite de 0.20 USD/).waitFor({ timeout: 10000 })
+  check('workflows: a project over its cost limit shows a warning', true)
+  check('workflows: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
