@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { FormEvent, useState } from 'react'
-import { moduleFor, moduleStateLabels, studioModules, type ModuleState } from '@/lib/module-status'
+import { groupedModules, moduleFor, moduleStateLabels, studioModules, type ModuleState } from '@/lib/module-status'
 import { Icon } from './studio-icon'
 
 export { studioModules }
@@ -27,6 +27,7 @@ export function StudioShell({ title, eyebrow = 'WORKSPACE', actions, children }:
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const activeHref = studioModules.filter(m => isActive(pathname, m.href)).sort((a, b) => b.href.length - a.href.length)[0]?.href
 
   function search(event: FormEvent) {
     event.preventDefault()
@@ -53,13 +54,18 @@ export function StudioShell({ title, eyebrow = 'WORKSPACE', actions, children }:
 
       <aside className={open ? 'sidebar open' : 'sidebar'}>
         <nav aria-label="Módulos">
-          {studioModules.map(m => (
-            <Link key={m.href} href={m.href} className={isActive(pathname, m.href) ? 'navItem active' : 'navItem'} onClick={() => setOpen(false)}
-              title={`${moduleStateLabels[m.state]} · ${m.note}`}>
-              <Icon name={m.icon} />
-              <span>{m.label}</span>
-              {m.state !== 'functional' && <i className={`dot state-${m.state}`} aria-label={moduleStateLabels[m.state]} />}
-            </Link>
+          {groupedModules().map(g => (
+            <div key={g.id ?? 'top'} className="navGroup" role={g.id ? 'group' : undefined} aria-label={g.label || undefined}>
+              {g.label && <small className="navGroupLabel">{g.label}</small>}
+              {g.modules.map(m => (
+                <Link key={m.href} href={m.href} className={m.href === activeHref ? 'navItem active' : 'navItem'} onClick={() => setOpen(false)}
+                  aria-current={m.href === activeHref ? 'page' : undefined} title={`${moduleStateLabels[m.state]} · ${m.note}`}>
+                  <Icon name={m.icon} />
+                  <span>{m.label}</span>
+                  {m.state !== 'functional' && <i className={`dot state-${m.state}`} aria-label={moduleStateLabels[m.state]} />}
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="sideNote">

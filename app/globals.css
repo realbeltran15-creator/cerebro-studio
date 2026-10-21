@@ -432,3 +432,6 @@ textarea.viText{width:100%;min-height:70px}
   .calHead, .calDay:not(.busy) { display: none; }
   .calDay { min-height: 0; }
 }
+.navGroup{display:flex;flex-direction:column;gap:2px}
+.navGroup+.navGroup{margin-top:10px}
+.navGroupLabel{padding:4px 12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#6f7695;font-weight:700}
