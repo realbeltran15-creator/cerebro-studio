@@ -1,5 +1,5 @@
 import { applyGainPlan, musicGainPlan } from './audio-plan'
-import { audioStartMs, clipCaptions, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type Composition, type TextOverlay } from './composition'
+import { audioStartMs, clipCaptions, clipStarts, formatSize, totalDurationMs, videoBitrateFor, type CaptionStyle, type Composition, type TextOverlay } from './composition'
 
 /**
  * Browser renderer: draws the composition on a canvas, mixes audio with WebAudio and,
@@ -86,7 +86,8 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
   return lines
 }
 
-function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number) {
+function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, style: CaptionStyle = 'box', progress = 0) {
+  if (style !== 'box') return drawBoldCaption(ctx, text, w, h, style === 'karaoke' ? progress : null)
   const size = Math.round(Math.min(w, h) * 0.045)
   ctx.font = `600 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
@@ -99,6 +100,44 @@ function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: 
   ctx.fillRect((w - boxW) / 2, bottom - boxH, boxW, boxH)
   ctx.fillStyle = '#fff'
   lines.forEach((l, i) => ctx.fillText(l, w / 2, bottom - boxH + size * 0.3 + (i + 1) * lineH))
+}
+
+/** Index of the word being spoken at `progress` (0..1) of a cue, weighting each word by its length (a fair stand-in for speech timing). */
+export function activeWordIndex(words: string[], progress: number) {
+  const weights = words.map(w => Math.max(2, w.replace(/[^\p{L}\p{N}]/gu, '').length))
+  const total = weights.reduce((a, b) => a + b, 0)
+  let acc = 0
+  for (let i = 0; i < words.length; i++) { acc += weights[i]; if (progress * total < acc) return i }
+  return Math.max(0, words.length - 1)
+}
+
+/** Shorts-style captions: big, uppercase, outlined; with `progress` the spoken word is highlighted. */
+function drawBoldCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, progress: number | null) {
+  const size = Math.round(Math.min(w, h) * (w < h ? 0.075 : 0.06))
+  ctx.save()
+  ctx.font = `900 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+  const words = text.toUpperCase().split(/\s+/).filter(Boolean)
+  const active = progress === null ? -1 : activeWordIndex(words, progress)
+  const lines = wrap(ctx, words.join(' '), w * 0.86)
+  const lineH = size * 1.2
+  const centerY = h * (w < h ? 0.68 : 0.8)
+  const top = centerY - ((lines.length - 1) * lineH) / 2
+  ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(4, size * 0.16); ctx.strokeStyle = 'rgba(0,0,0,0.9)'
+  let index = 0
+  lines.forEach((line, li) => {
+    const lw = line.split(' ')
+    let x = (w - ctx.measureText(line).width) / 2
+    const y = top + li * lineH
+    for (const word of lw) {
+      ctx.strokeText(word, x, y)
+      ctx.fillStyle = index === active ? '#ffd23f' : '#fff'
+      ctx.fillText(word, x, y)
+      x += ctx.measureText(`${word} `).width
+      index++
+    }
+  })
+  ctx.restore()
 }
 
 function drawText(ctx: CanvasRenderingContext2D, t: TextOverlay, w: number, h: number) {
@@ -267,7 +306,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
         }
         if (clip.text) drawText(ctx, clip.text, width, height)
         const cap = captions[i].find(c => local >= c.startMs && local < c.endMs)
-        if (cap) drawCaption(ctx, cap.text, width, height)
+        if (cap) drawCaption(ctx, cap.text, width, height, composition.captionStyle ?? 'box', (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs))
         if (composition.hookText && now < (composition.hookMs ?? 3000)) {
           const hookMs = composition.hookMs ?? 3000
           drawHook(ctx, composition.hookText, width, height, Math.min(1, (hookMs - now) / 400))

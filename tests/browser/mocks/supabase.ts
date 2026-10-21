@@ -39,8 +39,8 @@ function q(table: string) {
       return { data: null, error: null }
     }
     if (op === 'delete') { db[table] = rows.filter(r => !m.includes(r)); return { data: null, error: null } }
-    const row = { id: uid(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...JSON.parse(JSON.stringify(payload)) }
-    rows.push(row); return { data: [row], error: null }
+    const list = (Array.isArray(payload) ? payload : [payload]).map((p: Row) => ({ id: uid(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...JSON.parse(JSON.stringify(p)) }))
+    rows.push(...list); return { data: list, error: null }
   }
   return api
 }

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { audioStartMs, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { audioStartMs, CAPTION_STYLES, type CaptionStyle, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
 import { addAudioClip, addClip, commit, fromClip, deleteAudioClip, deleteClip, duplicateClip, historyOf, moveAudioClip, moveClip, redo, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
@@ -328,6 +328,7 @@ export default function ManualEditorPage() {
         <label>Volumen de música ({Math.round(comp.musicVolume * 100)}%)<input type="range" min={0} max={1} step={0.05} value={comp.musicVolume} onChange={e => apply(c => ({ ...c, musicVolume: Number(e.target.value) }))} /></label>
         <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={comp.duckMusic} onChange={e => apply(c => ({ ...c, duckMusic: e.target.checked }))} /> Bajar música bajo la voz</label>
         <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={comp.subtitles} onChange={e => apply(c => ({ ...c, subtitles: e.target.checked }))} /> Subtítulos (texto de cada clip)</label>
+        {comp.subtitles && <label>Estilo de subtítulos<select value={comp.captionStyle ?? 'box'} onChange={e => apply(c => ({ ...c, captionStyle: e.target.value as CaptionStyle }))}>{(Object.keys(CAPTION_STYLES) as CaptionStyle[]).map(k => <option key={k} value={k}>{CAPTION_STYLES[k]}</option>)}</select></label>}
         <label>Duración de los fundidos (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
         <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
       </section>

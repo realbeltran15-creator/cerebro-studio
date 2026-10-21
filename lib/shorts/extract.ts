@@ -1,4 +1,4 @@
-import { emptyComposition, type Composition } from '@/lib/editor/composition'
+import { emptyComposition, type CaptionStyle, type Composition } from '@/lib/editor/composition'
 
 /**
  * Finds Short-sized moments inside a long video from its transcript (Biblioteca → «Transcribir»). Heuristic, explainable and free: it does not
@@ -75,12 +75,47 @@ export function windowCues(segments: TranscriptSegment[], c: Pick<ShortCandidate
   }).filter(q => q.endMs > q.startMs)
 }
 
-export function shortComposition(videoAssetId: string, c: ShortCandidate, title: string, segments: TranscriptSegment[] = []): Composition {
+/** Ready-made Short styles: subtitle look, words per subtitle, opening hook and default framing. */
+export type ShortTemplate = { id: string; name: string; description: string; captionStyle: CaptionStyle; maxWords: number; hook: boolean; zoom: number }
+export const SHORT_TEMPLATES: ShortTemplate[] = [
+  { id: 'dinamico', name: 'Dinámico', description: 'Subtítulos grandes palabra a palabra y gancho al inicio (estilo Shorts/TikTok).', captionStyle: 'karaoke', maxWords: 3, hook: true, zoom: 1 },
+  { id: 'impacto', name: 'Impacto', description: 'Frases cortas en negrita, gancho y un ligero zoom para dar energía.', captionStyle: 'bold', maxWords: 4, hook: true, zoom: 1.08 },
+  { id: 'documental', name: 'Documental', description: 'Subtítulos clásicos en caja, sin gancho: sobrio y legible.', captionStyle: 'box', maxWords: 10, hook: false, zoom: 1 },
+]
+export type ShortOptions = { template?: ShortTemplate; /** Horizontal framing when a 16:9 source is cut to 9:16: 0 left · 0.5 centre · 1 right. */ focusX?: number }
+
+export function shortComposition(videoAssetId: string, c: ShortCandidate, title: string, segments: TranscriptSegment[] = [], opts: ShortOptions = {}): Composition {
+  const t = opts.template
   const comp = { ...emptyComposition(`short-${globalThis.crypto.randomUUID()}`, title.slice(0, 120), '9:16'), editedManually: true }
-  comp.clips = [{ id: globalThis.crypto.randomUUID(), sceneId: `short-${c.startMs}`, position: 1, narration: c.text, visualAssetId: videoAssetId, voiceAssetId: null, durationMs: c.endMs - c.startMs, motion: 'none', trimInMs: c.startMs, transition: 'cut', ...(segments.length ? { cues: windowCues(segments, c) } : {}) }]
+  comp.clips = [{ id: globalThis.crypto.randomUUID(), sceneId: `short-${c.startMs}`, position: 1, narration: c.text, visualAssetId: videoAssetId, voiceAssetId: null, durationMs: c.endMs - c.startMs, motion: 'none', trimInMs: c.startMs, transition: 'cut',
+    focusX: Math.min(1, Math.max(0, opts.focusX ?? 0.5)), focusY: 0.5, zoom: t?.zoom ?? 1,
+    ...(segments.length ? { cues: windowCues(segments, c, t?.maxWords ?? 10) } : {}) }]
   comp.subtitles = true
+  comp.captionStyle = t?.captionStyle ?? 'box'
   comp.fadeMs = 0
-  comp.hookText = c.hook.slice(0, 60)
+  comp.hookText = t && !t.hook ? null : c.hook.slice(0, 60)
   comp.hookMs = 2500
   return comp
+}
+
+/**
+ * Estimated viral potential 0-100 of a candidate, from signals in its own transcript: hook, complete ending, pace, silences, length,
+ * plus intensity (exclamations, direct address, superlatives, numbers). It is a heuristic to rank moments, NOT a prediction of views.
+ */
+export type Potential = { score: number; label: 'alto' | 'medio' | 'bajo'; factors: Array<{ name: string; points: number }> }
+export function viralPotential(c: ShortCandidate): Potential {
+  const factors: Array<{ name: string; points: number }> = []
+  const base = Math.round(Math.min(60, Math.max(0, (c.score + 3) * 7)))
+  factors.push({ name: 'gancho, final, ritmo y silencios', points: base })
+  const t = c.text.toLowerCase()
+  const excl = (c.text.match(/[!¡]/g) ?? []).length
+  if (excl) factors.push({ name: 'exclamaciones', points: Math.min(8, excl * 3) })
+  if (/(?<!\p{L})(tú|tu|te|usted|you|your)(?!\p{L})/u.test(t)) factors.push({ name: 'habla directamente al espectador', points: 8 })
+  if (/(?<!\p{L})(más|mayor|peor|mejor|nunca|jamás|única?|most|best|worst|never|only)(?!\p{L})/u.test(t)) factors.push({ name: 'superlativos o absolutos', points: 6 })
+  if (/\d/.test(c.text)) factors.push({ name: 'cifras concretas', points: 6 })
+  const dur = (c.endMs - c.startMs) / 1000
+  if (dur >= 25 && dur <= 45) factors.push({ name: 'duración ideal (25–45 s)', points: 8 })
+  if (/[?¿]/.test(c.hook)) factors.push({ name: 'arranca con una pregunta', points: 4 })
+  const score = Math.min(100, factors.reduce((a, f) => a + f.points, 0))
+  return { score, label: score >= 65 ? 'alto' : score >= 40 ? 'medio' : 'bajo', factors }
 }

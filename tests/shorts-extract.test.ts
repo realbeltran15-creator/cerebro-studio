@@ -56,3 +56,36 @@ describe('Shorts keep the transcript timing in their subtitles', () => {
     expect(split.clips[1].cues?.[0].startMs).toBe(0)
   })
 })
+
+describe('Shorts templates, framing and estimated potential', () => {
+  const c = { startMs: 10_000, endMs: 40_000, score: 3, reasons: [], hook: '¿Sabías que nadie lo vio venir?', text: '¿Sabías que nadie lo vio venir? Tú también lo harías: el 90 % lo hace. ¡Es el peor error!' }
+  it('applies the template (caption style, words per subtitle, hook, zoom) and the framing', async () => {
+    const { shortComposition, SHORT_TEMPLATES } = await import('@/lib/shorts/extract')
+    const seg = [{ start: 10, end: 25, text: 'uno dos tres cuatro cinco seis siete' }, { start: 25, end: 40, text: 'ocho nueve diez once' }]
+    const dyn = shortComposition('v1', c, 'T', seg, { template: SHORT_TEMPLATES.find(t => t.id === 'dinamico'), focusX: 0.25 })
+    expect(dyn.captionStyle).toBe('karaoke')
+    expect(dyn.clips[0].focusX).toBe(0.25)
+    expect(dyn.clips[0].cues!.every(q => q.text.split(' ').length <= 3)).toBe(true)
+    expect(dyn.hookText).toBeTruthy()
+    const doc = shortComposition('v1', c, 'T', seg, { template: SHORT_TEMPLATES.find(t => t.id === 'documental') })
+    expect(doc.hookText).toBeNull()
+    expect(doc.captionStyle).toBe('box')
+  })
+  it('scores potential from explainable signals and caps it at 100', async () => {
+    const { viralPotential } = await import('@/lib/shorts/extract')
+    const p = viralPotential(c)
+    expect(p.factors.map(f => f.name)).toEqual(expect.arrayContaining(['habla directamente al espectador', 'cifras concretas', 'superlativos o absolutos', 'arranca con una pregunta', 'duración ideal (25–45 s)']))
+    expect(p.score).toBeLessThanOrEqual(100)
+    expect(viralPotential({ ...c, score: -4, text: 'y entonces bueno', hook: 'y entonces' }).label).toBe('bajo')
+  })
+})
+
+describe('karaoke captions', () => {
+  it('moves the highlighted word forward with the cue progress', async () => {
+    const { activeWordIndex } = await import('@/lib/editor/renderer')
+    const w = ['UNO', 'DOS', 'TRES']
+    expect(activeWordIndex(w, 0)).toBe(0)
+    expect(activeWordIndex(w, 0.5)).toBe(1)
+    expect(activeWordIndex(w, 0.99)).toBe(2)
+  })
+})

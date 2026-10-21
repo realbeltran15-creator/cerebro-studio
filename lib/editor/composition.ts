@@ -7,6 +7,9 @@
 export type OutputFormat = '16:9' | '9:16' | '1:1'
 
 export type Transition = 'fade' | 'cut'
+/** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
+export type CaptionStyle = 'box' | 'bold' | 'karaoke'
+export const CAPTION_STYLES: Record<CaptionStyle, string> = { box: 'Clásico (caja)', bold: 'Grande y en negrita', karaoke: 'Palabra a palabra (resaltada)' }
 export type TextOverlay = { content: string; position: 'top' | 'center' | 'bottom'; sizePct: number }
 
 export type Clip = {
@@ -66,6 +69,8 @@ export type Composition = {
   musicVolume: number
   duckMusic: boolean
   subtitles: boolean
+  /** Subtitle look. Default «box». */
+  captionStyle?: CaptionStyle
   fadeMs: number
   /** Large on-screen text for the opening seconds (Shorts hook). */
   hookText?: string | null
@@ -191,6 +196,7 @@ export function parseComposition(value: unknown): Composition | null {
     musicVolume: clamp(v.musicVolume ?? 0.25, 0, 1, 0.25),
     duckMusic: v.duckMusic !== false,
     subtitles: v.subtitles !== false,
+    captionStyle: v.captionStyle === 'bold' || v.captionStyle === 'karaoke' ? v.captionStyle : 'box',
     fadeMs: clamp(v.fadeMs ?? 300, 0, 1500, 300),
     hookText: typeof v.hookText === 'string' && v.hookText.trim() ? v.hookText.trim().slice(0, 120) : null,
     hookMs: clamp(v.hookMs ?? 3000, 1000, 8000, 3000),
