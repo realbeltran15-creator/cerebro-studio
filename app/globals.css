@@ -414,3 +414,20 @@ article p{color:var(--muted);font-size:14px;margin-top:6px}
 .viChecks{display:flex;flex-direction:column;gap:8px}
 .viCheck{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg-2)}
 textarea.viText{width:100%;min-height:70px}
+
+/* Calendario editorial */
+.calendarGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 8px; }
+.calHead { font-size: 12px; font-weight: 700; text-align: center; color: var(--muted, #8a8f98); padding: 4px 0; }
+.calDay { min-height: 86px; border: 1px solid var(--line, rgba(127,127,127,.25)); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.calDay.out { opacity: .45; }
+.calDay.today { outline: 2px solid var(--accent, #6d5efc); }
+.calNum { font-size: 12px; font-weight: 700; }
+.calItem { display: block; font-size: 11px; line-height: 1.25; padding: 2px 4px; border-radius: 4px; text-decoration: none; color: inherit; background: rgba(127,127,127,.14); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calItem.kind-published { background: rgba(34,170,90,.22); }
+.calItem.kind-scheduled { background: rgba(230,60,60,.2); }
+.calItem.kind-planned { background: rgba(240,180,40,.25); }
+@media (max-width: 640px) {
+  .calendarGrid { grid-template-columns: 1fr; }
+  .calHead, .calDay:not(.busy) { display: none; }
+  .calDay { min-height: 0; }
+}

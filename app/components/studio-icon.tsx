@@ -30,6 +30,7 @@ const paths: Record<string, string> = {
   eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   menu: 'M4 6h16M4 12h16M4 18h16',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
+  calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   copy: 'M8 8h12v12H8zM4 16V4h12',
   up: 'M12 19V5M6 11l6-6 6 6',
   down: 'M12 5v14M6 13l6 6 6-6',

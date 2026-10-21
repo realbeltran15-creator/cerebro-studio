@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose', '/automations', '/studio', '/usage', '/social', '/connectors', '/campaigns', '/shorts', '/influencer']
+const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose', '/automations', '/studio', '/usage', '/social', '/connectors', '/campaigns', '/shorts', '/influencer', '/calendar']
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -43,6 +43,6 @@ export const config = {
     '/projects/:path*', '/market-intelligence/:path*', '/opportunities/:path*', '/scripts/:path*', '/create/:path*',
     '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*', '/thumbnails/:path*', '/radar/:path*', '/audio/:path*', '/editor/:path*', '/repurpose/:path*', '/automations/:path*',
     // Previously missing from the matcher although listed as protected: the pages rendered without a session (data stayed behind RLS).
-    '/social/:path*', '/connectors/:path*', '/campaigns/:path*', '/shorts/:path*', '/influencer/:path*',
+    '/social/:path*', '/connectors/:path*', '/campaigns/:path*', '/shorts/:path*', '/influencer/:path*', '/calendar/:path*',
   ],
 }

@@ -289,7 +289,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
+    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   for (const [name, mod, url, params] of pages) {
@@ -1122,6 +1122,34 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('library: filtering by an own tag shows only tagged files', (await page.locator('.thumb').count()) === 1 && total > 1, total)
   check('library: automatic tags are offered as filters', (await page.locator('#lib-tag option', { hasText: 'subido' }).count()) + (await page.locator('#lib-tag option', { hasText: 'generado con IA' }).count()) >= 1)
   check('library: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 14. Calendario editorial: drafts on several platforms from one video in one step; a draft gets a planned date and shows on its day.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/calendar/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const seed = `\nwindow.__DB.assets.push({ id: 'vid1', owner_id: 'u1', project_id: 'p1', asset_type: 'video', storage_path: 'u1/p1/v.mp4', license_status: 'generated', provenance: { title: 'Vídeo horizontal', format: '16:9' }, created_at: '2026-10-01T00:00:00Z' }); window.__DB.publication_jobs = []`
+  const server = serve(8804, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + seed, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8804/calendar')
+  const box = page.getByRole('region', { name: 'Preparar en varias plataformas' })
+  await box.getByLabel('Proyecto', { exact: true }).selectOption('p1')
+  await box.getByLabel('Vídeo', { exact: true }).selectOption('vid1')
+  await box.getByLabel('Título (YouTube)').fill('Prueba multiplataforma')
+  await box.getByLabel('TikTok', { exact: true }).check()
+  check('calendar: warns that a 16:9 video is better as a vertical version for TikTok', (await box.getByText(/funciona mejor en vertical 9:16/).count()) === 1)
+  await box.getByRole('button', { name: 'Crear 2 borradores' }).click()
+  await page.getByText(/2 borradores creados/).waitFor({ timeout: 10000 })
+  const jobs = await page.evaluate(() => window.__DB.publication_jobs)
+  check('calendar: one draft per platform, YouTube private and TikTok without a default privacy', jobs.length === 2 && jobs.find(j => j.platform === 'youtube')?.payload.privacyStatus === 'private' && jobs.find(j => j.platform === 'tiktok') && !('privacyLevel' in jobs.find(j => j.platform === 'tiktok').payload) && jobs.every(j => j.status === 'draft'), jobs)
+  check('calendar: undated drafts are listed apart', (await page.getByRole('heading', { name: 'Sin fecha (2)' }).count()) === 1)
+  const d = new Date(); const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  await page.getByLabel('Fecha prevista de Prueba multiplataforma').first().fill(ymd)
+  await page.getByText(/Fecha prevista: /).waitFor({ timeout: 10000 })
+  check('calendar: the planned draft appears on today in the grid', (await page.locator('.calDay.today .calItem').count()) === 1 && (await page.getByRole('heading', { name: 'Sin fecha (1)' }).count()) === 1)
+  check('calendar: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
