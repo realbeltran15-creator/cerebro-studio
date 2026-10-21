@@ -230,7 +230,10 @@ export default function ManualEditorPage() {
     })
     if (!r.ok) { setError(`${r.message} Ejemplos: «${COMMAND_EXAMPLES.slice(0, 4).join('», «')}».`); return }
     setError('')
-    apply(() => r.composition)
+    if (r.history) { setHistory(h => (h ? (r.history === 'undo' ? undo(h) : redo(h)) : h)); setDirty(true) }
+    else if (r.composition !== history.present) apply(() => r.composition)
+    if (r.playheadMs !== undefined) setPlayheadMs(r.playheadMs)
+    if (r.range !== undefined) { setRange(r.range); setMarkIn(null) }
     setInstructionLog(l => [{ text, done: r.done }, ...l].slice(0, 8))
     if (r.watch?.length) setWatches(ws => [...r.watch!, ...ws].slice(0, 20))
     setNotice(`${r.done.join(' ')} (Ctrl+Z para deshacer)`)

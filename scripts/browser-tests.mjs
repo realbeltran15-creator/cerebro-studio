@@ -1444,6 +1444,17 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   check('preferences: the next «zoom lento» uses the preference', (await page.getByLabel(/^Intensidad \(/).inputValue()) === '0.05')
   await say('haz magia')
   check('instructions: an unknown instruction is reported with examples, nothing changes', (await page.getByText(/No he entendido la instrucción\. Ejemplos/).count()) === 1 && (await clips.count()) === n)
+  // More Spanish instructions: navigation, selection written in the sentence and undo by voice.
+  await page.getByRole('button', { name: 'Quitar selección (Esc)' }).click().catch(() => undefined)
+  await say('selecciona del segundo 1 al 3')
+  await page.locator('.rangeOverlay').waitFor()
+  await say('ve al segundo 2')
+  check('instructions: «selecciona…» marks the fragment and «ve al…» moves the playhead', (await page.locator('.playhead').getAttribute('style')).includes('left: 80px'))
+  const before = await clips.count()
+  await say('corta aquí')
+  await say('deshaz')
+  check('instructions: «deshaz» undoes the last change', (await clips.count()) === before)
+  await page.getByRole('button', { name: 'Quitar selección (Esc)' }).click()
   // Volume points dragged on the waveform lane of the selected audio clip.
   await page.locator('[aria-label="Pista de Música"] > div').first().click()
   const lane = page.locator('svg[aria-label="Puntos de volumen"]')

@@ -188,3 +188,45 @@ describe('draggable volume points', () => {
     expect(addEnvelopePoint(a, { atMs: 4000, gain: 0.2 }).envelope!.map(p => p.atMs)).toEqual([2000, 4000, 6000])
   })
 })
+
+describe('more Spanish instructions', () => {
+  it('spans written in the sentence', async () => {
+    const { parseSpan } = await import('@/lib/editor/commands')
+    expect(parseSpan('corta del minuto 1 al 2')).toEqual({ startMs: 60000, endMs: 120000 })
+    expect(parseSpan('quita la voz desde 0:30 hasta 1:00')).toEqual({ startMs: 30000, endMs: 60000 })
+    expect(parseSpan('zoom lento entre el segundo 5 y el segundo 10')).toEqual({ startMs: 5000, endMs: 10000 })
+    expect(parseSpan('pon esta música desde el minuto 2')).toBeNull()
+  })
+  it('«corta del 0:06 al 0:09» removes that stretch; «zoom lento del segundo 5 al 15» scopes it', () => {
+    const r = run('corta del 0:07 al 0:10')
+    expect(r.ok && totalDurationMs(r.composition)).toBe(17000)
+    const z = run('haz un zoom lento del segundo 6 al 14')
+    expect(z.ok && z.composition.clips.map(k => k.camera?.kind ?? null)).toEqual([null, 'zoom_in', null])
+  })
+  it('fades, removing and silencing audio, ducking and caption styles', () => {
+    const f = run('que la música entre poco a poco y luego fundido de salida de 3 segundos en la música')
+    expect(f.ok && f.composition.audioClips![0]).toMatchObject({ fadeInMs: 2000, fadeOutMs: 3000 })
+    const q = run('quita la música'); expect(q.ok && q.composition.audioClips).toEqual([])
+    const sil = run('silencia la música del segundo 4 al 8')
+    expect(sil.ok && sil.composition.audioClips![0].envelope?.filter(p => p.gain === 0).map(p => p.atMs)).toEqual([4000, 8000])
+    const qr = run('quita la música del 0:04 al 0:08'); expect(qr.ok && qr.composition.audioClips!.length).toBe(1)
+    expect(run('baja la música cuando hable').ok && (run('baja la música cuando hable') as { composition: Composition }).composition.duckMusic).toBe(true)
+    const nb = run('no bajes la música'); expect(nb.ok && nb.composition.duckMusic).toBe(false)
+    const sub = run('subtítulos palabra a palabra'); expect(sub.ok && [sub.composition.subtitles, sub.composition.captionStyle]).toEqual([true, 'karaoke'])
+  })
+  it('clip length, moving, navigation and history', () => {
+    const d = run('que dure 3 segundos', { selectedClipId: 'b' }); expect(d.ok && d.composition.clips[1].durationMs).toBe(3000)
+    const i = run('acorta las imágenes a 2 segundos'); expect(i.ok && i.composition.clips.map(k => k.durationMs)).toEqual([2000, 10000, 2000])
+    const m = run('mueve este clip al principio', { selectedClipId: 'c' }); expect(m.ok && m.composition.clips.map(k => k.id)).toEqual(['c', 'a', 'b'])
+    const v = run('ve al minuto 0:12'); expect(v.ok && v.playheadMs).toBe(12000)
+    const sel = run('selecciona del 0:02 al 0:06'); expect(sel.ok && sel.range).toEqual({ startMs: 2000, endMs: 6000 })
+    const u = run('deshaz'); expect(u.ok && u.history).toBe('undo')
+  })
+  it('effects on the cuts from the materials', () => {
+    const r = runInstruction(comp(), 'pon el efecto «whoosh» en los cortes', { ...ctx(), assets: [...ctx().assets, { id: 'wh', label: 'Whoosh rápido', type: 'sfx', durationMs: 800 }] })
+    expect(r.ok && r.composition.audioClips!.filter(a => a.origin === 'cut-sfx').length).toBe(2)
+    if (!r.ok) return
+    const off = runInstruction(r.composition, 'quita los efectos de los cortes', ctx())
+    expect(off.ok && off.composition.audioClips!.filter(a => a.origin === 'cut-sfx').length).toBe(0)
+  })
+})

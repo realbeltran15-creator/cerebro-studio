@@ -7,7 +7,8 @@
  * «todo», «todas las imágenes», «todos los vídeos» widen it.
  */
 import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type CameraKind, type Clip, type Composition, type OutputFormat, type Transition } from './composition'
-import { addAudioClip, addTextClip, deleteClip, duplicateClip, setLevelBetween, setSpeed, splitClip, updateClip } from './timeline'
+import { addAudioClip, addTextClip, deleteClip, duplicateClip, moveClip, setLevelBetween, setSpeed, splitClip, updateClip } from './timeline'
+import { cutSfxClips, defaultCutSfx, removeCutSfx, setCutSfx } from './cut-sfx'
 import { clipIdsInRange, deleteRange, isolateRange, type Range } from './range'
 import { DEFAULT_PREFS, type EditPreferences, type Watch } from './preferences'
 
@@ -24,9 +25,11 @@ export type CommandContext = {
   /** The owner's confirmed preferences (defaults when absent). */
   prefs?: EditPreferences
 }
-export type CommandResult = { ok: true; composition: Composition; done: string[]; /** Values set by default, watched to propose a preference if the owner corrects them. */ watch?: Watch[] } | { ok: false; message: string }
+export type CommandResult = { ok: true; composition: Composition; done: string[]; /** Values set by default, watched to propose a preference if the owner corrects them. */ watch?: Watch[]; /** Navigation asked for («ve al minuto 2», «selecciona del 1:00 al 1:30»). */ playheadMs?: number; range?: Range | null; /** «deshaz» / «rehaz»: handled by the editor's history. */ history?: 'undo' | 'redo' } | { ok: false; message: string }
 
 export const COMMAND_EXAMPLES = [
+  'corta del minuto 1 al 1:30', 'que la música entre poco a poco', 'fundido de salida de 3 segundos en la música', 'quita la voz del minuto 2 al 3', 'que dure 4 segundos', 'mueve este clip al principio',
+  've al minuto 2', 'selecciona del 0:10 al 0:20', 'pon el efecto «whoosh» en los cortes', 'baja la música cuando hable', 'subtítulos palabra a palabra', 'deshaz',
   'corta aquí', 'corta en 1:20', 'borra este fragmento', 'duplica el clip',
   'pon esta música desde el minuto 2', 'pon la música «lluvia» desde 0:30 hasta 2:00 al 40 %', 'baja la música al 20 %', 'sube la voz', 'silencia el vídeo',
   'haz un zoom lento', 'zoom rápido en todas las imágenes', 'panorámica a la derecha', 'sin movimiento',
@@ -49,6 +52,27 @@ export function parseTime(raw: string): number | null {
   m = /segundo\s+(\d+(?:[.,]\d+)?)/.exec(s) ?? /(\d+(?:[.,]\d+)?)\s*(?:segundos?|seg|s)\b/.exec(s)
   if (m) return Math.round(Number(m[1].replace(',', '.')) * 1000)
   return null
+}
+const TIME_TOKEN = /(\d{1,3}:\d{1,2}(?:[.,]\d)?)|(minuto\s+\d+(?:[.,]\d+)?(?:\s*(?:y|con)\s*\d+(?:[.,]\d+)?(?:\s*(?:segundos?|s)\b)?)?)|(\d+(?:[.,]\d+)?\s*(?:minutos?|min)\b(?:\s*(?:y\s*)?\d+(?:[.,]\d+)?\s*(?:segundos?|seg|s)\b)?)|(segundo\s+\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?\s*(?:segundos?|seg|s)\b)/g
+/** «del minuto 1 al 2», «desde 0:30 hasta 1:00», «entre el segundo 5 y el 10»: a range written inside the instruction. */
+export function parseSpan(raw: string): Range | null {
+  const s = fold(raw)
+  const toks = [...s.matchAll(TIME_TOKEN)].map(m => ({ i: m.index ?? 0, len: m[0].length, ms: parseTime(m[0]) })).filter(t => t.ms !== null) as Array<{ i: number; len: number; ms: number }>
+  // «del minuto 1 al 2», «del segundo 4 al 8»: the second end is a bare number in the unit of the first.
+  if (toks.length >= 1) {
+    const a = toks[0], word = s.slice(a.i, a.i + a.len)
+    const m = /^\s+(?:al|hasta(?: el)?|y(?: el)?|a)\s+(\d+(?:[.,]\d+)?)\b(?!\s*(?::|minutos?|min|segundos?|seg|s\b))/.exec(s.slice(a.i + a.len))
+    if (m && (toks.length < 2 || toks[1].i > a.i + a.len + m[0].length)) {
+      const n = Number(m[1].replace(',', '.'))
+      const unit = /minuto|minutos?|min\b/.test(word) ? 60000 : /segundo|segundos?|seg|s\b/.test(word) ? 1000 : word.includes(':') ? 1000 : 0
+      if (unit) toks.splice(1, 0, { i: a.i + a.len + m[0].length - m[1].length, len: m[1].length, ms: Math.round(n * unit) })
+    }
+  }
+  if (toks.length < 2) return null
+  const [a, b] = toks
+  const before = s.slice(Math.max(0, a.i - 14), a.i), between = s.slice(a.i + a.len, b.i)
+  if (!/\b(del?|desde|entre)\b(\s+(el|la))?\s*$/.test(before) || !/^\s*(?:(?:y|al?|hasta)(?:\s+(?:el|la))?)\s*$/.test(between)) return null
+  return a.ms < b.ms ? { startMs: a.ms, endMs: b.ms } : null
 }
 const after = (s: string, words: RegExp) => { const m = words.exec(s); return m ? s.slice(m.index + m[0].length) : null }
 const timeAfter = (s: string, words: RegExp) => { const rest = after(s, words); return rest === null ? null : parseTime(rest.split(/\b(?:hasta|durante|al|a la|con)\b/)[0]) }
@@ -104,15 +128,20 @@ export function runInstruction(c0: Composition, text: string, ctx: CommandContex
   let c = c0
   const done: string[] = []
   const watch: Watch[] = []
+  let nav: Pick<Extract<CommandResult, { ok: true }>, 'playheadMs' | 'range' | 'history'> = {}
   for (const part of parts) {
-    const r = runOne(c, part, ctx)
+    const span = parseSpan(part)
+    const r = runOne(c, part, span ? { ...ctx, range: span } : ctx, span)
     if (!r.ok) return { ok: false, message: parts.length > 1 ? `«${part}»: ${r.message}` : r.message }
     c = r.composition; done.push(...r.done); watch.push(...(r.watch ?? []))
+    if (r.playheadMs !== undefined) nav = { ...nav, playheadMs: r.playheadMs }
+    if (r.range !== undefined) nav = { ...nav, range: r.range }
+    if (r.history) nav = { ...nav, history: r.history }
   }
-  return { ok: true, composition: c, done, watch }
+  return { ok: true, composition: c, done, watch, ...nav }
 }
 
-function runOne(c: Composition, text: string, ctx: CommandContext): CommandResult {
+function runOne(c: Composition, text: string, ctx: CommandContext, span: Range | null = null): CommandResult {
   const s = fold(text)
   const total = totalDurationMs(c)
   const P = ctx.prefs ?? DEFAULT_PREFS
@@ -120,6 +149,86 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
   const ok = (composition: Composition, ...d: string[]): CommandResult => ({ ok: true, composition, done: d, watch })
   const newId = <T extends { id: string }>(before: T[] | undefined, after: T[] | undefined) => (after ?? []).find(x => !(before ?? []).some(y => y.id === x.id))?.id
   const fail = (message: string): CommandResult => ({ ok: false, message })
+
+  const kindWord = (): AudioClip['kind'] | null => /\b(musica|cancion)\b/.test(s) ? 'music' : /\b(voz|voces|narracion)\b/.test(s) ? 'voice' : /\befectos?\b/.test(s) ? 'sfx' : null
+  const overlaps = (a: AudioClip, r: Range) => { const s0 = audioStartMs(c, a); return s0 < r.endMs && s0 + a.durationMs > r.startMs }
+
+  // ---- History: «deshaz», «rehaz»
+  if (/^(deshaz|deshacer|anula|vuelve atras)\b/.test(s)) return { ok: true, composition: c, done: ['Deshecho el último cambio.'], history: 'undo' }
+  if (/^(rehaz|rehacer)\b/.test(s)) return { ok: true, composition: c, done: ['Rehecho.'], history: 'redo' }
+
+  // ---- Navigation: «ve al minuto 2», «lleva el cabezal a 1:30», «selecciona del 0:10 al 0:20», «quita la selección»
+  if (/^(ve|ir|vete|salta|lleva el cabezal|pon el cabezal|mueve el cabezal)\b/.test(s)) {
+    const t = parseTime(s)
+    if (t === null) return fail('Dime a qué momento: por ejemplo, ve al minuto 2.')
+    return { ok: true, composition: c, done: [`Cabezal en ${fmt(Math.min(t, total))}.`], playheadMs: Math.min(t, total) }
+  }
+  if (/^(selecciona|marca)\b/.test(s) && span) return { ok: true, composition: c, done: [`Fragmento ${fmt(span.startMs)}–${fmt(span.endMs)} marcado.`], range: { startMs: span.startMs, endMs: Math.min(span.endMs, total) } }
+  if (/^(quita|borra|deshaz) (la )?seleccion\b/.test(s)) return { ok: true, composition: c, done: ['Selección quitada.'], range: null }
+
+  // ---- Effects on every cut: «pon el efecto «whoosh» en los cortes», «quita los efectos de los cortes»
+  if (/\b(cortes|cada corte|cada cambio)\b/.test(s) && /\b(efecto|efectos|sonido|whoosh)\b/.test(s)) {
+    if (/^(quita|elimina|borra)\b/.test(s)) { const n = cutSfxClips(c).length; return n ? ok(removeCutSfx(c), `Quitados ${n} efectos de los cortes.`) : fail('No hay efectos puestos en los cortes.') }
+    const a = findAsset(text, s, ctx, ['sfx', 'audio'])
+    if (!a) return fail('No encuentro ese efecto en los materiales del proyecto (súbelo como «Efecto»).')
+    const r = setCutSfx(c, { ...defaultCutSfx(a.id), volume: percent(s) ?? P.sfxVolume })
+    return r.added ? ok(r.composition, `Efecto «${a.label}» en ${r.added} corte${r.added === 1 ? '' : 's'}.`) : fail('No hay cortes donde ponerlo.')
+  }
+
+  // ---- Music under the voice: «baja la música cuando hable», «no bajes la música»
+  if (/\bmusica\b/.test(s) && /\b(cuando (habla|hable|hablo|hay voz|suena la voz)|bajo la voz|con la voz|al hablar|ducking)\b/.test(s)) {
+    const on = !/\b(no|nunca|sin)\b/.test(s)
+    return ok({ ...c, duckMusic: on }, on ? 'La música bajará cuando suene la voz.' : 'La música ya no baja con la voz.')
+  }
+  if (/\b(no bajes la musica|musica constante|musica siempre igual)\b/.test(s)) return ok({ ...c, duckMusic: false }, 'La música ya no baja con la voz.')
+
+  // ---- Fades of an audio track: «que la música entre poco a poco», «fundido de salida de 3 segundos en la voz»
+  const fadeIn = /\b(entre|entrada|empiece|aparezca|fade ?in|suba poco a poco|arranque)\b/.test(s)
+  const fadeOut = /\b(salga|salida|termine|acabe|desaparezca|fade ?out|se apague|final)\b/.test(s)
+  if ((fadeIn || fadeOut) && /\b(poco a poco|suave|gradual|progresiv\w*|fundido|fade|despacio)\b/.test(s) && (kindWord() || /\b(audio|sonido)\b/.test(s))) {
+    const kind = kindWord() ?? 'music'
+    const len = timeAfter(s, /\b(?:de|durante)\b/) ?? 2000
+    const target = (c.audioClips ?? []).filter(a => a.kind === kind && (!ctx.range || overlaps(a, ctx.range)))
+    if (!target.length) return fail(`No hay ${kind === 'music' ? 'música' : kind === 'voice' ? 'voz' : 'efectos'} en la pista de audio.`)
+    const ids = new Set(target.map(a => a.id))
+    const first = target.reduce((x, y) => (audioStartMs(c, y) < audioStartMs(c, x) ? y : x)).id, last = target.reduce((x, y) => (audioStartMs(c, y) + y.durationMs > audioStartMs(c, x) + x.durationMs ? y : x)).id
+    const audioClips = (c.audioClips ?? []).map(a => (!ids.has(a.id) ? a : { ...a, ...(fadeIn && (a.id === first || ctx.range) ? { fadeInMs: Math.min(len, a.durationMs / 2) } : {}), ...(fadeOut && (a.id === last || ctx.range) ? { fadeOutMs: Math.min(len, a.durationMs / 2) } : {}) }))
+    return ok({ ...c, audioClips }, `${kind === 'music' ? 'Música' : kind === 'voice' ? 'Voz' : 'Efectos'}: ${[fadeIn ? 'entrada' : '', fadeOut ? 'salida' : ''].filter(Boolean).join(' y ')} gradual de ${fmt(len)}.`)
+  }
+
+  // ---- Remove audio: «quita la música», «elimina la voz del minuto 2 al 3»
+  if (/^(quita|elimina|borra|saca)\b/.test(s) && kindWord() && !/\b(volumen|subtitulos?|efectos de los cortes)\b/.test(s)) {
+    const kind = kindWord()!
+    const gone = (c.audioClips ?? []).filter(a => a.kind === kind && (!ctx.range || overlaps(a, ctx.range)))
+    const global = kind === 'music' && c.musicAssetId && !ctx.range
+    if (!gone.length && !global) return fail(`No hay ${kind === 'music' ? 'música' : kind === 'voice' ? 'voz' : 'efectos'} que quitar${ctx.range ? ' en esa parte' : ''}.`)
+    if (ctx.range) {
+      // Inside a range only that stretch goes silent (the clip keeps playing before and after).
+      const r = ctx.range
+      const audioClips = (c.audioClips ?? []).map(a => (gone.includes(a) ? setLevelBetween(a, r.startMs - audioStartMs(c, a), r.endMs - audioStartMs(c, a), 0, 150) : a))
+      return ok({ ...c, audioClips }, `${kind === 'music' ? 'Música' : kind === 'voice' ? 'Voz' : 'Efectos'} en silencio de ${fmt(r.startMs)} a ${fmt(r.endMs)}.`)
+    }
+    const ids = new Set(gone.map(a => a.id))
+    return ok({ ...c, audioClips: (c.audioClips ?? []).filter(a => !ids.has(a.id)), ...(global ? { musicAssetId: null } : {}) }, `Quitad${kind === 'music' ? 'a la música' : kind === 'voice' ? 'a la voz' : 'os los efectos'} (${gone.length + (global ? 1 : 0)}).`)
+  }
+
+  // ---- Clip length: «que dure 4 segundos», «acorta este clip a 3 segundos», «alarga las imágenes a 6 s»
+  if (/\b(que dure|que duren|dure|duren|duracion|acorta|alarga|estira)\b/.test(s) && !/\b(texto|titulo|musica|voz|efecto)\b/.test(s)) {
+    const t = timeAfter(s, /\b(?:a|en|dure|duren|de)\b/) ?? parseTime(s)
+    if (t === null) return fail('Dime cuánto: por ejemplo, que dure 4 segundos.')
+    const sc = /\b(imagenes|fotos)\b/.test(s) ? { ids: c.clips.filter(k => !ctx.isVideo(k)).map(k => k.id), label: 'las imágenes' } : scope(c, s, ctx)
+    if (!sc.ids.length) return fail('Selecciona un clip o pon el cabezal sobre él.')
+    const d = Math.min(Math.max(t, MIN_CLIP_MS), MAX_CLIP_MS)
+    return ok(sc.ids.reduce((x, id) => updateClip(x, id, { durationMs: d }), c), `${sc.label[0].toUpperCase()}${sc.label.slice(1)}: ${fmt(d)} cada uno.`)
+  }
+
+  // ---- Move a clip: «mueve este clip al principio», «pasa la escena al final»
+  if (/^(mueve|pasa|lleva|coloca)\b/.test(s) && /\b(clip|escena|esto|plano)\b/.test(s) && /\b(al principio|al inicio|al comienzo|al final)\b/.test(s)) {
+    const sc = scope(c, s, ctx)
+    if (sc.ids.length !== 1) return fail('Selecciona un solo clip para moverlo.')
+    const toEnd = /\bal final\b/.test(s)
+    return ok(moveClip(c, sc.ids[0], toEnd ? c.clips.length : 0), `${sc.label[0].toUpperCase()}${sc.label.slice(1)} movido ${toEnd ? 'al final' : 'al principio'}.`)
+  }
 
   // ---- Texts and titles: «pon el título "X" en el segundo 5 durante 3 segundos (arriba)»
   if (/\b(texto|titulo|rotulo)\b/.test(s) && /\b(pon|anade|escribe|mete|agrega|crea)\b/.test(s)) {
@@ -140,15 +249,15 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
   // ---- Music / voice / effect on the audio track: «pon esta música desde el minuto 2 (hasta el minuto 4) (al 30 %)»
   const placeVerb = /\b(pon|ponle|anade|mete|usa|agrega|coloca|inserta)\b/.test(s)
   const audioWord = /\b(musica|cancion|voz|narracion|efecto|sonido)\b/.test(s)
-  const placementHint = /\b(desde|hasta|a partir|esta|este|minuto|segundo)\b/.test(s) || /\d+:\d+/.test(s) || /[«"“']/.test(text)
+  const placementHint = Boolean(span) || /\b(desde|hasta|a partir|esta|este|minuto|segundo)\b/.test(s) || /\d+:\d+/.test(s) || /[«"“']/.test(text)
   if (placeVerb && audioWord && (placementHint || percent(s) === null)) {
     const kind: AudioClip['kind'] = /\b(voz|narracion)\b/.test(s) ? 'voice' : /\b(efecto|sonido)\b/.test(s) ? 'sfx' : 'music'
     const types = kind === 'music' ? ['music', 'audio'] : kind === 'voice' ? ['voice', 'audio'] : ['sfx', 'audio']
     const a = findAsset(text, s, ctx, types)
     if (!a) return fail(kind === 'music' ? 'No encuentro esa música en los materiales del proyecto. Selecciónala en el panel o escribe su nombre entre comillas.' : 'No encuentro ese audio en los materiales del proyecto.')
-    const start = timeAfter(s, /\b(?:desde|a partir de|en)\b(?: el)?/) ?? ctx.range?.startMs ?? 0
+    const start = span ? span.startMs : timeAfter(s, /\b(?:desde|a partir de|en)\b(?: el)?/) ?? ctx.range?.startMs ?? 0
     if (start >= total) return fail(`El montaje dura ${fmt(total)}: no se puede empezar en ${fmt(start)}.`)
-    const end = /\bhasta el final\b/.test(s) ? total : timeAfter(s, /\bhasta\b(?: el)?/) ?? (ctx.range && !/\bdesde\b/.test(s) ? ctx.range.endMs : null)
+    const end = /\bhasta el final\b/.test(s) ? total : span ? span.endMs : timeAfter(s, /\bhasta\b(?: el)?/) ?? (ctx.range && !/\bdesde\b/.test(s) ? ctx.range.endMs : null)
     const own = a.durationMs ?? null
     const durationMs = Math.max(500, Math.min(end !== null ? end - start : own ?? total - start, total - start, own ?? Infinity))
     const prefKey = kind === 'music' ? 'musicVolume' as const : kind === 'voice' ? 'voiceVolume' as const : 'sfxVolume' as const
@@ -177,10 +286,10 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
       return n ? ok(next, `Audio original de ${n} vídeo${n === 1 ? '' : 's'} ${mute ? 'silenciado' : mute === false ? 'activado' : `al ${Math.round(setVol(1) * 100)} %`}.`) : fail('No hay clips de vídeo en esa parte.')
     }
     // With a marked fragment, the level changes only there (volume automation with short ramps); the rest keeps its level.
-    if (ctx.range && mute === null) {
+    if (ctx.range) {
       const r = ctx.range
       let k = 0
-      const target = (a: AudioClip) => Math.min(2, Math.max(0, pct !== null ? pct / Math.max(0.01, a.volume) : envelopeAt(a, Math.max(0, r.startMs - audioStartMs(c, a))) * (rel ?? 1)))
+      const target = (a: AudioClip) => mute === true ? 0 : mute === false ? 1 : Math.min(2, Math.max(0, pct !== null ? pct / Math.max(0.01, a.volume) : envelopeAt(a, Math.max(0, r.startMs - audioStartMs(c, a))) * (rel ?? 1)))
       const audioClips = (c.audioClips ?? []).map(a => {
         const s0 = audioStartMs(c, a)
         if (a.kind !== track || s0 >= r.endMs || s0 + a.durationMs <= r.startMs) return a
@@ -188,7 +297,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
         return setLevelBetween(a, r.startMs - s0, r.endMs - s0, target(a))
       })
       const name = track === 'music' ? 'Música' : track === 'voice' ? 'Voz' : 'Efectos'
-      return k ? ok({ ...c, audioClips }, `${name} ${pct !== null ? `al ${Math.round(pct * 100)} %` : rel! > 1 ? 'más alta' : 'más baja'} solo en el fragmento ${fmt(r.startMs)}–${fmt(r.endMs)} (automatización de volumen en ${k} clip${k === 1 ? '' : 's'}).`) : fail(`No hay ${name.toLowerCase()} en la pista dentro del fragmento.`)
+      return k ? ok({ ...c, audioClips }, `${name} ${mute ? 'en silencio' : mute === false ? 'activada' : pct !== null ? `al ${Math.round(pct * 100)} %` : rel! > 1 ? 'más alta' : 'más baja'} solo en el fragmento ${fmt(r.startMs)}–${fmt(r.endMs)} (automatización de volumen en ${k} clip${k === 1 ? '' : 's'}).`) : fail(`No hay ${name.toLowerCase()} en la pista dentro del fragmento.`)
     }
     let n = 0
     const audioClips = (c.audioClips ?? []).map(a => (a.kind === track ? (n++, { ...a, ...(mute !== null ? { muted: mute } : { volume: setVol(a.volume), muted: false }) }) : a))
@@ -199,6 +308,11 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
   }
 
   // ---- Delete: «borra este fragmento», «elimina el clip»
+  if (span && /^(corta|recorta|quita|elimina|borra|suprime)\b/.test(s) && !kindWord()) {
+    const r = deleteRange(c, span)
+    return r.removedMs ? ok(r.composition, `Eliminado de ${fmt(span.startMs)} a ${fmt(span.endMs)} (${fmt(r.removedMs)}); lo que venía después se adelanta y el audio sigue sincronizado.`) : fail('En ese tramo no hay clips que quitar.')
+  }
+  if (span && /^(separa|aisla|divide)\b/.test(s)) { const r = isolateRange(c, span); return ok(r.composition, `Separado de ${fmt(r.range.startMs)} a ${fmt(r.range.endMs)} en ${r.ids.length} clip${r.ids.length === 1 ? '' : 's'} propios.`) }
   if (/^(borra|elimina|quita|suprime)\b/.test(s) && !/\b(zoom|movimiento|subtitulos|musica|voz|efectos?|transicion)\b/.test(s)) {
     if (ctx.range && !/\bclip\b/.test(s)) { const r = deleteRange(c, ctx.range); return r.removedMs ? ok(r.composition, `Fragmento eliminado (${fmt(r.removedMs)}); lo que venía después se adelanta.`) : fail('El fragmento no contiene clips completos.') }
     const sc = scope(c, s, ctx)
@@ -278,6 +392,10 @@ function runOne(c: Composition, text: string, ctx: CommandContext): CommandResul
   // ---- Format and subtitles
   const format: OutputFormat | null = /\b(vertical|9:16|short|reel|tiktok)\b/.test(s) ? '9:16' : /\b(horizontal|16:9|youtube)\b/.test(s) ? '16:9' : /\b(cuadrado|1:1)\b/.test(s) ? '1:1' : null
   if (format && /\b(formato|pasalo|ponlo|hazlo|convierte)\b/.test(s)) return ok({ ...c, format }, `Formato ${format}.`)
+  if (/\bsubtitulos?\b/.test(s) && /\b(palabra a palabra|karaoke|dinamicos|grandes|negrita|clasicos|con caja|caja)\b/.test(s)) {
+    const style = /\b(palabra a palabra|karaoke|dinamicos)\b/.test(s) ? 'karaoke' : /\b(grandes|negrita)\b/.test(s) ? 'bold' : 'box'
+    return ok({ ...c, subtitles: true, captionStyle: style }, `Subtítulos ${style === 'karaoke' ? 'palabra a palabra' : style === 'bold' ? 'grandes en negrita' : 'clásicos con caja'}.`)
+  }
   if (/\bsubtitulos?\b/.test(s)) {
     const on = !/\b(quita|desactiva|sin|oculta|elimina)\b/.test(s)
     return ok({ ...c, subtitles: on }, `Subtítulos ${on ? 'activados' : 'desactivados'}.`)
