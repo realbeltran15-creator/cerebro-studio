@@ -421,7 +421,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
+    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/editor/style', 'app/editor/style/page', '/editor/style'], ['/editor/styles', 'app/editor/styles/page', '/editor/styles'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   for (const [name, mod, url, params] of pages) {
@@ -1331,6 +1331,62 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
   check('motion: slide brings the next clip in from the right', red(slide.left) && blue(slide.right) && blue(slide.after), slide)
   const dissolve = await page.evaluate(() => window.runMotion('dissolve'))
   check('motion: dissolve mixes both clips (no black frame)', dissolve.mid[0] > 60 && dissolve.mid[2] > 60, dissolve)
+  await page.close(); server.close()
+}
+
+// 17. Mis estilos: create from a template, edit a parameter, see the change before saving, save as a new version and restore the old one.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/editor/styles/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const server = serve(8807, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1200 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8807/editor/styles')
+  await page.getByRole('button', { name: '+ Lo-fi / Relax Music' }).click()
+  await page.getByText(/Estilo «Lo-fi \/ Relax Music» creado/).waitFor({ timeout: 10000 })
+  await page.getByLabel('Música (%)').fill('70')
+  await page.getByLabel('Entre materiales').selectOption('wipe')
+  const pending = page.getByRole('region', { name: 'Cambios sin guardar' }).or(page.locator('[aria-label="Cambios sin guardar"]'))
+  check('styles: every pending change is listed before saving', (await pending.getByText(/Música: 90 % → 70 %/).count()) === 1 && (await pending.getByText(/Transición entre materiales: Disolvencia → Cortinilla/).count()) === 1)
+  await page.getByRole('button', { name: 'Guardar cambios' }).click()
+  await page.getByRole('button', { name: 'Confirmar' }).click()
+  await page.getByText(/guardado como versión 2/).waitFor({ timeout: 10000 })
+  let row = (await page.evaluate(() => window.__DB.connector_configs)).find(r => r.capability === 'edit_profiles')
+  let lofi = row.config.profiles[0]
+  check('styles: saved as version 2 keeping version 1', lofi.version === 2 && lofi.audio.musicVolume === 0.7 && lofi.transitions.betweenMaterials === 'wipe' && lofi.previous[0].version === 1, lofi)
+  await page.getByRole('button', { name: 'Restaurar' }).click()
+  await page.getByRole('button', { name: 'Confirmar restaurar' }).click()
+  await page.getByText(/Restaurada la versión 1 como versión 3/).waitFor({ timeout: 10000 })
+  row = (await page.evaluate(() => window.__DB.connector_configs)).find(r => r.capability === 'edit_profiles')
+  lofi = row.config.profiles[0]
+  check('styles: restoring creates a new version with the old values', lofi.version === 3 && lofi.audio.musicVolume === 0.9 && lofi.transitions.betweenMaterials === 'dissolve', lofi)
+  check('styles: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 18. Editar con mi estilo: my materials + a style → a draft montage that follows the style, ready for the manual editor.
+{
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/editor/style/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
+  const seed = `
+window.__DB.render_jobs = []
+for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) window.__DB.assets.push({ id, owner_id: 'u1', project_id: 'p1', asset_type: 'image', storage_path: 'u1/p1/' + id + '.png', license_status: 'owned', provenance: { title: t }, created_at: '2026-10-01T00:00:00Z' })`
+  const server = serve(8808, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + seed, 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1100 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8808/editor/style?project=p1')
+  await page.getByLabel('Estilo').selectOption('preset-docu')
+  await page.getByLabel('Título').fill('La cueva')
+  for (const n of ['Bosque', 'Amanecer', 'Cueva']) await page.getByRole('region', { name: 'Materiales del proyecto' }).getByText(new RegExp(n)).click()
+  await page.getByRole('button', { name: /^Subir Amanecer/ }).click()
+  await page.getByRole('button', { name: 'Editar automáticamente con mi estilo' }).click()
+  await page.getByText(/Montaje creado con «Historias y documentales»/).waitFor({ timeout: 15000 })
+  const job = (await page.evaluate(() => window.__DB.render_jobs))[0]
+  const c = job?.composition
+  check('style edit: clips follow my order and the style (6 s images, alternating camera, title)', c && c.clips.map(k => k.visualAssetId).join() === 'ia,ib,ic' && c.clips.every(k => k.durationMs === 6000) && new Set(c.clips.map(k => k.camera.kind)).size === 2 && c.textClips[0].content === 'La cueva', c)
+  check('style edit: the automatic result is kept to compare with my corrections', c.styleRef.profileId === 'preset-docu' && c.styleRef.baseline.clips.length === 3 && job.status === 'draft')
+  check('style edit: opens in the manual editor', (await page.getByRole('link', { name: /Abrir en el editor manual/ }).getAttribute('href')) === `/editor/manual?job=${job.id}`)
+  check('style edit: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 
