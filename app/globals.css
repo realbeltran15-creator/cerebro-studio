@@ -434,4 +434,17 @@ textarea.viText{width:100%;min-height:70px}
 }
 .navGroup{display:flex;flex-direction:column;gap:2px}
 .navGroup+.navGroup{margin-top:10px}
-.navGroupLabel{padding:4px 12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#6f7695;font-weight:700}
+.navGroupLabel{padding:4px 12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#9aa3c4;font-weight:700}
+.srOnly{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.warning{color:var(--warn);background:#f5b94214;border:1px solid #f5b94244;border-radius:10px;padding:8px 12px;margin:8px 0}
+.plainList{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px}
+.workflowList{display:flex;flex-direction:column;gap:14px}
+.workflowCard{display:flex;flex-direction:column;gap:10px}
+.workflowHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.workflowSteps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.wfStep{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);text-align:center}
+.wfDot{width:100%;height:6px;border-radius:999px;background:var(--line-2)}
+.wfStep.done .wfDot{background:var(--ok)} .wfStep.in_progress .wfDot{background:var(--info)} .wfStep.needs_approval .wfDot{background:var(--warn)}
+.wfStep.failed .wfDot,.wfStep.blocked .wfDot{background:var(--bad)} .wfStep.done{color:var(--text)}
+.workflowDetail table{width:100%;border-collapse:collapse} .workflowDetail td,.workflowDetail th{padding:6px 8px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+@media (max-width:720px){.workflowSteps{grid-template-columns:repeat(4,1fr)}.workflowDetail td:nth-child(3){display:none}}
