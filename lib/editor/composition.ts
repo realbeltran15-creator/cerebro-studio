@@ -4,11 +4,11 @@
  * rendered in the browser now or sent to a server render worker later.
  */
 
-export type OutputFormat = '16:9' | '9:16' | '1:1'
+export type OutputFormat = '16:9' | '9:16' | '1:1' | 'custom'
 
 /** fade = through black; cut = none; dissolve/slide/wipe/zoom blend into the next clip during the last fadeMs of this one. */
-export type Transition = 'fade' | 'cut' | 'dissolve' | 'slide' | 'wipe' | 'zoom'
-export const TRANSITIONS: Record<Transition, string> = { fade: 'Fundido a negro', dissolve: 'Disolvencia', slide: 'Deslizar', wipe: 'Cortinilla', zoom: 'Zoom', cut: 'Corte' }
+export type Transition = 'fade' | 'cut' | 'dissolve' | 'slide' | 'wipe' | 'zoom' | 'blur' | 'slide_up' | 'wipe_down'
+export const TRANSITIONS: Record<Transition, string> = { fade: 'Fundido a negro', dissolve: 'Disolvencia', slide: 'Deslizar', slide_up: 'Deslizar hacia arriba', wipe: 'Cortinilla', wipe_down: 'Cortinilla vertical', zoom: 'Zoom', blur: 'Desenfoque', cut: 'Corte' }
 export type TextAnimation = 'none' | 'fade' | 'pop' | 'slide' | 'typewriter'
 export const TEXT_ANIMATIONS: Record<TextAnimation, string> = { none: 'Sin animación', fade: 'Aparecer', pop: 'Rebote', slide: 'Subir', typewriter: 'Máquina de escribir' }
 /** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
@@ -21,9 +21,21 @@ export const TEXT_FONTS: Record<TextFont, { label: string; css: string }> = {
   condensed: { label: 'Condensada (impacto)', css: 'Impact, "Arial Narrow", "Roboto Condensed", sans-serif' },
   mono: { label: 'Monoespaciada', css: 'ui-monospace, Menlo, Consolas, monospace' },
 }
-export type TextOverlay = { content: string; position: 'top' | 'center' | 'bottom'; sizePct: number; animation?: TextAnimation; font?: TextFont; /** #rrggbb */ color?: string }
+export type TextOverlay = {
+  content: string; position: 'top' | 'center' | 'bottom'; sizePct: number; animation?: TextAnimation; font?: TextFont; /** #rrggbb */ color?: string
+  /** Free position of the text's centre (fractions of the frame); overrides `position` when set (dragged on the viewer). */
+  x?: number; y?: number
+  /** Exit animation (the entry one is `animation`). */
+  outAnimation?: TextAnimation
+  /** Outline colour (#rrggbb) and width (% of the font size, 0 = none). */
+  outline?: string; outlineWidth?: number
+  shadow?: boolean
+  /** Box behind the text (#rrggbb), null = none; opacity 0..1. */
+  background?: string | null; backgroundOpacity?: number
+  bold?: boolean
+}
 /** A title or text on its own track, independent of the clips: it has its own start and duration on the timeline. */
-export type TextClip = TextOverlay & { id: string; startMs: number; durationMs: number }
+export type TextClip = TextOverlay & { id: string; startMs: number; durationMs: number; trackId?: string; groupId?: string }
 
 /** Camera movement over the clip (images and videos). amount = how far it moves (0.02–0.5 of the frame). */
 export type CameraKind = 'none' | 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'pan_up' | 'pan_down'
@@ -42,6 +54,44 @@ export type ExportSettings = {
 }
 /** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
 export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
+
+export type Filters = { brightness: number; contrast: number; saturation: number; blur: number }
+export const NO_FILTERS: Filters = { brightness: 1, contrast: 1, saturation: 1, blur: 0 }
+export const FILTER_PRESETS: Record<string, { label: string; f: Filters }> = {
+  none: { label: 'Original', f: NO_FILTERS },
+  vivid: { label: 'Vivo', f: { brightness: 1.05, contrast: 1.15, saturation: 1.35, blur: 0 } },
+  warm: { label: 'Cálido suave', f: { brightness: 1.08, contrast: 1.05, saturation: 1.15, blur: 0 } },
+  mono: { label: 'Blanco y negro', f: { brightness: 1, contrast: 1.15, saturation: 0, blur: 0 } },
+  faded: { label: 'Desvaído', f: { brightness: 1.1, contrast: 0.85, saturation: 0.75, blur: 0 } },
+  dramatic: { label: 'Dramático', f: { brightness: 0.92, contrast: 1.35, saturation: 0.9, blur: 0 } },
+  dream: { label: 'Sueño', f: { brightness: 1.1, contrast: 0.95, saturation: 1.1, blur: 0.4 } },
+}
+export type Crop = { left: number; top: number; right: number; bottom: number }
+/** Position of an overlay: centre (fractions of the frame), width as a fraction of the frame width, rotation in degrees, opacity 0..1. */
+export type Transform = { x: number; y: number; scale: number; rotation: number; opacity: number }
+export const DEFAULT_TRANSFORM: Transform = { x: 0.5, y: 0.5, scale: 0.4, rotation: 0, opacity: 1 }
+/** A keyframe (clip-relative time) with the properties it fixes; between keyframes values are interpolated with ease-in-out. */
+export type Keyframe = { atMs: number } & Partial<Transform>
+/** A picture or video above the main track (picture-in-picture, logos, stickers, a second camera). */
+export type OverlayClip = {
+  id: string; trackId: string; assetId: string
+  startMs: number; durationMs: number
+  /** Where it starts in the source (video), ms. */
+  trimInMs: number
+  speed?: number; volume?: number; muted?: boolean
+  transform: Transform
+  keyframes?: Keyframe[]
+  crop?: Crop | null
+  filters?: Filters | null
+  /** Ken Burns style movement inside its box. */
+  camera?: CameraMove | null
+  fadeInMs?: number; fadeOutMs?: number
+  groupId?: string
+}
+export type TrackType = 'main' | 'overlay' | 'text' | 'voice' | 'music' | 'sfx'
+/** A track of the timeline. Order of `tracks` = order on screen (top to bottom); overlay tracks higher up are drawn on top. */
+export type TrackMeta = { id: string; type: TrackType; name: string; locked?: boolean; hidden?: boolean; muted?: boolean; solo?: boolean }
+export type Marker = { id: string; atMs: number; label: string; color?: string }
 
 export type Clip = {
   /** Unique within the composition. Automatic edits use the scene id; manual edits may duplicate/split. */
@@ -74,6 +124,16 @@ export type Clip = {
   speed?: number
   /** Camera movement. When absent, the legacy `motion` applies (kenburns = slow zoom in on images). */
   camera?: CameraMove | null
+  /** Picture adjustments (brightness/contrast/saturation 1 = unchanged; blur in % of the frame height). */
+  filters?: Filters | null
+  /** Part of the source removed at each edge (fractions). */
+  crop?: Crop | null
+  /** Rotation in degrees and opacity 0..1 of the picture. */
+  rotation?: number
+  opacity?: number
+  /** Transition length into the next clip (ms); absent = the montage's fadeMs. */
+  transitionMs?: number
+  groupId?: string
 }
 
 /** Independent audio on the timeline: voice-over, music or effects. */
@@ -96,6 +156,11 @@ export type AudioClip = {
   fadeInMs?: number
   fadeOutMs?: number
   envelope?: EnvelopePoint[]
+  /** Stereo position -1 (left) … 1 (right). */
+  pan?: number
+  /** Custom audio track; absent = the default track of its kind. */
+  trackId?: string
+  groupId?: string
 }
 export type EnvelopePoint = { atMs: number; gain: number }
 
@@ -176,6 +241,13 @@ export type Composition = {
   styleRef?: StyleRef | null
   /** Level, mute and solo of each kind of sound. */
   mix?: Partial<Record<TrackKind, TrackState>>
+  /** Layers above the main track. */
+  overlays?: OverlayClip[]
+  /** Tracks (names, order, lock, hide, mute, solo). Missing = the default set. */
+  tracks?: TrackMeta[]
+  markers?: Marker[]
+  /** Frame size when format = 'custom' (even numbers, 240–3840). */
+  customSize?: { width: number; height: number }
 }
 
 export type SceneLike = { id: string; position: number; duration_ms: number; narration: string | null }
@@ -184,6 +256,7 @@ export const formatSize: Record<OutputFormat, { width: number; height: number }>
   '16:9': { width: 1280, height: 720 },
   '9:16': { width: 720, height: 1280 },
   '1:1': { width: 1080, height: 1080 },
+  custom: { width: 1280, height: 720 },
 }
 
 export const MIN_CLIP_MS = 1000
@@ -235,6 +308,13 @@ function parseText(t: unknown): TextOverlay | null {
     animation: typeof v.animation === 'string' && v.animation in TEXT_ANIMATIONS ? v.animation : 'none',
     font: typeof v.font === 'string' && v.font in TEXT_FONTS ? v.font : 'sans',
     color: typeof v.color === 'string' && HEX.test(v.color) ? v.color.toLowerCase() : '#ffffff',
+    ...(v.x !== undefined && v.y !== undefined && Number.isFinite(Number(v.x)) && Number.isFinite(Number(v.y)) ? { x: clamp(v.x, 0, 1, 0.5), y: clamp(v.y, 0, 1, 0.5) } : {}),
+    ...(typeof v.outAnimation === 'string' && v.outAnimation in TEXT_ANIMATIONS ? { outAnimation: v.outAnimation } : {}),
+    ...(typeof v.outline === 'string' && HEX.test(v.outline) ? { outline: v.outline.toLowerCase() } : {}),
+    ...(v.outlineWidth !== undefined ? { outlineWidth: clamp(v.outlineWidth, 0, 40, 10) } : {}),
+    ...(v.shadow === true ? { shadow: true } : {}),
+    ...(typeof v.background === 'string' && HEX.test(v.background) ? { background: v.background.toLowerCase(), backgroundOpacity: clamp(v.backgroundOpacity, 0, 1, 0.6) } : {}),
+    ...(v.bold === false ? { bold: false } : {}),
   }
 }
 
@@ -242,7 +322,7 @@ function parseTextClip(t: unknown): TextClip | null {
   const base = parseText(t)
   const v = (t ?? {}) as Partial<TextClip>
   if (!base || typeof v.id !== 'string' || !v.id) return null
-  return { ...base, id: v.id.slice(0, 60), startMs: Math.round(clamp(v.startMs, 0, MAX_TIMELINE_MS, 0)), durationMs: Math.round(clamp(v.durationMs, 300, MAX_TIMELINE_MS, 3000)) }
+  return { ...base, id: v.id.slice(0, 60), startMs: Math.round(clamp(v.startMs, 0, MAX_TIMELINE_MS, 0)), durationMs: Math.round(clamp(v.durationMs, 300, MAX_TIMELINE_MS, 3000)), ...(typeof v.trackId === 'string' && v.trackId ? { trackId: v.trackId.slice(0, 60) } : {}), ...(typeof v.groupId === 'string' && v.groupId ? { groupId: v.groupId.slice(0, 60) } : {}) }
 }
 
 export function parseCamera(c: unknown): CameraMove | null {
@@ -265,6 +345,9 @@ function parseAudioClip(a: unknown): AudioClip | null {
     ...(v.origin === 'cut-sfx' ? { origin: 'cut-sfx' as const } : {}),
     ...(Number(v.fadeInMs) > 0 ? { fadeInMs: clamp(v.fadeInMs, 0, 60_000, 0) } : {}),
     ...(Number(v.fadeOutMs) > 0 ? { fadeOutMs: clamp(v.fadeOutMs, 0, 60_000, 0) } : {}),
+    ...(Number(v.pan) ? { pan: clamp(v.pan, -1, 1, 0) } : {}),
+    ...(typeof v.trackId === 'string' && v.trackId ? { trackId: v.trackId.slice(0, 60) } : {}),
+    ...(typeof v.groupId === 'string' && v.groupId ? { groupId: v.groupId.slice(0, 60) } : {}),
     ...(Array.isArray(v.envelope) && v.envelope.length ? { envelope: v.envelope.flatMap(p => { const at = Number(p?.atMs), g = Number(p?.gain); return Number.isFinite(at) && Number.isFinite(g) && at >= 0 ? [{ atMs: Math.round(at), gain: Math.min(2, Math.max(0, g)) }] : [] }).sort((x, y) => x.atMs - y.atMs).slice(0, 64) } : {}),
   }
 }
@@ -274,7 +357,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const v = value as Partial<Composition>
   if (typeof v.storyboardId !== 'string' || !Array.isArray(v.clips)) return null
-  const format: OutputFormat = v.format === '9:16' || v.format === '1:1' ? v.format : '16:9'
+  const format: OutputFormat = v.format === '9:16' || v.format === '1:1' || v.format === 'custom' ? v.format : '16:9'
   const seen = new Set<string>()
   const clips = v.clips.flatMap((c: Partial<Clip>) => {
     if (!c || typeof c.sceneId !== 'string') return []
@@ -300,6 +383,12 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       text: parseText(c.text),
       speed: clamp(c.speed, 0.25, 4, 1),
       camera: parseCamera(c.camera),
+      ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
+      ...(c.crop ? { crop: parseCrop(c.crop) } : {}),
+      ...(Number(c.rotation) ? { rotation: clamp(c.rotation, -360, 360, 0) } : {}),
+      ...(c.opacity !== undefined && Number(c.opacity) < 1 ? { opacity: clamp(c.opacity, 0, 1, 1) } : {}),
+      ...(c.transitionMs !== undefined && Number.isFinite(Number(c.transitionMs)) ? { transitionMs: clamp(c.transitionMs, 0, 3000, 300) } : {}),
+      ...(typeof c.groupId === 'string' && c.groupId ? { groupId: c.groupId.slice(0, 60) } : {}),
       ...(Array.isArray(c.cues) ? { cues: parseCues(c.cues, clampMs(Number(c.durationMs) || 5000)) } : {}),
     } satisfies Clip]
   })
@@ -332,7 +421,86 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
     exportSettings: parseExport(v.exportSettings),
     styleRef: parseStyleRef(v.styleRef, depth),
     mix: parseMix(v.mix),
+    ...parseLayers(v),
   }
+}
+
+function parseFilters(f: unknown): Filters | null {
+  if (!f || typeof f !== 'object') return null
+  const v = f as Partial<Filters>
+  const out = { brightness: clamp(v.brightness, 0, 3, 1), contrast: clamp(v.contrast, 0, 3, 1), saturation: clamp(v.saturation, 0, 3, 1), blur: clamp(v.blur, 0, 5, 0) }
+  return out.brightness === 1 && out.contrast === 1 && out.saturation === 1 && out.blur === 0 ? null : out
+}
+function parseCrop(c: unknown): Crop | null {
+  if (!c || typeof c !== 'object') return null
+  const v = c as Partial<Crop>
+  const out = { left: clamp(v.left, 0, 0.9, 0), top: clamp(v.top, 0, 0.9, 0), right: clamp(v.right, 0, 0.9, 0), bottom: clamp(v.bottom, 0, 0.9, 0) }
+  if (out.left + out.right > 0.95) out.right = Math.max(0, 0.95 - out.left)
+  if (out.top + out.bottom > 0.95) out.bottom = Math.max(0, 0.95 - out.top)
+  return out.left || out.top || out.right || out.bottom ? out : null
+}
+function parseTransform(t: unknown): Transform {
+  const v = (t && typeof t === 'object' ? t : {}) as Partial<Transform>
+  return { x: clamp(v.x, -1, 2, 0.5), y: clamp(v.y, -1, 2, 0.5), scale: clamp(v.scale, 0.02, 4, 0.4), rotation: clamp(v.rotation, -720, 720, 0), opacity: clamp(v.opacity, 0, 1, 1) }
+}
+function parseKeyframes(k: unknown, durationMs: number): Keyframe[] | undefined {
+  if (!Array.isArray(k) || !k.length) return undefined
+  const keys: Array<keyof Transform> = ['x', 'y', 'scale', 'rotation', 'opacity']
+  const out = k.flatMap(raw => {
+    if (!raw || typeof raw !== 'object') return []
+    const at = Number((raw as Keyframe).atMs)
+    if (!Number.isFinite(at)) return []
+    const kf: Keyframe = { atMs: Math.round(Math.min(Math.max(at, 0), durationMs)) }
+    const full = parseTransform(raw)
+    for (const key of keys) if ((raw as Keyframe)[key] !== undefined) kf[key] = full[key]
+    return [kf]
+  }).sort((a, b) => a.atMs - b.atMs).slice(0, 64)
+  return out.length ? out : undefined
+}
+const TRACK_TYPES: TrackType[] = ['main', 'overlay', 'text', 'voice', 'music', 'sfx']
+function parseLayers(v: Partial<Composition>): Pick<Composition, 'overlays' | 'tracks' | 'markers' | 'customSize'> {
+  const out: Pick<Composition, 'overlays' | 'tracks' | 'markers' | 'customSize'> = {}
+  if (Array.isArray(v.tracks)) {
+    const seen = new Set<string>()
+    const tracks = v.tracks.flatMap(t => {
+      if (!t || typeof t !== 'object' || typeof t.id !== 'string' || !t.id || seen.has(t.id) || !TRACK_TYPES.includes(t.type)) return []
+      seen.add(t.id)
+      return [{ id: t.id.slice(0, 60), type: t.type, name: typeof t.name === 'string' && t.name.trim() ? t.name.trim().slice(0, 40) : t.id, ...(t.locked === true ? { locked: true } : {}), ...(t.hidden === true ? { hidden: true } : {}), ...(t.muted === true ? { muted: true } : {}), ...(t.solo === true ? { solo: true } : {}) }]
+    }).slice(0, 40)
+    if (tracks.length) out.tracks = tracks
+  }
+  if (Array.isArray(v.overlays)) {
+    const overlays = v.overlays.flatMap(o => {
+      if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !idOf(o.assetId) || typeof o.trackId !== 'string') return []
+      const durationMs = Math.round(clamp(o.durationMs, 100, MAX_TIMELINE_MS, 5000))
+      const kf = parseKeyframes(o.keyframes, durationMs)
+      return [{
+        id: o.id.slice(0, 60), trackId: o.trackId.slice(0, 60), assetId: o.assetId as string,
+        startMs: Math.round(clamp(o.startMs, 0, MAX_TIMELINE_MS, 0)), durationMs, trimInMs: Math.round(clamp(o.trimInMs, 0, MAX_TIMELINE_MS, 0)),
+        ...(o.speed !== undefined ? { speed: clamp(o.speed, 0.25, 4, 1) } : {}),
+        ...(o.volume !== undefined ? { volume: clamp(o.volume, 0, 2, 1) } : {}),
+        ...(o.muted === true ? { muted: true } : {}),
+        transform: parseTransform(o.transform),
+        ...(kf ? { keyframes: kf } : {}),
+        ...(o.crop ? { crop: parseCrop(o.crop) } : {}),
+        ...(o.filters ? { filters: parseFilters(o.filters) } : {}),
+        ...(o.camera ? { camera: parseCamera(o.camera) } : {}),
+        ...(Number(o.fadeInMs) > 0 ? { fadeInMs: clamp(o.fadeInMs, 0, 10_000, 0) } : {}),
+        ...(Number(o.fadeOutMs) > 0 ? { fadeOutMs: clamp(o.fadeOutMs, 0, 10_000, 0) } : {}),
+        ...(typeof o.groupId === 'string' && o.groupId ? { groupId: o.groupId.slice(0, 60) } : {}),
+      } satisfies OverlayClip]
+    }).slice(0, 2000)
+    if (overlays.length) out.overlays = overlays
+  }
+  if (Array.isArray(v.markers)) {
+    const markers = v.markers.flatMap(m => (m && typeof m === 'object' && typeof m.id === 'string' && Number.isFinite(Number(m.atMs)) ? [{ id: m.id.slice(0, 60), atMs: Math.round(clamp(m.atMs, 0, MAX_TIMELINE_MS, 0)), label: typeof m.label === 'string' ? m.label.slice(0, 60) : '', ...(typeof m.color === 'string' && HEX.test(m.color) ? { color: m.color } : {}) }] : [])).sort((a, b) => a.atMs - b.atMs).slice(0, 500)
+    if (markers.length) out.markers = markers
+  }
+  if (v.customSize && typeof v.customSize === 'object') {
+    const even = (n: unknown) => Math.round(clamp(n, 240, 3840, 1280) / 2) * 2
+    out.customSize = { width: even(v.customSize.width), height: even(v.customSize.height) }
+  }
+  return out
 }
 
 function parseMix(m: unknown): Partial<Record<TrackKind, TrackState>> | undefined {
@@ -376,6 +544,19 @@ export function audioStartMs(c: Pick<Composition, 'clips'>, a: Pick<AudioClip, '
   return a.startMs
 }
 
+/**
+ * Length of the whole project: the end of whatever finishes last (main track, overlays, texts, voices, effects and music clips).
+ * The global background music loops, so it never lengthens the project.
+ */
+export function projectDurationMs(c: Pick<Composition, 'clips'> & Partial<Pick<Composition, 'overlays' | 'textClips' | 'audioClips'>>) {
+  let end = totalDurationMs(c)
+  for (const o of c.overlays ?? []) end = Math.max(end, o.startMs + o.durationMs)
+  for (const t of c.textClips ?? []) end = Math.max(end, t.startMs + t.durationMs)
+  for (const a of c.audioClips ?? []) end = Math.max(end, audioStartMs(c, a) + a.durationMs)
+  return Math.min(end, MAX_TIMELINE_MS)
+}
+
+/** Length of the main (picture) track: its clips one after another. */
 export function totalDurationMs(c: Pick<Composition, 'clips'>) {
   return c.clips.reduce((t, clip) => t + clip.durationMs, 0)
 }
@@ -503,7 +684,15 @@ export const LIBRARY_MAX_BYTES = 50 * 1024 * 1024
 const BITRATES: Record<ExportResolution, { normal: number; high: number }> = { '480': { normal: 1_200_000, high: 2_000_000 }, '720': { normal: 2_500_000, high: 5_000_000 }, '1080': { normal: 5_000_000, high: 8_000_000 } }
 
 /** Frame size for a format at a resolution (even numbers, as encoders need). */
-export function frameSize(format: OutputFormat, resolution?: ExportResolution) {
+export function frameSize(format: OutputFormat, resolution?: ExportResolution, custom?: { width: number; height: number }) {
+  if (format === 'custom') {
+    const c = custom ?? formatSize.custom
+    if (!resolution) return { width: c.width, height: c.height }
+    // Same aspect, the short side at the chosen resolution.
+    const short = Number(resolution), k = short / Math.min(c.width, c.height)
+    const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+    return { width: even(c.width * k), height: even(c.height * k) }
+  }
   if (!resolution) return formatSize[format]
   const short = Number(resolution), long = Math.round(short * 16 / 9 / 2) * 2
   return format === '16:9' ? { width: long, height: short } : format === '9:16' ? { width: short, height: long } : { width: short, height: short }
@@ -513,10 +702,10 @@ export function frameSize(format: OutputFormat, resolution?: ExportResolution) {
  * What the export will be: frame size, bitrates and the estimated file size. For the Biblioteca the video bitrate is lowered
  * if needed so the file fits in 50 MB (and the plan says so); downloads keep the chosen bitrate.
  */
-export function exportPlan(c: Pick<Composition, 'clips' | 'format' | 'exportSettings'>) {
+export function exportPlan(c: Pick<Composition, 'clips' | 'format' | 'exportSettings'> & Partial<Pick<Composition, 'customSize' | 'overlays' | 'textClips' | 'audioClips'>>) {
   const e = c.exportSettings ?? { quality: 'normal' }
-  const total = totalDurationMs(c)
-  const { width, height } = frameSize(c.format, e.resolution)
+  const total = projectDurationMs(c)
+  const { width, height } = frameSize(c.format, e.resolution, c.customSize)
   const wanted = e.videoKbps ? e.videoKbps * 1000 : e.resolution ? BITRATES[e.resolution][e.quality] : preferredBitrate(e.quality)
   const audioBps = 128_000
   const destination = e.destination ?? 'library'
@@ -525,3 +714,31 @@ export function exportPlan(c: Pick<Composition, 'clips' | 'format' | 'exportSett
   const reduced = destination === 'library' && videoBps < wanted
   return { width, height, videoBps, audioBps, wantedBps: wanted, destination, estimatedBytes, reduced, durationMs: total, /** Even at the minimum bitrate a long montage may not fit in the Library: then it can only be downloaded. */ fitsLibrary: estimatedBytes <= LIBRARY_MAX_BYTES }
 }
+
+
+// ---------- Tracks ----------
+/** The tracks every montage has, even when it was saved before tracks existed. */
+export const DEFAULT_TRACKS: TrackMeta[] = [
+  { id: 'main', type: 'main', name: 'Vídeo principal' },
+  { id: 'text', type: 'text', name: 'Texto' },
+  { id: 'voice', type: 'voice', name: 'Voz' },
+  { id: 'music', type: 'music', name: 'Música' },
+  { id: 'sfx', type: 'sfx', name: 'Efectos' },
+]
+/** Tracks of a montage: the stored ones plus any default track missing, and a track for every overlay/clip that names an unknown one. */
+export function tracksOf(c: Pick<Composition, 'tracks' | 'overlays' | 'audioClips' | 'textClips'>): TrackMeta[] {
+  const list = [...(c.tracks ?? [])]
+  const has = (id: string) => list.some(t => t.id === id)
+  for (const d of DEFAULT_TRACKS) if (!has(d.id)) {
+    // Default tracks keep their usual place: overlays above the main track, the rest below in this order.
+    if (d.type === 'main') { const firstLower = list.findIndex(t => t.type !== 'overlay'); list.splice(firstLower < 0 ? list.length : firstLower, 0, d) } else list.push(d)
+  }
+  let n = list.filter(t => t.type === 'overlay').length
+  for (const o of c.overlays ?? []) if (!has(o.trackId)) list.splice(list.findIndex(t => t.type === 'main'), 0, { id: o.trackId, type: 'overlay', name: `Superposición ${++n}` })
+  for (const a of c.audioClips ?? []) if (a.trackId && !has(a.trackId)) list.push({ id: a.trackId, type: a.kind, name: `${TRACK_LABELS[a.kind]} ${a.trackId.slice(-3)}` })
+  for (const t of c.textClips ?? []) if (t.trackId && !has(t.trackId)) list.splice(list.findIndex(x => x.type === 'text') + 1, 0, { id: t.trackId, type: 'text', name: `Texto ${t.trackId.slice(-3)}` })
+  return list
+}
+/** Track an audio or text clip is on. */
+export const audioTrackId = (a: Pick<AudioClip, 'trackId' | 'kind'>) => a.trackId ?? a.kind
+export const textTrackId = (t: Pick<TextClip, 'trackId'>) => t.trackId ?? 'text'

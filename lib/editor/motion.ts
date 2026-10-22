@@ -15,22 +15,32 @@ export type TransitionFrame = {
   bReveal: number
   /** Extra zoom applied to A (zoom transition). */
   aScale: number
+  /** Incoming clip offset as a fraction of the height (slide up). */
+  bOffsetY: number
+  /** Fraction of the height revealed for B from the top (vertical wipe). */
+  bRevealY: number
+  /** Blur of each clip in % of the frame height (blur transition). */
+  aBlur: number; bBlur: number
 }
 
 const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 
 /** Transitions that draw the next clip during the overlap (the rest only touch the outgoing clip). */
-export const BLENDS: ReadonlySet<Transition> = new Set<Transition>(['dissolve', 'slide', 'wipe', 'zoom'])
+export const BLENDS: ReadonlySet<Transition> = new Set<Transition>(['dissolve', 'slide', 'wipe', 'zoom', 'blur', 'slide_up', 'wipe_down'])
 
 export function transitionFrame(kind: Transition, rawT: number): TransitionFrame {
   const t = clamp01(rawT), e = ease(t)
-  const base: TransitionFrame = { black: 0, aAlpha: 1, bAlpha: 0, bOffsetX: 0, bReveal: 1, aScale: 1 }
+  const base: TransitionFrame = { black: 0, aAlpha: 1, bAlpha: 0, bOffsetX: 0, bReveal: 1, aScale: 1, bOffsetY: 0, bRevealY: 1, aBlur: 0, bBlur: 0 }
   switch (kind) {
     case 'dissolve': return { ...base, bAlpha: e }
     case 'slide': return { ...base, bAlpha: 1, bOffsetX: 1 - e }
     case 'wipe': return { ...base, bAlpha: 1, bReveal: e }
     case 'zoom': return { ...base, aScale: 1 + 0.35 * e, bAlpha: clamp01((t - 0.35) / 0.65) }
+    case 'slide_up': return { ...base, bAlpha: 1, bOffsetY: 1 - e }
+    case 'wipe_down': return { ...base, bAlpha: 1, bRevealY: e }
+    // The outgoing clip blurs out while the incoming one comes in blurred and sharpens.
+    case 'blur': return { ...base, aBlur: 3 * e, bBlur: 3 * (1 - e), bAlpha: e }
     default: return base
   }
 }
@@ -86,4 +96,43 @@ export function cameraAt(cam: CameraMove | null | undefined, rawP: number): Came
 export function effectiveCamera(clip: { camera?: CameraMove | null; motion: 'kenburns' | 'none' }, isImage: boolean): CameraMove | null {
   if (clip.camera) return clip.camera
   return isImage && clip.motion === 'kenburns' ? { kind: 'zoom_in', amount: 0.08 } : null
+}
+
+/**
+ * A text with an entry animation and, optionally, a different exit one. Without `out` it behaves exactly as before
+ * (the entry animation's own fade-out). With `out`, the exit is the chosen animation played backwards over the last part.
+ */
+export function textFrameFor(t: { animation?: TextAnimation; outAnimation?: TextAnimation; content: string }, localMs: number, durationMs: number): TextFrame {
+  if (!t.outAnimation) return textFrame(t.animation, localMs, durationMs, t.content.length)
+  const outMs = Math.min(IN_MS, durationMs / 3)
+  // Entry only: evaluate the entry animation as if the text lasted for ever (no built-in fade-out).
+  const entry = textFrame(t.animation, localMs, 1e9, t.content.length)
+  const remaining = durationMs - localMs
+  if (t.outAnimation === 'none' || remaining >= outMs) return entry
+  // Mirror of the exit animation's entry at the same distance from the end.
+  const exit = t.outAnimation === 'typewriter'
+    ? { alpha: 1, scale: 1, offsetY: 0, visibleChars: Math.max(0, Math.floor(t.content.length * clamp01(remaining / outMs))) }
+    : textFrame(t.outAnimation, remaining * (IN_MS / outMs), 1e9, t.content.length)
+  return {
+    alpha: entry.alpha * exit.alpha, scale: entry.scale * exit.scale, offsetY: entry.offsetY + exit.offsetY,
+    visibleChars: entry.visibleChars === null ? exit.visibleChars : exit.visibleChars === null ? entry.visibleChars : Math.min(entry.visibleChars, exit.visibleChars),
+  }
+}
+
+/** Keyframed value of each transform property at `localMs` (ease in-out between the keyframes that set it; flat outside them). */
+export function transformAt<T extends Record<string, number>>(base: T, keyframes: Array<{ atMs: number } & Partial<T>> | undefined, localMs: number): T {
+  if (!keyframes?.length) return base
+  const out = { ...base }
+  for (const key of Object.keys(base) as Array<keyof T>) {
+    const ks = keyframes.filter(k => k[key] !== undefined)
+    if (!ks.length) continue
+    if (localMs <= ks[0].atMs) { out[key] = ks[0][key] as unknown as T[keyof T]; continue }
+    const last = ks[ks.length - 1]
+    if (localMs >= last.atMs) { out[key] = last[key] as unknown as T[keyof T]; continue }
+    const i = ks.findIndex(k => k.atMs > localMs)
+    const a = ks[i - 1], b = ks[i]
+    const p = ease((localMs - a.atMs) / Math.max(1, b.atMs - a.atMs))
+    out[key] = ((a[key] as unknown as number) + ((b[key] as unknown as number) - (a[key] as unknown as number)) * p) as unknown as T[keyof T]
+  }
+  return out
 }

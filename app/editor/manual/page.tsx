@@ -5,8 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { audioStartMs, envelopeBreakpoints, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
-import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, fromClip, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
+import { audioStartMs, envelopeBreakpoints, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
@@ -26,6 +26,9 @@ import { acceptProposal, DEFAULT_PREFS, detectCorrection, loadPrefs, PREF_LABELS
 import { deleteRange, isolateRange, normRange, type Range } from '@/lib/editor/range'
 import { effectiveCamera } from '@/lib/editor/motion'
 import { ManualPicker } from '../../components/manual-picker'
+import { EditorPlayerView } from '../../components/editor-player'
+import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
+import type { EditorPlayer } from '@/lib/editor/player'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
@@ -54,14 +57,19 @@ export default function ManualEditorPage() {
   const [addAudio, setAddAudio] = useState('')
   const [addAudioKind, setAddAudioKind] = useState<AudioClip['kind']>('music')
   const [splitAt, setSplitAt] = useState('')
-  const [previewFromSelected, setPreviewFromSelected] = useState(false)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [picking, setPicking] = useState(false)
   const [importAudioKind, setImportAudioKind] = useState<'music' | 'sfx' | 'voice'>('music')
   const [importLicense, setImportLicense] = useState<LicenseStatus>('owned')
   const [importNotes, setImportNotes] = useState('')
   const [dropping, setDropping] = useState(false)
-  const [playheadMs, setPlayheadMs] = useState(0)
+  const [playheadMs, setPlayheadMsState] = useState(0)
+  // The player owns the clock; the timeline playhead follows it every frame (directly on the DOM) and the state a few times a second.
+  const playerRef = useRef<EditorPlayer | null>(null)
+  const playheadEl = useRef<HTMLDivElement | null>(null)
+  const resolveUrl = useMemo(() => assetUrlResolver(), [])
+  const setPlayheadMs = useCallback((ms: number) => { setPlayheadMsState(ms); const p = playerRef.current; if (p && Math.abs(p.state.timeMs - ms) > 1) p.seek(ms) }, [])
+  const lastPlayheadState = useRef(0)
   // Marked fragment («entrada»/«salida»): instructions and fragment actions apply only to it.
   const [range, setRange] = useState<Range | null>(null)
   const [markIn, setMarkIn] = useState<number | null>(null)
@@ -93,6 +101,18 @@ export default function ManualEditorPage() {
   const [view, setView] = useState({ left: 0, width: 1200 })
 
   const comp = history?.present ?? null
+  const kindOfAsset = useMemo(() => kindFromAssets(assets), [assets])
+  const pxRef = useRef(40)
+  useEffect(() => { pxRef.current = pxPerSec }, [pxPerSec])
+  const onPlayerTime = useCallback((ms: number, playing: boolean) => {
+    const el = playheadEl.current
+    if (el) el.style.left = `${ms / 1000 * pxRef.current}px`
+    const now = performance.now()
+    if (!playing || now - lastPlayheadState.current > 250) { lastPlayheadState.current = now; setPlayheadMsState(ms) }
+    // Follow the playhead while playing when it leaves the visible part of the timeline.
+    const sc = scroller.current
+    if (playing && sc) { const x = ms / 1000 * pxRef.current; if (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = Math.max(0, x - 80) }
+  }, [])
   const apply = useCallback((next: (c: Composition) => Composition) => {
     setHistory(h => (h ? commit(h, next(h.present)) : h)); setDirty(true); setNotice('')
   }, [])
@@ -359,7 +379,7 @@ export default function ManualEditorPage() {
     {error ? <p className="error" role="alert">{error} <Link className="open" href="/editor">Volver al editor</Link></p> : <p className="muted">{busy === 'convert' ? 'Preparando el montaje (midiendo voces)…' : 'Cargando…'}</p>}
   </StudioShell>
 
-  const total = totalDurationMs(comp)
+  const total = projectDurationMs(comp)
   const selClip = selection?.kind === 'clip' ? comp.clips.find(c => c.id === selection.id) ?? null : null
   const selAudio = selection?.kind === 'audio' ? (comp.audioClips ?? []).find(a => a.id === selection.id) ?? null : null
   const selText = selection?.kind === 'text' ? (comp.textClips ?? []).find(t => t.id === selection.id) ?? null : null
@@ -485,10 +505,11 @@ export default function ManualEditorPage() {
       </aside>
 
       <div className="editorViewer">
-        {selClip && comp.clips[0]?.id !== selClip.id && <label className="pill" style={{ marginBottom: 8 }}><input type="checkbox" checked={previewFromSelected} onChange={e => setPreviewFromSelected(e.target.checked)} /> Vista previa desde el clip seleccionado (sin render)</label>}
-        {previewFromSelected && selClip && comp.clips[0]?.id !== selClip.id
-          ? <RenderPanel key={`preview-${selClip.id}`} projectId={job.project_id} composition={fromClip(comp, selClip.id)} assets={assets} previewOnly />
-          : <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} />}
+        <EditorPlayerView composition={comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }} />
+        <details className="panel exportBox" style={{ marginTop: 12 }}>
+          <summary><b>Exportar el vídeo</b> <span className="muted small">resolución, calidad, destino</span></summary>
+          <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} exportOnly />
+        </details>
       </div>
 
       <section className="panel editorProps" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-label="Propiedades">
@@ -543,7 +564,7 @@ export default function ManualEditorPage() {
           onPointerUp={e => { if (rangeDrag.current) { e.stopPropagation(); rangeDrag.current = null } }}>
           {Array.from({ length: Math.ceil(total / 1000 / 5) + 1 }, (_, i) => <span key={i} style={{ position: 'absolute', left: i * 5 * pxPerSec }}>{i * 5}s</span>)}
         </div>
-        <div className="playhead" style={{ left: playheadMs / 1000 * pxPerSec }} aria-hidden="true" />
+        <div className="playhead" ref={playheadEl} style={{ left: playheadMs / 1000 * pxPerSec }} aria-hidden="true" />
         {range && <div className="rangeOverlay" style={{ position: 'absolute', top: 0, bottom: 0, left: range.startMs / 1000 * pxPerSec, width: (range.endMs - range.startMs) / 1000 * pxPerSec }} aria-label={`Fragmento marcado ${secs(range.startMs)}–${secs(range.endMs)} s`} />}
         {!range && markIn !== null && <div className="markIn" style={{ left: markIn / 1000 * pxPerSec }} aria-hidden="true" />}
         <div style={{ display: 'flex', height: 64, marginTop: 4 }} aria-label="Pista de vídeo" onDragOver={allowAsset} onDrop={e => void dropAsset(e, 'video', e.currentTarget)}>
