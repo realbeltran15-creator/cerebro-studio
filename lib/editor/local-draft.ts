@@ -38,3 +38,35 @@ export const clearLocalDraft = (jobId: string) => tx<void>('readwrite', s => s.d
 export function draftDiffers(d: LocalDraft | null, loaded: Composition): d is LocalDraft {
   return Boolean(d && JSON.stringify(d.composition) !== JSON.stringify(loaded))
 }
+
+/**
+ * The undo history of a montage, kept in this browser (IndexedDB) so Ctrl+Z still works after reloading the page.
+ * Only used when the montage opened is exactly the one the history ends in.
+ */
+export type LocalHistory = { jobId: string; past: Composition[]; future: Composition[]; present: Composition }
+const HDB = 'cerebro-editor-history', HSTORE = 'history'
+function openH(): Promise<IDBDatabase | null> {
+  return new Promise(resolve => {
+    try {
+      const req = indexedDB.open(HDB, 1)
+      req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(HSTORE)) req.result.createObjectStore(HSTORE, { keyPath: 'jobId' }) }
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => resolve(null)
+    } catch { resolve(null) }
+  })
+}
+async function htx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest | void): Promise<T | null> {
+  const db = await openH()
+  if (!db) return null
+  return new Promise(resolve => {
+    try {
+      const t = db.transaction(HSTORE, mode)
+      const r = fn(t.objectStore(HSTORE))
+      t.oncomplete = () => { resolve((r && 'result' in r ? r.result : null) as T | null); db.close() }
+      t.onerror = () => { resolve(null); db.close() }
+    } catch { resolve(null) }
+  })
+}
+export const HISTORY_KEPT = 30
+export const saveLocalHistory = (h: LocalHistory) => htx<void>('readwrite', s => s.put(JSON.parse(JSON.stringify({ ...h, past: h.past.slice(-HISTORY_KEPT), future: h.future.slice(0, HISTORY_KEPT) }))))
+export const loadLocalHistory = (jobId: string) => htx<LocalHistory>('readonly', s => s.get(jobId))

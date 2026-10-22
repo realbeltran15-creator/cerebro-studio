@@ -102,8 +102,8 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await clips.first().click()
   await page.getByRole('button', { name: /Añadir al inicio/ }).click()
   await page.locator('[aria-label="Pista de Música"] > div').first().waitFor()
-  await page.getByRole('button', { name: 'Guardar montaje' }).click()
-  await page.getByText('Montaje guardado.').waitFor()
+  await page.getByRole('button', { name: 'Guardar ahora' }).click()
+  await page.getByText('Montaje guardado en la nube.').waitFor()
   const stored = (await db()).render_jobs[0].composition
   check('manual: saved as manual edit with split trims', stored.editedManually === true && stored.clips[2].trimInMs === 1500 && stored.clips[3].text?.content === 'FIN', stored.clips)
   check('manual: saved audio tracks', stored.audioClips.map(a => a.kind).join() === 'voice,voice,music', stored.audioClips)
@@ -210,7 +210,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const srtOut = await (async () => { const st = await dl.createReadStream(); let t = ''; for await (const c of st) t += c; return t })()
   check('editor-pro: the edited caption is exported as a valid SRT', /00:00:00,500 --> 00:00:01,800\nEditado a mano/.test(srtOut) && /Segundo subtítulo/.test(srtOut), srtOut)
   // Save and inspect what was stored.
-  await page.getByRole('button', { name: 'Guardar montaje' }).click(); await page.getByText('Montaje guardado.').waitFor()
+  await page.getByRole('button', { name: 'Guardar ahora' }).click(); await page.getByText('Montaje guardado en la nube.').waitFor()
   const stored = (await db()).render_jobs.find(j => j.id === 'job1').composition
   check('editor-pro: effects are tagged and saved, cues are saved on the clips, the automatic snapshot is kept', stored.audioClips.filter(a => a.origin === 'cut-sfx').length === nCuts && stored.clips.some(k => k.cues?.length) && stored.autoSnapshot?.clips.length === 3, [stored.audioClips.length, stored.autoSnapshot])
   // Reference video: analysed locally; only numbers come out.
@@ -764,14 +764,14 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByLabel('Formato').selectOption('9:16')
   await page.getByRole('button', { name: 'Crear montaje vacío' }).click()
   await page.waitForURL(/job=new-/, { timeout: 15000 })
-  await page.getByRole('button', { name: 'Guardar montaje' }).waitFor({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Guardar ahora' }).waitFor({ timeout: 20000 })
   const created = (await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))).render_jobs.find(j => j.composition.title === 'Mi corto')
   check('manual picker: the empty edit is stored as a manual draft in the chosen format', created?.status === 'draft' && created.output_format === '9:16' && created.composition.editedManually === true && created.composition.clips.length === 0, created)
   const tracks = await page.locator('[aria-label^="Pista de"]').evaluateAll(els => els.map(e => e.getAttribute('aria-label')))
   check('manual picker: separate tracks for video/images, voice, music and effects', ['Pista de vídeo', 'Pista de Voz', 'Pista de Música', 'Pista de Efectos'].every(t => tracks.includes(t)), tracks)
   // An automatic edit with no voices opens in manual mode as it is: no "voices were moved" notice and nothing to save.
   await page.goto('http://127.0.0.1:8798/editor/manual?job=job9')
-  await page.getByRole('button', { name: 'Guardar montaje' }).waitFor({ timeout: 20000 })
+  await page.getByRole('button', { name: 'Guardar ahora' }).waitFor({ timeout: 20000 })
   await page.waitForTimeout(500)
   check('manual picker: an edit without voices opens without a false "voices moved" notice or unsaved state', (await page.getByText(/las voces pasaron a la pista/).count()) === 0 && (await page.getByText('Cambios sin guardar').count()) === 0)
   check('manual picker: no page errors', errors.length === 0, errors)
@@ -1469,6 +1469,8 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   await page.getByRole('button', { name: 'Deshacer' }).click()
   check('volume points: the whole drag is one undo step', / · 10\d %$| · 9\d %$/.test(await page.locator('svg[aria-label="Puntos de volumen"] circle title').first().textContent()))
   // Recovery: unsaved changes survive closing the tab and are offered (not applied) when the montage is opened again.
+  // (Automatic saving off: this simulates the tab dying before the cloud save.)
+  await page.getByLabel('Guardado automático').uncheck()
   await say('formato cuadrado')
   await page.waitForTimeout(2200)
   await page.reload()
@@ -1771,8 +1773,8 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('tracks: rename, mute and solo', await page.getByRole('group', { name: 'Controles de Logo' }).count() === 1 && (await page.getByRole('button', { name: 'Silenciar Música' }).getAttribute('aria-pressed')) === 'true')
   await go('0:03'); await page.locator('.playerTime').click(); await page.keyboard.press('m')
   check('markers: M adds a marker at the playhead', await page.getByRole('button', { name: /^Marcador Marcador 1/ }).count() === 1)
-  await page.getByRole('button', { name: 'Guardar montaje' }).click()
-  await page.getByText('Montaje guardado.').waitFor()
+  await page.getByRole('button', { name: 'Guardar ahora' }).click()
+  await page.getByText('Montaje guardado en la nube.').waitFor()
   const stored = (await db()).render_jobs[0].composition
   check('save: overlays, tracks (name, lock, hide, mute, solo), keyframes, groups and markers are stored', stored.overlays.length === 3 && stored.tracks.some(t => t.name === 'Logo' && t.locked && t.hidden) && stored.tracks.some(t => t.id === 'music' && t.muted) && stored.tracks.some(t => t.id === 'voice' && t.solo) && stored.overlays.some(o => o.keyframes?.length === 2) && stored.textClips[0].groupId && stored.markers.length === 1, { tracks: stored.tracks, n: stored.overlays?.length })
   await page.evaluate(() => sessionStorage.setItem('__KEEP_JOBS', JSON.stringify(window.__DB.render_jobs)))
@@ -1836,8 +1838,8 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await bar.getByRole('button', { name: 'Retroceder 10 segundos' }).click()
   check('verify-ui: −10 s from there goes back to the start', (await bar.locator('.playerTime b').innerText()) === '00:00.00')
   await go('0:05.5'); await bar.locator('.playerTime').click(); await page.keyboard.press('m')
-  await page.getByRole('button', { name: 'Guardar montaje' }).click()
-  await page.getByText('Montaje guardado.').waitFor()
+  await page.getByRole('button', { name: 'Guardar ahora' }).click()
+  await page.getByText('Montaje guardado en la nube.').waitFor()
   await page.evaluate(() => sessionStorage.setItem('__KEEP_JOBS', JSON.stringify(window.__DB.render_jobs)))
   await page.reload()
   await bar.waitFor({ timeout: 30000 })
@@ -1860,6 +1862,110 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('verify-ui: the exported file shows at 0:05.5 what the viewer showed', near(out.mag, viewMag) && near(out.green, viewGreen) && Math.abs(out.duration - 13) < 0.6, { out, viewMag, viewGreen, status })
   check('verify-ui: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
+}
+
+// 26. Persistencia completa: edit everything (by hand and by instruction), autosave, reload, close the browser and open it again
+//     (a fresh session with nothing in the browser), every property identical; undo after a reload; recovery points; a conflict
+//     between sessions; change a transition, save, export and compare with the preview.
+{
+  const server = serve(8819, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const errors = []
+  const open = async (ctx, keep) => {
+    if (keep) await ctx.addInitScript(([j, st]) => { sessionStorage.setItem('__KEEP_JOBS', j); sessionStorage.setItem('__KEEP_STORE', st) }, keep)
+    const page = await ctx.newPage()
+    page.on('pageerror', e => errors.push(e.message))
+    page.on('dialog', d => d.accept())
+    await page.goto('http://127.0.0.1:8819/editor/manual?job=jv')
+    await page.getByRole('toolbar', { name: 'Controles de reproducción' }).waitFor({ timeout: 30000 })
+    return page
+  }
+  const ctx1 = await browser.newContext({ viewport: { width: 1500, height: 1000 } })
+  let page = await open(ctx1)
+  const job = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.render_jobs.find(j => j.id === 'jv'))))
+  const status = () => page.getByRole('status', { name: 'Estado del guardado' }).innerText()
+  const savedOk = async () => { await page.waitForFunction(() => /^Guardado en la nube/.test(document.querySelector('[aria-label="Estado del guardado"]')?.textContent ?? ''), null, { timeout: 15000 }) }
+  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const say = async t => { await page.getByLabel('Dile al editor qué hacer').fill(t); await page.getByRole('button', { name: 'Hacer', exact: true }).click() }
+  // Edit: transitions (type and duration), a filter, a camera move, the overlay (keyframes by instruction), a text, pan, a track name, export settings.
+  await clips.nth(1).click()
+  await page.getByLabel('Transición al siguiente').selectOption('zoom')
+  await page.getByLabel('Duración de la transición').fill('800')
+  await clips.nth(2).click()
+  await page.getByText('Imagen: filtros, recorte, rotación y opacidad').click()
+  await page.getByLabel('Filtro').selectOption('mono')
+  await clips.nth(0).click()
+  await say('haz un zoom lento')
+  await page.locator('[aria-label="Pista de Superposición 1"] > div').first().click()
+  await say('que la capa vaya de izquierda a derecha')
+  await page.locator('[aria-label="Pista de Texto"] > div').first().click()
+  await page.getByLabel('Contenido del texto').fill('TITULO NUEVO')
+  await page.locator('[aria-label="Pista de Voz"] > div').first().click()
+  await page.getByLabel('Panorámica').fill('0.5')
+  await page.getByLabel('Nombre de la pista Música').fill('Pianos'); await page.getByLabel('Nombre de la pista Música').press('Enter')
+  await page.getByText('Exportar el vídeo').click()
+  await page.getByLabel('Resolución').selectOption('720')
+  check('save: the state says there are changes, then saves by itself a few seconds later', /Cambios sin guardar|Guardando/.test(await status()), await status())
+  await savedOk()
+  const before = (await job()).composition
+  check('save: autosave wrote every edit to the server copy', before.clips[1].transition === 'zoom' && before.clips[1].transitionMs === 800 && before.clips[2].filters?.saturation === 0 && before.clips[0].camera?.kind === 'zoom_in' && before.overlays[0].keyframes?.length === 2 && before.textClips[0].content === 'TITULO NUEVO' && before.audioClips.find(a => a.id === 'a3')?.pan === 0.5 && before.tracks.find(t => t.id === 'music')?.name === 'Pianos' && before.exportSettings?.resolution === '720', before)
+  // Same values regardless of key order inside objects.
+  const canon = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(n => [n, x[n]])) : x))
+  const keepOf = async p => [await p.evaluate(() => JSON.stringify(window.__DB.render_jobs)), await p.evaluate(() => JSON.stringify(window.__STORE ?? {}))]
+  await page.waitForTimeout(2500) // the undo history is copied to the browser 2 s after the last change
+  let keep = await keepOf(page)
+  await page.close()
+  // Reload: the same browser opens the montage again from the server copy.
+  page = await open(ctx1, keep)
+  const undoBack = await page.waitForFunction(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent === 'Deshacer'); return b && !b.disabled }, null, { timeout: 8000 }).then(() => true, () => false)
+  check('reload: Ctrl+Z still works after reopening (undo history kept in this browser)', undoBack)
+  await page.getByRole('button', { name: 'Guardar ahora' }).click()
+  await page.getByText('Montaje guardado en la nube.').waitFor()
+  const reloaded = (await job()).composition
+  check('reload: the reopened montage is identical, property by property', canon(reloaded) === canon(before), { reloaded, before })
+  // Recovery points: «Guardar ahora» created one on the server.
+  await page.getByRole('button', { name: 'Puntos de recuperación' }).click()
+  await page.getByRole('region', { name: 'Puntos de recuperación' }).getByRole('button', { name: 'Restaurar' }).first().waitFor({ timeout: 10000 })
+  check('versions: «Guardar ahora» leaves a recovery point on the server', await page.getByRole('region', { name: 'Puntos de recuperación' }).getByText(/Guardado a mano/).count() >= 1)
+  keep = await keepOf(page)
+  await ctx1.close()
+  // Close the browser completely and open it again: a fresh session (no browser storage), only the server copy.
+  const ctx2 = await browser.newContext({ viewport: { width: 1500, height: 1000 } })
+  page = await open(ctx2, keep)
+  check('new session: no local copy is involved (nothing to recover)', await page.getByRole('alert', { name: 'Recuperar cambios' }).count() === 0)
+  await page.getByRole('button', { name: 'Guardar ahora' }).click()
+  await page.getByText('Montaje guardado en la nube.').waitFor()
+  check('new session: the montage is identical in a clean browser (as on another device)', canon((await job()).composition) === canon(before))
+  await page.locator('[aria-label="Pista de vídeo"] > div').nth(1).click()
+  check('new session: the editor shows the saved values (transition and its length)', (await page.getByLabel('Transición al siguiente').inputValue()) === 'zoom' && (await page.getByLabel('Duración de la transición').inputValue()) === '800')
+  // A conflict: another session saves first.
+  await page.evaluate(() => { const j = window.__DB.render_jobs.find(x => x.id === 'jv'); j.updated_at = '2030-01-01T00:00:00.000Z'; j.composition = { ...j.composition, title: 'Desde el móvil' } })
+  await page.getByLabel('Transición al siguiente').selectOption('wipe_down')
+  await page.getByRole('alert', { name: 'Conflicto al guardar' }).waitFor({ timeout: 15000 })
+  check('conflict: saving over a newer version from another session is stopped and explained', (await job()).composition.title === 'Desde el móvil')
+  await page.getByRole('button', { name: 'Guardar la mía encima' }).click()
+  await savedOk()
+  check('conflict: «Guardar la mía encima» keeps my change (and leaves the other one as a recovery point)', (await job()).composition.clips[1].transition === 'wipe_down' && Object.keys(await page.evaluate(() => window.__STORE)).some(k => k.endsWith('-conflict.json')))
+  // Export after the change and compare with the preview in the middle of the new transition (clip 2 → 3 at 7 s, 800 ms).
+  const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' })
+  await bar.getByLabel('Ir a un tiempo').fill('0:06.6'); await bar.getByLabel('Ir a un tiempo').press('Enter'); await page.waitForTimeout(1500)
+  const prev = await page.evaluate(() => { const c = document.querySelector('canvas.playerCanvas'); const g = c.getContext('2d'); const px = (x, y) => [...g.getImageData(Math.floor(c.width * x), Math.floor(c.height * y), 1, 1).data.slice(0, 3)]; return { top: px(0.3, 0.15), bottom: px(0.3, 0.85) } })
+  await page.getByText('Exportar el vídeo').click()
+  await page.getByRole('button', { name: /Renderizar y descargar|Renderizar y guardar/ }).click()
+  await page.getByText(/Vídeo guardado en la Biblioteca|se ha descargado a tu equipo/).waitFor({ timeout: 120000 })
+  const exp = await page.evaluate(async () => {
+    const blob = window.__LAST_RENDER
+    if (!blob) return null
+    const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(blob)
+    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej })
+    v.currentTime = 6.6; await new Promise(r => (v.onseeked = r))
+    const c = document.createElement('canvas'); c.width = 1280; c.height = 720; const g = c.getContext('2d'); g.drawImage(v, 0, 0, 1280, 720)
+    const px = (x, y) => [...g.getImageData(Math.floor(1280 * x), Math.floor(720 * y), 1, 1).data.slice(0, 3)]
+    return { top: px(0.3, 0.15), bottom: px(0.3, 0.85) }
+  })
+  const near = (a, b) => a && b && a.every((x, i) => Math.abs(x - b[i]) <= 60)
+  check('export: mid-transition (vertical wipe) the export matches the preview (incoming clip on top, outgoing below)', exp && near(exp.top, prev.top) && near(exp.bottom, prev.bottom) && prev.top.reduce((t, v, i) => t + Math.abs(v - prev.bottom[i]), 0) > 100, { prev, exp })
+  check('persistence: no page errors', errors.length === 0, errors)
+  await ctx2.close(); server.close()
 }
 
 await browser.close()

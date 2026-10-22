@@ -21,7 +21,8 @@ import { EditorComparePanel } from '../../components/editor-compare-panel'
 import { analyzeAsset, type AssetAnalysis } from '@/lib/editor/analysis-assets'
 import { nearestBeat } from '@/lib/editor/sync'
 import { COMMAND_EXAMPLES, runInstruction } from '@/lib/editor/commands'
-import { clearLocalDraft, draftDiffers, loadLocalDraft, saveLocalDraft, type LocalDraft } from '@/lib/editor/local-draft'
+import { clearLocalDraft, draftDiffers, loadLocalDraft, loadLocalHistory, saveLocalDraft, saveLocalHistory, type LocalDraft } from '@/lib/editor/local-draft'
+import { listVersions, loadVersion, REASON_LABELS, saveVersion, type VersionInfo, type VersionReason } from '@/lib/editor/versions'
 import { acceptProposal, DEFAULT_PREFS, detectCorrection, loadPrefs, PREF_LABELS, savePrefs, type EditPreferences, type Proposal, type Watch } from '@/lib/editor/preferences'
 import { deleteRange, isolateRange, normRange, type Range } from '@/lib/editor/range'
 import { effectiveCamera } from '@/lib/editor/motion'
@@ -99,7 +100,6 @@ export default function ManualEditorPage() {
   // Recovery and automatic saving.
   const [recovery, setRecovery] = useState<LocalDraft | null>(null)
   const [autoSave, setAutoSave] = useState(true)
-  const [lastAutoSave, setLastAutoSave] = useState<string | null>(null)
   const [matTab, setMatTab] = useState<'visual' | 'audio' | 'transitions'>('visual')
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
@@ -175,7 +175,12 @@ export default function ManualEditorPage() {
     void loadLocalDraft(row.id).then(d => { const c = d ? parseComposition(d.composition) : null; if (d && c && draftDiffers({ ...d, composition: c }, parsed)) setRecovery({ ...d, composition: c }) })
     const { data: a } = await supabase.from('assets').select('id,project_id,asset_type,storage_path,license_status,source_provider,provenance,created_at').or(`project_id.eq.${row.project_id},project_id.is.null`).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
     setAssets((a ?? []) as EditorAsset[])
-    if (parsed.editedManually) { setHistory(historyOf(parsed)); return }
+    if (parsed.editedManually) {
+      setHistory(historyOf(parsed))
+      // Ctrl+Z after a reload: the history kept in this browser, if it ends exactly in the montage just opened.
+      void loadLocalHistory(row.id).then(h => { if (h && JSON.stringify(parseComposition(h.present)) === JSON.stringify(parsed)) setHistory(cur => (cur && cur.present === parsed && !cur.past.length ? { past: h.past.flatMap(x => { const p = parseComposition(x); return p ? [p] : [] }), present: parsed, future: h.future.flatMap(x => { const p = parseComposition(x); return p ? [p] : [] }) } : cur)) })
+      return
+    }
     // First time in manual mode: move clip voices to the audio track with their real length.
     const voices = [...new Set(parsed.clips.map(c => c.voiceAssetId).filter((x): x is string => Boolean(x)))]
     // Nothing to move: open it as is, without a misleading notice or an "unsaved changes" state.
@@ -212,36 +217,130 @@ export default function ManualEditorPage() {
     })
   }, [allProjects, job, supabase])
 
-  const save = useCallback(async () => {
-    if (!job || !comp || !savedAt) return
-    const { data, error: e } = await supabase.from('render_jobs').update({ composition: comp, output_format: comp.format, updated_at: new Date().toISOString() })
-      .eq('id', job.id).eq('updated_at', savedAt).select('updated_at')
-    if (e) throw new Error(e.message)
-    if (!data?.length) throw new SaveConflictError()
-    setSavedAt((data[0] as { updated_at: string }).updated_at); setDirty(false)
-    void clearLocalDraft(job.id)
-  }, [job, comp, savedAt, supabase])
+  // ---------- Saving ----------
+  // The cloud copy (render_jobs.composition) is the one that counts: autosave a couple of seconds after each change, «Guardar ahora»,
+  // a visible state, retries when the connection fails, conflict handling between sessions, and recovery points on the server.
+  // The browser copy (IndexedDB) is only a safety net for crashes and is never taken for the saved one.
+  const presentRef = useRef<Composition | null>(null)
+  useEffect(() => { presentRef.current = comp }, [comp])
+  const savedAtRef = useRef<string | null>(null)
+  useEffect(() => { savedAtRef.current = savedAt }, [savedAt])
+  const lastSaved = useRef<Composition | null>(null)
+  const ownerRef = useRef<string | null>(null)
+  const lastVersionAt = useRef(0)
+  const inFlight = useRef<Promise<void> | null>(null)
+  const [saveState, setSaveState] = useState<'saved' | 'pending' | 'saving' | 'error' | 'conflict'>('saved')
+  const [saveMessage, setSaveMessage] = useState('')
+  const [lastCloudSave, setLastCloudSave] = useState<string | null>(null)
+  const [retryIn, setRetryIn] = useState(0)
+  useEffect(() => { if (history && !lastSaved.current) lastSaved.current = history.present }, [history])
+  useEffect(() => { void supabase.auth.getUser().then(({ data }: { data: { user: { id: string } | null } }) => { ownerRef.current = data.user?.id ?? null }) }, [supabase])
 
-  // Every change is copied locally a moment later (recovery after a crash); with automatic saving on, dirty changes reach the cloud every minute.
+  const writeVersion = useCallback(async (composition: Composition, reason: VersionReason) => {
+    if (!job || !ownerRef.current) return
+    try { await saveVersion(supabase, { owner: ownerRef.current, projectId: job.project_id, jobId: job.id, composition, reason }); lastVersionAt.current = Date.now(); setVersionsKey(k => k + 1) } catch { /* a recovery point is a bonus: the save itself already happened */ }
+  }, [job, supabase])
+
+  const save = useCallback(async (opts: { force?: boolean; reason?: VersionReason } = {}) => {
+    // One save at a time: a second request waits for the first and then saves whatever is newest.
+    while (inFlight.current) await inFlight.current.catch(() => undefined)
+    const snapshot = presentRef.current
+    if (!job || !snapshot || !savedAtRef.current) return
+    const run = (async () => {
+      setSaveState('saving'); setSaveMessage('')
+      let q = supabase.from('render_jobs').update({ composition: snapshot, output_format: snapshot.format, updated_at: new Date().toISOString() }).eq('id', job.id)
+      if (!opts.force) q = q.eq('updated_at', savedAtRef.current)
+      const { data, error: e } = await q.select('updated_at')
+      if (e) throw new Error(e.message)
+      if (!data?.length) throw new SaveConflictError()
+      const at = (data[0] as { updated_at: string }).updated_at
+      savedAtRef.current = at; setSavedAt(at)
+      lastSaved.current = snapshot
+      setLastCloudSave(new Date().toLocaleTimeString())
+      const still = presentRef.current !== snapshot
+      setDirty(still); setSaveState(still ? 'pending' : 'saved'); setRetryIn(0)
+      if (!still) void clearLocalDraft(job.id)
+      if (opts.reason || Date.now() - lastVersionAt.current > 5 * 60_000) void writeVersion(snapshot, opts.reason ?? 'auto')
+    })()
+    inFlight.current = run
+    try { await run } catch (err) {
+      if (err instanceof SaveConflictError) { setSaveState('conflict'); setSaveMessage(err.message) }
+      else { setSaveState('error'); setSaveMessage(err instanceof Error ? err.message : 'No se pudo guardar.') }
+      throw err
+    } finally { inFlight.current = null }
+  }, [job, supabase, writeVersion])
+
+  // Every change is copied locally a moment later (crash safety net only).
   useEffect(() => {
     if (!job || !comp || !dirty) return
-    const t = setTimeout(() => { void saveLocalDraft({ jobId: job.id, composition: comp, savedAt: new Date().toISOString(), baseUpdatedAt: savedAt }) }, 1500)
+    const t = setTimeout(() => { void saveLocalDraft({ jobId: job.id, composition: comp, savedAt: new Date().toISOString(), baseUpdatedAt: savedAt }) }, 800)
     return () => clearTimeout(t)
   }, [job, comp, dirty, savedAt])
-  const saveRef = useRef(save)
-  saveRef.current = save
+  // The undo history too (so Ctrl+Z works after reloading), a little later.
   useEffect(() => {
-    if (!autoSave || !dirty) return
-    const t = setTimeout(() => {
-      if (dragging.current || busy) return
-      void saveRef.current().then(() => setLastAutoSave(new Date().toLocaleTimeString()), e => { setAutoSave(false); setError(`Guardado automático detenido: ${e instanceof Error ? e.message : 'error al guardar'}`) })
-    }, 60_000)
+    if (!job || !history) return
+    const t = setTimeout(() => { void saveLocalHistory({ jobId: job.id, past: history.past, future: history.future, present: history.present }) }, 2000)
     return () => clearTimeout(t)
-  }, [autoSave, dirty, comp, busy])
+  }, [job, history])
+  useEffect(() => { if (dirty && saveState === 'saved') setSaveState('pending') }, [dirty, saveState])
+  const saveRef = useRef(save)
+  useEffect(() => { saveRef.current = save }, [save])
+  // Autosave: 2.5 s after the last change (never in the middle of a drag); after a failed attempt, retries after 5, 15, 30, 60 s.
+  const failures = useRef(0)
+  useEffect(() => {
+    if (!autoSave || !dirty || saveState === 'conflict' || saveState === 'saving') return
+    const wait = saveState === 'error' ? [5, 15, 30, 60][Math.min(failures.current, 3)] * 1000 : 2500
+    if (saveState === 'error') setRetryIn(Math.round(wait / 1000))
+    const t = setTimeout(function attempt() {
+      if (dragging.current || busy === 'import') { setTimeout(attempt, 800); return }
+      void saveRef.current().then(() => { failures.current = 0 }, () => { failures.current++ })
+    }, wait)
+    return () => clearTimeout(t)
+  }, [autoSave, dirty, comp, busy, saveState])
 
   async function saveClick() {
     setError(''); setBusy('save')
-    try { await save(); setNotice('Montaje guardado.') } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar.') } finally { setBusy('') }
+    try { await save({ reason: 'manual' }); setNotice('Montaje guardado en la nube.') } catch (e) { if (!(e instanceof SaveConflictError)) setError(e instanceof Error ? e.message : 'No se pudo guardar.') } finally { setBusy('') }
+  }
+  /** Conflict: the same montage was saved from another tab or device after it was opened here. */
+  async function resolveConflict(how: 'theirs' | 'mine' | 'copy') {
+    if (!job || !comp) return
+    const mine = comp
+    await writeVersion(mine, 'conflict')
+    if (how === 'mine') { try { await save({ force: true, reason: 'manual' }); setNotice('Tu versión ha sustituido a la otra (la otra sigue en «Puntos de recuperación» si se guardó desde aquí).') } catch { /* state shows it */ } return }
+    if (how === 'copy') {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user?.id, project_id: job.project_id, output_format: mine.format, status: 'draft', composition: { ...mine, title: `${mine.title || 'Montaje'} (copia)` } }).select('id').single()
+      if (e || !data) { setError(e?.message ?? 'No se pudo crear la copia.'); return }
+      window.location.href = `/editor/manual?job=${(data as { id: string }).id}`
+      return
+    }
+    const { data } = await supabase.from('render_jobs').select('id,project_id,status,updated_at,composition').eq('id', job.id).maybeSingle()
+    const parsed = data ? parseComposition((data as Job).composition) : null
+    if (!data || !parsed) { setError('No se pudo leer la otra versión.'); return }
+    savedAtRef.current = (data as Job).updated_at; setSavedAt((data as Job).updated_at)
+    lastSaved.current = parsed
+    setHistory(h => (h ? commit(h, parsed) : historyOf(parsed))); setDirty(false); setSaveState('saved')
+    setNotice('Cargada la versión más reciente. La tuya está en «Puntos de recuperación» y Ctrl+Z la devuelve.')
+  }
+
+  // Recovery points on the server.
+  const [versionsKey, setVersionsKey] = useState(0)
+  const [versions, setVersions] = useState<VersionInfo[] | null>(null)
+  const [showVersions, setShowVersions] = useState(false)
+  useEffect(() => {
+    if (!showVersions || !job || !ownerRef.current) return
+    void listVersions(supabase, { owner: ownerRef.current, projectId: job.project_id, jobId: job.id }).then(setVersions, () => setVersions([]))
+  }, [showVersions, versionsKey, job, supabase])
+  async function restoreVersion(v: VersionInfo) {
+    if (!comp) return
+    try {
+      const c = await loadVersion(supabase, v.path)
+      if (!c) throw new Error('El punto de recuperación no es válido.')
+      await writeVersion(comp, 'before-restore')
+      apply(() => c)
+      setNotice(`Restaurado el punto de recuperación del ${new Date(v.at).toLocaleString()}. Se guardará solo; Ctrl+Z lo deshace.`)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo restaurar.') }
   }
 
   // Keyboard: undo/redo, delete, split, copy/paste/duplicate, group, markers, select all (never while typing in a field).
@@ -451,13 +550,33 @@ export default function ManualEditorPage() {
         <button type="button" className="small" disabled={!relinkTo[m.id]} onClick={() => { const to = relinkTo[m.id]; apply(c => replaceAsset(c, m.id, to)); setNotice('Archivo vuelto a vincular: se mantienen los tiempos, efectos y ajustes.') }}>Volver a vincular</button>
       </li>)}</ul>
     </div>}
+    {saveState === 'conflict' && <div className="panel warning" role="alert" aria-label="Conflicto al guardar" style={{ marginBottom: 12 }}>
+      <b>Este montaje se guardó desde otra pestaña o dispositivo después de abrirlo aquí.</b> <span className="small">Tus cambios no se han perdido: siguen en pantalla y se guardan como punto de recuperación al elegir.</span>
+      <div className="pageActions" style={{ marginTop: 6 }}>
+        <button type="button" className="small" onClick={() => void resolveConflict('theirs')}>Cargar la versión más reciente</button>
+        <button type="button" className="ghost small" onClick={() => void resolveConflict('mine')}>Guardar la mía encima</button>
+        <button type="button" className="ghost small" onClick={() => void resolveConflict('copy')}>Guardar la mía como copia</button>
+      </div>
+    </div>}
+    {saveState === 'error' && <p className="warnBox small" role="alert">No se pudo guardar en la nube ({saveMessage}). Tus cambios siguen aquí y en este navegador; se reintenta solo. <button type="button" className="ghost small" onClick={() => void saveClick()}>Reintentar ahora</button></p>}
+    {showVersions && <section className="panel" aria-label="Puntos de recuperación" style={{ marginBottom: 12 }}>
+      <b>Puntos de recuperación en la nube</b> <span className="muted small">(se crean al pulsar «Guardar ahora», cada 5 minutos de guardado automático, antes de restaurar y en los conflictos; se guardan los {30} últimos)</span>
+      {versions === null ? <p className="muted small">Cargando…</p> : versions.length === 0 ? <p className="muted small">Todavía no hay ninguno.</p> :
+        <ul className="plainList small">{versions.map(v => <li key={v.path} className="field-row" style={{ alignItems: 'center' }}>
+          <span>{new Date(v.at).toLocaleString()} · {REASON_LABELS[v.reason] ?? v.reason}</span>
+          <button type="button" className="ghost small" onClick={() => void restoreVersion(v)}>Restaurar</button>
+        </li>)}</ul>}
+    </section>}
     <div className="editorBar panel" style={{ marginBottom: 12 }}>
       <div className="stats">
         <span className="pill">{comp.clips.length} clips</span>
         <span className="pill info">{fmt(total)}</span>
         {comp.styleRef && <span className="pill" title="Estilo con el que se creó o se re-estiló">Estilo: {comp.styleRef.profileName}</span>}
-        {dirty && <span className="pill warn">Cambios sin guardar</span>}
-        <label className="pill small" title="Guarda en la nube cada minuto si hay cambios (con el mismo control de conflictos)"><input type="checkbox" checked={autoSave} onChange={e => setAutoSave(e.target.checked)} /> Guardado automático{lastAutoSave ? ` · ${lastAutoSave}` : ''}</label>
+        <span role="status" aria-label="Estado del guardado" className={`pill ${saveState === 'error' || saveState === 'conflict' ? 'warn' : saveState === 'saved' && !dirty ? 'ok' : saveState === 'saving' ? 'info' : 'warn'}`} title={saveState === 'error' ? 'Tus cambios siguen en este navegador; se reintenta solo.' : 'La copia que cuenta es la de la nube: se abre igual desde cualquier dispositivo con tu cuenta.'}>
+          {saveState === 'saving' ? 'Guardando…' : saveState === 'error' ? `Error al guardar${retryIn ? ` · reintento en ${retryIn} s` : ''}` : saveState === 'conflict' ? 'Conflicto: guardado desde otra sesión' : dirty ? 'Cambios sin guardar' : `Guardado en la nube${lastCloudSave ? ` · ${lastCloudSave}` : ''}`}
+        </span>
+        <label className="pill small" title="Guarda en la nube unos segundos después de cada cambio (con control de conflictos entre sesiones)"><input type="checkbox" checked={autoSave} onChange={e => setAutoSave(e.target.checked)} /> Guardado automático</label>
+        <button type="button" className="ghost small" aria-expanded={showVersions} onClick={() => setShowVersions(v => !v)}>Puntos de recuperación</button>
         <label className="small">Formato{' '}
           <select value={comp.format} onChange={e => apply(c => ({ ...c, format: e.target.value as OutputFormat }))}>
             <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="custom">Personalizado</option>
@@ -475,7 +594,7 @@ export default function ManualEditorPage() {
         <button type="button" className="ghost" onClick={() => { const at = Math.min(playheadMs, Math.max(0, total - 1000)); apply(c => addTextClip(c, { content: 'Texto', startMs: at, durationMs: 3000, position: 'center', sizePct: 7, animation: 'fade', font: 'sans', color: '#ffffff' })) }}>Añadir texto</button>
         <button type="button" className="ghost" disabled={!history?.past.length} onClick={() => { setHistory(h => (h ? undo(h) : h)); setDirty(true) }} title="Ctrl+Z">Deshacer</button>
         <button type="button" className="ghost" disabled={!history?.future.length} onClick={() => { setHistory(h => (h ? redo(h) : h)); setDirty(true) }} title="Ctrl+Shift+Z">Rehacer</button>
-        <button type="button" onClick={() => void saveClick()} disabled={!dirty || busy === 'save'}>{busy === 'save' ? 'Guardando…' : 'Guardar montaje'}</button>
+        <button type="button" onClick={() => void saveClick()} disabled={busy === 'save' || saveState === 'saving'} title="Guarda en la nube y crea un punto de recuperación">{busy === 'save' ? 'Guardando…' : 'Guardar ahora'}</button>
       </div>
     </div>
 

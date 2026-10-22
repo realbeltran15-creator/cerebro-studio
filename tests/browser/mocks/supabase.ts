@@ -48,7 +48,17 @@ function q(table: string) {
 const client = {
   auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }), getSession: async () => ({ data: { session: { access_token: 'test-access-token', user: { id: 'u1' } } } }) },
   from: q,
-  storage: { from: () => ({ upload: async (path: string, blob: Blob) => { (window as any).__UPLOADS.push({ path, size: blob.size }); await (window as any).__putBlob?.(path, blob); return { error: null } }, remove: async () => ({ error: null }) }) },
+  storage: { from: () => ({
+    upload: async (path: string, blob: Blob) => {
+      ;((window as any).__UPLOADS ??= []).push({ path, size: blob.size }); await (window as any).__putBlob?.(path, blob)
+      // Small JSON files (recovery points) are kept so they can be listed and read back, like the real bucket.
+      if (blob.type === 'application/json') ((window as any).__STORE ??= {})[path] = await blob.text()
+      return { error: null }
+    },
+    list: async (dir: string) => ({ data: Object.keys((window as any).__STORE ?? {}).filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/')).map(k => ({ name: k.slice(dir.length + 1), metadata: { size: (window as any).__STORE[k].length } })), error: null }),
+    download: async (path: string) => { const t = (window as any).__STORE?.[path]; return t === undefined ? { data: null, error: { message: 'not found' } } : { data: new Blob([t], { type: 'application/json' }), error: null } },
+    remove: async (paths: string[]) => { for (const p of paths ?? []) delete (window as any).__STORE?.[p]; return { error: null } },
+  }) },
 }
 export const getSupabaseBrowserClient = () => client
 /** Some pages import the client by relative path and call it createClient. */

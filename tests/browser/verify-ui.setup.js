@@ -41,5 +41,6 @@
   })()
   window.__putBlob = (path, blob) => { if (/renders/.test(path)) window.__LAST_RENDER = blob }
   try { const kept = sessionStorage.getItem('__KEEP_JOBS'); if (kept) window.__DB.render_jobs = JSON.parse(kept) } catch { /* ignore */ }
+  try { const st = sessionStorage.getItem('__KEEP_STORE'); if (st) window.__STORE = JSON.parse(st) } catch { /* ignore */ }
   history.replaceState(null, '', '/editor/manual?job=jv')
 })()
