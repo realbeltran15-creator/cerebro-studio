@@ -9,6 +9,8 @@ import { presignUrl } from './s3-presign'
  * Keys always start with the owner's user id; callers must check ownership before signing.
  */
 export const BUCKET = 'generated-assets'
+/** Supabase Free plan: 50 MB per file (cannot be raised on Free; Pro allows up to 500 GB). Override only after upgrading. */
+export const SUPABASE_MAX_BYTES = (Number(process.env.SUPABASE_MAX_FILE_MB) > 0 ? Number(process.env.SUPABASE_MAX_FILE_MB) : 50) * 1024 * 1024
 export const R2_PREFIX = 'r2:'
 
 const env = () => ({

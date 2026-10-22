@@ -181,7 +181,7 @@ export default function LibraryPage() {
   }
 
   return (
-    <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<><button type="button" className="small" onClick={() => setUploading(u => !u)}><Icon name="upload" size={14} />Subir archivo</button><Link className="buttonLink ghost" href="/usage">Costes y créditos</Link></>}>
+    <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<><button type="button" className="small" onClick={() => setUploading(u => !u)}><Icon name="upload" size={14} />Subir archivo</button><Link className="buttonLink" href="/add">Añadir materiales (móvil, Drive, iPhone)</Link><Link className="buttonLink ghost" href="/usage">Costes y créditos</Link></>}>
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
       {uploading && (

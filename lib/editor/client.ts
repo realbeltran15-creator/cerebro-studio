@@ -6,6 +6,8 @@ import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
 
 export type EditorAsset = {
   id: string
+  /** null = general Library (not tied to a project); usable in any montage. */
+  project_id?: string | null
   asset_type: string
   storage_path: string | null
   license_status: string

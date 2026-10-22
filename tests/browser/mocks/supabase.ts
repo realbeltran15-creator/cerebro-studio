@@ -8,10 +8,11 @@ function q(table: string) {
   let op = 'select', payload: any = null, ret = false
   const api: any = {
     select() { if (op !== 'select') ret = true; return api },
-    eq(c: string, v: any) { filters.push(r => r[c] === v); return api },
+    eq(c: string, v: any) { filters.push(r => (c.includes('->>') ? r[c.split('->>')[0]]?.[c.split('->>')[1]] : r[c]) === v); return api },
     neq(c: string, v: any) { filters.push(r => r[c] !== v); return api },
     in(c: string, v: any[]) { filters.push(r => v.includes(r[c])); return api },
     not(c: string, _o: string, v: any) { filters.push(r => r[c] !== v); return api },
+    or(expr: string) { const parts = expr.split(',').map(p => { const [col, op, ...rest] = p.split('.'); const v = rest.join('.'); return (r: any) => (op === 'is' && v === 'null' ? r[col] == null : op === 'eq' ? String(r[col]) === v : false) }); filters.push(r => parts.some(f => f(r))); return api },
     order() { return api }, limit() { return api }, range() { return api },
     update(p: Row) { op = 'update'; payload = p; return api },
     insert(p: Row) { op = 'insert'; payload = p; return api },
@@ -45,7 +46,7 @@ function q(table: string) {
   return api
 }
 const client = {
-  auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+  auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }), getSession: async () => ({ data: { session: { access_token: 'test-access-token', user: { id: 'u1' } } } }) },
   from: q,
   storage: { from: () => ({ upload: async (path: string, blob: Blob) => { (window as any).__UPLOADS.push({ path, size: blob.size }); await (window as any).__putBlob?.(path, blob); return { error: null } }, remove: async () => ({ error: null }) }) },
 }

@@ -22,7 +22,7 @@ if (!chrome || !existsSync(chrome)) { console.log('Chromium not found (set CHROM
 async function bundle(entry, stdinContents, extraDefine = {}) {
   const out = await build({
     ...(stdinContents ? { stdin: { contents: stdinContents, resolveDir: root, loader: 'tsx' } } : { entryPoints: [entry] }), bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
-    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), ...extraDefine }, alias: { '@': root },
+    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined', 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"http://127.0.0.1:9"', 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', ...extraDefine }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
       b.onResolve({ filter: /(^@\/lib|\.\.\/lib|\.\/lib)\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
@@ -421,7 +421,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     ['/audio', 'app/audio/page', '/audio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/library', 'app/library/page', '/library'],
     ['/usage', 'app/usage/page', '/usage'], ['/youtube', 'app/youtube/page', '/youtube?project=p1'], ['/social', 'app/social/page', '/social?project=p1'],
     ['/analytics', 'app/analytics/page', '/analytics'], ['/automations', 'app/automations/page', '/automations'], ['/connectors', 'app/connectors/page', '/connectors'],
-    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/editor/style', 'app/editor/style/page', '/editor/style'], ['/editor/styles', 'app/editor/styles/page', '/editor/styles'], ['/editor/templates', 'app/editor/templates/page', '/editor/templates'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
+    ['/campaigns', 'app/campaigns/page', '/campaigns'], ['/calendar', 'app/calendar/page', '/calendar'], ['/workflows', 'app/workflows/page', '/workflows'], ['/editor/style', 'app/editor/style/page', '/editor/style'], ['/editor/styles', 'app/editor/styles/page', '/editor/styles'], ['/editor/templates', 'app/editor/templates/page', '/editor/templates'], ['/add', 'app/add/page', '/add'], ['/shorts', 'app/shorts/page', '/shorts'], ['/editor/manual', 'app/editor/manual/page', '/editor/manual'],
   ]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   for (const [name, mod, url, params] of pages) {
@@ -1514,6 +1514,73 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('templates: the new montage keeps the structure with my files', c && c.format === '9:16' && c.clips.map(k => k.visualAssetId).join() === 'img9,img9' && c.clips[0].transition === 'wipe' && c.audioClips[0].assetId === 'mus9' && c.audioClips[0].volume === 0.4 && c.textClips[0].content === 'HOLA', c)
   check('templates: opens in the manual editor', (await page.getByRole('link', { name: /Abrir en el editor manual/ }).count()) === 1)
   check('templates: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 21. Añadir materiales: original file, resumable upload (6 MB chunks) that survives a dropped connection, duplicates, size limit, shortcut code.
+{
+  const SB = 'http://127.0.0.1:8814/sb'
+  const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/add/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`, { 'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(SB), 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': '""', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': '""', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': '""' })
+  const server = serve(8814, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\nwindow.__DB.assets = []', 'app.js': code })
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  const tus = { uploads: new Map(), patches: 0, chunkSizes: [], dropped: 0, auth: [] }
+  const CHUNK = 6 * 1024 * 1024
+  await page.route('**/api/storage/upload-url', async route => { const b = JSON.parse(route.request().postData() || '{}'); await route.fulfill({ json: { driver: 'supabase', storagePath: `u1/${b.projectId}/uploads/${b.name ?? 'x'}.${b.ext}`, maxBytes: 20 * 1024 * 1024, resumable: true } }) })
+  await page.route('**/api/ios/token', async route => {
+    const m = route.request().method()
+    if (m === 'GET') return route.fulfill({ json: { active: tus.token ? true : false, createdAt: new Date().toISOString(), destination: 'library', lastUsedAt: null, uploads: 0, serverReady: true } })
+    if (m === 'POST') { tus.token = 'cs_' + 'a'.repeat(32); return route.fulfill({ json: { token: tus.token, destination: 'library' } }) }
+    return route.fulfill({ json: {} })
+  })
+  await page.route(`${SB}/storage/v1/upload/resumable**`, async route => {
+    const q = route.request(), h = q.headers(), m = q.method()
+    tus.auth.push(h['authorization'])
+    if (m === 'POST') { const id = String(tus.uploads.size + 1); tus.uploads.set(id, { length: Number(h['upload-length']), offset: 0, meta: h['upload-metadata'] }); return route.fulfill({ status: 201, headers: { Location: `${SB}/storage/v1/upload/resumable/${id}`, 'Tus-Resumable': '1.0.0', 'Access-Control-Expose-Headers': 'Location, Upload-Offset' } }) }
+    const id = q.url().split('/').pop(); const u = tus.uploads.get(id)
+    if (!u) return route.fulfill({ status: 404 })
+    if (m === 'HEAD') return route.fulfill({ status: 200, headers: { 'Upload-Offset': String(u.offset), 'Upload-Length': String(u.length), 'Access-Control-Expose-Headers': 'Upload-Offset' } })
+    if (m === 'DELETE') { tus.deleted = (tus.deleted ?? 0) + 1; return route.fulfill({ status: 204 }) }
+    if (m === 'PATCH' && id === '3') { await new Promise(r => setTimeout(r, 5000)); return route.fulfill({ status: 204, headers: { 'Upload-Offset': String(u.offset) } }).catch(() => undefined) }
+    if (m === 'PATCH') {
+      tus.patches++
+      const body = q.postDataBuffer() ?? Buffer.alloc(0)
+      // The second chunk arrives completely but the response is lost (dropped connection): the client must ask the offset and not resend it.
+      if (tus.patches === 2 && !tus.dropped) { tus.dropped++; u.offset += body.length; return route.abort('connectionreset') }
+      if (Number(h['upload-offset']) !== u.offset) return route.fulfill({ status: 409 })
+      tus.chunkSizes.push(body.length); (u.chunks ??= []).push(body.length); u.offset += body.length
+      return route.fulfill({ status: 204, headers: { 'Upload-Offset': String(u.offset), 'Access-Control-Expose-Headers': 'Upload-Offset' } })
+    }
+    return route.fulfill({ status: 204 })
+  })
+  await page.goto('http://127.0.0.1:8814/add')
+  await page.getByLabel('Destino', { exact: true }).waitFor()
+  const big = Buffer.alloc(14 * 1024 * 1024 + 1234, 7); big.write('ftypqt', 4)
+  await page.locator('#add-device').setInputFiles([{ name: 'IMG_0001.MOV', mimeType: 'video/quicktime', buffer: big }, { name: 'Grabación.m4a', mimeType: 'audio/x-m4a', buffer: Buffer.alloc(300 * 1024, 3) }, { name: 'enorme.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(21 * 1024 * 1024, 1) }])
+  await page.waitForFunction(() => (window.__DB.assets ?? []).length >= 2, null, { timeout: 60000 })
+  const assets = await page.evaluate(() => window.__DB.assets)
+  const mov = assets.find(a => a.provenance.originalFilename === 'IMG_0001.MOV')
+  check('add: the original is uploaded in exact 6 MB chunks and registered in the general Library', mov && mov.project_id === null && mov.asset_type === 'video' && mov.provenance.bytes === big.length && mov.provenance.original === true && tus.uploads.get('1').chunks[0] === CHUNK && tus.uploads.get('1').offset === big.length, { chunks: tus.uploads.get('1').chunks, mov })
+  check('add: a dropped connection is resumed from the server offset without resending', tus.dropped === 1 && tus.uploads.get('1').chunks.length === 2 && tus.uploads.get('1').chunks[1] === big.length - 2 * CHUNK, tus.uploads.get('1').chunks)
+  check('add: Voice Memos audio is stored as a voice, uploads use the session token', assets.some(a => a.provenance.originalFilename === 'Grabación.m4a' && a.asset_type === 'voice') && tus.auth.every(x => x === 'Bearer test-access-token'))
+  check('add: a file over the storage limit is refused before uploading, with the reason', /Pesa 21\.0 MB/.test(await page.getByLabel('Subida enorme.mov').textContent()) && assets.length === 2)
+  await page.locator('#add-device').setInputFiles([{ name: 'IMG_0001.MOV', mimeType: 'video/quicktime', buffer: big }])
+  await page.getByText('Ya está en tu Biblioteca: no se ha subido otra vez.').waitFor({ timeout: 20000 })
+  check('add: the same file again is detected as a duplicate (nothing uploaded)', (await page.evaluate(() => window.__DB.assets.length)) === 2 && tus.uploads.size === 2)
+  await page.locator('#add-device').setInputFiles([{ name: 'lento.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(7 * 1024 * 1024, 9) }])
+  await page.getByLabel('Subida lento.mov').getByText(/Subiendo/).waitFor({ timeout: 20000 })
+  await page.waitForTimeout(500)
+  await page.getByLabel('Subida lento.mov').getByRole('button', { name: 'Cancelar' }).click()
+  await page.getByLabel('Subida lento.mov').getByText('Cancelado.').waitFor()
+  await page.waitForTimeout(300)
+  check('add: cancelling stops the upload, registers nothing and discards the partial upload on the server', tus.deleted >= 1 && (await page.evaluate(() => window.__DB.assets.length)) === 2 && (await page.getByLabel('Subida lento.mov').getByRole('button', { name: 'Reintentar' }).count()) === 1, tus.deleted)
+  await page.getByRole('button', { name: 'Generar código del atajo' }).click()
+  await page.getByRole('group', { name: 'Código del atajo' }).waitFor()
+  check('add: the shortcut code is shown once with the exact steps and URLs', /cs_a{32}/.test(await page.locator('.tokenBox').textContent()) && /\/api\/ios\/start/.test(await page.locator('.addSteps').textContent()))
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  check('add: fits an iPhone screen without horizontal scrolling', overflow <= 1, overflow)
+  check('add: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 

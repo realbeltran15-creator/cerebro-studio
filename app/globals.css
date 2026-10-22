@@ -470,3 +470,24 @@ textarea.viText{width:100%;min-height:70px}
 .mixerStrip{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;padding:10px 14px}
 .mixerTrack{display:flex;align-items:center;gap:6px}
 .mixerTrack input[type=range]{width:110px}
+/* Añadir materiales: one column on phones, big touch targets */
+.addPanel{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.addDest{display:flex;flex-direction:column;gap:6px;font-weight:600}
+.addDest select{font-size:16px;min-height:44px}
+.addSources{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.addSource{position:relative;display:flex;flex-direction:column;gap:6px;align-items:flex-start;text-align:left;padding:18px;min-height:120px;border-radius:14px;border:1px solid var(--line-2);background:var(--panel);color:var(--text);cursor:pointer;text-decoration:none}
+.addSource:hover{border-color:#b49cff}
+.addSource input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:16px}
+.addSource:disabled{opacity:.6;cursor:not-allowed}
+.addIcon{font-size:26px}
+.addQueue{gap:10px}
+.addRow{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--line);border-radius:10px}
+.addRow progress{width:100%;height:10px}
+.addRow.error{border-color:#ff6b7a66}.addRow.done{border-color:#2fd18b66}
+.addRowHead{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.addName{word-break:break-all}
+.errorText{color:var(--bad)}
+.tokenBox{display:block;word-break:break-all;padding:8px;border-radius:8px;background:var(--panel-2);font-size:14px;user-select:all}
+.addSteps{margin:8px 0 0 18px;display:flex;flex-direction:column;gap:6px}
+.addSteps code{word-break:break-all}
+@media (max-width:720px){.addSources{grid-template-columns:1fr}.addSource{min-height:84px}}

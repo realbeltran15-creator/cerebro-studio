@@ -141,7 +141,7 @@ export default function ManualEditorPage() {
     setJob(row); setSavedAt(row.updated_at)
     // A local copy with changes that never reached the cloud (closed tab, crash): offer it, never apply it silently.
     void loadLocalDraft(row.id).then(d => { const c = d ? parseComposition(d.composition) : null; if (d && c && draftDiffers({ ...d, composition: c }, parsed)) setRecovery({ ...d, composition: c }) })
-    const { data: a } = await supabase.from('assets').select('id,asset_type,storage_path,license_status,source_provider,provenance,created_at').eq('project_id', row.project_id).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
+    const { data: a } = await supabase.from('assets').select('id,project_id,asset_type,storage_path,license_status,source_provider,provenance,created_at').or(`project_id.eq.${row.project_id},project_id.is.null`).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
     setAssets((a ?? []) as EditorAsset[])
     if (parsed.editedManually) { setHistory(historyOf(parsed)); return }
     // First time in manual mode: move clip voices to the audio track with their real length.
@@ -279,7 +279,7 @@ export default function ManualEditorPage() {
       } catch (e) { problems.push(`${file.name}: ${e instanceof Error ? e.message : 'no se pudo subir.'}`) }
     }
     if (added.length) {
-      const { data: a } = await supabase.from('assets').select('id,asset_type,storage_path,license_status,source_provider,provenance,created_at').eq('project_id', job.project_id).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
+      const { data: a } = await supabase.from('assets').select('id,project_id,asset_type,storage_path,license_status,source_provider,provenance,created_at').or(`project_id.eq.${job.project_id},project_id.is.null`).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
       setAssets((a ?? []) as EditorAsset[])
       apply(c => added.reduce((acc, f) => {
         if (f.kind === 'video') return addVideo(acc, f.id, f.ms ?? 5000)
@@ -448,7 +448,7 @@ export default function ManualEditorPage() {
         <ul className="materialList" role="listbox" aria-label="Materiales del proyecto">
           {materials.map(a => <li key={a.id} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
             <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
-            <span className="matName">{assetLabel(a)}<small className="muted">{a.asset_type}</small></span>
+            <span className="matName">{assetLabel(a)}<small className="muted">{a.asset_type}{a.project_id === null ? ' · Biblioteca general' : ''}</small></span>
           </li>)}
           {!materials.length && <li role="option" aria-selected={false} aria-disabled="true" className="muted small">Nada todavía. Importa archivos abajo.</li>}
         </ul>
