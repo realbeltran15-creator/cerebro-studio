@@ -35,7 +35,7 @@ import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, keysToPreset, loadPresets, presetKey
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
 import { extractProfile } from '@/lib/editor/profile'
-import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
+import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
@@ -723,6 +723,8 @@ export default function ManualEditorPage() {
         onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setCols(c => ({ ...c, right: Math.min(640, Math.max(170, c.right + (e.key === 'ArrowLeft' ? 20 : -20))) })) } }} />
       <section className="panel editorProps" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-label="Propiedades">
         <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1}` : selAudio ? 'Audio' : selText ? 'Texto' : selOverlay ? 'Superposición' : 'Montaje'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
+        {selection && isLocked(comp, selection) && <p className="warnBox small" role="status">Este elemento está en una pista bloqueada: desbloquéala (🔒) para cambiarlo.</p>}
+        <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {selOverlay && <OverlayInspector animation={(() => {
             const local = Math.min(Math.max(playheadMs - selOverlay.startMs, 0), selOverlay.durationMs)
             const cur = frameValuesAt({ ...selOverlay.transform }, selOverlay.keyframes, local)
@@ -798,6 +800,7 @@ export default function ManualEditorPage() {
           <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
                     <p className="muted small">Selecciona un clip, un audio o un texto en la línea de tiempo para editarlo.</p>
         </>}
+        </fieldset>
       </section>
     </div>
 
