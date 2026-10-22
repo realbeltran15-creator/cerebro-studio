@@ -510,3 +510,30 @@ textarea.viText{width:100%;min-height:70px}
 .playerVolume{width:80px}
 .playerJump input{width:96px}
 .exportBox>summary{cursor:pointer}
+/* Multitrack timeline */
+.tlToolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.tlToolbar label{display:flex;align-items:center;gap:4px}
+.tlGrid{display:grid;grid-template-columns:190px minmax(0,1fr);gap:6px;align-items:start}
+.tlHeads{position:sticky;left:0}
+.tlHead{display:flex;flex-direction:column;justify-content:center;gap:2px;padding:2px 6px;border-radius:6px;background:var(--bg-2,#1d2140);overflow:hidden;box-sizing:border-box}
+.tlHead.type-overlay{border-left:3px solid #1f6f86}.tlHead.type-main{border-left:3px solid #7c4fe0}.tlHead.type-text{border-left:3px solid #8a3a8f}
+.tlHead.type-voice{border-left:3px solid #23805a}.tlHead.type-music{border-left:3px solid #9a5b0f}.tlHead.type-sfx{border-left:3px solid #b03a2e}
+.tlName{background:transparent;border:1px solid transparent;color:inherit;font-size:12px;font-weight:600;padding:1px 3px;width:100%;min-width:0}
+.tlName:hover,.tlName:focus{border-color:rgba(255,255,255,.3)}
+.tlFlags{display:flex;gap:3px;align-items:center}
+.tlFlag{min-width:0!important;padding:0 5px!important;height:20px;font-size:11px;line-height:18px;background:transparent;border:1px solid rgba(255,255,255,.2);color:inherit;border-radius:4px;opacity:.65}
+.tlFlag.on{opacity:1;background:var(--accent,#7c4fe0);border-color:transparent}
+.tlMenu{position:relative}
+.tlMenu>summary{list-style:none;cursor:pointer;padding:0 6px;border:1px solid rgba(255,255,255,.2);border-radius:4px;font-size:12px;line-height:18px}
+.tlMenu>summary::-webkit-details-marker{display:none}
+.tlMenuBody{position:absolute;z-index:20;left:0;top:22px;display:flex;flex-direction:column;gap:2px;background:var(--bg-1,#151833);border:1px solid rgba(255,255,255,.15);border-radius:6px;padding:4px;min-width:130px}
+.tlScroll{overflow-x:auto;overflow-y:hidden;position:relative}
+.tlRow.isHidden{opacity:.35}
+.tlRow.isLocked{background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.05) 0 6px,transparent 6px 12px)}
+.tlEdge{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:rgba(255,255,255,.3);z-index:2}
+.tlEdge.left{left:0}.tlEdge.right{right:0}
+.tlGroup{margin-left:4px;opacity:.85}
+.tlKey{position:absolute;bottom:2px;width:7px;height:7px;margin-left:-3px;background:#ffe08a;transform:rotate(45deg);pointer-events:none}
+.tlMarker{position:absolute;top:0;width:10px!important;min-width:0!important;height:12px;padding:0!important;margin-left:-5px;border:none;border-radius:2px;clip-path:polygon(0 0,100% 0,100% 60%,50% 100%,0 60%);cursor:pointer;z-index:3}
+.tlMarkerLine{position:absolute;top:18px;bottom:0;border-left:1px dashed;pointer-events:none;opacity:.6;z-index:1}
+@media (max-width:720px){.tlGrid{grid-template-columns:120px minmax(0,1fr)}.tlFlags{flex-wrap:wrap}}

@@ -110,7 +110,6 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
         case 'Home': e.preventDefault(); p.seek(0); return
         case 'End': e.preventDefault(); p.seek(p.state.durationMs); return
         case 'f': case 'F': e.preventDefault(); void toggleFull(); return
-        case 'm': case 'M': e.preventDefault(); p.setMuted(!p.state.muted); return
       }
     }
     window.addEventListener('keydown', onKey)
@@ -135,8 +134,8 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
   const pct = dur ? Math.min(100, time / dur * 100) : 0
 
   return <section className={`panel playerPanel${full ? ' isFull' : ''}`} aria-label="Reproductor">
-    <div ref={box} className="playerStage" style={{ aspectRatio: `${pw} / ${ph}` }}>
-      <canvas ref={canvas} width={pw} height={ph} className="playerCanvas" aria-label={`Visor del montaje, ${timecode(time)}`} onDoubleClick={() => void toggleFull()} onClick={e => { if (e.target === canvas.current && !overlay) p?.toggle() }} />
+    <div ref={box} className="playerStage" style={{ aspectRatio: `${pw} / ${ph}`, position: 'relative', background: '#000', overflow: 'hidden' }}>
+      <canvas ref={canvas} width={pw} height={ph} className="playerCanvas" style={{ display: 'block', width: '100%', height: '100%' }} aria-label={`Visor del montaje, ${timecode(time)}`} onDoubleClick={() => void toggleFull()} onClick={e => { if (e.target === canvas.current && !overlay) p?.toggle() }} />
       {overlay}
       {st.waiting && <span className="playerWaiting" role="status">Cargando…</span>}
     </div>
@@ -165,7 +164,7 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
           {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map(r => <option key={r} value={String(r)}>{r}×</option>)}
         </select>
       </label>
-      <button type="button" className="ghost small" onClick={() => p?.setMuted(!st.muted)} aria-pressed={st.muted} aria-label={st.muted ? 'Activar sonido' : 'Silenciar'} title="Silenciar (M)">{st.muted ? '🔇' : '🔊'}</button>
+      <button type="button" className="ghost small" onClick={() => p?.setMuted(!st.muted)} aria-pressed={st.muted} aria-label={st.muted ? 'Activar sonido' : 'Silenciar'} title="Silenciar la vista previa">{st.muted ? '🔇' : '🔊'}</button>
       <input type="range" min={0} max={1} step={0.05} value={st.volume} aria-label="Volumen" onChange={e => p?.setVolume(Number(e.target.value))} className="playerVolume" />
       <button type="button" className="ghost small" onClick={() => void toggleFull()} aria-label="Pantalla completa" title="Pantalla completa (F)">⛶</button>
       <form className="playerJump" onSubmit={e => { e.preventDefault(); const ms = parseTimecode(jump); if (ms === null) { setError('Escribe un tiempo como 45:00, 1:02:30 o 90s.'); return } setError(''); p?.seek(ms); setJump('') }}>

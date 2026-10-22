@@ -729,14 +729,16 @@ export const DEFAULT_TRACKS: TrackMeta[] = [
 export function tracksOf(c: Pick<Composition, 'tracks' | 'overlays' | 'audioClips' | 'textClips'>): TrackMeta[] {
   const list = [...(c.tracks ?? [])]
   const has = (id: string) => list.some(t => t.id === id)
-  for (const d of DEFAULT_TRACKS) if (!has(d.id)) {
+  // Once the montage stores its tracks they are authoritative (a deleted default track stays deleted); the main track always exists.
+  for (const d of c.tracks ? DEFAULT_TRACKS.filter(x => x.type === 'main') : DEFAULT_TRACKS) if (!has(d.id)) {
     // Default tracks keep their usual place: overlays above the main track, the rest below in this order.
     if (d.type === 'main') { const firstLower = list.findIndex(t => t.type !== 'overlay'); list.splice(firstLower < 0 ? list.length : firstLower, 0, d) } else list.push(d)
   }
   let n = list.filter(t => t.type === 'overlay').length
   for (const o of c.overlays ?? []) if (!has(o.trackId)) list.splice(list.findIndex(t => t.type === 'main'), 0, { id: o.trackId, type: 'overlay', name: `Superposición ${++n}` })
-  for (const a of c.audioClips ?? []) if (a.trackId && !has(a.trackId)) list.push({ id: a.trackId, type: a.kind, name: `${TRACK_LABELS[a.kind]} ${a.trackId.slice(-3)}` })
-  for (const t of c.textClips ?? []) if (t.trackId && !has(t.trackId)) list.splice(list.findIndex(x => x.type === 'text') + 1, 0, { id: t.trackId, type: 'text', name: `Texto ${t.trackId.slice(-3)}` })
+  const defName = (id: string) => DEFAULT_TRACKS.find(d => d.id === id)?.name
+  for (const a of c.audioClips ?? []) { const id = a.trackId ?? a.kind; if (!has(id)) list.push({ id, type: a.kind, name: defName(id) ?? `${TRACK_LABELS[a.kind]} ${id.slice(-3)}` }) }
+  for (const t of c.textClips ?? []) { const id = t.trackId ?? 'text'; if (!has(id)) { const at = list.map(x => x.type).lastIndexOf('text'); list.splice(at < 0 ? list.findIndex(x => x.type === 'main') + 1 : at + 1, 0, { id, type: 'text', name: defName(id) ?? `Texto ${id.slice(-3)}` }) } }
   return list
 }
 /** Track an audio or text clip is on. */

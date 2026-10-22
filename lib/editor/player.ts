@@ -92,6 +92,9 @@ export class EditorPlayer {
   get stream() { return this.dest?.stream ?? null }
   get state(): PlayerState { return { playing: this.playing, timeMs: this.t, durationMs: this.durationMs, waiting: this.waiting, rate: this.rate, volume: this.volume, muted: this.muted, loop: this.loopRange } }
   get frameMs() { return 1000 / (this.init.frameRate ?? 30) }
+  /** Size of the picture being drawn (the preview canvas). */
+  get width() { return this.init.canvas.width }
+  get height() { return this.init.canvas.height }
 
   setComposition(c: Composition) {
     this.comp = c
