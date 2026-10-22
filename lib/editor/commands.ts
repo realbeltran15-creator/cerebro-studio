@@ -11,6 +11,9 @@ import { addAudioClip, addTextClip, deleteClip, duplicateClip, moveClip, setLeve
 import { cutSfxClips, defaultCutSfx, removeCutSfx, setCutSfx } from './cut-sfx'
 import { clipIdsInRange, deleteRange, isolateRange, type Range } from './range'
 import { DEFAULT_PREFS, type EditPreferences, type Watch } from './preferences'
+import { addOverlay, addMarker, deleteItems, duplicateItems, setKeyframe, updateOverlay, type ItemRef } from './tracks'
+import { FILTER_PRESETS, NO_FILTERS, type Filters, type Transform } from './composition'
+import { transformAt } from './motion'
 
 export type CommandAsset = { id: string; label: string; type: string; durationMs?: number | null }
 export type CommandContext = {
@@ -24,6 +27,8 @@ export type CommandContext = {
   isVideo: (clip: Clip) => boolean
   /** The owner's confirmed preferences (defaults when absent). */
   prefs?: EditPreferences
+  /** Everything selected on the timeline (overlays, texts, audio…), for instructions about «esta capa». */
+  selectedItems?: ItemRef[]
 }
 export type CommandResult = { ok: true; composition: Composition; done: string[]; /** Values set by default, watched to propose a preference if the owner corrects them. */ watch?: Watch[]; /** Navigation asked for («ve al minuto 2», «selecciona del 1:00 al 1:30»). */ playheadMs?: number; range?: Range | null; /** «deshaz» / «rehaz»: handled by the editor's history. */ history?: 'undo' | 'redo' } | { ok: false; message: string }
 
@@ -35,6 +40,8 @@ export const COMMAND_EXAMPLES = [
   'haz un zoom lento', 'zoom rápido en todas las imágenes', 'panorámica a la derecha', 'sin movimiento',
   'cambia de imagen siguiendo el ritmo', 'cambia de imagen cada 4 pulsos', 'transición de disolvencia en todo', 'corte seco',
   'cámara lenta', 'velocidad 2x', 'pon el título «Capítulo 1» en el segundo 5 durante 3 segundos', 'formato vertical', 'quita los subtítulos',
+  'pon esta imagen encima del vídeo durante 8 segundos', 'pon esta imagen en la esquina superior derecha', 'haz la capa más grande', 'que la capa vaya de izquierda a derecha',
+  'blanco y negro', 'más brillo', 'filtro cálido', 'desenfoca el fondo', 'añade una transición suave', 'transición de desenfoque', 'pon un marcador', 'baja la música mientras habla la persona',
 ]
 
 const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/\s+/g, ' ').trim()
@@ -119,7 +126,7 @@ export function retimeToBeats(input: Composition, ids: string[], beats: readonly
   return { composition: c, changed }
 }
 
-const TRANS: Array<[RegExp, Transition]> = [[/disolvencia|fundido encadenado|crossfade/, 'dissolve'], [/fundido( a negro)?/, 'fade'], [/deslizar|deslizamiento|slide/, 'slide'], [/cortinilla|barrido|wipe/, 'wipe'], [/transicion de zoom|zoom de transicion/, 'zoom'], [/corte seco|corte directo|sin transicion/, 'cut']]
+const TRANS: Array<[RegExp, Transition]> = [[/desenfoque|borroso/, 'blur'], [/deslizar hacia arriba|deslizamiento vertical/, 'slide_up'], [/cortinilla vertical|barrido vertical/, 'wipe_down'], [/disolvencia|fundido encadenado|crossfade|transicion suave|suave/, 'dissolve'], [/fundido( a negro)?/, 'fade'], [/deslizar|deslizamiento|slide/, 'slide'], [/cortinilla|barrido|wipe/, 'wipe'], [/transicion de zoom|zoom de transicion/, 'zoom'], [/corte seco|corte directo|sin transicion/, 'cut']]
 
 /** Runs one instruction. Several can be chained with «y luego», «después» or «;». */
 export function runInstruction(c0: Composition, text: string, ctx: CommandContext): CommandResult {
@@ -150,6 +157,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   const newId = <T extends { id: string }>(before: T[] | undefined, after: T[] | undefined) => (after ?? []).find(x => !(before ?? []).some(y => y.id === x.id))?.id
   const fail = (message: string): CommandResult => ({ ok: false, message })
 
+  const freeSel = (ctx.selectedItems ?? []).filter(r => r.kind !== 'clip')
   const kindWord = (): AudioClip['kind'] | null => /\b(musica|cancion)\b/.test(s) ? 'music' : /\b(voz|voces|narracion)\b/.test(s) ? 'voice' : /\befectos?\b/.test(s) ? 'sfx' : null
   const overlaps = (a: AudioClip, r: Range) => { const s0 = audioStartMs(c, a); return s0 < r.endMs && s0 + a.durationMs > r.startMs }
 
@@ -166,6 +174,82 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   if (/^(selecciona|marca)\b/.test(s) && span) return { ok: true, composition: c, done: [`Fragmento ${fmt(span.startMs)}–${fmt(span.endMs)} marcado.`], range: { startMs: span.startMs, endMs: Math.min(span.endMs, total) } }
   if (/^(quita|borra|deshaz) (la )?seleccion\b/.test(s)) return { ok: true, composition: c, done: ['Selección quitada.'], range: null }
 
+  // ---- Markers: «pon un marcador (aquí / en 1:20) llamado «Intro»»
+  if (/\b(marcador|marca aqui)\b/.test(s) && /\b(pon|anade|crea|marca|mete)\b/.test(s)) {
+    const at = parseTime(s) ?? ctx.playheadMs
+    const label = /[«"“']([^»"”']+)[»"”']/.exec(text)?.[1]?.trim() ?? ''
+    return ok(addMarker(c, at, label), `Marcador${label ? ` «${label}»` : ''} en ${fmt(at)}.`)
+  }
+
+  // ---- Overlays: «pon esta imagen encima del vídeo durante 8 segundos (en la esquina superior derecha)»
+  const corner = (): Partial<Transform> | null => {
+    if (/\b(pantalla completa|toda la pantalla|a pantalla)\b/.test(s)) return { x: 0.5, y: 0.5, scale: 1 }
+    const top = /\b(arriba|superior)\b/.test(s), bottom = /\b(abajo|inferior)\b/.test(s), left = /\bizquierd/.test(s), right = /\bderech/.test(s)
+    if (/\b(esquina|pip|ventana)\b/.test(s) || ((top || bottom) && (left || right))) return { x: left ? 0.2 : 0.8, y: top ? 0.22 : 0.78, scale: 0.3 }
+    if (/\b(centro|centrada|centrado|en medio)\b/.test(s)) return { x: 0.5, y: 0.5 }
+    if (top) return { y: 0.22 }
+    if (bottom) return { y: 0.78 }
+    if (left) return { x: 0.25 }
+    if (right) return { x: 0.75 }
+    return null
+  }
+  const mentionsVisual = /\b(imagen|foto|logo|video|clip|grafico|sticker)\b/.test(s)
+  if (/\b(pon|anade|mete|coloca|superpon|agrega)\b/.test(s) && mentionsVisual && /\b(encima|sobre|superpuest\w*|superpon\w*|por encima|esquina|pip|capa)\b/.test(s)) {
+    const a = findAsset(text, s, ctx, ['image', 'thumbnail', 'video'])
+    if (!a) return fail('Selecciona la imagen o el vídeo en el panel de materiales (o escribe su nombre entre comillas).')
+    const at = span ? span.startMs : timeAfter(s, /\b(?:en|desde|a partir de)\b(?: el)?/) ?? ctx.range?.startMs ?? ctx.playheadMs
+    const dur = span ? span.endMs - span.startMs : timeAfter(s, /\bdurante\b/) ?? (a.type === 'video' && a.durationMs ? a.durationMs : 5000)
+    const r = addOverlay(c, { assetId: a.id, startMs: at, durationMs: dur, transform: { x: 0.5, y: 0.5, scale: 0.5, rotation: 0, opacity: 1, ...(corner() ?? {}) } })
+    return ok(r.composition, `«${a.label}» encima del vídeo de ${fmt(at)} a ${fmt(at + dur)}${corner() ? ' en la posición pedida' : ''}.`)
+  }
+  // Instructions about the selected overlay: position, size, rotation, opacity, movement.
+  const selOv = (ctx.selectedItems ?? []).filter(r => r.kind === 'overlay').map(r => (c.overlays ?? []).find(o => o.id === r.id)).filter((o): o is NonNullable<typeof o> => !!o)
+  const aboutLayer = selOv.length > 0 && /\b(capa|superposicion|imagen|logo|esto|esta|este)\b/.test(s)
+  if (aboutLayer) {
+    const o = selOv[0]
+    const local = Math.min(Math.max(ctx.playheadMs - o.startMs, 0), o.durationMs)
+    const now = transformAt({ ...o.transform }, o.keyframes, local)
+    if (/\bde (izquierda a derecha|derecha a izquierda|arriba a abajo|abajo a arriba)\b/.test(s) || /\b(se mueva|que se desplace|que cruce)\b/.test(s)) {
+      const [k, a0, a1] = /izquierda a derecha/.test(s) ? ['x', 0.15, 0.85] as const : /derecha a izquierda/.test(s) ? ['x', 0.85, 0.15] as const : /arriba a abajo/.test(s) ? ['y', 0.15, 0.85] as const : ['y', 0.85, 0.15] as const
+      let next = updateOverlay(c, o.id, { keyframes: undefined })
+      next = setKeyframe(next, o.id, 0, { [k]: a0 }); next = setKeyframe(next, o.id, o.durationMs, { [k]: a1 })
+      return ok(next, `La capa se desplaza ${/izquierda a derecha/.test(s) ? 'de izquierda a derecha' : /derecha a izquierda/.test(s) ? 'de derecha a izquierda' : /arriba a abajo/.test(s) ? 'de arriba abajo' : 'de abajo arriba'} durante ${fmt(o.durationMs)} (fotogramas clave).`)
+    }
+    const patch: Partial<Transform> = { ...(corner() ?? {}) }
+    if (/\b(mas grande|agranda|aumenta|amplia)\b/.test(s)) patch.scale = Math.min(2, now.scale * 1.3)
+    if (/\b(mas pequen\w*|reduce|achica|encoge)\b/.test(s)) patch.scale = Math.max(0.05, now.scale / 1.3)
+    const deg = /gira\w*\s+(-?\d+)/.exec(s)?.[1]
+    if (deg) patch.rotation = Number(deg)
+    const op = /\b(opacidad|transparencia|transparente)\b/.test(s) ? percent(s) ?? (/\btransparen/.test(s) ? 0.5 : null) : null
+    if (op !== null) patch.opacity = Math.min(1, Math.max(0, op))
+    if (Object.keys(patch).length) {
+      const next = o.keyframes?.length ? setKeyframe(c, o.id, local, { ...now, ...patch }) : updateOverlay(c, o.id, { transform: { ...o.transform, ...patch } })
+      return ok(next, `Capa: ${[patch.x !== undefined || patch.y !== undefined ? 'nueva posición' : '', patch.scale !== undefined ? `tamaño ${Math.round(patch.scale * 100)} %` : '', patch.rotation !== undefined ? `${patch.rotation}°` : '', patch.opacity !== undefined ? `opacidad ${Math.round(patch.opacity * 100)} %` : ''].filter(Boolean).join(', ')}.`)
+    }
+  }
+
+  // ---- Picture filters: «blanco y negro», «más brillo», «más contraste», «filtro cálido», «desenfoca»
+  const preset = /\b(blanco y negro|byn|monocromo)\b/.test(s) ? 'mono' : /\b(filtro )?(calido|calida)\b/.test(s) ? 'warm' : /\b(filtro )?(vivo|vivos|colores vivos|saturado)\b/.test(s) ? 'vivid' : /\b(dramatico|cine|cinematografico)\b/.test(s) && /\b(filtro|aspecto|look)\b/.test(s) ? 'dramatic' : /\b(desvaido|vintage|apagado)\b/.test(s) ? 'faded' : /\b(sin filtro|quita (el|los) filtros?|color original)\b/.test(s) ? 'none' : null
+  const tweak = /\b(mas|sube el|aumenta el) brillo\b/.test(s) ? ['brightness', 1.2] as const : /\b(menos|baja el) brillo\b|\boscurece\b/.test(s) ? ['brightness', 0.8] as const : /\b(mas|sube el) contraste\b/.test(s) ? ['contrast', 1.25] as const : /\b(menos|baja el) contraste\b/.test(s) ? ['contrast', 0.8] as const : /\b(mas|sube la) saturacion\b/.test(s) ? ['saturation', 1.3] as const : /\b(menos|baja la) saturacion\b/.test(s) ? ['saturation', 0.7] as const : /\b(desenfoca|difumina|borroso)\b/.test(s) && !/\btransicion\b/.test(s) ? ['blur', 1.5] as const : null
+  if (preset || tweak) {
+    const apply = (f: Filters | null | undefined): Filters | null => {
+      if (preset) return preset === 'none' ? null : FILTER_PRESETS[preset].f
+      const base = f ?? NO_FILTERS
+      const [k, v] = tweak!
+      const n = { ...base, [k]: k === 'blur' ? Math.min(5, base.blur + v) : Math.min(3, Math.max(0, base[k] * v)) }
+      return n.brightness === 1 && n.contrast === 1 && n.saturation === 1 && n.blur === 0 ? null : n
+    }
+    const what = preset ? (preset === 'none' ? 'sin filtro' : FILTER_PRESETS[preset].label.toLowerCase()) : ({ brightness: tweak![1] > 1 ? 'más brillo' : 'menos brillo', contrast: tweak![1] > 1 ? 'más contraste' : 'menos contraste', saturation: tweak![1] > 1 ? 'más saturación' : 'menos saturación', blur: 'desenfoque' } as Record<string, string>)[tweak![0]]
+    if (selOv.length && !/\b(todo|clip|video principal)\b/.test(s)) {
+      const ids = new Set(selOv.map(o => o.id))
+      return ok({ ...c, overlays: (c.overlays ?? []).map(o => (ids.has(o.id) ? { ...o, filters: apply(o.filters) } : o)) }, `Capa: ${what}.`)
+    }
+    const sc = scope(c, s, ctx)
+    if (!sc.ids.length) return fail('Selecciona un clip o una capa, marca un fragmento o pon el cabezal sobre un clip.')
+    const ids = new Set(sc.ids)
+    return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, filters: apply(k.filters) } : k)) }, `${what[0].toUpperCase()}${what.slice(1)} en ${sc.label}.`)
+  }
+
   // ---- Effects on every cut: «pon el efecto «whoosh» en los cortes», «quita los efectos de los cortes»
   if (/\b(cortes|cada corte|cada cambio)\b/.test(s) && /\b(efecto|efectos|sonido|whoosh)\b/.test(s)) {
     if (/^(quita|elimina|borra)\b/.test(s)) { const n = cutSfxClips(c).length; return n ? ok(removeCutSfx(c), `Quitados ${n} efectos de los cortes.`) : fail('No hay efectos puestos en los cortes.') }
@@ -176,7 +260,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   }
 
   // ---- Music under the voice: «baja la música cuando hable», «no bajes la música»
-  if (/\bmusica\b/.test(s) && /\b(cuando (habla|hable|hablo|hay voz|suena la voz)|bajo la voz|con la voz|al hablar|ducking)\b/.test(s)) {
+  if (/\bmusica\b/.test(s) && /\b((cuando|mientras) (habla|hable|hablo|hay voz|suena la voz|se habla)|bajo la voz|con la voz|al hablar|ducking)\b/.test(s)) {
     const on = !/\b(no|nunca|sin)\b/.test(s)
     return ok({ ...c, duckMusic: on }, on ? 'La música bajará cuando suene la voz.' : 'La música ya no baja con la voz.')
   }
@@ -313,6 +397,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
     return r.removedMs ? ok(r.composition, `Eliminado de ${fmt(span.startMs)} a ${fmt(span.endMs)} (${fmt(r.removedMs)}); lo que venía después se adelanta y el audio sigue sincronizado.`) : fail('En ese tramo no hay clips que quitar.')
   }
   if (span && /^(separa|aisla|divide)\b/.test(s)) { const r = isolateRange(c, span); return ok(r.composition, `Separado de ${fmt(r.range.startMs)} a ${fmt(r.range.endMs)} en ${r.ids.length} clip${r.ids.length === 1 ? '' : 's'} propios.`) }
+  if (/^(borra|elimina|quita|suprime)\b/.test(s) && freeSel.length && !ctx.selectedClipId && !ctx.range && /\b(esto|esta|este|capa|seleccion|texto|imagen|logo)\b/.test(s)) return ok(deleteItems(c, freeSel), `Eliminado${freeSel.length === 1 ? '' : 's'} ${freeSel.length} elemento${freeSel.length === 1 ? '' : 's'}.`)
   if (/^(borra|elimina|quita|suprime)\b/.test(s) && !/\b(zoom|movimiento|subtitulos|musica|voz|efectos?|transicion)\b/.test(s)) {
     if (ctx.range && !/\bclip\b/.test(s)) { const r = deleteRange(c, ctx.range); return r.removedMs ? ok(r.composition, `Fragmento eliminado (${fmt(r.removedMs)}); lo que venía después se adelanta.`) : fail('El fragmento no contiene clips completos.') }
     const sc = scope(c, s, ctx)
@@ -333,6 +418,10 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   }
 
   // ---- Duplicate
+  if (/^(duplica|repite|copia)\b/.test(s) && freeSel.length && !ctx.selectedClipId) {
+    const r = duplicateItems(c, freeSel)
+    return ok(r.composition, `Duplicado${r.refs.length === 1 ? '' : 's'} ${r.refs.length} elemento${r.refs.length === 1 ? '' : 's'} a continuación.`)
+  }
   if (/^(duplica|repite|copia)\b/.test(s)) {
     const sc = scope(c, s, ctx)
     if (!sc.ids.length) return fail('No hay ningún clip seleccionado ni bajo el cabezal.')
@@ -375,7 +464,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
     const sc = scope(c, s, ctx)
     if (!sc.ids.length) return fail('Selecciona un clip o marca un fragmento.')
     const ids = new Set(sc.ids)
-    return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, transition: tr } : k)) }, `Transición «${({ fade: 'fundido a negro', dissolve: 'disolvencia', slide: 'deslizar', wipe: 'cortinilla', zoom: 'zoom', cut: 'corte seco' } as Record<Transition, string>)[tr]}» en ${sc.label}.`)
+    return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, transition: tr } : k)) }, `Transición «${({ fade: 'fundido a negro', dissolve: 'disolvencia', slide: 'deslizar', wipe: 'cortinilla', zoom: 'zoom', cut: 'corte seco', blur: 'desenfoque', slide_up: 'deslizar hacia arriba', wipe_down: 'cortinilla vertical' } as Record<Transition, string>)[tr]}» en ${sc.label}.`)
   }
 
   // ---- Speed: «cámara lenta», «velocidad 2x», «al doble», «a la mitad»

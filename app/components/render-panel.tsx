@@ -10,8 +10,12 @@ import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
+import { fastExport, FastExportUnsupported } from '@/lib/editor/fast-export'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
 import { Icon } from './studio-icon'
+
+/** Seconds since it was created (how long an export took). */
+function stopwatch() { const t0 = performance.now(); return () => (performance.now() - t0) / 1000 }
 
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
 
@@ -108,10 +112,26 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       }
       setMode(record ? 'render' : 'preview')
       setStatus(record ? 'Grabando en tiempo real. Mantén esta pestaña visible hasta que termine.' : 'Vista previa en reproducción.')
-      const result = await renderComposition({
+      const realtime = () => renderComposition({
         composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), record, signal: controller.signal,
         onProgress: (elapsed, t) => setProgress({ elapsed, total: t }),
       })
+      let result: Awaited<ReturnType<typeof renderComposition>>
+      const clock = stopwatch()
+      if (record && (exp.mode ?? 'fast') === 'fast') {
+        try {
+          setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real).')
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), signal: controller.signal, onProgress: (elapsed, t) => setProgress({ elapsed, total: t }) })
+          const secs = clock()
+          setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
+        } catch (e) {
+          if (controller.signal.aborted || (e as Error)?.name === 'AbortError') throw e
+          // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
+          setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
+          setProgress({ elapsed: 0, total: 0 })
+          result = await realtime()
+        }
+      } else result = await realtime()
       if (controller.signal.aborted) {
         const reason = (abortReason.current as string) === 'unmount' ? 'Cancelado: se salió del editor antes de terminar el render.' : 'Cancelado por el usuario.'
         if (jobId) await supabase.from('render_jobs').update({ status: 'cancelled', error: reason, updated_at: new Date().toISOString() }).eq('id', jobId)
@@ -176,12 +196,14 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       <span className="pill">{composition.format} · {width}×{height} · {fmt(total)}</span>
     </div>
     {!previewOnly && <div className="field-row exportControls" role="group" aria-label="Exportación" style={{ alignItems: 'end' }}>
-      <label>Resolución<select aria-label="Resolución" value={exp.resolution ?? ''} onChange={e => setExport({ resolution: (e.target.value || undefined) as ExportResolution | undefined })}><option value="">Estándar</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></label>
+      <label>Resolución<select aria-label="Resolución" value={exp.resolution ?? ''} onChange={e => setExport({ resolution: (e.target.value || undefined) as ExportResolution | undefined })}><option value="">Estándar</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option><option value="1440">1440p (2K)</option><option value="2160">2160p (4K)</option></select></label>
       <label>Calidad<select aria-label="Calidad" value={exp.videoKbps ? 'custom' : exp.quality} onChange={e => e.target.value === 'custom' ? setExport({ videoKbps: Math.round(plan.wantedBps / 1000) }) : setExport({ quality: e.target.value === 'high' ? 'high' : 'normal', videoKbps: null })}><option value="normal">Normal</option><option value="high">Alta</option><option value="custom">Personalizada</option></select></label>
-      {exp.videoKbps ? <label>Vídeo (kbit/s)<input aria-label="Bitrate de vídeo" type="number" min={200} max={20000} step={100} value={exp.videoKbps} onChange={e => setExport({ videoKbps: Math.min(20000, Math.max(200, Number(e.target.value) || 200)) })} style={{ width: 100 }} /></label> : null}
+      {exp.videoKbps ? <label>Vídeo (kbit/s)<input aria-label="Bitrate de vídeo" type="number" min={200} max={40000} step={100} value={exp.videoKbps} onChange={e => setExport({ videoKbps: Math.min(40000, Math.max(200, Number(e.target.value) || 200)) })} style={{ width: 100 }} /></label> : null}
+      <label>Modo<select aria-label="Modo de exportación" value={exp.mode ?? 'fast'} onChange={e => setExport({ mode: e.target.value === 'realtime' ? 'realtime' : undefined })}><option value="fast">Rápida (fotograma a fotograma)</option><option value="realtime">En tiempo real (grabación)</option></select></label>
       <label>Destino<select aria-label="Destino" value={plan.destination} onChange={e => setExport({ destination: e.target.value === 'download' ? 'download' : 'library' })}><option value="library">Biblioteca (máx. 50 MB)</option><option value="download">Descargar a mi equipo</option></select></label>
       <span className="small muted" aria-label="Estimación">{width}×{height} · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
     </div>}
+    {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
     {!previewOnly && plan.destination === 'library' && !plan.fitsLibrary && <p className="warnBox small" role="alert">Este montaje no cabe en la Biblioteca ({Math.round(LIBRARY_MAX_BYTES / 1048576)} MB) ni con la calidad mínima. Elige «Descargar a mi equipo».</p>}
     {!previewOnly && plan.reduced && plan.fitsLibrary && <p className="warnBox small">Para caber en {Math.round(LIBRARY_MAX_BYTES / 1048576)} MB la calidad baja a {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 })} Mbit/s (pedías {(plan.wantedBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })}). Elige «Descargar a mi equipo» para conservarla.</p>}
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />

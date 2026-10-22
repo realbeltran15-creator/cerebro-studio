@@ -28,9 +28,9 @@ import { effectiveCamera } from '@/lib/editor/motion'
 import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
-import { ASSET_MIME, EditorTimeline, kindColor } from '../../components/editor-timeline'
+import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
 import { OverlayInspector, VisualFields } from '../../components/editor-inspectors'
-import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, splitAt as splitAllAt, ungroupItems, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
+import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
@@ -52,6 +52,12 @@ export default function ManualEditorPage() {
   const clipboard = useRef<Clipboard | null>(null)
   const dragging = useRef(false)
   const [trackScale, setTrackScale] = useState(1)
+  const [allProjects, setAllProjects] = useState(false)
+  // Panel widths (materials | viewer | properties), adjustable by dragging the separators and remembered in this browser.
+  const [cols, setCols] = useState<{ left: number; right: number }>(() => { try { const v = JSON.parse(localStorage.getItem('cerebro-editor-cols') ?? 'null'); if (v && v.left > 150 && v.right > 200) return v } catch { /* ignore */ } return { left: 250, right: 340 } })
+  useEffect(() => { try { localStorage.setItem('cerebro-editor-cols', JSON.stringify(cols)) } catch { /* ignore */ } }, [cols])
+  const colDrag = useRef<{ side: 'left' | 'right'; x: number; w: number } | null>(null)
+  const [relinkTo, setRelinkTo] = useState<Record<string, string>>({})
   const [magnet, setMagnet] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(40)
   const [savedAt, setSavedAt] = useState<string | null>(null)
@@ -94,7 +100,7 @@ export default function ManualEditorPage() {
   const [recovery, setRecovery] = useState<LocalDraft | null>(null)
   const [autoSave, setAutoSave] = useState(true)
   const [lastAutoSave, setLastAutoSave] = useState<string | null>(null)
-  const [matTab, setMatTab] = useState<'visual' | 'audio'>('visual')
+  const [matTab, setMatTab] = useState<'visual' | 'audio' | 'transitions'>('visual')
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
   const requested = useRef(new Set<string>())
@@ -185,6 +191,27 @@ export default function ManualEditorPage() {
   }, [supabase])
   useEffect(() => { void load() }, [load])
 
+  // Files used by the montage that are not in this project's list: look them up (another project's material is fine); what is left is really missing.
+  const checkedMissing = useRef(new Set<string>())
+  const missing = useMemo(() => (comp && history ? missingAssets(comp, assets) : []), [comp, assets, history])
+  useEffect(() => {
+    const ask = missing.map(m => m.id).filter(id => !checkedMissing.current.has(id))
+    if (!ask.length || !job) return
+    ask.forEach(id => checkedMissing.current.add(id))
+    void supabase.from('assets').select('id,project_id,asset_type,storage_path,license_status,source_provider,provenance,created_at').in('id', ask).then(({ data }: { data: unknown[] | null }) => {
+      const found = ((data ?? []) as EditorAsset[]).filter(a => a.storage_path)
+      if (found.length) setAssets(list => [...list, ...found.filter(f => !list.some(x => x.id === f.id))])
+    })
+  }, [missing, job, supabase])
+  // «Ver también otros proyectos»: the owner's materials from every project, used here without copying the files.
+  useEffect(() => {
+    if (!allProjects || !job) return
+    void supabase.from('assets').select('id,project_id,asset_type,storage_path,license_status,source_provider,provenance,created_at').not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(1000).then(({ data }: { data: unknown[] | null }) => {
+      const more = (data ?? []) as EditorAsset[]
+      setAssets(list => [...list, ...more.filter(f => !list.some(x => x.id === f.id))])
+    })
+  }, [allProjects, job, supabase])
+
   const save = useCallback(async () => {
     if (!job || !comp || !savedAt) return
     const { data, error: e } = await supabase.from('render_jobs').update({ composition: comp, output_format: comp.format, updated_at: new Date().toISOString() })
@@ -266,7 +293,7 @@ export default function ManualEditorPage() {
     const kinds = Object.fromEntries(assets.map(a => [a.id, a.asset_type]))
     const durationOf = (id: string) => { const an = analyses[id]; if (typeof an === 'object' && an.durationMs) return an.durationMs; const p = assets.find(a => a.id === id)?.provenance ?? {}; return typeof p.durationMs === 'number' ? p.durationMs : typeof p.durationSeconds === 'number' ? p.durationSeconds * 1000 : null }
     const r = runInstruction(history.present, text, {
-      playheadMs, range, selectedClipId: selection?.kind === 'clip' ? selection.id : null, selectedAssetId: selectedAsset, beatsMs: beats.beatsMs,
+      playheadMs, range, selectedClipId: selection?.kind === 'clip' ? selection.id : null, selectedAssetId: selectedAsset, selectedItems: sel, beatsMs: beats.beatsMs,
       assets: assets.map(a => ({ id: a.id, label: assetLabel(a), type: a.asset_type, durationMs: durationOf(a.id) })),
       isVideo: k => kinds[k.visualAssetId ?? ''] === 'video', prefs,
     })
@@ -399,7 +426,7 @@ export default function ManualEditorPage() {
   const width = Math.max(total / 1000 * pxPerSec, 600)
   const starts = clipStarts(comp)
   const selOverlay = selection?.kind === 'overlay' ? (comp.overlays ?? []).find(o => o.id === selection.id) ?? null : null
-  const materials = matTab === 'visual' ? visuals : audios
+  const materials = matTab === 'visual' ? visuals : matTab === 'audio' ? audios : []
   const nextBeatRel = selClip ? (() => { const st = starts[comp.clips.findIndex(k => k.id === selClip.id)]; const b = beats.beatsMs.find(t => t - st >= MIN_CLIP_MS && st + selClip.durationMs - t >= MIN_CLIP_MS); return b === undefined ? null : b - st })() : null
 
   return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor/style?project=${job.project_id}`}>Editar con mi estilo</Link><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
@@ -412,6 +439,17 @@ export default function ManualEditorPage() {
         <button type="button" className="small" onClick={() => { setHistory(h => (h ? commit(h, recovery.composition) : h)); setDirty(true); setRecovery(null); setNotice('Cambios recuperados. Guarda para conservarlos (Ctrl+Z vuelve a la versión guardada).') }}>Recuperar cambios</button>
         <button type="button" className="ghost small" onClick={() => { if (job) void clearLocalDraft(job.id); setRecovery(null) }}>Descartar copia</button>
       </div>
+    </div>}
+    {missing.length > 0 && <div className="panel warning" role="alert" aria-label="Archivos que faltan" style={{ marginBottom: 12 }}>
+      <b>Faltan {missing.length} archivo(s) del montaje</b> <span className="small">(se borraron de la Biblioteca o no se pueden abrir). El montaje no se ha tocado: esas partes se ven en negro o en silencio hasta que los vuelvas a vincular.</span>
+      <ul className="plainList small">{missing.map(m => <li key={m.id} className="field-row" style={{ alignItems: 'center' }}>
+        <span>Usado en: {m.uses.join(', ')}</span>
+        <select aria-label={`Sustituto para ${m.uses[0]}`} value={relinkTo[m.id] ?? ''} onChange={e => setRelinkTo(r => ({ ...r, [m.id]: e.target.value }))}>
+          <option value="">— Elegir un archivo de la Biblioteca</option>
+          {assets.filter(a => (m.uses.some(u => /clip|superposici/.test(u)) ? visualTypes.includes(a.asset_type) : !visualTypes.includes(a.asset_type) || a.asset_type === 'video')).map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}
+        </select>
+        <button type="button" className="small" disabled={!relinkTo[m.id]} onClick={() => { const to = relinkTo[m.id]; apply(c => replaceAsset(c, m.id, to)); setNotice('Archivo vuelto a vincular: se mantienen los tiempos, efectos y ajustes.') }}>Volver a vincular</button>
+      </li>)}</ul>
     </div>}
     <div className="editorBar panel" style={{ marginBottom: 12 }}>
       <div className="stats">
@@ -458,13 +496,31 @@ export default function ManualEditorPage() {
       {instructionLog.length > 0 && <details className="small"><summary>Últimas instrucciones ({instructionLog.length})</summary><ul className="plainList">{instructionLog.map((l, i) => <li key={i}><button type="button" className="ghost small" onClick={() => runText(l.text)} title="Repetir">↻</button> «{l.text}» → {l.done.join(' ')}</li>)}</ul></details>}
     </form>
 
-    <div className="editorLayout">
+    <div className="editorLayout" style={{ ['--ed-left' as string]: `${cols.left}px`, ['--ed-right' as string]: `${cols.right}px` }}
+      onPointerMove={e => { const d = colDrag.current; if (!d) return; const dx = e.clientX - d.x; setCols(c => ({ ...c, [d.side]: Math.round(Math.min(640, Math.max(170, d.side === 'left' ? d.w + dx : d.w - dx))) })) }}
+      onPointerUp={() => { colDrag.current = null }}>
       <aside className="panel editorMaterials" aria-label="Materiales">
         <div className="cardHead" style={{ marginBottom: 6 }}><h3>Materiales</h3><span className="muted small">{assets.length}</span></div>
         <div className="pageActions" role="tablist" aria-label="Tipo de material">
           <button type="button" role="tab" aria-selected={matTab === 'visual'} className={matTab === 'visual' ? 'small' : 'ghost small'} onClick={() => setMatTab('visual')}>Vídeo e imagen</button>
           <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Audio</button>
+          <button type="button" role="tab" aria-selected={matTab === 'transitions'} className={matTab === 'transitions' ? 'small' : 'ghost small'} onClick={() => setMatTab('transitions')}>Transiciones</button>
         </div>
+        {matTab === 'transitions' ? <>
+          <ul className="materialList" role="listbox" aria-label="Transiciones">
+            {(Object.keys(TRANSITIONS) as Transition[]).map(t => <li key={t} role="option" aria-selected={selClip?.transition === t} draggable aria-label={`Transición ${TRANSITIONS[t]}`} title="Arrástrala entre dos clips del vídeo principal, o selecciona un clip y haz clic"
+              onDragStart={e => { e.dataTransfer.setData(TRANSITION_MIME, t); e.dataTransfer.effectAllowed = 'copy' }}
+              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } apply(c => updateClip(c, selClip.id, { transition: t })); setNotice(`Transición «${TRANSITIONS[t]}» al final del clip seleccionado.`) }}>
+              <span className="matThumb" aria-hidden="true" style={{ background: '#333', display: 'grid', placeItems: 'center' }}>{TRANSITION_ICONS[t]}</span>
+              <span className="matName">{TRANSITIONS[t]}</span>
+            </li>)}
+          </ul>
+          <div className="field-row" style={{ alignItems: 'end' }}>
+            <label>Duración (ms)<input type="number" aria-label="Duración de las transiciones" min={0} max={3000} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
+            <button type="button" className="ghost small" onClick={() => { const t = selClip?.transition ?? 'dissolve'; apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, transition: t } : k)) })); setNotice(`«${TRANSITIONS[t]}» aplicada entre todos los clips.`) }}>Aplicar a todos los cortes</button>
+          </div>
+          <p className="muted small">La transición se ve en el visor al momento, sin exportar. Cada clip puede tener su propia duración en sus propiedades.</p>
+        </> : <>
         <ul className="materialList" role="listbox" aria-label="Materiales del proyecto">
           {materials.map(a => <li key={a.id} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
             <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
@@ -472,7 +528,9 @@ export default function ManualEditorPage() {
           </li>)}
           {!materials.length && <li role="option" aria-selected={false} aria-disabled="true" className="muted small">Nada todavía. Importa archivos abajo.</li>}
         </ul>
-        <p className="muted small">Arrastra un material a la pista de vídeo o a una pista de audio; se coloca donde lo sueltas.</p>
+        <label className="pill small"><input type="checkbox" checked={allProjects} onChange={e => setAllProjects(e.target.checked)} /> Ver también otros proyectos</label>
+        <p className="muted small">Arrastra un material a cualquier pista; se coloca donde lo sueltas. Los materiales de la Biblioteca general y de otros proyectos se usan sin copiar el archivo.</p>
+        </>}
         <details open={assets.length === 0}><summary className="small"><b>Importar o añadir</b></summary>
           <section style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             <label htmlFor="mi-files"><b>Importar desde tu equipo</b>
@@ -504,6 +562,9 @@ export default function ManualEditorPage() {
         </details>
       </aside>
 
+      <div className="colSplit" role="separator" aria-orientation="vertical" aria-label="Ancho del panel de materiales" tabIndex={0} aria-valuenow={cols.left} aria-valuemin={170} aria-valuemax={640}
+        onPointerDown={e => { (e.target as HTMLElement).setPointerCapture(e.pointerId); colDrag.current = { side: 'left', x: e.clientX, w: cols.left } }}
+        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setCols(c => ({ ...c, left: Math.min(640, Math.max(170, c.left + (e.key === 'ArrowRight' ? 20 : -20))) })) } }} />
       <div className="editorViewer">
         <EditorPlayerView composition={comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
           overlay={<ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
@@ -513,6 +574,9 @@ export default function ManualEditorPage() {
         </details>
       </div>
 
+      <div className="colSplit" role="separator" aria-orientation="vertical" aria-label="Ancho del panel de propiedades" tabIndex={0} aria-valuenow={cols.right} aria-valuemin={170} aria-valuemax={640}
+        onPointerDown={e => { (e.target as HTMLElement).setPointerCapture(e.pointerId); colDrag.current = { side: 'right', x: e.clientX, w: cols.right } }}
+        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setCols(c => ({ ...c, right: Math.min(640, Math.max(170, c.right + (e.key === 'ArrowLeft' ? 20 : -20))) })) } }} />
       <section className="panel editorProps" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-label="Propiedades">
         <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1}` : selAudio ? 'Audio' : selText ? 'Texto' : selOverlay ? 'Superposición' : 'Montaje'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
         {selOverlay && <OverlayInspector o={selOverlay} visuals={visuals} isVideo={typeOf(selOverlay.assetId) === 'video'} playheadMs={playheadMs}
@@ -536,6 +600,7 @@ export default function ManualEditorPage() {
             <label>Duración (s)<input type="number" min={0.1} step={0.1} value={secs(selAudio.durationMs)} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { durationMs: Number(e.target.value) * 1000 }))} /></label>
           </div>
           <label>Volumen ({Math.round(selAudio.volume * 100)}%)<input type="range" min={0} max={2} step={0.05} value={selAudio.volume} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { volume: Number(e.target.value) }))} /></label>
+          <label>Panorámica ({!selAudio.pan ? 'centro' : `${selAudio.pan < 0 ? 'izquierda' : 'derecha'} ${Math.round(Math.abs(selAudio.pan) * 100)} %`})<input type="range" aria-label="Panorámica" min={-1} max={1} step={0.05} value={selAudio.pan ?? 0} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { pan: Number(e.target.value) || undefined }))} /></label>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={selAudio.muted} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { muted: e.target.checked }))} /> Silenciar</label>
           <AutomationEditor a={selAudio} startMs={audioStartMs(comp, selAudio)} playheadMs={playheadMs} range={range} onChange={p => apply(c => updateAudioClip(c, selAudio.id, p))} />
           <div className="pageActions">
@@ -586,6 +651,7 @@ export default function ManualEditorPage() {
         waveformOf={id => { const an = analyses[id]; return an === 'loading' ? 'loading' : typeof an === 'object' ? an.waveform ?? null : null }}
         thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf}
         begin={beginDrag} live={liveDrag} end={endDrag} apply={apply} onReorderMain={(id, to) => apply(c => moveClip(c, id, to))}
+        onDropTransition={(clipId, t) => { apply(c => updateClip(c, clipId, { transition: t })); setSelection({ kind: 'clip', id: clipId }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}
         onTrackAction={trackAction} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
         scrollerRef={scroller} playheadRef={playheadEl} view={view} onScroll={measureView}>
@@ -614,6 +680,7 @@ export default function ManualEditorPage() {
       <p className="muted small" style={{ marginTop: 8 }}>Arrastra materiales a cualquier pista. Clic selecciona; Mayús/Ctrl + clic suma a la selección. Arrastra los clips para moverlos (también a otra pista del mismo tipo) y sus bordes para recortarlos; los clips del vídeo principal se reordenan arrastrándolos. S divide en el cabezal · Ctrl+C / Ctrl+V / Ctrl+D copian, pegan y duplican · Ctrl+G agrupa · M añade un marcador · Supr borra · Ctrl+Z / Ctrl+Mayús+Z deshacen y rehacen · Espacio reproduce.</p>
     </section>
 
+    <h2 className="sectionTitle" style={{ margin: '18px 0 8px' }}>Ritmo, subtítulos, estilos y aprendizaje</h2>
     <EditorSyncPanel comp={comp} assets={assets} beats={beats} showBeats={showBeats} setShowBeats={setShowBeats} snap={snap} setSnap={setSnap} toleranceMs={toleranceMs} setToleranceMs={setToleranceMs}
       isVideo={k => typeOf(k.visualAssetId) === 'video'} apply={apply} onNotice={setNotice} />
     <EditorSubtitlesPanel comp={comp} apply={apply} onNotice={setNotice} />
@@ -684,6 +751,15 @@ function TextStyleFields({ t, onChange }: { t: TextOverlay; onChange: (p: Partia
   return <>
     <label>Tipografía<select value={t.font ?? 'sans'} onChange={e => onChange({ font: e.target.value as TextFont })}>{(Object.keys(TEXT_FONTS) as TextFont[]).map(f => <option key={f} value={f}>{TEXT_FONTS[f].label}</option>)}</select></label>
     <label>Color<input type="color" value={t.color ?? '#ffffff'} onChange={e => onChange({ color: e.target.value })} /></label>
+    <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={t.bold !== false} onChange={e => onChange({ bold: e.target.checked ? undefined : false })} /> Negrita</label>
+    <label>Contorno<input type="color" aria-label="Color del contorno" value={t.outline ?? '#000000'} onChange={e => onChange({ outline: e.target.value })} /></label>
+    <label>Grosor del contorno ({t.outlineWidth ?? 10} %)<input type="range" aria-label="Grosor del contorno" min={0} max={30} step={1} value={t.outlineWidth ?? 10} onChange={e => onChange({ outlineWidth: Number(e.target.value) })} /></label>
+    <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={t.shadow === true} onChange={e => onChange({ shadow: e.target.checked || undefined })} /> Sombra</label>
+    <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={!!t.background} onChange={e => onChange({ background: e.target.checked ? '#000000' : null, backgroundOpacity: 0.6 })} /> Fondo</label>
+    {t.background && <><label>Color del fondo<input type="color" aria-label="Color del fondo" value={t.background} onChange={e => onChange({ background: e.target.value })} /></label>
+      <label>Opacidad del fondo ({Math.round((t.backgroundOpacity ?? 0.6) * 100)} %)<input type="range" min={0} max={1} step={0.05} value={t.backgroundOpacity ?? 0.6} onChange={e => onChange({ backgroundOpacity: Number(e.target.value) })} /></label></>}
+    <label>Animación de salida<select aria-label="Animación de salida" value={t.outAnimation ?? ''} onChange={e => onChange({ outAnimation: (e.target.value || undefined) as TextAnimation | undefined })}><option value="">La de entrada</option>{(Object.keys(TEXT_ANIMATIONS) as TextAnimation[]).map(a => <option key={a} value={a}>{TEXT_ANIMATIONS[a]}</option>)}</select></label>
+    {t.x !== undefined && <button type="button" className="ghost small" style={{ alignSelf: 'end' }} onClick={() => onChange({ x: undefined, y: undefined })} title="Lo has movido en el visor">Volver a {t.position === 'top' ? 'arriba' : t.position === 'center' ? 'centro' : 'abajo'}</button>}
   </>
 }
 

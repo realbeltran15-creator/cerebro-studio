@@ -42,7 +42,7 @@ export type CameraKind = 'none' | 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_rig
 export const CAMERA_MOVES: Record<CameraKind, string> = { none: 'Fija', zoom_in: 'Acercar', zoom_out: 'Alejar', pan_left: 'Panorámica a la izquierda', pan_right: 'Panorámica a la derecha', pan_up: 'Subir', pan_down: 'Bajar' }
 export type CameraMove = { kind: CameraKind; amount: number }
 
-export type ExportResolution = '480' | '720' | '1080'
+export type ExportResolution = '480' | '720' | '1080' | '1440' | '2160'
 export type ExportSettings = {
   quality: 'normal' | 'high'
   /** Short side of the frame. Absent = the editor's classic sizes (formatSize). */
@@ -51,6 +51,8 @@ export type ExportSettings = {
   videoKbps?: number | null
   /** library = uploaded to the Biblioteca (50 MB limit, bitrate reduced to fit); download = saved to the computer only (no limit). */
   destination?: 'library' | 'download'
+  /** fast = frame by frame with WebCodecs (faster than real time when the browser can); realtime = played and recorded. */
+  mode?: 'fast' | 'realtime'
 }
 /** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
 export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
@@ -673,15 +675,16 @@ export function activeTextClips(c: Pick<Composition, 'textClips'>, ms: number) {
 
 function parseExport(e: Partial<ExportSettings> | undefined): ExportSettings {
   const out: ExportSettings = { quality: e?.quality === 'high' ? 'high' : 'normal' }
-  if (e?.resolution === '480' || e?.resolution === '720' || e?.resolution === '1080') out.resolution = e.resolution
+  if (e?.resolution === '480' || e?.resolution === '720' || e?.resolution === '1080' || e?.resolution === '1440' || e?.resolution === '2160') out.resolution = e.resolution
   const k = Number(e?.videoKbps)
-  if (Number.isFinite(k) && k >= 200 && k <= 20000) out.videoKbps = Math.round(k)
+  if (Number.isFinite(k) && k >= 200 && k <= 40000) out.videoKbps = Math.round(k)
   if (e?.destination === 'download') out.destination = 'download'
+  if (e?.mode === 'realtime') out.mode = 'realtime'
   return out
 }
 
 export const LIBRARY_MAX_BYTES = 50 * 1024 * 1024
-const BITRATES: Record<ExportResolution, { normal: number; high: number }> = { '480': { normal: 1_200_000, high: 2_000_000 }, '720': { normal: 2_500_000, high: 5_000_000 }, '1080': { normal: 5_000_000, high: 8_000_000 } }
+const BITRATES: Record<ExportResolution, { normal: number; high: number }> = { '480': { normal: 1_200_000, high: 2_000_000 }, '720': { normal: 2_500_000, high: 5_000_000 }, '1080': { normal: 5_000_000, high: 8_000_000 }, '1440': { normal: 9_000_000, high: 14_000_000 }, '2160': { normal: 16_000_000, high: 25_000_000 } }
 
 /** Frame size for a format at a resolution (even numbers, as encoders need). */
 export function frameSize(format: OutputFormat, resolution?: ExportResolution, custom?: { width: number; height: number }) {

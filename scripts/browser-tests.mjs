@@ -1783,6 +1783,33 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 24. Verificación integral: a project with two videos at once, photos, two music tracks, a voice, an effect, a title, subtitles,
+//     transitions and volume automation. The preview and both exports must show the same pictures and carry the same sounds.
+{
+  const server = serve(8817, { 'v.js': await bundle(path.join(dir, 'verify-project.harness.ts')) })
+  const page = await browser.newPage()
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8817/')
+  await page.waitForFunction(() => typeof window.runVerify === 'function')
+  const want = [[200, 30, 30], [0, 200, 0], [0, 200, 0], [200, 0, 200], [200, 0, 200], [224, 208, 32], [224, 208, 32]]
+  const near = (a, b, tol = 60) => a.every((v, i) => Math.abs(v - b[i]) <= tol)
+  const pb = await page.evaluate(() => window.runPlayback())
+  check('verify: playback from 0:09.5 advances in real time and −10 s goes back', pb.after > 10_600 && pb.after < 11_800 && Math.abs(pb.back - Math.max(0, pb.after - 10_000)) < 5, pb)
+  for (const which of ['fast', 'realtime']) {
+    const r = await page.evaluate(w => window.runVerify(w), which)
+    check(`verify (${which}): the preview shows each layer where expected (main video, overlay video, photos)`, r.preview.every((c, i) => near(c, want[i], 70)), r.preview)
+    check(`verify (${which}): the export shows the same picture as the preview at the same instants`, r.exported.every((c, i) => near(c, r.preview[i], 60)), { exported: r.exported, preview: r.preview })
+    check(`verify (${which}): length and size are the project's (13 s, 1280×720)`, (r.duration === null || Math.abs(r.duration - 13) < 0.6) && r.size[0] === 1280 && r.size[1] === 720, [r.duration, r.size, r.mime])
+    const a = r.audio
+    check(`verify (${which}): both music tracks, voice, effect and the two videos' sound are in the export, each in its place`, a.music1_before_voice > 0.01 && a.voice > 0.01 && a.voice_after < a.voice * 0.1 && a.music2 > 0.01 && a.music2_before < a.music2 * 0.1 && a.sfx > 0.01 && a.sfx_before < a.sfx * 0.1 && a.video_main > 0.005 && a.video_main_after < a.video_main * 0.2 && a.video_overlay > 0.005 && a.video_overlay_before < a.video_overlay * 0.2, a)
+    check(`verify (${which}): the music dips under the voice and the automation point lowers it`, a.music1_under_voice < a.music1_before_voice * 0.6 && a.music1_after_automation < a.music1_before_voice * 0.3, a)
+    if (which === 'fast') check('verify (fast): the fast export is faster than real time', r.seconds < 13, r.seconds)
+  }
+  check('verify: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

@@ -426,3 +426,30 @@ export function itemsInRange(c: Composition, fromMs: number, toMs: number): Item
   ]
 }
 
+
+// ---------- Missing files ----------
+/** Every asset the montage uses, with where it is used (for the «missing file» notice). */
+export function assetUses(c: Composition): Map<string, string[]> {
+  const uses = new Map<string, string[]>()
+  const add = (id: string | null | undefined, where: string) => { if (id) uses.set(id, [...(uses.get(id) ?? []), where]) }
+  c.clips.forEach((k, i) => { add(k.visualAssetId, `clip ${i + 1}`); add(k.voiceAssetId, `voz del clip ${i + 1}`) })
+  ;(c.overlays ?? []).forEach((o, i) => add(o.assetId, `superposición ${i + 1}`))
+  ;(c.audioClips ?? []).forEach(a => add(a.assetId, a.kind === 'music' ? 'música' : a.kind === 'voice' ? 'voz' : 'efecto'))
+  add(c.musicAssetId, 'música de fondo')
+  return uses
+}
+/** Assets the montage uses that are not in the list given (deleted from the Library, or not loaded). */
+export function missingAssets(c: Composition, known: Array<{ id: string }>): Array<{ id: string; uses: string[] }> {
+  const have = new Set(known.map(a => a.id))
+  return [...assetUses(c).entries()].filter(([id]) => !have.has(id)).map(([id, uses]) => ({ id, uses: [...new Set(uses)] }))
+}
+/** Points every use of one asset to another (relinking a missing file): timing, effects and everything else stay as they were. */
+export function replaceAsset(c: Composition, from: string, to: string): Composition {
+  return {
+    ...c,
+    clips: c.clips.map(k => ({ ...k, ...(k.visualAssetId === from ? { visualAssetId: to } : {}), ...(k.voiceAssetId === from ? { voiceAssetId: to } : {}) })),
+    overlays: c.overlays?.map(o => (o.assetId === from ? { ...o, assetId: to } : o)),
+    audioClips: c.audioClips?.map(a => (a.assetId === from ? { ...a, assetId: to } : a)),
+    musicAssetId: c.musicAssetId === from ? to : c.musicAssetId,
+  }
+}

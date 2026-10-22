@@ -179,3 +179,43 @@ describe('sound per track', () => {
     expect(audioTrackFactors(updateTrack(c, 'music', { muted: true })).get('music')).toBe(0)
   })
 })
+
+describe('instructions on the same engine (overlays, filters, markers, ducking wording)', async () => {
+  const { runInstruction } = await import('@/lib/editor/commands')
+  const ctx = (c: Composition, extra: Partial<Parameters<typeof runInstruction>[2]> = {}) => ({ playheadMs: 1000, range: null, selectedClipId: null, selectedAssetId: 'logo', assets: [{ id: 'logo', label: 'Logo rojo', type: 'image' }, { id: 'mus', label: 'Canción', type: 'music', durationMs: 9000 }], beatsMs: [], isVideo: (k: { visualAssetId: string | null }) => k.visualAssetId === 'vid', ...extra })
+  it('«pon esta imagen encima del vídeo durante 8 segundos»', () => {
+    const r = runInstruction(base(), 'pon esta imagen encima del vídeo durante 8 segundos', ctx(base()))
+    expect(r.ok && r.composition.overlays?.[0]).toMatchObject({ assetId: 'logo', startMs: 1000, durationMs: 8000 })
+  })
+  it('in a corner, then bigger, then moving left to right', () => {
+    const r = runInstruction(base(), 'pon esta imagen en la esquina superior derecha encima del vídeo', ctx(base()))
+    if (!r.ok) throw new Error(r.message)
+    const o = r.composition.overlays![0]
+    expect(o.transform).toMatchObject({ x: 0.8, y: 0.22, scale: 0.3 })
+    const sel = { selectedItems: [{ kind: 'overlay' as const, id: o.id }] }
+    const g = runInstruction(r.composition, 'haz la capa más grande', ctx(r.composition, sel))
+    expect(g.ok && g.composition.overlays![0].transform.scale).toBeCloseTo(0.39)
+    const m = runInstruction(r.composition, 'que la capa vaya de izquierda a derecha', ctx(r.composition, sel))
+    expect(m.ok && m.composition.overlays![0].keyframes?.map(k => k.x)).toEqual([0.15, 0.85])
+    const d = runInstruction(r.composition, 'duplica esta capa', ctx(r.composition, sel))
+    expect(d.ok && d.composition.overlays).toHaveLength(2)
+  })
+  it('filters, markers, a soft transition and ducking «mientras habla»', () => {
+    const c = base()
+    const bw = runInstruction(c, 'blanco y negro en todo', ctx(c))
+    expect(bw.ok && bw.composition.clips.every(k => k.filters?.saturation === 0)).toBe(true)
+    const br = runInstruction(c, 'más brillo', ctx(c))
+    expect(br.ok && br.composition.clips[0].filters?.brightness).toBeCloseTo(1.2)
+    const mk = runInstruction(c, 'pon un marcador «Intro»', ctx(c))
+    expect(mk.ok && mk.composition.markers?.[0]).toMatchObject({ atMs: 1000, label: 'Intro' })
+    const tr = runInstruction(c, 'añade una transición suave', ctx(c, { selectedClipId: c.clips[0].id }))
+    expect(tr.ok && tr.composition.clips[0].transition).toBe('dissolve')
+    const bl = runInstruction(c, 'transición de desenfoque en todo', ctx(c))
+    expect(bl.ok && bl.composition.clips[0].transition).toBe('blur')
+    const du = runInstruction({ ...c, duckMusic: false }, 'baja la música mientras habla la persona', ctx(c))
+    expect(du.ok && du.composition.duckMusic).toBe(true)
+    const long = addClip(addClip(c, 'img', 120000), 'img', 120000)
+    const sel = runInstruction(long, 'selecciona del minuto 2 al minuto 3', ctx(long))
+    expect(sel.ok && sel.range).toEqual({ startMs: 120000, endMs: 180000 })
+  })
+})

@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, type ReactNode } from 'react'
-import { audioStartMs, audioTrackId, clipStarts, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta } from '@/lib/editor/composition'
+import { audioStartMs, audioTrackId, clipStarts, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta, type Transition } from '@/lib/editor/composition'
 import { expandGroups, isLocked, moveItems, moveToTrack, setItemEnd, snap, snapBlock, snapPoints, trimItemStart, type ItemRef } from '@/lib/editor/tracks'
 import { updateClip } from '@/lib/editor/timeline'
 import { normRange, type Range } from '@/lib/editor/range'
@@ -9,6 +9,8 @@ import type { Waveform } from '@/lib/editor/waveform'
 import { WaveformSvg } from './waveform-view'
 
 export const ASSET_MIME = 'application/x-cerebro-asset'
+export const TRANSITION_MIME = 'application/x-cerebro-transition'
+export const TRANSITION_ICONS: Record<Transition, string> = { fade: '◐', dissolve: '◑', slide: '⇢', slide_up: '⇡', wipe: '▶', wipe_down: '▼', zoom: '⊕', blur: '≋', cut: '|' }
 // Track colours keep white text at >= 4.5:1 (WCAG AA).
 export const kindColor: Record<string, string> = { image: '#2f62c4', video: '#7c4fe0', none: '#444', voice: '#23805a', music: '#9a5b0f', sfx: '#b03a2e', text: '#8a3a8f', overlay: '#1f6f86' }
 const secs = (ms: number) => Math.round(ms / 100) / 10
@@ -46,6 +48,8 @@ export type TimelineProps = {
   end: () => void
   apply: (fn: (c: Composition) => Composition) => void
   onReorderMain: (id: string, toIndex: number) => void
+  /** A transition dropped near a cut: it goes on the clip that ends there. */
+  onDropTransition: (clipId: string, t: Transition) => void
   onDropAsset: (assetId: string, track: TrackMeta, atMs: number) => void
   onDropFiles: (files: File[]) => void
   onTrackAction: (track: TrackMeta, action: 'up' | 'down' | 'duplicate' | 'delete' | 'rename', value?: string) => void
@@ -185,7 +189,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
     const h = rowH(t)
     const common = {
       'data-track-id': t.id, role: 'group', className: `tlRow${t.hidden ? ' isHidden' : ''}${t.locked ? ' isLocked' : ''}`,
-      onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(ASSET_MIME)) e.preventDefault() },
+      onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(ASSET_MIME) || e.dataTransfer.types.includes(TRANSITION_MIME)) e.preventDefault() },
       onDrop: (e: React.DragEvent) => { const id = e.dataTransfer.getData(ASSET_MIME); if (!id) return; e.preventDefault(); e.stopPropagation(); p.onDropAsset(id, t, Math.max(0, toMs(e.clientX - e.currentTarget.getBoundingClientRect().left))) },
       onPointerDown: (e: React.PointerEvent) => { if (e.target === e.currentTarget && !e.shiftKey) p.onSelect([]) },
     }
@@ -198,11 +202,24 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           const thumb = p.thumbOf(clip.visualAssetId)
           return <div key={clip.id} draggable={!t.locked}
             onDragStart={e => { if (drag.current || t.locked) { e.preventDefault(); return } dragMain.current = clip.id }} onDragOver={e => e.preventDefault()}
-            onDrop={e => { if (e.dataTransfer.types.includes(ASSET_MIME)) return; if (dragMain.current && dragMain.current !== clip.id) p.onReorderMain(dragMain.current, i); dragMain.current = null }}
+            onDrop={e => {
+              if (e.dataTransfer.types.includes(ASSET_MIME)) return
+              const tr = e.dataTransfer.getData(TRANSITION_MIME) as Transition
+              if (tr) {
+                // Left half of a clip = the cut before it; right half = the cut after it.
+                e.preventDefault(); e.stopPropagation()
+                const r = e.currentTarget.getBoundingClientRect()
+                const target = e.clientX - r.left < r.width / 2 ? i - 1 : i
+                if (target >= 0 && target < comp.clips.length - 1) p.onDropTransition(comp.clips[target].id, tr)
+                return
+              }
+              if (dragMain.current && dragMain.current !== clip.id) p.onReorderMain(dragMain.current, i); dragMain.current = null
+            }}
             onClick={e => select(e, ref)}
             style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumb ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumb}) center / cover` : kindColor[p.typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: t.locked ? 'not-allowed' : 'grab', outline: isSel(ref) ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
             title={`${p.labelOf(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
             <b>{i + 1}</b> {p.labelOf(clip.visualAssetId)}{groupMark(clip.groupId)}<br />{secs(clip.durationMs)} s{clip.speed && clip.speed !== 1 ? ` · ${clip.speed}×` : ''}{clip.transition && clip.transition !== 'fade' ? ` · ${TRANSITIONS[clip.transition].toLowerCase()}` : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}{clip.filters ? ' · fx' : ''}
+            {i < comp.clips.length - 1 && (clip.transition ?? 'fade') !== 'cut' && <span className="tlTransition" aria-label={`Transición ${TRANSITIONS[clip.transition ?? 'fade']}`} title={`${TRANSITIONS[clip.transition ?? 'fade']} · ${clip.transitionMs ?? comp.fadeMs} ms`} style={{ position: 'absolute', right: 10, bottom: 3, fontSize: 12, background: 'rgba(0,0,0,.55)', borderRadius: 3, padding: '0 3px', pointerEvents: 'none' }}>{TRANSITION_ICONS[clip.transition ?? 'fade']}</span>}
             {!t.locked && <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); p.begin(); drag.current = { mode: 'resizeMain', id: clip.id, startX: e.clientX, base: comp, clipStart: starts[i], dur: clip.durationMs } }} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />}
           </div>
         })}
