@@ -1810,6 +1810,58 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 25. The verification project in the real editor: play, pause, jump, Space, save, reopen and export (fast), and the exported file
+//     matches what the viewer showed at the same instant.
+{
+  const server = serve(8818, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  page.on('dialog', d => d.accept())
+  await page.goto('http://127.0.0.1:8818/editor/manual?job=jv')
+  const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' })
+  await bar.waitFor({ timeout: 30000 })
+  const go = async t => { await bar.getByLabel('Ir a un tiempo').fill(t); await bar.getByLabel('Ir a un tiempo').press('Enter') }
+  const pixel = (fx, fy) => page.evaluate(([fx, fy]) => { const c = document.querySelector('canvas.playerCanvas'); const d = c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data; return [d[0], d[1], d[2]] }, [fx, fy])
+  const settle = async (fx, fy, want) => { for (let i = 0; i < 60; i++) { const c = await pixel(fx, fy); if (want(c)) return c; await page.waitForTimeout(100) } return pixel(fx, fy) }
+  const isMag = c => c[0] > 150 && c[2] > 150 && c[1] < 80, isGreen = c => c[1] > 150 && c[0] < 80
+  check('verify-ui: the project opens with its tracks (overlay, main, title, voice, two music clips, effect, subtitles)', await page.locator('[aria-label="Pista de Superposición 1"] > div').count() === 1 && await page.locator('[aria-label="Pista de Música"] > div').count() === 2 && await page.locator('[aria-label="Pista de Subtítulos"] > div').count() >= 1 && (await bar.locator('.playerTime').innerText()).includes('00:13.00'))
+  await go('0:05.5')
+  const viewMag = await settle(0.75, 0.3, isMag), viewGreen = await settle(0.3, 0.6, isGreen)
+  check('verify-ui: at 0:05.5 the viewer shows the overlay video over the main video', isMag(viewMag) && isGreen(viewGreen), [viewMag, viewGreen])
+  await bar.locator('.playerTime').click()
+  await page.keyboard.press('Space'); await page.waitForTimeout(1200); await page.keyboard.press('Space')
+  const t1 = await bar.locator('.playerTime b').innerText()
+  check('verify-ui: Space plays and pauses', t1 > '00:06.00' && t1 < '00:09.00', t1)
+  await bar.getByRole('button', { name: 'Retroceder 10 segundos' }).click()
+  check('verify-ui: −10 s from there goes back to the start', (await bar.locator('.playerTime b').innerText()) === '00:00.00')
+  await go('0:05.5'); await bar.locator('.playerTime').click(); await page.keyboard.press('m')
+  await page.getByRole('button', { name: 'Guardar montaje' }).click()
+  await page.getByText('Montaje guardado.').waitFor()
+  await page.evaluate(() => sessionStorage.setItem('__KEEP_JOBS', JSON.stringify(window.__DB.render_jobs)))
+  await page.reload()
+  await bar.waitFor({ timeout: 30000 })
+  check('verify-ui: saved and reopened with everything (marker included)', await page.getByRole('button', { name: /^Marcador Marcador 1/ }).count() === 1 && await page.locator('[aria-label="Pista de Superposición 1"] > div').count() === 1 && await page.locator('[aria-label="Pista de Música"] > div').count() === 2)
+  await page.getByText('Exportar el vídeo').click()
+  check('verify-ui: the export defaults to the fast mode', (await page.getByLabel('Modo de exportación').inputValue()) === 'fast')
+  await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
+  await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 120000 })
+  const status = await page.locator('[role="status"]').allInnerTexts()
+  const out = await page.evaluate(async () => {
+    const blob = window.__LAST_RENDER
+    const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(blob)
+    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej })
+    v.currentTime = 5.5; await new Promise(r => (v.onseeked = r))
+    const c = document.createElement('canvas'); c.width = 1280; c.height = 720; const g = c.getContext('2d'); g.drawImage(v, 0, 0, 1280, 720)
+    const px = (x, y) => [...g.getImageData(Math.floor(1280 * x), Math.floor(720 * y), 1, 1).data.slice(0, 3)]
+    return { mag: px(0.75, 0.3), green: px(0.3, 0.6), duration: v.duration, size: blob.size }
+  })
+  const near = (a, b) => a.every((x, i) => Math.abs(x - b[i]) <= 60)
+  check('verify-ui: the exported file shows at 0:05.5 what the viewer showed', near(out.mag, viewMag) && near(out.green, viewGreen) && Math.abs(out.duration - 13) < 0.6, { out, viewMag, viewGreen, status })
+  check('verify-ui: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

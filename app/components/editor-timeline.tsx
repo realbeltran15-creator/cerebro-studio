@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, type ReactNode } from 'react'
-import { audioStartMs, audioTrackId, clipStarts, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta, type Transition } from '@/lib/editor/composition'
+import { audioStartMs, audioTrackId, clipStarts, compositionCues, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta, type Transition } from '@/lib/editor/composition'
 import { expandGroups, isLocked, moveItems, moveToTrack, setItemEnd, snap, snapBlock, snapPoints, trimItemStart, type ItemRef } from '@/lib/editor/tracks'
 import { updateClip } from '@/lib/editor/timeline'
 import { normRange, type Range } from '@/lib/editor/range'
@@ -272,6 +272,13 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
     </div>
   }
 
+  // Subtitles: the captions the export burns in (clip narration or imported SRT/VTT), shown on their own row; click to go there.
+  const cues = comp.subtitles ? compositionCues(comp) : []
+  const subtitleRow = cues.length > 0 ? <div role="group" aria-label="Pista de Subtítulos" style={{ position: 'relative', height: 24, marginTop: 6, background: 'var(--bg-2)', borderRadius: 6 }}>
+    {cues.filter(q => onScreen(q.startMs, q.endMs - q.startMs)).slice(0, 2000).map((q, i) => <div key={i} title={`${q.text} · ${secs(q.startMs)}–${secs(q.endMs)} s`} onClick={() => p.onSeek(q.startMs)}
+      style={{ position: 'absolute', left: q.startMs / 1000 * pxPerSec, width: Math.max(6, (q.endMs - q.startMs) / 1000 * pxPerSec - 1), top: 2, height: 20, background: '#5b4a8f', borderRadius: 4, color: '#fff', fontSize: 10, padding: '3px 5px', overflow: 'hidden', whiteSpace: 'nowrap', cursor: 'pointer' }}>{q.text}</div>)}
+  </div> : null
+
   const flagBtn = (t: TrackMeta, flag: 'locked' | 'hidden' | 'muted' | 'solo', label: string, text: string) =>
     <button type="button" className={t[flag] ? 'tlFlag on' : 'tlFlag'} aria-pressed={!!t[flag]} aria-label={`${label} ${t.name}`} title={label} onClick={() => p.onTrackFlag(t, flag)}>{text}</button>
 
@@ -295,6 +302,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           </details>}
         </div>
       </div>)}
+      {cues.length > 0 && <div className="tlHead type-text" style={{ height: 24, marginTop: 6, overflow: 'hidden', boxSizing: 'border-box', fontSize: 12, justifyContent: 'center' }} role="group" aria-label="Controles de Subtítulos"><b>Subtítulos</b> <span className="muted">(se editan abajo)</span></div>}
     </div>
     <section ref={scrollerRef} onScroll={p.onScroll} className="tlScroll" style={{ overflowX: 'auto', overflowY: 'hidden', position: 'relative', minWidth: 0 }} aria-label="Línea de tiempo"
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
@@ -306,6 +314,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
         {!p.range && p.markIn !== null && <div className="markIn" style={{ left: p.markIn / 1000 * pxPerSec }} aria-hidden="true" />}
         {(comp.markers ?? []).filter(m => m.atMs >= loMs && m.atMs <= hiMs).map(m => <div key={m.id} className="tlMarkerLine" style={{ left: m.atMs / 1000 * pxPerSec, borderColor: m.color ?? '#ffb000' }} aria-hidden />)}
         {tracks.map(row)}
+        {subtitleRow}
         {p.children}
       </div>
     </section>
