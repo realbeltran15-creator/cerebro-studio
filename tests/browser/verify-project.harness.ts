@@ -71,7 +71,7 @@ function project(): Composition {
 }
 
 // Instants and points compared (away from transitions): [t, x, y] as fractions of the frame.
-const SAMPLES: Array<[number, number, number]> = [[1200, 0.5, 0.6], [4000, 0.3, 0.6], [5500, 0.3, 0.6], [5500, 0.75, 0.3], [8000, 0.75, 0.3], [11000, 0.5, 0.5], [12000, 0.4, 0.6]]
+const SAMPLES: Array<[number, number, number]> = [[1200, 0.5, 0.6], [4000, 0.3, 0.6], [5500, 0.3, 0.6], [5500, 0.75, 0.3], [8000, 0.75, 0.3], [11000, 0.5, 0.5], [12000, 0.4, 0.6], [2800, 0.5, 0.6], [6800, 0.2, 0.6], [6800, 0.9, 0.6], [9800, 0.85, 0.6]]
 const W = 1280, H = 720
 
 async function previewSamples() {

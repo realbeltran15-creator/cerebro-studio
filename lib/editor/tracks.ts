@@ -7,6 +7,7 @@ import {
   audioStartMs, audioTrackId, clipStarts, DEFAULT_TRANSFORM, MAX_TIMELINE_MS, projectDurationMs, textTrackId, tracksOf,
   type AudioClip, type Clip, type Composition, type Marker, type OverlayClip, type TextClip, type TrackMeta, type TrackType,
 } from './composition'
+import { splitKeyframes } from './motion'
 import { deleteAudioClip, deleteClip, deleteTextClip, splitClip, updateAudioClip, updateTextClip } from './timeline'
 
 export type ItemKind = 'clip' | 'audio' | 'text' | 'overlay'
@@ -317,8 +318,9 @@ export function splitAt(c: Composition, atMs: number, refs?: ItemRef[]): { compo
   for (const o of [...(out.overlays ?? [])]) {
     if (!(atMs > o.startMs + 100 && atMs < o.startMs + o.durationMs - 100) || !wants({ kind: 'overlay', id: o.id })) continue
     const first = atMs - o.startMs
-    const second: OverlayClip = { ...o, id: newId('ov'), startMs: atMs, durationMs: o.durationMs - first, trimInMs: o.trimInMs + Math.round(first * (o.speed ?? 1)), keyframes: o.keyframes?.filter(k => k.atMs >= first).map(k => ({ ...k, atMs: k.atMs - first })), fadeInMs: undefined }
-    out = { ...out, overlays: (out.overlays ?? []).flatMap(x => (x.id === o.id ? [{ ...x, durationMs: first, keyframes: x.keyframes?.filter(k => k.atMs <= first), fadeOutMs: undefined }, second] : [x])) }
+    const [k1, k2] = splitKeyframes(o.keyframes, { ...o.transform }, first)
+    const second: OverlayClip = { ...o, id: newId('ov'), startMs: atMs, durationMs: o.durationMs - first, trimInMs: o.trimInMs + Math.round(first * (o.speed ?? 1)), keyframes: k2, fadeInMs: undefined }
+    out = { ...out, overlays: (out.overlays ?? []).flatMap(x => (x.id === o.id ? [{ ...x, durationMs: first, keyframes: k1, fadeOutMs: undefined }, second] : [x])) }
     cut++
   }
   for (const a of [...(out.audioClips ?? [])]) {
@@ -452,4 +454,18 @@ export function replaceAsset(c: Composition, from: string, to: string): Composit
     audioClips: c.audioClips?.map(a => (a.assetId === from ? { ...a, assetId: to } : a)),
     musicAssetId: c.musicAssetId === from ? to : c.musicAssetId,
   }
+}
+
+
+// ---------- Main-clip animation (keyframed framing) ----------
+export function setClipKeyframe(c: Composition, id: string, atMs: number, values: Partial<import('./composition').ClipFrame>): Composition {
+  const k = c.clips.find(x => x.id === id)
+  if (!k) return c
+  const at = Math.round(Math.min(Math.max(atMs, 0), k.durationMs))
+  const others = (k.keyframes ?? []).filter(x => Math.abs(x.atMs - at) > 20)
+  const prev = (k.keyframes ?? []).find(x => Math.abs(x.atMs - at) <= 20)
+  return { ...c, clips: c.clips.map(x => (x.id === id ? { ...x, keyframes: [...others, { ...(prev ?? {}), ...values, atMs: at }].sort((a, b) => a.atMs - b.atMs).slice(0, 64) } : x)) }
+}
+export function setClipKeyframes(c: Composition, id: string, keyframes: import('./composition').ClipKeyframe[] | undefined): Composition {
+  return { ...c, clips: c.clips.map(x => (x.id === id ? { ...x, keyframes: keyframes?.length ? [...keyframes].sort((a, b) => a.atMs - b.atMs) : undefined } : x)) }
 }

@@ -30,8 +30,12 @@ import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
-import { OverlayInspector, VisualFields } from '../../components/editor-inspectors'
-import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
+import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, TransitionTools, VisualFields } from '../../components/editor-inspectors'
+import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
+import { transformAt as frameValuesAt } from '@/lib/editor/motion'
+import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
+import { extractProfile } from '@/lib/editor/profile'
+import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
@@ -51,6 +55,12 @@ export default function ManualEditorPage() {
   const selection: ItemRef | null = sel.length ? sel[sel.length - 1] : null
   const setSelection = useCallback((r: ItemRef | null) => setSel(r ? [r] : []), [])
   const clipboard = useRef<Clipboard | null>(null)
+  const [copiedAnim, setCopiedAnim] = useState<{ target: 'clip' | 'layer'; keys: AnimKey[] } | null>(null)
+  const [copiedTransition, setCopiedTransition] = useState<Pick<Clip, 'transition' | 'transitionMs' | 'transitionOpts'> | null>(null)
+  // Favourite transitions and animations, saved in the account (every montage, every device).
+  const [presets, setPresets] = useState<Presets>(EMPTY_PRESETS)
+  const [presetsAt, setPresetsAt] = useState<string | null>(null)
+  const storePresets = async (next: Presets) => { try { const at = await savePresets(supabase, next, presetsAt); setPresets(next); setPresetsAt(at) } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar el preajuste.') } }
   const dragging = useRef(false)
   const [trackScale, setTrackScale] = useState(1)
   const [allProjects, setAllProjects] = useState(false)
@@ -146,6 +156,7 @@ export default function ManualEditorPage() {
   const measureView = useCallback(() => { const el = scroller.current; if (el) setView(v => (v.left === el.scrollLeft && v.width === el.clientWidth ? v : { left: el.scrollLeft, width: el.clientWidth })) }, [])
   const loaded = history !== null
   useEffect(() => { void loadPrefs(supabase).then(r => { setPrefs(r.prefs); setPrefsAt(r.updatedAt) }).catch(() => undefined) }, [supabase])
+  useEffect(() => { void loadPresets(supabase).then(r => { setPresets(r.presets); setPresetsAt(r.updatedAt) }).catch(() => undefined) }, [supabase])
   useEffect(() => { if (history && !sessionStart) setSessionStart(history.present) }, [history, sessionStart])
   useEffect(() => {
     if (!comp || proposal || !watches.length) return
@@ -401,6 +412,20 @@ export default function ManualEditorPage() {
     if (r.history) { setHistory(h => (h ? (r.history === 'undo' ? undo(h) : redo(h)) : h)); setDirty(true) }
     else if (r.composition !== history.present) apply(() => r.composition)
     if (r.playheadMs !== undefined) setPlayheadMs(r.playheadMs)
+    if (r.saveStyle) {
+      // The same measurement «Medir este montaje» makes: decisions as numbers (pacing, transitions, movement, sound), never the media.
+      const name = r.saveStyle
+      void (async () => {
+        try {
+          const st = await loadProfiles(supabase)
+          if (st.profiles.some(p => p.name.toLowerCase() === name.toLowerCase())) { setError(`Ya tienes un estilo «${name}». Dime otro nombre entre comillas.`); return }
+          const prof = extractProfile(history.present, kindOf, name)
+          await saveProfiles(supabase, [prof, ...st.profiles], st.updatedAt)
+          setStylesKey(k => k + 1)
+          setNotice(`Estilo «${name}» guardado en tu cuenta: aplícalo a otros montajes desde «Estilos de edición».`)
+        } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar el estilo.') }
+      })()
+    }
     if (r.range !== undefined) { setRange(r.range); setMarkIn(null) }
     setInstructionLog(l => [{ text, done: r.done }, ...l].slice(0, 8))
     if (r.watch?.length) setWatches(ws => [...r.watch!, ...ws].slice(0, 20))
@@ -698,11 +723,45 @@ export default function ManualEditorPage() {
         onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setCols(c => ({ ...c, right: Math.min(640, Math.max(170, c.right + (e.key === 'ArrowLeft' ? 20 : -20))) })) } }} />
       <section className="panel editorProps" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-label="Propiedades">
         <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1}` : selAudio ? 'Audio' : selText ? 'Texto' : selOverlay ? 'Superposición' : 'Montaje'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
-        {selOverlay && <OverlayInspector o={selOverlay} visuals={visuals} isVideo={typeOf(selOverlay.assetId) === 'video'} playheadMs={playheadMs}
+        {selOverlay && <OverlayInspector animation={(() => {
+            const local = Math.min(Math.max(playheadMs - selOverlay.startMs, 0), selOverlay.durationMs)
+            const cur = frameValuesAt({ ...selOverlay.transform }, selOverlay.keyframes, local)
+            return <KeyframeEditor title="Animación con fotogramas clave" props={LAYER_PROPS} keys={selOverlay.keyframes as never} current={cur} localMs={local} durationMs={selOverlay.durationMs}
+              inside={playheadMs >= selOverlay.startMs && playheadMs <= selOverlay.startMs + selOverlay.durationMs}
+              onKeys={k => apply(c => updateOverlay(c, selOverlay.id, { keyframes: k as never }))}
+              canPaste={copiedAnim?.target === 'layer'} onCopy={() => { setCopiedAnim({ target: 'layer', keys: keysToPreset((selOverlay.keyframes ?? []) as never, selOverlay.durationMs) }); setNotice('Animación copiada: selecciona otra capa y pulsa «Pegar animación».') }}
+              onPaste={() => { if (!copiedAnim) return; const ids = sel.filter(r => r.kind === 'overlay').map(r => r.id); apply(c => ids.reduce((x, id) => { const o = (x.overlays ?? []).find(v => v.id === id); return o ? updateOverlay(x, id, { keyframes: presetKeys({ id: '', name: '', target: 'layer', camera: null, keyframes: copiedAnim.keys }, o.durationMs) as never }) : x }, c)) }}
+              presets={[...BUILTIN_ANIMATIONS, ...presets.animations].filter(p => p.target === 'layer')}
+              onApplyPreset={pr => apply(c => updateOverlay(c, selOverlay.id, { keyframes: presetKeys(pr, selOverlay.durationMs) as never }))}
+              onSavePreset={name => void storePresets({ ...presets, animations: [...presets.animations.filter(a => a.name !== name), { id: `ap-${Date.now().toString(36)}`, name, target: 'layer', camera: null, keyframes: keysToPreset((selOverlay.keyframes ?? []) as never, selOverlay.durationMs) }] }).then(() => setNotice(`Animación «${name}» guardada en tu cuenta.`))}
+              onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
+          })()} o={selOverlay} visuals={visuals} isVideo={typeOf(selOverlay.assetId) === 'video'} playheadMs={playheadMs}
           onChange={p => apply(c => updateOverlay(c, selOverlay.id, p))} apply={apply}
           onDelete={() => { apply(c => deleteItems(c, [{ kind: 'overlay', id: selOverlay.id }])); setSel([]) }}
           onDuplicate={() => { const r = duplicateItems(comp, [{ kind: 'overlay', id: selOverlay.id }]); apply(() => r.composition); setSel(r.refs) }} />}
-        {selClip && <ClipInspector clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
+        {selClip && <ClipInspector animation={(() => {
+            const i = comp.clips.findIndex(k => k.id === selClip.id)
+            const local = Math.min(Math.max(playheadMs - starts[i], 0), selClip.durationMs)
+            const cur = frameValuesAt({ zoom: selClip.zoom ?? 1, focusX: selClip.focusX ?? 0.5, focusY: selClip.focusY ?? 0.5, rotation: selClip.rotation ?? 0, opacity: selClip.opacity ?? 1 }, selClip.keyframes, local)
+            return <KeyframeEditor title="Animación de la imagen (zoom, encuadre, giro, opacidad)" props={CLIP_PROPS} keys={selClip.keyframes as never} current={cur} localMs={local} durationMs={selClip.durationMs}
+              inside={playheadMs >= starts[i] && playheadMs <= starts[i] + selClip.durationMs}
+              onKeys={k => apply(c => setClipKeyframes(c, selClip.id, k as never))}
+              canPaste={copiedAnim?.target === 'clip'} onCopy={() => { setCopiedAnim({ target: 'clip', keys: keysToPreset((selClip.keyframes ?? []) as never, selClip.durationMs) }); setNotice('Animación copiada: selecciona otro clip y pulsa «Pegar animación».') }}
+              onPaste={() => { if (!copiedAnim) return; const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => { const k = x.clips.find(v => v.id === id); return k ? setClipKeyframes(x, id, presetKeys({ id: '', name: '', target: 'clip', camera: null, keyframes: copiedAnim.keys }, k.durationMs) as never) : x }, c)) }}
+              presets={[...BUILTIN_ANIMATIONS, ...presets.animations].filter(p => p.target === 'clip')}
+              onApplyPreset={pr => { apply(c => setClipKeyframes(updateClip(c, selClip.id, { camera: { kind: 'none', amount: 0.1 } }), selClip.id, presetKeys(pr, selClip.durationMs) as never)); setNotice(`Movimiento «${pr.name}» aplicado (sustituye al movimiento de cámara). Ctrl+Z lo deshace.`) }}
+              onSavePreset={name => void storePresets({ ...presets, animations: [...presets.animations.filter(a => a.name !== name), { id: `ap-${Date.now().toString(36)}`, name, target: 'clip', camera: null, keyframes: keysToPreset((selClip.keyframes ?? []) as never, selClip.durationMs) }] }).then(() => setNotice(`Animación «${name}» guardada en tu cuenta.`))}
+              onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
+          })()} transitionTools={<TransitionTools clip={selClip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, selClip.id, p))}
+            canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition({ transition: selClip.transition, transitionMs: selClip.transitionMs, transitionOpts: selClip.transitionOpts }); setNotice('Transición copiada: selecciona otro clip y pulsa «Pegar transición».') }}
+            onPaste={() => { if (!copiedTransition) return; const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, { ...copiedTransition }), c)) }}
+            onPreview={() => { const i = comp.clips.findIndex(k => k.id === selClip.id); const ms = selClip.transitionMs ?? comp.fadeMs; const end = starts[i] + selClip.durationMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, end - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) }}
+            others={sel.filter(r => r.kind === 'clip' && r.id !== selClip.id).length}
+            onApplyToOthers={() => { const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, { transition: selClip.transition, transitionMs: selClip.transitionMs, transitionOpts: selClip.transitionOpts }), c)); setNotice(`Transición aplicada a ${ids.length} cortes.`) }}
+            presets={presets.transitions}
+            onSavePreset={name => void storePresets({ ...presets, transitions: [...presets.transitions.filter(t => t.name !== name), { id: `tp-${Date.now().toString(36)}`, name, transition: selClip.transition ?? 'fade', ms: selClip.transitionMs ?? comp.fadeMs, opts: selClip.transitionOpts ?? {} }] }).then(() => setNotice(`Transición favorita «${name}» guardada en tu cuenta.`))}
+            onDeletePreset={id => void storePresets({ ...presets, transitions: presets.transitions.filter(t => t.id !== id) })} />}
+          clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
           onChange={p => apply(c => updateClip(c, selClip.id, p))}
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
@@ -812,7 +871,9 @@ export default function ManualEditorPage() {
   </StudioShell>
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onDelete, onMove }: {
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onDelete, onMove, transitionTools, animation }: {
+  transitionTools?: React.ReactNode
+  animation?: React.ReactNode
   clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
   onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
 }) {
@@ -829,6 +890,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
       <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
       <label>Duración de la transición (ms)<input type="number" aria-label="Duración de la transición" min={0} max={3000} step={50} value={clip.transitionMs ?? ''} placeholder="la del montaje" onChange={e => onChange({ transitionMs: e.target.value === '' ? undefined : Math.min(3000, Math.max(0, Number(e.target.value) || 0)) })} /></label>
     </div>
+    {transitionTools}
     <div className="field-row">
       <label>Zoom ({(clip.zoom ?? 1).toFixed(2)}×)<input type="range" min={1} max={3} step={0.05} value={clip.zoom ?? 1} onChange={e => onChange({ zoom: Number(e.target.value) })} /></label>
       <label>Posición horizontal<input type="range" min={0} max={1} step={0.01} value={clip.focusX ?? 0.5} onChange={e => onChange({ focusX: Number(e.target.value) })} /></label>
@@ -843,6 +905,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
       <label>Volumen del vídeo ({Math.round((clip.volume ?? 1) * 100)}%)<input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
       <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
     </div>}
+    {animation}
     <VisualFields filters={clip.filters} crop={clip.crop} rotation={clip.rotation ?? 0} opacity={clip.opacity ?? 1} onChange={p => onChange(p as Partial<Clip>)} />
     <label>Subtítulo de este clip<textarea className="viText" value={clip.narration ?? ''} onChange={e => onChange({ narration: e.target.value || null })} /></label>
     <div className="field-row">

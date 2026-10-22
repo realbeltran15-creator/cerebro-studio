@@ -30,7 +30,7 @@ export type CommandContext = {
   /** Everything selected on the timeline (overlays, texts, audio…), for instructions about «esta capa». */
   selectedItems?: ItemRef[]
 }
-export type CommandResult = { ok: true; composition: Composition; done: string[]; /** Values set by default, watched to propose a preference if the owner corrects them. */ watch?: Watch[]; /** Navigation asked for («ve al minuto 2», «selecciona del 1:00 al 1:30»). */ playheadMs?: number; range?: Range | null; /** «deshaz» / «rehaz»: handled by the editor's history. */ history?: 'undo' | 'redo' } | { ok: false; message: string }
+export type CommandResult = { ok: true; composition: Composition; done: string[]; /** Values set by default, watched to propose a preference if the owner corrects them. */ watch?: Watch[]; /** Navigation asked for («ve al minuto 2», «selecciona del 1:00 al 1:30»). */ playheadMs?: number; range?: Range | null; /** «deshaz» / «rehaz»: handled by the editor's history. */ history?: 'undo' | 'redo'; /** «guarda este estilo»: the editor measures the montage and stores it as a style with this name. */ saveStyle?: string } | { ok: false; message: string }
 
 export const COMMAND_EXAMPLES = [
   'corta del minuto 1 al 1:30', 'que la música entre poco a poco', 'fundido de salida de 3 segundos en la música', 'quita la voz del minuto 2 al 3', 'que dure 4 segundos', 'mueve este clip al principio',
@@ -44,7 +44,10 @@ export const COMMAND_EXAMPLES = [
   'blanco y negro', 'más brillo', 'filtro cálido', 'desenfoca el fondo', 'añade una transición suave', 'transición de desenfoque', 'pon un marcador', 'baja la música mientras habla la persona',
 ]
 
-const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/\s+/g, ' ').trim()
+const NUM_WORDS: Record<string, string> = { un: '1', uno: '1', una: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9', diez: '10', once: '11', doce: '12', trece: '13', catorce: '14', quince: '15', dieciseis: '16', diecisiete: '17', dieciocho: '18', diecinueve: '19', veinte: '20', treinta: '30', cuarenta: '40', cincuenta: '50', sesenta: '60', medio: '0.5' }
+/** «dos segundos» → «2 segundos», «medio segundo» → «0.5 segundo» (only before a time unit, so names are left alone). */
+const numWords = (s: string) => s.replace(/\b(un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte|treinta|cuarenta|cincuenta|sesenta|medio)\s+(segundos?|minutos?|milisegundos?)\b/g, (_m, w: string, u: string) => `${NUM_WORDS[w]} ${u}`)
+const fold = (s: string) => numWords(s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/\s+/g, ' ').trim())
 const fmt = (ms: number) => { const t = Math.round(ms / 100) / 10; const m = Math.floor(t / 60); const s = t - m * 60; return m ? `${m}:${s.toFixed(1).padStart(4, '0')}` : `${s.toFixed(1)} s` }
 
 /** «1:23», «minuto 2», «minuto 2 y 30», «2 minutos 30 segundos», «segundo 12», «12 s», «0,5 segundos». */
@@ -92,6 +95,8 @@ function scope(c: Composition, s: string, ctx: CommandContext): { ids: string[];
   if (/\b(todos los videos|todos los clips de video)\b/.test(s)) return { ids: c.clips.filter(k => ctx.isVideo(k)).map(k => k.id), label: 'todos los vídeos' }
   if (/\b(todo|todos|todas|todo el video|todo el montaje|en todo)\b/.test(s)) return { ids: c.clips.map(k => k.id), label: 'todo el montaje' }
   if (ctx.range) { const ids = clipIdsInRange(c, ctx.range); return { ids, label: `el fragmento ${fmt(ctx.range.startMs)}–${fmt(ctx.range.endMs)}` } }
+  const selClips = (ctx.selectedItems ?? []).filter(r => r.kind === 'clip' && c.clips.some(k => k.id === r.id)).map(r => r.id)
+  if (selClips.length > 1) { const ord = c.clips.filter(k => selClips.includes(k.id)).map(k => k.id); return { ids: ord, label: `los ${ord.length} clips seleccionados` } }
   if (ctx.selectedClipId && c.clips.some(k => k.id === ctx.selectedClipId)) return { ids: [ctx.selectedClipId], label: `el clip ${c.clips.findIndex(k => k.id === ctx.selectedClipId) + 1}` }
   const st = clipStarts(c)
   const i = c.clips.findIndex((k, n) => ctx.playheadMs >= st[n] && ctx.playheadMs < st[n] + k.durationMs)
@@ -126,7 +131,8 @@ export function retimeToBeats(input: Composition, ids: string[], beats: readonly
   return { composition: c, changed }
 }
 
-const TRANS: Array<[RegExp, Transition]> = [[/desenfoque|borroso/, 'blur'], [/deslizar hacia arriba|deslizamiento vertical/, 'slide_up'], [/cortinilla vertical|barrido vertical/, 'wipe_down'], [/disolvencia|fundido encadenado|crossfade|transicion suave|suave/, 'dissolve'], [/fundido( a negro)?/, 'fade'], [/deslizar|deslizamiento|slide/, 'slide'], [/cortinilla|barrido|wipe/, 'wipe'], [/transicion de zoom|zoom de transicion/, 'zoom'], [/corte seco|corte directo|sin transicion/, 'cut']]
+const TRANSITION_NAMES: Record<Transition, string> = { fade: 'fundido a negro', fade_white: 'fundido a blanco', dissolve: 'disolvencia', slide: 'deslizar', wipe: 'cortinilla', zoom: 'zoom de entrada', zoom_out: 'zoom de salida', cut: 'corte seco', blur: 'desenfoque', slide_up: 'deslizar hacia arriba', wipe_down: 'cortinilla vertical', flash: 'destello de luz' }
+const TRANS: Array<[RegExp, Transition]> = [[/destello|flash|transicion de luz|luz suave/, 'flash'], [/fundido a blanco|a blanco/, 'fade_white'], [/zoom de salida|alejamiento/, 'zoom_out'],[/desenfoque|borroso/, 'blur'], [/deslizar hacia arriba|deslizamiento vertical/, 'slide_up'], [/cortinilla vertical|barrido vertical/, 'wipe_down'], [/disolvencia|fundido encadenado|crossfade|transicion suave|suave/, 'dissolve'], [/fundido( a negro)?/, 'fade'], [/deslizar|deslizamiento|slide/, 'slide'], [/cortinilla|barrido|wipe/, 'wipe'], [/transicion de zoom|zoom de transicion/, 'zoom'], [/corte seco|corte directo|sin transicion/, 'cut']]
 
 /** Runs one instruction. Several can be chained with «y luego», «después» or «;». */
 export function runInstruction(c0: Composition, text: string, ctx: CommandContext): CommandResult {
@@ -135,7 +141,7 @@ export function runInstruction(c0: Composition, text: string, ctx: CommandContex
   let c = c0
   const done: string[] = []
   const watch: Watch[] = []
-  let nav: Pick<Extract<CommandResult, { ok: true }>, 'playheadMs' | 'range' | 'history'> = {}
+  let nav: Pick<Extract<CommandResult, { ok: true }>, 'playheadMs' | 'range' | 'history' | 'saveStyle'> = {}
   for (const part of parts) {
     const span = parseSpan(part)
     const r = runOne(c, part, span ? { ...ctx, range: span } : ctx, span)
@@ -144,6 +150,7 @@ export function runInstruction(c0: Composition, text: string, ctx: CommandContex
     if (r.playheadMs !== undefined) nav = { ...nav, playheadMs: r.playheadMs }
     if (r.range !== undefined) nav = { ...nav, range: r.range }
     if (r.history) nav = { ...nav, history: r.history }
+    if (r.saveStyle) nav = { ...nav, saveStyle: r.saveStyle }
   }
   return { ok: true, composition: c, done, watch, ...nav }
 }
@@ -173,6 +180,17 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   }
   if (/^(selecciona|marca)\b/.test(s) && span) return { ok: true, composition: c, done: [`Fragmento ${fmt(span.startMs)}–${fmt(span.endMs)} marcado.`], range: { startMs: span.startMs, endMs: Math.min(span.endMs, total) } }
   if (/^(quita|borra|deshaz) (la )?seleccion\b/.test(s)) return { ok: true, composition: c, done: ['Selección quitada.'], range: null }
+
+  // ---- Animating one object inside a photo needs a mask or AI video: say so instead of faking it.
+  if (/\b(anima|mueve|haz que se mueva|que se muevan?|parpadee|ondee)\b/.test(s) && /\b(solo|solamente|unicamente|solo la|solo el)\b/.test(s) && !/\b(capa|superposicion|texto|titulo|clip)\b/.test(s)) {
+    return fail('Animar solo una parte de una foto (la luz de las velas, el agua, el humo…) no se puede con transformaciones de edición: moverían o iluminarían la imagen entera. Haría falta separar esa parte en su propia capa (recortada) o generar vídeo con IA, que no está activado. Puedo hacer un zoom o una panorámica lenta de toda la foto, o animar una capa que hayas recortado.')
+  }
+
+  // ---- Save the style of this montage: «guarda este estilo (como «Lofi suave»)»
+  if (/\b(guarda|guardar|crea|memoriza)\b/.test(s) && /\bestilo\b/.test(s)) {
+    const name = /[«"“']([^»"”']+)[»"”']/.exec(text)?.[1]?.trim() || `Mi estilo ${new Date().toLocaleDateString()}`
+    return { ok: true, composition: c, done: [`Midiendo este montaje para guardarlo como estilo «${name}»…`], saveStyle: name }
+  }
 
   // ---- Markers: «pon un marcador (aquí / en 1:20) llamado «Intro»»
   if (/\b(marcador|marca aqui)\b/.test(s) && /\b(pon|anade|crea|marca|mete)\b/.test(s)) {
@@ -260,7 +278,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   }
 
   // ---- Music under the voice: «baja la música cuando hable», «no bajes la música»
-  if (/\bmusica\b/.test(s) && /\b((cuando|mientras) (habla|hable|hablo|hay voz|suena la voz|se habla)|bajo la voz|con la voz|al hablar|ducking)\b/.test(s)) {
+  if (/\bmusica\b/.test(s) && /\b((cuando|mientras) (habla|hable|hablo|hay voz|suena la voz|se habla|(empieza|comienza|entra) la voz)|bajo la voz|con la voz|al hablar|ducking)\b/.test(s)) {
     const on = !/\b(no|nunca|sin)\b/.test(s)
     return ok({ ...c, duckMusic: on }, on ? 'La música bajará cuando suene la voz.' : 'La música ya no baja con la voz.')
   }
@@ -447,12 +465,20 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
     : /\b(sube la camara|camara hacia arriba)\b/.test(s) ? 'pan_up'
     : /\b(baja la camara|camara hacia abajo)\b/.test(s) ? 'pan_down'
     : /\b(zoom|acerca|acercar|acercamiento|zoom in|cierra el plano)\b/.test(s) ? 'zoom_in' : null
-  if (cam) {
+  if (cam && !/\btransicion/.test(s)) {
     const sc = scope(c, s, ctx)
     if (!sc.ids.length) return fail('Selecciona un clip, marca un fragmento o pon el cabezal sobre un clip.')
     const speedKey = /\b(muy lento|muy suave)\b/.test(s) ? null : /\b(lento|suave|ligero|poco)\b/.test(s) ? 'zoomSlow' as const : /\b(rapido|fuerte|intenso|mucho|dramatico)\b/.test(s) ? 'zoomFast' as const : 'zoomNormal' as const
     const amount = speedKey ? P[speedKey] : Math.max(0.02, P.zoomSlow * 0.6)
     const ids = new Set(sc.ids)
+    // «durante ocho segundos»: the movement lasts the whole clip, so a photo takes that length (a video keeps its own).
+    const lasting = timeAfter(s, /\bdurante\b/)
+    if (lasting !== null && cam !== 'none') {
+      const d = Math.min(Math.max(lasting, MIN_CLIP_MS), MAX_CLIP_MS)
+      const imgs = c.clips.filter(k => ids.has(k.id) && !ctx.isVideo(k))
+      const next = { ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, camera: { kind: cam, amount }, ...(!ctx.isVideo(k) ? { durationMs: d } : {}) } : k)) }
+      return ok(next, `${cam === 'zoom_in' ? 'Zoom' : 'Movimiento'} ${speedKey === 'zoomFast' ? 'rápido' : 'lento'} durante ${fmt(d)} en ${sc.label}${imgs.length ? ` (${imgs.length === 1 ? 'la foto dura' : 'las fotos duran'} ahora ${fmt(d)})` : ''}.`)
+    }
     if (speedKey && cam !== 'none') watch = [{ key: speedKey, value: amount, target: { kind: 'clips', ids: sc.ids } }]
     return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, camera: { kind: cam, amount } } : k)) },
       cam === 'none' ? `Sin movimiento de cámara en ${sc.label}.` : `${({ zoom_in: 'Zoom', zoom_out: 'Alejamiento', pan_left: 'Panorámica a la izquierda', pan_right: 'Panorámica a la derecha', pan_up: 'Subida de cámara', pan_down: 'Bajada de cámara' } as Record<string, string>)[cam]} ${speedKey === 'zoomSlow' || !speedKey ? 'lento' : speedKey === 'zoomFast' ? 'rápido' : ''} en ${sc.label}.`.replace(/\s+en/, ' en'))
@@ -460,11 +486,16 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
 
   // ---- Transitions
   const tr = TRANS.find(([re]) => re.test(s))?.[1]
-  if (tr && /\b(transicion|transiciones|fundido|corte seco|corte directo|disolvencia|cortinilla|deslizar|sin transicion)\b/.test(s)) {
+  if (tr && /\b(transicion|transiciones|fundido|corte seco|corte directo|disolvencia|cortinilla|deslizar|sin transicion|destello)\b/.test(s)) {
     const sc = scope(c, s, ctx)
     if (!sc.ids.length) return fail('Selecciona un clip o marca un fragmento.')
-    const ids = new Set(sc.ids)
-    return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, transition: tr } : k)) }, `Transición «${({ fade: 'fundido a negro', dissolve: 'disolvencia', slide: 'deslizar', wipe: 'cortinilla', zoom: 'zoom', cut: 'corte seco', blur: 'desenfoque', slide_up: 'deslizar hacia arriba', wipe_down: 'cortinilla vertical' } as Record<Transition, string>)[tr]}» en ${sc.label}.`)
+    // «entre estas fotografías»: the cuts between the chosen clips (not after the last one).
+    const ids = new Set(/\bentre\b/.test(s) && sc.ids.length > 1 ? sc.ids.slice(0, -1) : sc.ids)
+    const durM = /(\d+(?:[.,]\d+)?)\s*(milisegundos?|ms|segundos?|seg|s)\b/.exec(s)
+    const ms = durM ? Math.round(Number(durM[1].replace(',', '.')) * (/^m/.test(durM[2]) ? 1 : 1000)) : null
+    if (ms !== null && (ms < 50 || ms > 3000)) return fail('La transición puede durar entre 0,05 y 3 segundos.')
+    const name = TRANSITION_NAMES[tr]
+    return ok({ ...c, clips: c.clips.map(k => (ids.has(k.id) ? { ...k, transition: tr, ...(ms !== null && tr !== 'cut' ? { transitionMs: ms } : {}) } : k)) }, `Transición «${name}»${ms !== null && tr !== 'cut' ? ` de ${fmt(ms)}` : ''} en ${sc.label}${ids.size !== sc.ids.length ? ` (${ids.size} corte${ids.size === 1 ? '' : 's'} entre ellos)` : ''}.`)
   }
 
   // ---- Speed: «cámara lenta», «velocidad 2x», «al doble», «a la mitad»

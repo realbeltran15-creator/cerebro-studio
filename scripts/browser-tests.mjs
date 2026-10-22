@@ -1728,6 +1728,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('keyframes: the layer moves from the left (1 s) to the right (4 s)', leftOk && await settle(0.8, 0.5, isBlue) && !isBlue(await pixel(0.2, 0.5)), [await pixel(0.2, 0.5), await pixel(0.8, 0.5)])
   // Timeline: drag the layer 1 s later.
   const item = ovRow.locator('> div').first()
+  await page.evaluate(() => document.querySelector('[aria-label="Pista de Superposición 1"]').scrollIntoView({ block: 'center' }))
   const ib = await item.boundingBox()
   await page.mouse.move(ib.x + ib.width / 2, ib.y + ib.height / 2); await page.mouse.down(); await page.mouse.move(ib.x + ib.width / 2 + 40, ib.y + ib.height / 2, { steps: 5 }); await page.mouse.up()
   check('timeline: dragging a layer moves it in time', /· 1\.5–6\.5 s$/.test(await item.getAttribute('title')), await item.getAttribute('title'))
@@ -1745,6 +1746,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await textItem.click(); await layer.click({ modifiers: ['Shift'] })
   await page.getByRole('button', { name: 'Agrupar selección', exact: true }).click()
   const tStart = (await textItem.getAttribute('title')).match(/· ([\d.]+)–/)[1]
+  await page.evaluate(() => document.querySelector('[aria-label="Pista de Texto"]').scrollIntoView({ block: 'center' }))
   const tb = await textItem.boundingBox()
   await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2); await page.mouse.down(); await page.mouse.move(tb.x + tb.width / 2 + 20, tb.y + tb.height / 2, { steps: 4 }); await page.mouse.up()
   check('groups: moving one grouped item moves the whole group', (await textItem.getAttribute('title')).match(/· ([\d.]+)–/)[1] !== tStart && /· 2(\.0)?–7(\.0)? s$/.test(await layer.getAttribute('title')), [tStart, await textItem.getAttribute('title'), await layer.getAttribute('title')])
@@ -1794,14 +1796,15 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   page.on('pageerror', e => errors.push(e.message))
   await page.goto('http://127.0.0.1:8817/')
   await page.waitForFunction(() => typeof window.runVerify === 'function')
-  const want = [[200, 30, 30], [0, 200, 0], [0, 200, 0], [200, 0, 200], [200, 0, 200], [224, 208, 32], [224, 208, 32]]
+  // The last four instants are in the middle of transitions (dissolve, wipe, slide): only compared with the preview.
+  const want = [[200, 30, 30], [0, 200, 0], [0, 200, 0], [200, 0, 200], [200, 0, 200], [224, 208, 32], [224, 208, 32], null, null, null, null]
   const near = (a, b, tol = 60) => a.every((v, i) => Math.abs(v - b[i]) <= tol)
   const pb = await page.evaluate(() => window.runPlayback())
   check('verify: playback from 0:09.5 advances in real time and −10 s goes back', pb.after > 10_600 && pb.after < 11_800 && Math.abs(pb.back - Math.max(0, pb.after - 10_000)) < 5, pb)
   for (const which of ['fast', 'realtime']) {
     const r = await page.evaluate(w => window.runVerify(w), which)
-    check(`verify (${which}): the preview shows each layer where expected (main video, overlay video, photos)`, r.preview.every((c, i) => near(c, want[i], 70)), r.preview)
-    check(`verify (${which}): the export shows the same picture as the preview at the same instants`, r.exported.every((c, i) => near(c, r.preview[i], 60)), { exported: r.exported, preview: r.preview })
+    check(`verify (${which}): the preview shows each layer where expected (main video, overlay video, photos)`, r.preview.every((c, i) => !want[i] || near(c, want[i], 70)), r.preview)
+    check(`verify (${which}): the export shows the same picture as the preview at the same instants (also mid-transition)`, r.exported.every((c, i) => near(c, r.preview[i], 60)), { exported: r.exported, preview: r.preview })
     check(`verify (${which}): length and size are the project's (13 s, 1280×720)`, (r.duration === null || Math.abs(r.duration - 13) < 0.6) && r.size[0] === 1280 && r.size[1] === 720, [r.duration, r.size, r.mime])
     const a = r.audio
     check(`verify (${which}): both music tracks, voice, effect and the two videos' sound are in the export, each in its place`, a.music1_before_voice > 0.01 && a.voice > 0.01 && a.voice_after < a.voice * 0.1 && a.music2 > 0.01 && a.music2_before < a.music2 * 0.1 && a.sfx > 0.01 && a.sfx_before < a.sfx * 0.1 && a.video_main > 0.005 && a.video_main_after < a.video_main * 0.2 && a.video_overlay > 0.005 && a.video_overlay_before < a.video_overlay * 0.2, a)
@@ -1965,6 +1968,86 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const near = (a, b) => a && b && a.every((x, i) => Math.abs(x - b[i]) <= 60)
   check('export: mid-transition (vertical wipe) the export matches the preview (incoming clip on top, outgoing below)', exp && near(exp.top, prev.top) && near(exp.bottom, prev.bottom) && prev.top.reduce((t, v, i) => t + Math.abs(v - prev.bottom[i]), 0) > 100, { prev, exp })
   check('persistence: no page errors', errors.length === 0, errors)
+  await ctx2.close(); server.close()
+}
+
+// 27. Transiciones y animaciones de verdad: type, direction, curve, copy/paste, favourites in the account, ready-made movements on
+//     a photo, everything kept after closing the browser, and the export matching the viewer mid-transition.
+{
+  const server = serve(8820, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const errors = []
+  const open = async (ctx, keep) => {
+    if (keep) await ctx.addInitScript(([j, st, cc]) => { sessionStorage.setItem('__KEEP_JOBS', j); sessionStorage.setItem('__KEEP_STORE', st); sessionStorage.setItem('__KEEP_CC', cc) }, keep)
+    const page = await ctx.newPage()
+    page.on('pageerror', e => errors.push(e.message))
+    page.on('dialog', d => d.accept())
+    await page.goto('http://127.0.0.1:8820/editor/manual?job=jv')
+    await page.getByRole('toolbar', { name: 'Controles de reproducción' }).waitFor({ timeout: 30000 })
+    return page
+  }
+  const ctx1 = await browser.newContext({ viewport: { width: 1500, height: 1100 } })
+  let page = await open(ctx1)
+  const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
+  const clips = () => page.locator('[aria-label="Pista de vídeo"] > div')
+  const pixel = (fx, fy) => page.evaluate(([fx, fy]) => { const c = document.querySelector('canvas.playerCanvas'); const d = c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data; return [d[0], d[1], d[2]] }, [fx, fy])
+  const settle = async (fx, fy, want) => { for (let i = 0; i < 60; i++) { const c = await pixel(fx, fy); if (want(c)) return c; await page.waitForTimeout(100) } return pixel(fx, fy) }
+  const isRed = c => c[0] > 150 && c[1] < 80, isGreen = c => c[1] > 150 && c[0] < 80
+  const openDetails = async re => page.evaluate(src => { const r = new RegExp(src); for (const d of document.querySelectorAll('details')) if (r.test(d.querySelector('summary')?.textContent ?? '')) d.open = true }, re)
+  const go = async t => { const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' }); await bar.getByLabel('Ir a un tiempo').fill(t); await bar.getByLabel('Ir a un tiempo').press('Enter') }
+  await clips().nth(0).click()
+  await page.getByLabel('Transición al siguiente').selectOption('wipe')
+  await openDetails('Ajustes de la transición')
+  await page.getByLabel('Dirección de la transición').selectOption('left')
+  await page.getByLabel('Curva de la transición').selectOption('linear')
+  await go('0:02.8')
+  check('transition: a wipe «hacia la izquierda» shows both clips mid-way (incoming on the right, outgoing on the left)', isGreen(await settle(0.9, 0.5, isGreen)) && isRed(await settle(0.1, 0.5, isRed)), [await pixel(0.9, 0.5), await pixel(0.1, 0.5)])
+  const viewerMid = { right: await pixel(0.9, 0.5), left: await pixel(0.1, 0.5) }
+  await page.getByLabel('Nombre de la transición favorita').fill('Barrido izq')
+  await page.getByRole('button', { name: 'Guardar', exact: true }).first().click()
+  await page.getByText('Transición favorita «Barrido izq» guardada en tu cuenta.').waitFor()
+  check('transition: a favourite is saved in the account (not in the browser)', (await db()).connector_configs?.find(r => r.capability === 'edit_presets')?.config?.transitions?.[0]?.name === 'Barrido izq')
+  await page.getByRole('button', { name: 'Copiar transición' }).click()
+  await clips().nth(2).click()
+  await openDetails('Ajustes de la transición')
+  await page.getByRole('button', { name: 'Pegar transición' }).click()
+  // A ready-made smooth movement on the yellow photo (lo-fi).
+  await clips().nth(3).click()
+  await openDetails('^Animación de la imagen')
+  await page.getByRole('group', { name: /Movimientos para Animación de la imagen/ }).getByRole('button', { name: 'Respiración lenta (lo-fi)' }).click()
+  await page.waitForFunction(() => /^Guardado en la nube/.test(document.querySelector('[aria-label="Estado del guardado"]')?.textContent ?? ''), null, { timeout: 15000 })
+  let comp = (await db()).render_jobs.find(j => j.id === 'jv').composition
+  check('saved: transition type, direction and curve; the pasted copy; the photo movement (keyframes)', comp.clips[0].transition === 'wipe' && comp.clips[0].transitionOpts?.direction === 'left' && comp.clips[0].transitionOpts?.easing === 'linear' && comp.clips[2].transition === 'wipe' && comp.clips[2].transitionOpts?.direction === 'left' && comp.clips[3].keyframes?.length === 3 && comp.clips[3].keyframes[1].zoom === 1.06, comp.clips.map(k => [k.transition, k.transitionOpts, k.keyframes]))
+  const keep = [await page.evaluate(() => JSON.stringify(window.__DB.render_jobs)), await page.evaluate(() => JSON.stringify(window.__STORE ?? {})), await page.evaluate(() => JSON.stringify(window.__DB.connector_configs ?? []))]
+  await ctx1.close()
+  // Close the browser and open a clean one.
+  const ctx2 = await browser.newContext({ viewport: { width: 1500, height: 1100 } })
+  page = await open(ctx2, keep)
+  await clips().nth(0).click()
+  await openDetails('Ajustes de la transición')
+  check('reopened: the transition settings and the favourite are there in a clean browser', (await page.getByLabel('Transición al siguiente').inputValue()) === 'wipe' && (await page.getByLabel('Dirección de la transición').inputValue()) === 'left' && await page.getByRole('group', { name: 'Transiciones favoritas' }).getByRole('button', { name: '★ Barrido izq' }).count() === 1)
+  await clips().nth(3).click()
+  check('reopened: the photo keeps its keyframed movement', await page.getByRole('table', { name: /Fotogramas clave de Animación de la imagen/ }).locator('tbody tr').count() === 3)
+  // Change the transition through an instruction and export: the file must match the viewer mid-transition.
+  await clips().nth(0).click()
+  await page.getByLabel('Dile al editor qué hacer').fill('pon una disolvencia de un segundo')
+  await page.getByRole('button', { name: 'Hacer', exact: true }).click()
+  await page.locator('.notice').getByText(/Transición «disolvencia» de 1\.0 s/).waitFor()
+  await go('0:02.5')
+  const mix = await settle(0.5, 0.5, c => c[0] > 60 && c[1] > 60)
+  check('instruction: «una disolvencia de un segundo» mixes both clips in the viewer', mix[0] > 60 && mix[1] > 60, mix)
+  await page.waitForFunction(() => /^Guardado en la nube/.test(document.querySelector('[aria-label="Estado del guardado"]')?.textContent ?? ''), null, { timeout: 15000 })
+  await page.getByText('Exportar el vídeo').click()
+  await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
+  await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 120000 })
+  const exp = await page.evaluate(async () => {
+    const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(window.__LAST_RENDER)
+    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej })
+    v.currentTime = 2.5; await new Promise(r => (v.onseeked = r))
+    const c = document.createElement('canvas'); c.width = 1280; c.height = 720; const g = c.getContext('2d'); g.drawImage(v, 0, 0, 1280, 720)
+    return [...g.getImageData(640, 360, 1, 1).data.slice(0, 3)]
+  })
+  check('export: mid-dissolve the exported frame matches the viewer', exp.every((x, i) => Math.abs(x - mix[i]) <= 60), { exp, mix, viewerMid })
+  check('transitions/animations: no page errors', errors.length === 0, errors)
   await ctx2.close(); server.close()
 }
 

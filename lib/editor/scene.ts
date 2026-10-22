@@ -6,7 +6,7 @@ import {
   activeTextClips, audioStartMs, audioTrackId, clipCaptions, clipStarts, envelopeAt, projectDurationMs, textTrackId, totalDurationMs, tracksOf, trackGains,
   type AudioClip, type CaptionStyle, type Composition, type Crop, type Filters, type TextOverlay, type TrackKind,
 } from './composition'
-import { BLENDS, cameraAt, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
+import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
 
 export type MediaKind = 'video' | 'image' | 'audio' | null
@@ -37,6 +37,8 @@ export type VisualOp = {
   filters: Filters | null
   /** Transition transforms applied to the whole layer. */
   scale: number; offsetX: number; offsetY: number; revealX: number; revealY: number; blur: number
+  /** Edge the wipe reveals from. */
+  revealFrom: 'left' | 'right' | 'top' | 'bottom'
   /** Draw black under this layer first (an incoming clip during a slide covers the outgoing one completely). */
   backdrop: boolean
 }
@@ -48,7 +50,7 @@ export type Op = VisualOp | TextOp | CaptionOp | HookOp | FillOp
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n))
 const baseVisual = (): Omit<VisualOp, 'type' | 'slot' | 'assetId' | 'media' | 'sourceMs' | 'rate' | 'live' | 'volume' | 'trackId' | 'fit'> => ({
-  zoom: 1, focusX: 0.5, focusY: 0.5, box: null, rotation: 0, alpha: 1, crop: null, filters: null, scale: 1, offsetX: 0, offsetY: 0, revealX: 1, revealY: 1, blur: 0, backdrop: false,
+  zoom: 1, focusX: 0.5, focusY: 0.5, box: null, rotation: 0, alpha: 1, crop: null, filters: null, scale: 1, offsetX: 0, offsetY: 0, revealX: 1, revealY: 1, revealFrom: 'left', blur: 0, backdrop: false,
 })
 
 /** Transition length out of clip i (ms). */
@@ -84,13 +86,27 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
     const fade = transitionMsOf(c, i)
     const kind = clip.transition ?? 'fade'
     const blending = fade > 0 && i < last && BLENDS.has(kind) && clip.durationMs - local < fade
-    const tf = blending ? transitionFrame(kind, 1 - (clip.durationMs - local) / fade) : null
+    const remaining = clip.durationMs - local
+    const p = blending ? 1 - remaining / fade : 0
+    const tf = blending ? transitionFrame(kind, p, clip.transitionOpts ?? {}) : null
     const a = mainVisual(c, i, local, kindOf, mutedTrack.has('main'))
-    if (a) ops.push({ ...a, scale: tf?.aScale ?? 1, blur: tf?.aBlur ?? 0, alpha: a.alpha * (tf?.aAlpha ?? 1) })
+    // During a blending transition the two clips' own sound crossfades (linear), like the picture.
+    if (a) ops.push({ ...a, scale: tf?.aScale ?? 1, blur: tf?.aBlur ?? 0, alpha: a.alpha * (tf?.aAlpha ?? 1), volume: a.volume * (tf ? 1 - p : 1) })
     if (tf) {
-      // The incoming clip is held on its first frame (it starts playing when its turn comes) and drawn over a black backdrop.
-      const b = mainVisual(c, i + 1, 0, kindOf, true)
-      if (b) ops.push({ ...b, live: false, volume: 0, alpha: b.alpha * tf.bAlpha, offsetX: tf.bOffsetX, offsetY: tf.bOffsetY, revealX: tf.bReveal, revealY: tf.bRevealY, blur: tf.bBlur, backdrop: kind === 'slide' || kind === 'slide_up' || kind === 'wipe' || kind === 'wipe_down' })
+      const next = c.clips[i + 1]
+      const b = mainVisual(c, i + 1, 0, kindOf, mutedTrack.has('main'))
+      if (b) {
+        // The incoming video plays during the transition when its file has material before its start (a «handle»: it was trimmed);
+        // otherwise it holds its first frame until its turn, so its own timing never moves.
+        const pre = (next.trimInMs ?? 0) - remaining * (next.speed ?? 1)
+        const live = b.media === 'video' && pre >= 0
+        ops.push({
+          ...b, live, sourceMs: live ? pre : b.sourceMs, volume: live ? b.volume * p : 0, alpha: b.alpha * tf.bAlpha,
+          offsetX: tf.bOffsetX, offsetY: tf.bOffsetY, revealX: tf.bReveal, revealY: tf.bRevealY, revealFrom: tf.bRevealFrom, scale: tf.bScale, blur: tf.bBlur,
+          backdrop: kind === 'slide' || kind === 'slide_up' || kind === 'wipe' || kind === 'wipe_down',
+        })
+      }
+      if (tf.white > 0) ops.push({ type: 'fill', color: '#fff', alpha: tf.white })
     }
   }
   // What belongs to the main clip (its own text and the subtitles) fades with it.
@@ -102,13 +118,16 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
       const cap = clipCaptions(clip).find(q => local >= q.startMs && local < q.endMs)
       if (cap) ops.push({ type: 'caption', text: cap.text, style: c.captionStyle ?? 'box', progress: (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs) })
     }
-    // Fade through black at clip boundaries where «fundido a negro» was chosen (and at the very start and end of the main track).
-    const fadeIn = i === 0 ? c.fadeMs : (c.clips[i - 1].transition ?? 'fade') === 'fade' ? transitionMsOf(c, i - 1) : 0
-    const fadeOut = i === last || (clip.transition ?? 'fade') === 'fade' ? transitionMsOf(c, i) : 0
-    let black = 0
-    if (fadeIn > 0 && local < fadeIn) black = Math.max(black, 1 - local / fadeIn)
-    if (fadeOut > 0 && clip.durationMs - local < fadeOut) black = Math.max(black, 1 - (clip.durationMs - local) / fadeOut)
-    if (black > 0) ops.push({ type: 'fill', color: '#000', alpha: black })
+    // Dips at clip boundaries: «fundido a negro» (and at the very start and end of the main track) or «fundido a blanco».
+    const prevKind = i === 0 ? 'fade' : c.clips[i - 1].transition ?? 'fade'
+    const ownKind = clip.transition ?? 'fade'
+    const dips = (k: string) => k === 'fade' || k === 'fade_white'
+    const fadeIn = i === 0 ? c.fadeMs : dips(prevKind) ? transitionMsOf(c, i - 1) : 0
+    const fadeOut = i === last || dips(ownKind) ? transitionMsOf(c, i) : 0
+    const inEase = i === 0 ? undefined : c.clips[i - 1].transitionOpts?.easing, outEase = clip.transitionOpts?.easing
+    const amount = (x: number, e: string | undefined) => (e ? easeBy(e as 'smooth', clamp01(x)) : clamp01(x))
+    if (fadeIn > 0 && local < fadeIn) ops.push({ type: 'fill', color: i > 0 && prevKind === 'fade_white' ? '#fff' : '#000', alpha: amount(1 - local / fadeIn, inEase) })
+    if (fadeOut > 0 && clip.durationMs - local < fadeOut) ops.push({ type: 'fill', color: i < last && ownKind === 'fade_white' ? '#fff' : '#000', alpha: amount(1 - (clip.durationMs - local) / fadeOut, outEase) })
   }
   // Overlays: tracks higher on screen are drawn later (on top). They keep their own fades.
   const overlayTracks = tracks.filter(x => x.type === 'overlay').reverse()
@@ -146,12 +165,14 @@ function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, mu
   const media = kindOf(clip.visualAssetId)
   if (media !== 'video' && media !== 'image') return null
   const cam = cameraAt(effectiveCamera(clip, media === 'image'), local / clip.durationMs)
+  // Keyframed framing (zoom, which part is in view, rotation, opacity), then the camera move on top.
+  const f = transformAt({ zoom: clip.zoom ?? 1, focusX: clip.focusX ?? 0.5, focusY: clip.focusY ?? 0.5, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 }, clip.keyframes, local)
   return {
     ...baseVisual(), type: 'visual', slot: clip.id, assetId: clip.visualAssetId, media, fit: 'cover', trackId: 'main',
     sourceMs: (clip.trimInMs ?? 0) + local * (clip.speed ?? 1), rate: clip.speed ?? 1, live: true,
     volume: muted || clip.muted ? 0 : clip.volume ?? 1,
-    zoom: (clip.zoom ?? 1) * cam.zoom, focusX: cam.focusX ?? clip.focusX ?? 0.5, focusY: cam.focusY ?? clip.focusY ?? 0.5,
-    rotation: clip.rotation ?? 0, alpha: clip.opacity ?? 1, crop: clip.crop ?? null, filters: clip.filters ?? null,
+    zoom: f.zoom * cam.zoom, focusX: cam.focusX ?? f.focusX, focusY: cam.focusY ?? f.focusY,
+    rotation: f.rotation, alpha: f.opacity, crop: clip.crop ?? null, filters: clip.filters ?? null,
   }
 }
 
@@ -235,3 +256,33 @@ export const busLevels = (c: Composition) => trackGains(c.mix)
 
 /** Main-track length vs project length, for the UI. */
 export const lengths = (c: Composition) => ({ main: totalDurationMs(c), project: projectDurationMs(c) })
+
+
+/**
+ * The videos' own sound as voices (main clips and overlays), with the same crossfades the player applies during blending transitions.
+ * The player plays it from the picture elements; the fast exporter decodes it like any other sound.
+ */
+export function videoVoices(c: Composition, kindOf: KindOf): Array<Voice & { rate: number; trimSec: number }> {
+  const out: Array<Voice & { rate: number; trimSec: number }> = []
+  const starts = clipStarts(c)
+  const tracks = tracksOf(c)
+  const mainMuted = tracks.find(t => t.id === 'main')?.muted
+  const last = c.clips.length - 1
+  const blendsOut = (i: number) => i < last && transitionMsOf(c, i) > 0 && BLENDS.has(c.clips[i].transition ?? 'fade')
+  c.clips.forEach((k, i) => {
+    if (!k.visualAssetId || kindOf(k.visualAssetId) !== 'video' || k.muted || mainMuted || (k.volume ?? 1) <= 0) return
+    const rate = k.speed ?? 1, trim = k.trimInMs ?? 0
+    const fadeOut = blendsOut(i) ? transitionMsOf(c, i) : 0
+    // Pre-roll during the previous transition when the file has material before the clip's start (see frameAt).
+    const prevFade = i > 0 && blendsOut(i - 1) ? transitionMsOf(c, i - 1) : 0
+    const pre = prevFade > 0 && trim - prevFade * rate >= 0 ? prevFade : 0
+    const dur = k.durationMs + pre
+    out.push({ key: `vc:${k.id}`, assetId: k.visualAssetId, bus: 'video', trackId: 'main', startMs: starts[i] - pre, endMs: starts[i] + k.durationMs, sourceStartMs: trim - pre * rate, loop: false, volume: k.volume ?? 1, pan: 0,
+      envelope: pre || fadeOut ? { durationMs: dur, ...(pre ? { fadeInMs: pre } : {}), ...(fadeOut ? { fadeOutMs: fadeOut } : {}) } : null, duck: null, rate, trimSec: trim / 1000 })
+  })
+  for (const o of c.overlays ?? []) {
+    if (kindOf(o.assetId) !== 'video' || o.muted || (o.volume ?? 1) <= 0 || tracks.find(t => t.id === o.trackId)?.muted || tracks.find(t => t.id === o.trackId)?.hidden) continue
+    out.push({ key: `vo:${o.id}`, assetId: o.assetId, bus: 'video', trackId: o.trackId, startMs: o.startMs, endMs: o.startMs + o.durationMs, sourceStartMs: o.trimInMs, loop: false, volume: o.volume ?? 1, pan: 0, envelope: null, duck: null, rate: o.speed ?? 1, trimSec: o.trimInMs / 1000 })
+  }
+  return out
+}

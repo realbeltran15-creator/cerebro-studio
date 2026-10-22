@@ -1,9 +1,12 @@
 'use client'
 
-import { CAMERA_MOVES, FILTER_PRESETS, NO_FILTERS, type CameraKind, type Composition, type Crop, type Filters, type OverlayClip } from '@/lib/editor/composition'
+import { useState } from 'react'
+import { CAMERA_MOVES, FILTER_PRESETS, NO_FILTERS, TRANSITIONS, type CameraKind, type Clip, type Composition, type Crop, type Filters, type KeyEasing, type OverlayClip, type TransitionOptions } from '@/lib/editor/composition'
+import { DIRECTIONS, EASINGS, HAS_DIRECTION, HAS_INTENSITY, type TransitionDirection, type TransitionEasing } from '@/lib/editor/motion'
+import type { AnimationPreset, TransitionPreset } from '@/lib/editor/presets'
 import { assetLabel, type EditorAsset } from '@/lib/editor/client'
 import { transformAt } from '@/lib/editor/motion'
-import { removeKeyframe, setKeyframe } from '@/lib/editor/tracks'
+import { setKeyframe } from '@/lib/editor/tracks'
 import { canvasFiltersSupported } from '@/lib/editor/draw'
 
 const secs = (ms: number) => Math.round(ms / 100) / 10
@@ -42,8 +45,10 @@ export function VisualFields({ filters, crop, rotation, opacity, onChange, label
 }
 
 /** A layer above the main track: picture, timing, position/size/rotation/opacity, keyframes, Ken Burns, fades, sound, filters and crop. */
-export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, apply, onDelete, onDuplicate }: {
+export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, apply, onDelete, onDuplicate, animation }: {
   o: OverlayClip; visuals: EditorAsset[]; isVideo: boolean; playheadMs: number
+  /** The keyframe editor for this layer. */
+  animation?: React.ReactNode
   onChange: (p: Partial<OverlayClip>) => void
   apply: (fn: (c: Composition) => Composition) => void
   onDelete: () => void; onDuplicate: () => void
@@ -76,16 +81,7 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
       <button type="button" className="ghost small" onClick={() => setT({ x: 0.8, y: 0.78, scale: 0.3, rotation: 0 })}>Esquina (PiP)</button>
       <button type="button" className="ghost small" onClick={() => setT({ x: 0.5, y: 0.5 })}>Centrar</button>
     </div>
-    <details className="small" open={keyed}>
-      <summary><b>Animación con fotogramas clave</b> {keyed ? `(${o.keyframes!.length})` : ''}</summary>
-      <p className="muted">Coloca el cabezal, pon la capa como la quieres y pulsa «Fotograma clave». Entre dos fotogramas clave la posición, el tamaño, la rotación y la opacidad cambian suavemente.</p>
-      <div className="pageActions">
-        <button type="button" className="ghost small" disabled={!inside} onClick={() => apply(c => setKeyframe(c, o.id, local, now))}>◆ Fotograma clave en el cabezal ({secs(local)} s)</button>
-        {keyed && <button type="button" className="ghost small" onClick={() => onChange({ keyframes: undefined })}>Quitar todos</button>}
-      </div>
-      {keyed && <ul className="plainList">{o.keyframes!.map(k => <li key={k.atMs}>◆ {secs(k.atMs)} s · {k.x !== undefined ? `x ${pct(k.x)} % ` : ''}{k.y !== undefined ? `y ${pct(k.y)} % ` : ''}{k.scale !== undefined ? `tamaño ${pct(k.scale)} % ` : ''}{k.rotation !== undefined ? `${Math.round(k.rotation)}° ` : ''}{k.opacity !== undefined ? `opacidad ${pct(k.opacity)} %` : ''}
-        <button type="button" className="ghost small" aria-label={`Quitar fotograma clave de ${secs(k.atMs)} s`} onClick={() => apply(c => removeKeyframe(c, o.id, k.atMs))}>✕</button></li>)}</ul>}
-    </details>
+    {animation}
     <div className="field-row">
       <label>Movimiento (Ken Burns)<select value={o.camera?.kind ?? 'none'} onChange={e => onChange({ camera: e.target.value === 'none' ? null : { kind: e.target.value as CameraKind, amount: o.camera?.amount ?? 0.12 } })}>{(Object.keys(CAMERA_MOVES) as CameraKind[]).map(k => <option key={k} value={k}>{CAMERA_MOVES[k]}</option>)}</select></label>
       <label>Entrada gradual (s)<input type="number" min={0} max={10} step={0.1} value={secs(o.fadeInMs ?? 0)} onChange={e => onChange({ fadeInMs: Math.max(0, Number(e.target.value) * 1000) || undefined })} /></label>
@@ -103,3 +99,108 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
     </div>
   </>
 }
+
+/**
+ * Everything about the transition out of a clip, beyond its type and length: direction, intensity, easing, preview, copy/paste,
+ * remove, apply to the other selected cuts, and favourites saved in the account (usable in every montage).
+ */
+export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset }: {
+  clip: Clip; defaultMs: number
+  onChange: (p: Partial<Clip>) => void
+  canPaste: boolean; onCopy: () => void; onPaste: () => void; onPreview: () => void
+  /** Other main clips selected (their cut gets the same transition). */
+  others: number; onApplyToOthers: () => void
+  presets: TransitionPreset[]; onSavePreset: (name: string) => void; onDeletePreset: (id: string) => void
+}) {
+  const [name, setName] = useState('')
+  const kind = clip.transition ?? 'fade'
+  const o = clip.transitionOpts ?? {}
+  const setO = (p: Partial<TransitionOptions>) => onChange({ transitionOpts: { ...o, ...p } })
+  return <details className="small" open={!!clip.transitionOpts || presets.length > 0}>
+    <summary><b>Ajustes de la transición</b> <span className="muted">({TRANSITIONS[kind]}, {clip.transitionMs ?? defaultMs} ms)</span></summary>
+    <div className="field-row" style={{ marginTop: 6 }}>
+      {HAS_DIRECTION.has(kind) && <label>Dirección<select aria-label="Dirección de la transición" value={o.direction ?? (kind === 'slide_up' ? 'up' : kind === 'wipe_down' ? 'down' : kind === 'wipe' ? 'right' : 'left')} onChange={e => setO({ direction: e.target.value as TransitionDirection })}>{(Object.keys(DIRECTIONS) as TransitionDirection[]).map(d => <option key={d} value={d}>{DIRECTIONS[d]}</option>)}</select></label>}
+      {HAS_INTENSITY.has(kind) && <label>Intensidad ({Math.round((o.intensity ?? 1) * 100)} %)<input type="range" aria-label="Intensidad de la transición" min={0.2} max={3} step={0.1} value={o.intensity ?? 1} onChange={e => setO({ intensity: Number(e.target.value) })} /></label>}
+      {kind !== 'cut' && <label>Curva<select aria-label="Curva de la transición" value={o.easing ?? 'smooth'} onChange={e => setO({ easing: e.target.value as TransitionEasing })}>{(Object.keys(EASINGS) as TransitionEasing[]).map(k => <option key={k} value={k}>{EASINGS[k]}</option>)}</select></label>}
+    </div>
+    <div className="pageActions">
+      <button type="button" className="ghost small" onClick={onPreview} disabled={kind === 'cut'}>▶ Ver la transición</button>
+      <button type="button" className="ghost small" onClick={onCopy}>Copiar transición</button>
+      <button type="button" className="ghost small" onClick={onPaste} disabled={!canPaste}>Pegar transición</button>
+      <button type="button" className="ghost small" onClick={() => onChange({ transition: 'cut', transitionOpts: undefined, transitionMs: undefined })} disabled={kind === 'cut'}>Quitar transición</button>
+      {others > 0 && <button type="button" className="ghost small" onClick={onApplyToOthers}>Aplicar a los {others} cortes seleccionados</button>}
+    </div>
+    <div className="field-row" style={{ alignItems: 'end' }}>
+      <label>Guardar como favorita<input aria-label="Nombre de la transición favorita" value={name} maxLength={40} placeholder="p. ej. Disolvencia lenta" onChange={e => setName(e.target.value)} /></label>
+      <button type="button" className="ghost small" disabled={!name.trim() || kind === 'cut'} onClick={() => { onSavePreset(name.trim()); setName('') }}>Guardar</button>
+    </div>
+    {presets.length > 0 && <div className="pageActions" role="group" aria-label="Transiciones favoritas">
+      {presets.map(p => <span key={p.id} className="pill small"><button type="button" className="ghost small" onClick={() => onChange({ transition: p.transition, transitionMs: p.ms, transitionOpts: Object.keys(p.opts).length ? p.opts : undefined })} title={`${TRANSITIONS[p.transition]} · ${p.ms} ms`}>★ {p.name}</button><button type="button" className="ghost small" aria-label={`Borrar la favorita ${p.name}`} onClick={() => onDeletePreset(p.id)}>✕</button></span>)}
+    </div>}
+  </details>
+}
+
+export type AnimProp = { key: string; label: string; min: number; max: number; step: number; show: (v: number) => string }
+export const LAYER_PROPS: AnimProp[] = [
+  { key: 'x', label: 'Horizontal', min: -0.5, max: 1.5, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+  { key: 'y', label: 'Vertical', min: -0.5, max: 1.5, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+  { key: 'scale', label: 'Tamaño', min: 0.02, max: 4, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+  { key: 'rotation', label: 'Rotación', min: -720, max: 720, step: 1, show: v => `${Math.round(v)}°` },
+  { key: 'opacity', label: 'Opacidad', min: 0, max: 1, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+]
+export const CLIP_PROPS: AnimProp[] = [
+  { key: 'zoom', label: 'Zoom', min: 0.2, max: 5, step: 0.01, show: v => `${v.toFixed(2)}×` },
+  { key: 'focusX', label: 'Encuadre horizontal', min: 0, max: 1, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+  { key: 'focusY', label: 'Encuadre vertical', min: 0, max: 1, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+  { key: 'rotation', label: 'Rotación', min: -720, max: 720, step: 1, show: v => `${Math.round(v)}°` },
+  { key: 'opacity', label: 'Opacidad', min: 0, max: 1, step: 0.01, show: v => `${Math.round(v * 100)} %` },
+]
+export const KEY_EASINGS: Record<KeyEasing, string> = { smooth: 'Suave', linear: 'Lineal', in: 'Acelera', out: 'Frena', hold: 'Salto (sin transición)' }
+type AnyKey = { atMs: number; easing?: KeyEasing } & Record<string, number | string | undefined>
+
+/**
+ * Keyframes of a clip or layer: add one at the playhead with the current values, edit time / values / curve of each, remove,
+ * copy and paste to another clip, apply ready-made movements (smooth moves on still photos for lo-fi videos) and save your own.
+ */
+export function KeyframeEditor({ title, props, keys, current, localMs, durationMs, inside, onKeys, canPaste, onCopy, onPaste, presets, onApplyPreset, onSavePreset, onDeletePreset }: {
+  title: string; props: AnimProp[]
+  keys: AnyKey[] | undefined; current: Record<string, number>; localMs: number; durationMs: number; inside: boolean
+  onKeys: (next: AnyKey[] | undefined) => void
+  canPaste: boolean; onCopy: () => void; onPaste: () => void
+  presets: AnimationPreset[]; onApplyPreset: (p: AnimationPreset) => void; onSavePreset: (name: string) => void; onDeletePreset: (id: string) => void
+}) {
+  const [name, setName] = useState('')
+  const list = keys ?? []
+  const setKey = (i: number, patch: Partial<AnyKey>) => onKeys(list.map((k, n) => (n === i ? cleanKey({ ...k, ...patch }) : k)).sort((a, b) => a.atMs - b.atMs))
+  const addHere = () => {
+    const at = Math.round(Math.min(Math.max(localMs, 0), durationMs))
+    const rest = list.filter(k => Math.abs(k.atMs - at) > 20)
+    onKeys([...rest, { atMs: at, ...Object.fromEntries(props.map(p => [p.key, Math.round(current[p.key] * 1000) / 1000])) }].sort((a, b) => a.atMs - b.atMs))
+  }
+  return <details className="small" open={list.length > 0}>
+    <summary><b>{title}</b> {list.length ? `(${list.length} fotogramas clave)` : ''}</summary>
+    <p className="muted">Pon el cabezal donde quieras, ajusta los valores (aquí o en el visor) y pulsa «Fotograma clave». Entre dos fotogramas clave los valores cambian con la curva del segundo. Son efectos de edición: mueven, escalan, giran o atenúan la imagen entera; no animan objetos dentro de una foto.</p>
+    <div className="pageActions">
+      <button type="button" className="ghost small" disabled={!inside} onClick={addHere}>◆ Fotograma clave en el cabezal ({Math.round(localMs / 100) / 10} s)</button>
+      <button type="button" className="ghost small" disabled={!list.length} onClick={onCopy}>Copiar animación</button>
+      <button type="button" className="ghost small" disabled={!canPaste} onClick={onPaste}>Pegar animación</button>
+      {list.length > 0 && <button type="button" className="ghost small" onClick={() => onKeys(undefined)}>Quitar todos</button>}
+    </div>
+    {list.length > 0 && <div className="tableWrap"><table className="table small" aria-label={`Fotogramas clave de ${title}`}><thead><tr><th>Tiempo (s)</th>{props.map(p => <th key={p.key}>{p.label}</th>)}<th>Curva</th><th /></tr></thead><tbody>
+      {list.map((k, i) => <tr key={`${k.atMs}-${i}`}>
+        <td><input type="number" aria-label={`Tiempo del fotograma clave ${i + 1}`} min={0} max={durationMs / 1000} step={0.1} defaultValue={Math.round(k.atMs / 100) / 10} onBlur={e => setKey(i, { atMs: Math.round(Math.min(durationMs, Math.max(0, Number(e.target.value) * 1000))) })} style={{ width: 64 }} /></td>
+        {props.map(p => <td key={p.key}><input type="number" aria-label={`${p.label} del fotograma clave ${i + 1}`} min={p.min} max={p.max} step={p.step} defaultValue={k[p.key] === undefined ? '' : String(k[p.key])} placeholder="—" onBlur={e => setKey(i, { [p.key]: e.target.value === '' ? undefined : Math.min(p.max, Math.max(p.min, Number(e.target.value))) })} style={{ width: 70 }} /></td>)}
+        <td><select aria-label={`Curva del fotograma clave ${i + 1}`} value={k.easing ?? 'smooth'} onChange={e => setKey(i, { easing: e.target.value === 'smooth' ? undefined : e.target.value as KeyEasing })}>{(Object.keys(KEY_EASINGS) as KeyEasing[]).map(x => <option key={x} value={x}>{KEY_EASINGS[x]}</option>)}</select></td>
+        <td><button type="button" className="ghost small" aria-label={`Quitar el fotograma clave ${i + 1}`} onClick={() => onKeys(list.filter((_, n) => n !== i))}>✕</button></td>
+      </tr>)}
+    </tbody></table></div>}
+    {presets.length > 0 && <div className="pageActions" role="group" aria-label={`Movimientos para ${title}`}>
+      {presets.map(p => <span key={p.id} className="pill small"><button type="button" className="ghost small" onClick={() => onApplyPreset(p)}>{p.id.startsWith('b-') ? '' : '★ '}{p.name}</button>{!p.id.startsWith('b-') && <button type="button" className="ghost small" aria-label={`Borrar la animación ${p.name}`} onClick={() => onDeletePreset(p.id)}>✕</button>}</span>)}
+    </div>}
+    <div className="field-row" style={{ alignItems: 'end' }}>
+      <label>Guardar esta animación<input aria-label="Nombre de la animación" value={name} maxLength={40} placeholder="p. ej. Zoom lofi" onChange={e => setName(e.target.value)} /></label>
+      <button type="button" className="ghost small" disabled={!name.trim() || !list.length} onClick={() => { onSavePreset(name.trim()); setName('') }}>Guardar</button>
+    </div>
+  </details>
+}
+const cleanKey = (k: AnyKey): AnyKey => Object.fromEntries(Object.entries(k).filter(([, v]) => v !== undefined)) as AnyKey

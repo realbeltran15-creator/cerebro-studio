@@ -10,9 +10,9 @@
  * - Not used (the real-time exporter takes over) when the browser lacks WebCodecs H.264, when a file cannot be decoded here, or when a
  *   video with sound plays at another speed (the real-time path keeps its pitch; this one could not).
  */
-import { clipStarts, exportPlan, projectDurationMs, tracksOf, type Composition } from './composition'
+import { clipStarts, exportPlan, projectDurationMs, type Composition } from './composition'
 import { drawOps, type DrawSource } from './draw'
-import { audioTrackFactors, audioVoices, busLevels, frameAt, voiceGainAt, voiceWindows, type Bus, type KindOf, type VisualOp, type Voice } from './scene'
+import { audioTrackFactors, audioVoices, busLevels, frameAt, videoVoices as videoVoicesOf, voiceGainAt, voiceWindows, type Bus, type KindOf, type VisualOp, type Voice } from './scene'
 
 export class FastExportUnsupported extends Error {}
 
@@ -63,21 +63,11 @@ export async function fastExport(opts: {
   const sup = await fastExportSupported(plan.width, plan.height)
   if (!sup.ok) throw new FastExportUnsupported(sup.reason)
   const starts = clipStarts(c)
-  const tracks = tracksOf(c)
   const factors = audioTrackFactors(c)
   const levels = busLevels(c)
 
-  // The videos' own sound, as voices (the player plays it from the picture element; here it is decoded like any other sound).
-  const videoVoices: Array<Voice & { rate: number; trimSec: number }> = []
-  const mainMuted = tracks.find(t => t.id === 'main')?.muted
-  c.clips.forEach((k, i) => {
-    if (!k.visualAssetId || opts.kindOf(k.visualAssetId) !== 'video' || k.muted || mainMuted || (k.volume ?? 1) <= 0) return
-    videoVoices.push({ key: `vc:${k.id}`, assetId: k.visualAssetId, bus: 'video', trackId: 'main', startMs: starts[i], endMs: starts[i] + k.durationMs, sourceStartMs: k.trimInMs ?? 0, loop: false, volume: k.volume ?? 1, pan: 0, envelope: null, duck: null, rate: k.speed ?? 1, trimSec: (k.trimInMs ?? 0) / 1000 })
-  })
-  for (const o of c.overlays ?? []) {
-    if (opts.kindOf(o.assetId) !== 'video' || o.muted || (o.volume ?? 1) <= 0 || tracks.find(t => t.id === o.trackId)?.muted) continue
-    videoVoices.push({ key: `vo:${o.id}`, assetId: o.assetId, bus: 'video', trackId: o.trackId, startMs: o.startMs, endMs: o.startMs + o.durationMs, sourceStartMs: o.trimInMs, loop: false, volume: o.volume ?? 1, pan: 0, envelope: null, duck: null, rate: o.speed ?? 1, trimSec: o.trimInMs / 1000 })
-  }
+  // The videos' own sound, as voices (with the transitions' crossfades), decoded like any other sound.
+  const videoVoices = videoVoicesOf(c, opts.kindOf)
   if (videoVoices.some(v => Math.abs(v.rate - 1) > 0.001)) throw new FastExportUnsupported('Hay vídeos con sonido a otra velocidad: se exporta en tiempo real para mantener el tono de su audio.')
   const voices: Array<Voice & { rate: number; trimSec: number }> = [...audioVoices(c).map(v => ({ ...v, rate: 1, trimSec: v.loop ? 0 : v.sourceStartMs / 1000 })), ...videoVoices]
   const windows = voiceWindows(voices)

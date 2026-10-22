@@ -8,39 +8,58 @@ import type { CameraMove, TextAnimation, Transition } from './composition'
 export type TransitionFrame = {
   /** Opacity of a black layer over everything (fade through black). */
   black: number
+  /** Opacity of a white layer over both clips (flash of light). */
+  white: number
   aAlpha: number; bAlpha: number
-  /** Incoming clip offset as a fraction of the width (slide). */
-  bOffsetX: number
-  /** Fraction of the width revealed for B from the left (wipe); 1 = full frame. */
-  bReveal: number
-  /** Extra zoom applied to A (zoom transition). */
-  aScale: number
-  /** Incoming clip offset as a fraction of the height (slide up). */
-  bOffsetY: number
-  /** Fraction of the height revealed for B from the top (vertical wipe). */
-  bRevealY: number
+  /** Incoming clip offset as a fraction of the width / height (slides; negative = from the other side). */
+  bOffsetX: number; bOffsetY: number
+  /** Fraction of B revealed (wipes) and from which edge. */
+  bReveal: number; bRevealY: number; bRevealFrom: 'left' | 'right' | 'top' | 'bottom'
+  /** Extra zoom applied to A (zoom in) and to B (zoom out). */
+  aScale: number; bScale: number
   /** Blur of each clip in % of the frame height (blur transition). */
   aBlur: number; bBlur: number
 }
+export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
+export type TransitionEasing = 'smooth' | 'linear' | 'in' | 'out'
+export type TransitionOpts = { direction?: TransitionDirection; intensity?: number; easing?: TransitionEasing }
+export const EASINGS: Record<TransitionEasing, string> = { smooth: 'Suave (entra y sale despacio)', linear: 'Lineal', in: 'Acelera', out: 'Frena al final' }
+export const DIRECTIONS: Record<TransitionDirection, string> = { left: 'Hacia la izquierda', right: 'Hacia la derecha', up: 'Hacia arriba', down: 'Hacia abajo' }
+/** Transitions with a direction, and with an intensity. */
+export const HAS_DIRECTION: ReadonlySet<Transition> = new Set<Transition>(['slide', 'wipe', 'slide_up', 'wipe_down'])
+export const HAS_INTENSITY: ReadonlySet<Transition> = new Set<Transition>(['zoom', 'zoom_out', 'blur', 'flash'])
 
-const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
+const smooth = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2)
+const ease = smooth
+export const easeBy = (e: TransitionEasing | undefined, t: number) => (e === 'linear' ? t : e === 'in' ? t * t : e === 'out' ? 1 - (1 - t) * (1 - t) : smooth(t))
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t))
 
 /** Transitions that draw the next clip during the overlap (the rest only touch the outgoing clip). */
-export const BLENDS: ReadonlySet<Transition> = new Set<Transition>(['dissolve', 'slide', 'wipe', 'zoom', 'blur', 'slide_up', 'wipe_down'])
+export const BLENDS: ReadonlySet<Transition> = new Set<Transition>(['dissolve', 'slide', 'wipe', 'zoom', 'zoom_out', 'blur', 'slide_up', 'wipe_down', 'flash'])
 
-export function transitionFrame(kind: Transition, rawT: number): TransitionFrame {
-  const t = clamp01(rawT), e = ease(t)
-  const base: TransitionFrame = { black: 0, aAlpha: 1, bAlpha: 0, bOffsetX: 0, bReveal: 1, aScale: 1, bOffsetY: 0, bRevealY: 1, aBlur: 0, bBlur: 0 }
+export function transitionFrame(kind: Transition, rawT: number, o: TransitionOpts = {}): TransitionFrame {
+  const t = clamp01(rawT), e = easeBy(o.easing, t)
+  const k = Math.min(3, Math.max(0.1, o.intensity ?? 1))
+  const base: TransitionFrame = { black: 0, white: 0, aAlpha: 1, bAlpha: 0, bOffsetX: 0, bOffsetY: 0, bReveal: 1, bRevealY: 1, bRevealFrom: 'left', aScale: 1, bScale: 1, aBlur: 0, bBlur: 0 }
+  const dir: TransitionDirection = o.direction ?? (kind === 'slide_up' ? 'up' : kind === 'wipe_down' ? 'down' : kind === 'wipe' ? 'right' : 'left')
   switch (kind) {
     case 'dissolve': return { ...base, bAlpha: e }
-    case 'slide': return { ...base, bAlpha: 1, bOffsetX: 1 - e }
-    case 'wipe': return { ...base, bAlpha: 1, bReveal: e }
-    case 'zoom': return { ...base, aScale: 1 + 0.35 * e, bAlpha: clamp01((t - 0.35) / 0.65) }
-    case 'slide_up': return { ...base, bAlpha: 1, bOffsetY: 1 - e }
-    case 'wipe_down': return { ...base, bAlpha: 1, bRevealY: e }
+    // Slides: the incoming clip travels in the chosen direction (left = enters from the right edge).
+    case 'slide': case 'slide_up': {
+      const r = 1 - e
+      return { ...base, bAlpha: 1, bOffsetX: dir === 'left' ? r : dir === 'right' ? -r : 0, bOffsetY: dir === 'up' ? r : dir === 'down' ? -r : 0 }
+    }
+    // Wipes: the edge of the incoming clip moves in the chosen direction (right = reveals from the left edge).
+    case 'wipe': case 'wipe_down': {
+      if (dir === 'up' || dir === 'down') return { ...base, bAlpha: 1, bRevealY: e, bRevealFrom: dir === 'down' ? 'top' : 'bottom' }
+      return { ...base, bAlpha: 1, bReveal: e, bRevealFrom: dir === 'right' ? 'left' : 'right' }
+    }
+    case 'zoom': return { ...base, aScale: 1 + 0.35 * k * e, bAlpha: clamp01((t - 0.35) / 0.65) }
+    case 'zoom_out': return { ...base, bScale: 1 + 0.35 * k * (1 - e), bAlpha: e }
     // The outgoing clip blurs out while the incoming one comes in blurred and sharpens.
-    case 'blur': return { ...base, aBlur: 3 * e, bBlur: 3 * (1 - e), bAlpha: e }
+    case 'blur': return { ...base, aBlur: 3 * k * e, bBlur: 3 * k * (1 - e), bAlpha: e }
+    // A flash of light: everything goes bright, the cut happens at the brightest point, then the light fades.
+    case 'flash': return { ...base, bAlpha: t >= 0.5 ? 1 : 0, white: Math.min(1, k) * (1 - Math.abs(2 * e - 1)) }
     default: return base
   }
 }
@@ -119,8 +138,8 @@ export function textFrameFor(t: { animation?: TextAnimation; outAnimation?: Text
   }
 }
 
-/** Keyframed value of each transform property at `localMs` (ease in-out between the keyframes that set it; flat outside them). */
-export function transformAt<T extends Record<string, number>>(base: T, keyframes: Array<{ atMs: number } & Partial<T>> | undefined, localMs: number): T {
+/** Keyframed value of each transform property at `localMs` (between the keyframes that set it, with the curve of the keyframe it arrives at; flat outside them). */
+export function transformAt<T extends Record<string, number>>(base: T, keyframes: Array<{ atMs: number; easing?: string } & Partial<T>> | undefined, localMs: number): T {
   if (!keyframes?.length) return base
   const out = { ...base }
   for (const key of Object.keys(base) as Array<keyof T>) {
@@ -131,8 +150,23 @@ export function transformAt<T extends Record<string, number>>(base: T, keyframes
     if (localMs >= last.atMs) { out[key] = last[key] as unknown as T[keyof T]; continue }
     const i = ks.findIndex(k => k.atMs > localMs)
     const a = ks[i - 1], b = ks[i]
-    const p = ease((localMs - a.atMs) / Math.max(1, b.atMs - a.atMs))
+    const raw = (localMs - a.atMs) / Math.max(1, b.atMs - a.atMs)
+    const p = b.easing === 'hold' ? 0 : easeBy(b.easing as TransitionEasing | undefined, raw)
     out[key] = ((a[key] as unknown as number) + ((b[key] as unknown as number) - (a[key] as unknown as number)) * p) as unknown as T[keyof T]
   }
   return out
+}
+
+/**
+ * Splits keyframes at `atMs`: both halves get a keyframe at the cut with the value there, so the animation continues seamlessly;
+ * the second half's times start at 0.
+ */
+export function splitKeyframes<K extends { atMs: number; easing?: string }>(keys: K[] | undefined, base: Record<string, number>, atMs: number): [K[] | undefined, K[] | undefined] {
+  if (!keys?.length) return [keys, keys]
+  const props = Object.keys(base).filter(p => keys.some(k => (k as Record<string, unknown>)[p] !== undefined))
+  const at = transformAt(base, keys as unknown as Array<{ atMs: number } & Record<string, number>>, atMs)
+  const edge = Object.fromEntries(props.map(p => [p, at[p]])) as Partial<K>
+  const first = [...keys.filter(k => k.atMs < atMs), { ...edge, atMs } as K]
+  const second = [{ ...edge, atMs: 0 } as K, ...keys.filter(k => k.atMs > atMs).map(k => ({ ...k, atMs: k.atMs - atMs }))]
+  return [first, second]
 }

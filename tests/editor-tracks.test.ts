@@ -219,3 +219,80 @@ describe('instructions on the same engine (overlays, filters, markers, ducking w
     expect(sel.ok && sel.range).toEqual({ startMs: 120000, endMs: 180000 })
   })
 })
+
+describe('transitions: options, handles and crossfade', async () => {
+  const { transitionFrame, transformAt, splitKeyframes } = await import('@/lib/editor/motion')
+  const { videoVoices } = await import('@/lib/editor/scene')
+  const { updateClip: upd } = await import('@/lib/editor/timeline')
+  it('direction, intensity and easing change the frame', () => {
+    expect(transitionFrame('slide', 0.5, { direction: 'right', easing: 'linear' }).bOffsetX).toBeCloseTo(-0.5)
+    expect(transitionFrame('slide', 0.5, { direction: 'down', easing: 'linear' }).bOffsetY).toBeCloseTo(-0.5)
+    expect(transitionFrame('wipe', 0.3, { direction: 'left', easing: 'linear' })).toMatchObject({ bReveal: 0.3, bRevealFrom: 'right' })
+    expect(transitionFrame('wipe', 0.3, { direction: 'up', easing: 'linear' })).toMatchObject({ bRevealY: 0.3, bRevealFrom: 'bottom' })
+    expect(transitionFrame('zoom', 1, { intensity: 2 }).aScale).toBeCloseTo(1.7)
+    expect(transitionFrame('zoom_out', 0, {}).bScale).toBeCloseTo(1.35)
+    expect(transitionFrame('flash', 0.5, {}).white).toBeCloseTo(1)
+    expect(transitionFrame('flash', 0.49, { easing: 'linear' }).bAlpha).toBe(0)
+    expect(transitionFrame('dissolve', 0.25, { easing: 'in' }).bAlpha).toBeCloseTo(0.0625)
+  })
+  it('the incoming video plays during the transition when it has material before its start, and the sound crossfades', () => {
+    let c = base()
+    c = upd(c, c.clips[0].id, { transition: 'dissolve', transitionMs: 1000 })
+    c = upd(c, c.clips[1].id, { trimInMs: 3000 })
+    const mid = frameAt(c, 3500, kind).filter((o): o is VisualOp => o.type === 'visual')
+    expect(mid[1]).toMatchObject({ assetId: 'vid', live: true, sourceMs: 2500 })
+    expect(mid[1].volume).toBeCloseTo(0.5); expect(mid[0].volume).toBeCloseTo(0.5)
+    const vv = videoVoices(c, kind).find(v => v.assetId === 'vid')!
+    expect(vv).toMatchObject({ startMs: 3000, sourceStartMs: 2000 })
+    // Without a handle it holds its first frame and stays silent until its turn.
+    const held = frameAt(upd(c, c.clips[1].id, { trimInMs: 0 }), 3500, kind).filter((o): o is VisualOp => o.type === 'visual')
+    expect(held[1]).toMatchObject({ live: false, sourceMs: 0, volume: 0 })
+  })
+  it('white dips and keyframe curves', () => {
+    let c = base()
+    c = upd(c, c.clips[0].id, { transition: 'fade_white', transitionMs: 1000 })
+    expect(frameAt(c, 3800, kind).some(o => o.type === 'fill' && o.color === '#fff' && o.alpha > 0.7)).toBe(true)
+    expect(transformAt({ z: 0 }, [{ atMs: 0, z: 0 }, { atMs: 1000, z: 1, easing: 'hold' }], 900).z).toBe(0)
+    expect(transformAt({ z: 0 }, [{ atMs: 0, z: 0 }, { atMs: 1000, z: 1, easing: 'linear' }], 250).z).toBeCloseTo(0.25)
+    const [a, b] = splitKeyframes([{ atMs: 0, z: 0 }, { atMs: 1000, z: 1, easing: 'linear' }], { z: 0 }, 400)
+    expect(a?.[a.length - 1]).toMatchObject({ atMs: 400, z: 0.4 }); expect(b?.[0]).toMatchObject({ atMs: 0, z: 0.4 }); expect(b?.[1]).toMatchObject({ atMs: 600, z: 1 })
+  })
+  it('main-clip keyframes animate the framing of a photo', () => {
+    let c = base()
+    c = upd(c, c.clips[0].id, { keyframes: [{ atMs: 0, zoom: 1 }, { atMs: 4000, zoom: 1.2, easing: 'linear' }] })
+    const op = frameAt(c, 2000, kind).find((o): o is VisualOp => o.type === 'visual')!
+    expect(op.zoom).toBeCloseTo(1.1)
+  })
+})
+
+describe('instructions for transitions, animation and styles', async () => {
+  const { runInstruction } = await import('@/lib/editor/commands')
+  const ctx = (c: Composition, extra = {}) => ({ playheadMs: 500, range: null, selectedClipId: null, selectedAssetId: null, assets: [], beatsMs: [], isVideo: (k: { visualAssetId: string | null }) => k.visualAssetId === 'vid', ...extra })
+  it('«pon una disolvencia de dos segundos entre estas fotografías»', () => {
+    let c = addClip(base(), 'img', 4000)
+    const sel = c.clips.filter(k => k.visualAssetId === 'img').map(k => ({ kind: 'clip' as const, id: k.id }))
+    const r = runInstruction(c, 'pon una disolvencia de dos segundos entre estas fotografías', ctx(c, { selectedItems: sel, selectedClipId: sel[1].id }))
+    if (!r.ok) throw new Error(r.message)
+    c = r.composition
+    expect(c.clips.filter(k => k.transition === 'dissolve' && k.transitionMs === 2000).map(k => k.id)).toEqual([sel[0].id])
+  })
+  it('«aplica una transición suave a todos los cambios de imagen» and «haz un zoom lento durante ocho segundos»', () => {
+    const c = base()
+    const a = runInstruction(c, 'aplica una transición suave a todos los cambios de imagen', ctx(c))
+    expect(a.ok && a.composition.clips.every(k => k.transition === 'dissolve')).toBe(true)
+    const z = runInstruction(c, 'haz un zoom lento durante ocho segundos', ctx(c))
+    expect(z.ok && z.composition.clips[0]).toMatchObject({ durationMs: 8000, camera: { kind: 'zoom_in' } })
+  })
+  it('«baja la música cuando comienza la voz», «guarda este estilo», and honesty about animating one object', () => {
+    const c = { ...base(), duckMusic: false }
+    const d = runInstruction(c, 'baja la música cuando comienza la voz', ctx(c))
+    expect(d.ok && d.composition.duckMusic).toBe(true)
+    const st = runInstruction(c, 'guarda este estilo como «Lofi suave»', ctx(c))
+    expect(st.ok && st.saveStyle).toBe('Lofi suave')
+    const v = runInstruction(c, 'anima solamente la luz de las velas', ctx(c))
+    expect(v.ok).toBe(false)
+    expect(!v.ok && v.message).toMatch(/no se puede con transformaciones/)
+    const fl = runInstruction(c, 'transición de destello de luz en todo', ctx(c))
+    expect(fl.ok && fl.composition.clips[0].transition).toBe('flash')
+  })
+})

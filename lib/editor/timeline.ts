@@ -1,3 +1,4 @@
+import { splitKeyframes } from './motion'
 import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MAX_TIMELINE_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
 
 /**
@@ -73,8 +74,9 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   if (i < 0) return c
   const clip = c.clips[i]
   if (atMs < MIN_CLIP_MS || clip.durationMs - atMs < MIN_CLIP_MS) return c
-  const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut', ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
-  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
+  const [k1, k2] = splitKeyframes(clip.keyframes, { zoom: clip.zoom ?? 1, focusX: clip.focusX ?? 0.5, focusY: clip.focusY ?? 0.5, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 }, Math.round(atMs))
+  const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut', transitionMs: undefined, transitionOpts: undefined, ...(k1 ? { keyframes: k1 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
+  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)
   // Subtitles: keep the narration on the first half only (it was timed to the whole clip).

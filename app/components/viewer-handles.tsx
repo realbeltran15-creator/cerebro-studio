@@ -6,7 +6,7 @@ import { boxRect, textLayout } from '@/lib/editor/draw'
 import { transformAt } from '@/lib/editor/motion'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { frameAt, mainClipAt, type KindOf, type VisualOp } from '@/lib/editor/scene'
-import { setKeyframe, updateOverlay, type ItemRef } from '@/lib/editor/tracks'
+import { setClipKeyframe, setKeyframe, updateOverlay, type ItemRef } from '@/lib/editor/tracks'
 import { updateClip, updateTextClip } from '@/lib/editor/timeline'
 
 type Box = { cx: number; cy: number; w: number; h: number; rotation: number }
@@ -125,13 +125,13 @@ export function ViewerHandles({ comp, player, kindOf, playheadMs, selection, onS
     } else {
       const k = c.clips.find(x => x.id === hit.ref.id)
       if (!k) return
-      if (d.mode === 'scale') {
-        const r0 = Math.hypot(d.x0 - w / 2, d.y0 - h / 2), r1 = Math.hypot(p.x - w / 2, p.y - h / 2)
-        live(updateClip(c, k.id, { zoom: Math.min(3, Math.max(1, (k.zoom ?? 1) * r1 / Math.max(1, r0))) }))
-      } else {
-        // Framing: dragging the picture right shows more of its left side.
-        live(updateClip(c, k.id, { focusX: Math.min(1, Math.max(0, (k.focusX ?? 0.5) - dx / w)), focusY: Math.min(1, Math.max(0, (k.focusY ?? 0.5) - dy / h)) }))
-      }
+      const local = Math.min(Math.max(t - (clipStarts(c)[c.clips.indexOf(k)] ?? 0), 0), k.durationMs)
+      const now = transformAt({ zoom: k.zoom ?? 1, focusX: k.focusX ?? 0.5, focusY: k.focusY ?? 0.5, rotation: k.rotation ?? 0, opacity: k.opacity ?? 1 }, k.keyframes, local)
+      // Framing: dragging the picture right shows more of its left side; the corner zooms. With keyframes it sets the one at the playhead.
+      const patch = d.mode === 'scale'
+        ? { zoom: Math.min(3, Math.max(1, now.zoom * Math.hypot(p.x - w / 2, p.y - h / 2) / Math.max(1, Math.hypot(d.x0 - w / 2, d.y0 - h / 2)))) }
+        : { focusX: Math.min(1, Math.max(0, now.focusX - dx / w)), focusY: Math.min(1, Math.max(0, now.focusY - dy / h)) }
+      live(k.keyframes?.length ? setClipKeyframe(c, k.id, local, { ...now, ...patch }) : updateClip(c, k.id, patch))
     }
   }
   function up() { if (drag.current) { drag.current = null; end(); force(n => n + 1) } }

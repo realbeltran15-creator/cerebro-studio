@@ -10,7 +10,7 @@ import { WaveformSvg } from './waveform-view'
 
 export const ASSET_MIME = 'application/x-cerebro-asset'
 export const TRANSITION_MIME = 'application/x-cerebro-transition'
-export const TRANSITION_ICONS: Record<Transition, string> = { fade: '◐', dissolve: '◑', slide: '⇢', slide_up: '⇡', wipe: '▶', wipe_down: '▼', zoom: '⊕', blur: '≋', cut: '|' }
+export const TRANSITION_ICONS: Record<Transition, string> = { fade_white: '○', zoom_out: '⊖', flash: '✦', fade: '◐', dissolve: '◑', slide: '⇢', slide_up: '⇡', wipe: '▶', wipe_down: '▼', zoom: '⊕', blur: '≋', cut: '|' }
 // Track colours keep white text at >= 4.5:1 (WCAG AA).
 export const kindColor: Record<string, string> = { image: '#2f62c4', video: '#7c4fe0', none: '#444', voice: '#23805a', music: '#9a5b0f', sfx: '#b03a2e', text: '#8a3a8f', overlay: '#1f6f86' }
 const secs = (ms: number) => Math.round(ms / 100) / 10

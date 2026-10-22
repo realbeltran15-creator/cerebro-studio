@@ -7,8 +7,8 @@
 export type OutputFormat = '16:9' | '9:16' | '1:1' | 'custom'
 
 /** fade = through black; cut = none; dissolve/slide/wipe/zoom blend into the next clip during the last fadeMs of this one. */
-export type Transition = 'fade' | 'cut' | 'dissolve' | 'slide' | 'wipe' | 'zoom' | 'blur' | 'slide_up' | 'wipe_down'
-export const TRANSITIONS: Record<Transition, string> = { fade: 'Fundido a negro', dissolve: 'Disolvencia', slide: 'Deslizar', slide_up: 'Deslizar hacia arriba', wipe: 'Cortinilla', wipe_down: 'Cortinilla vertical', zoom: 'Zoom', blur: 'Desenfoque', cut: 'Corte' }
+export type Transition = 'fade' | 'fade_white' | 'cut' | 'dissolve' | 'slide' | 'wipe' | 'zoom' | 'zoom_out' | 'blur' | 'flash' | 'slide_up' | 'wipe_down'
+export const TRANSITIONS: Record<Transition, string> = { fade: 'Fundido a negro', fade_white: 'Fundido a blanco', dissolve: 'Disolvencia', slide: 'Deslizar', slide_up: 'Deslizar hacia arriba', wipe: 'Cortinilla', wipe_down: 'Cortinilla vertical', zoom: 'Zoom de entrada', zoom_out: 'Zoom de salida', blur: 'Desenfoque', flash: 'Destello de luz', cut: 'Corte' }
 export type TextAnimation = 'none' | 'fade' | 'pop' | 'slide' | 'typewriter'
 export const TEXT_ANIMATIONS: Record<TextAnimation, string> = { none: 'Sin animación', fade: 'Aparecer', pop: 'Rebote', slide: 'Subir', typewriter: 'Máquina de escribir' }
 /** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
@@ -57,6 +57,7 @@ export type ExportSettings = {
 /** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
 export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
 
+export type TransitionOptions = { direction?: 'left' | 'right' | 'up' | 'down'; intensity?: number; easing?: 'smooth' | 'linear' | 'in' | 'out' }
 export type Filters = { brightness: number; contrast: number; saturation: number; blur: number }
 export const NO_FILTERS: Filters = { brightness: 1, contrast: 1, saturation: 1, blur: 0 }
 export const FILTER_PRESETS: Record<string, { label: string; f: Filters }> = {
@@ -73,7 +74,12 @@ export type Crop = { left: number; top: number; right: number; bottom: number }
 export type Transform = { x: number; y: number; scale: number; rotation: number; opacity: number }
 export const DEFAULT_TRANSFORM: Transform = { x: 0.5, y: 0.5, scale: 0.4, rotation: 0, opacity: 1 }
 /** A keyframe (clip-relative time) with the properties it fixes; between keyframes values are interpolated with ease-in-out. */
-export type Keyframe = { atMs: number } & Partial<Transform>
+export type KeyEasing = 'smooth' | 'linear' | 'in' | 'out' | 'hold'
+/** A keyframe (clip-relative time) with the properties it fixes; `easing` is the curve that arrives at it (smooth by default). */
+export type Keyframe = { atMs: number; easing?: KeyEasing } & Partial<Transform>
+/** Framing of a main-track picture: zoom, which part stays in view, rotation and opacity. */
+export type ClipFrame = { zoom: number; focusX: number; focusY: number; rotation: number; opacity: number }
+export type ClipKeyframe = { atMs: number; easing?: KeyEasing } & Partial<ClipFrame>
 /** A picture or video above the main track (picture-in-picture, logos, stickers, a second camera). */
 export type OverlayClip = {
   id: string; trackId: string; assetId: string
@@ -133,8 +139,12 @@ export type Clip = {
   /** Rotation in degrees and opacity 0..1 of the picture. */
   rotation?: number
   opacity?: number
+  /** Animated framing (zoom, position, rotation, opacity) over the clip, multiplied by the camera move. */
+  keyframes?: ClipKeyframe[]
   /** Transition length into the next clip (ms); absent = the montage's fadeMs. */
   transitionMs?: number
+  /** Direction, intensity and easing of that transition. */
+  transitionOpts?: TransitionOptions | null
   groupId?: string
 }
 
@@ -386,10 +396,12 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       speed: clamp(c.speed, 0.25, 4, 1),
       camera: parseCamera(c.camera),
       ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
+      ...(Array.isArray(c.keyframes) && c.keyframes.length ? { keyframes: parseClipKeyframes(c.keyframes, clampMs(Number(c.durationMs) || 5000)) } : {}),
       ...(c.crop ? { crop: parseCrop(c.crop) } : {}),
       ...(Number(c.rotation) ? { rotation: clamp(c.rotation, -360, 360, 0) } : {}),
       ...(c.opacity !== undefined && Number(c.opacity) < 1 ? { opacity: clamp(c.opacity, 0, 1, 1) } : {}),
       ...(c.transitionMs !== undefined && Number.isFinite(Number(c.transitionMs)) ? { transitionMs: clamp(c.transitionMs, 0, 3000, 300) } : {}),
+      ...(c.transitionOpts && typeof c.transitionOpts === 'object' ? { transitionOpts: parseTransitionOpts(c.transitionOpts) } : {}),
       ...(typeof c.groupId === 'string' && c.groupId ? { groupId: c.groupId.slice(0, 60) } : {}),
       ...(Array.isArray(c.cues) ? { cues: parseCues(c.cues, clampMs(Number(c.durationMs) || 5000)) } : {}),
     } satisfies Clip]
@@ -427,6 +439,13 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
   }
 }
 
+function parseTransitionOpts(o: Partial<TransitionOptions>): TransitionOptions {
+  return {
+    ...(o.direction === 'left' || o.direction === 'right' || o.direction === 'up' || o.direction === 'down' ? { direction: o.direction } : {}),
+    ...(o.intensity !== undefined && Number.isFinite(Number(o.intensity)) ? { intensity: clamp(o.intensity, 0.1, 3, 1) } : {}),
+    ...(o.easing === 'smooth' || o.easing === 'linear' || o.easing === 'in' || o.easing === 'out' ? { easing: o.easing } : {}),
+  }
+}
 function parseFilters(f: unknown): Filters | null {
   if (!f || typeof f !== 'object') return null
   const v = f as Partial<Filters>
@@ -445,6 +464,7 @@ function parseTransform(t: unknown): Transform {
   const v = (t && typeof t === 'object' ? t : {}) as Partial<Transform>
   return { x: clamp(v.x, -1, 2, 0.5), y: clamp(v.y, -1, 2, 0.5), scale: clamp(v.scale, 0.02, 4, 0.4), rotation: clamp(v.rotation, -720, 720, 0), opacity: clamp(v.opacity, 0, 1, 1) }
 }
+const EASES = ['smooth', 'linear', 'in', 'out', 'hold']
 function parseKeyframes(k: unknown, durationMs: number): Keyframe[] | undefined {
   if (!Array.isArray(k) || !k.length) return undefined
   const keys: Array<keyof Transform> = ['x', 'y', 'scale', 'rotation', 'opacity']
@@ -453,8 +473,25 @@ function parseKeyframes(k: unknown, durationMs: number): Keyframe[] | undefined 
     const at = Number((raw as Keyframe).atMs)
     if (!Number.isFinite(at)) return []
     const kf: Keyframe = { atMs: Math.round(Math.min(Math.max(at, 0), durationMs)) }
+    const e = (raw as Keyframe).easing
+    if (typeof e === 'string' && EASES.includes(e) && e !== 'smooth') kf.easing = e
     const full = parseTransform(raw)
     for (const key of keys) if ((raw as Keyframe)[key] !== undefined) kf[key] = full[key]
+    return [kf]
+  }).sort((a, b) => a.atMs - b.atMs).slice(0, 64)
+  return out.length ? out : undefined
+}
+function parseClipKeyframes(k: unknown, durationMs: number): ClipKeyframe[] | undefined {
+  if (!Array.isArray(k) || !k.length) return undefined
+  const lim: Record<keyof ClipFrame, [number, number]> = { zoom: [0.2, 5], focusX: [0, 1], focusY: [0, 1], rotation: [-720, 720], opacity: [0, 1] }
+  const out = k.flatMap(raw => {
+    if (!raw || typeof raw !== 'object') return []
+    const at = Number((raw as ClipKeyframe).atMs)
+    if (!Number.isFinite(at)) return []
+    const kf: ClipKeyframe = { atMs: Math.round(Math.min(Math.max(at, 0), durationMs)) }
+    const e = (raw as ClipKeyframe).easing
+    if (typeof e === 'string' && EASES.includes(e) && e !== 'smooth') kf.easing = e
+    for (const key of Object.keys(lim) as Array<keyof ClipFrame>) { const v = (raw as ClipKeyframe)[key]; if (v !== undefined && Number.isFinite(Number(v))) kf[key] = clamp(v, lim[key][0], lim[key][1], 1) }
     return [kf]
   }).sort((a, b) => a.atMs - b.atMs).slice(0, 64)
   return out.length ? out : undefined

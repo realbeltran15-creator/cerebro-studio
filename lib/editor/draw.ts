@@ -39,7 +39,11 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
   if (op.alpha <= 0) return
   ctx.save()
   ctx.globalAlpha = Math.min(1, op.alpha)
-  if (op.revealX < 1 || op.revealY < 1) { ctx.beginPath(); ctx.rect(0, 0, w * op.revealX, h * op.revealY); ctx.clip() }
+  if (op.revealX < 1 || op.revealY < 1) {
+    const rw = w * op.revealX, rh = h * op.revealY
+    const x = op.revealFrom === 'right' ? w - rw : 0, y = op.revealFrom === 'bottom' ? h - rh : 0
+    ctx.beginPath(); ctx.rect(x, y, rw, rh); ctx.clip()
+  }
   if (op.offsetX || op.offsetY) ctx.translate(w * op.offsetX, h * op.offsetY)
   if (op.scale !== 1) { ctx.translate(w / 2, h / 2); ctx.scale(op.scale, op.scale); ctx.translate(-w / 2, -h / 2) }
   if (op.backdrop) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h) }
