@@ -109,7 +109,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.locator('label', { hasText: /^Audio/ }).locator('select').selectOption('mus')
   await page.locator('label', { hasText: /^Pista/ }).locator('select').selectOption('music')
   await clips.first().click()
-  await page.getByRole('button', { name: /Añadir al inicio/ }).click()
+  await page.getByRole('button', { name: /Añadir al inicio|Añadir en el cabezal/ }).click()
   await page.locator('[aria-label="Pista de Música"] > div').first().waitFor()
   await page.getByRole('button', { name: 'Guardar ahora' }).click()
   await page.getByText('Montaje guardado en la nube.').waitFor()
@@ -179,7 +179,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.locator('label', { hasText: /^Audio/ }).locator('select').selectOption('beat')
   await page.locator('label', { hasText: /^Pista/ }).locator('select').selectOption('music')
   await clips.first().click()
-  await page.getByRole('button', { name: /Añadir al inicio/ }).click()
+  await page.getByRole('button', { name: /Añadir al inicio|Añadir en el cabezal/ }).click()
   await page.locator('[aria-label="Pista de Música"] svg[data-waveform]').first().waitFor({ timeout: 60000 })
   // The music is quiet noise with a loud click every 500 ms: a real waveform has tall columns at the clicks and flat ones in between.
   const wf = await page.evaluate(() => { const d = document.querySelector('[aria-label="Pista de Música"] svg[data-waveform] path')?.getAttribute('d') ?? ''; const ys = [...d.matchAll(/,(-?[\d.]+)/g)].map(m => Number(m[1])); const top = ys.slice(0, ys.length / 2); return { tall: top.filter(y => y < 5).length, flat: top.filter(y => y > 12).length, cols: top.length } })

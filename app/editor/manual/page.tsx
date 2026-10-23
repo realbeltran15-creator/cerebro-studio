@@ -773,9 +773,11 @@ export default function ManualEditorPage() {
               setBusy('audio')
               const ms = await audioDurationMs(addAudio).catch(() => 5000)
               const linked = selClip && addAudioKind === 'voice' ? selClip.id : null
-              apply(c => addAudioClip(c, { assetId: addAudio, kind: addAudioKind, linkedClipId: linked, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: Math.min(ms, addAudioKind === 'music' ? totalDurationMs(c) : ms), volume: addAudioKind === 'music' ? 0.3 : 1, muted: false }))
+              // Where the playhead is (at the start when it is at 0): no need to add it at 0 and then move it.
+              const at = linked ? 0 : Math.round(playheadMs)
+              apply(c => addAudioClip(c, { assetId: addAudio, kind: addAudioKind, linkedClipId: linked, offsetMs: 0, startMs: at, trimInMs: 0, durationMs: Math.min(ms, addAudioKind === 'music' ? Math.max(1000, totalDurationMs(c) - at) : ms), volume: addAudioKind === 'music' ? 0.3 : 1, muted: false }))
               setAddAudio(''); setBusy('')
-            })()}>{busy === 'audio' ? 'Midiendo…' : addAudioKind === 'voice' && selClip ? 'Añadir enlazado al clip seleccionado' : 'Añadir al inicio'}</button>
+            })()}>{busy === 'audio' ? 'Midiendo…' : addAudioKind === 'voice' && selClip ? 'Añadir enlazado al clip seleccionado' : playheadMs >= 100 ? `Añadir en el cabezal (${fmt(playheadMs)})` : 'Añadir al inicio'}</button>
           </section>
         </details>
           </>,
@@ -1191,7 +1193,7 @@ function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: Audi
       </tr>)}
     </tbody></table>
     <div className="pageActions">
-      <button type="button" className="ghost small" onClick={() => onChange({ envelope: [...pts, { atMs: Math.round(rel), gain: 1 }].sort((x, y) => x.atMs - y.atMs) })}>Añadir punto en el cabezal</button>
+      <button type="button" className="ghost small" disabled={pts.some(p => Math.abs(p.atMs - rel) < 50)} title={pts.some(p => Math.abs(p.atMs - rel) < 50) ? 'Ya hay un punto en el cabezal: mueve el cabezal para añadir otro' : undefined} onClick={() => onChange({ envelope: [...pts, { atMs: Math.round(rel), gain: 1 }].sort((x, y) => x.atMs - y.atMs) })}>Añadir punto en el cabezal</button>
       {inRange && <button type="button" className="ghost small" onClick={() => onChange({ envelope: setLevelBetween(a, range!.startMs - startMs, range!.endMs - startMs, 0.3).envelope })}>Bajar al 30 % en el fragmento</button>}
       {pts.length > 0 && <button type="button" className="ghost small" onClick={() => onChange({ envelope: [] })}>Quitar puntos</button>}
     </div>
