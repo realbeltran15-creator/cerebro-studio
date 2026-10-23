@@ -71,7 +71,7 @@ export default function ManualEditorPage() {
   const setMode = (m: WorkspaceMode) => {
     const was = ws.layout.mode
     if (m === 'wide' && was !== 'wide') { sidebarBeforeWide.current = readSidebarMode(); writeSidebarMode('hidden') }
-    if (was === 'wide' && m !== 'wide') writeSidebarMode(sidebarBeforeWide.current && sidebarBeforeWide.current !== 'hidden' ? sidebarBeforeWide.current : 'expanded')
+    if (was === 'wide' && m !== 'wide') writeSidebarMode(sidebarBeforeWide.current && sidebarBeforeWide.current !== 'hidden' ? sidebarBeforeWide.current : 'pinned')
     if (m === 'edit') ws.set({ mode: m, left: true, right: true, viewerH: DEFAULT_LAYOUT.viewerH, rightW: DEFAULT_LAYOUT.rightW })
     if (m === 'audio') { ws.set({ mode: m, left: true, right: true, tab: 'audio', viewerH: 300 }); setTrackScale(1.4) }
     if (m === 'effects') ws.set({ mode: m, left: true, right: true, tab: 'effects', rightW: 440 })

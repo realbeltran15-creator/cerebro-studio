@@ -124,7 +124,7 @@ Ninguna prueba usa ni modifica el proyecto «Lofi prueba».
 
 ## 6. Espacio de trabajo
 
-**Barra lateral** (todas las páginas): expandida (iconos y nombres), compacta (solo iconos, se despliega al pasar el ratón o con el teclado; cada icono tiene su nombre como información emergente) u oculta. Se cambia con el botón de la barra superior o con «Contraer / Ocultar» al pie de la barra. La elección se recuerda en el navegador. Contraída u oculta, el contenido ocupa el espacio liberado (no queda columna vacía). En el móvil sigue siendo el menú desplegable.
+**Barra lateral** (todas las páginas), tres comportamientos: **Fija** (siempre abierta), **Automática** (una franja de iconos de 60 px; al acercar el ratón o pulsar el botón de arriba se abre por encima de la página, sin mover el visor ni la línea de tiempo, y se cierra sola medio segundo después de salir; no se cierra mientras el teclado está dentro; en pantallas táctiles el primer toque solo la abre y un toque fuera la cierra) y **Oculta** (sin columna; queda un botón pequeño en el borde izquierdo). La chincheta la fija o la desfija; Escape la cierra; cada icono tiene su nombre como información emergente. La elección se recuerda en el navegador. En el móvil sigue siendo el menú desplegable.
 
 **Editor manual**
 

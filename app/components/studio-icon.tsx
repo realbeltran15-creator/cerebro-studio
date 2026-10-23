@@ -33,6 +33,8 @@ const paths: Record<string, string> = {
   collapse: 'M3 4h18v16H3zM9 4v16M16 9l-3 3 3 3',
   expand: 'M3 4h18v16H3zM9 4v16M13 9l3 3-3 3',
   hide: 'M3 4h18v16H3zM9 4v16M5 8h2M5 12h2M5 16h2',
+  pin: 'M9 3h6l-1 6 4 4H6l4-4zM12 13v8',
+  auto: 'M3 4h18v16H3zM7 4v16M11 12h7M15 9l3 3-3 3',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
   calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
   copy: 'M8 8h12v12H8zM4 16V4h12',
