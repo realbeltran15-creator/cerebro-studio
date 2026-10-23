@@ -258,7 +258,9 @@ export class EditorPlayer {
       const ops = frameAt(this.comp, Math.min(this.t, Math.max(0, this.durationMs - 1)), this.init.kindOf, this.starts)
       const missing = this.prepare(ops, this.t, false)
       this.waiting = missing
-      this.draw(ops)
+      // Paused at the very start, a montage that opens with a fade from black would show a black viewer: the still shown there is the
+      // first picture (playing and exporting still start from black).
+      this.draw(this.t < 1 ? ops.filter((o, i) => !(i > 0 && o.type === 'fill' && o.alpha > 0.99)) : ops)
       this.emitState()
     })
   }

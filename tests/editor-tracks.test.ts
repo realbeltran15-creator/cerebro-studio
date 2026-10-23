@@ -256,6 +256,10 @@ describe('transitions: options, handles and crossfade', async () => {
     expect(transformAt({ z: 0 }, [{ atMs: 0, z: 0 }, { atMs: 1000, z: 1, easing: 'linear' }], 250).z).toBeCloseTo(0.25)
     const [a, b] = splitKeyframes([{ atMs: 0, z: 0 }, { atMs: 1000, z: 1, easing: 'linear' }], { z: 0 }, 400)
     expect(a?.[a.length - 1]).toMatchObject({ atMs: 400, z: 0.4 }); expect(b?.[0]).toMatchObject({ atMs: 0, z: 0.4 }); expect(b?.[1]).toMatchObject({ atMs: 600, z: 1 })
+    // A linear movement split in two stays linear (same speed) in the first half too: no slow-down at each cut.
+    expect(a?.[a.length - 1].easing).toBe('linear')
+    expect(transformAt({ z: 0 }, a as never, 200).z).toBeCloseTo(0.2)
+    expect(transformAt({ z: 0 }, b as never, 300).z).toBeCloseTo(0.7)
   })
   it('main-clip keyframes animate the framing of a photo', () => {
     let c = base()

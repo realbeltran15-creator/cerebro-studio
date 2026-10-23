@@ -117,11 +117,13 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         onProgress: (elapsed, t) => setProgress({ elapsed, total: t }),
       })
       let result: Awaited<ReturnType<typeof renderComposition>>
+      let renderer: 'browser-fast' | 'browser-mediarecorder' = 'browser-mediarecorder'
       const clock = stopwatch()
       if (record && (exp.mode ?? 'fast') === 'fast') {
         try {
           setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real).')
           result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), signal: controller.signal, onProgress: (elapsed, t) => setProgress({ elapsed, total: t }) })
+          renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
         } catch (e) {
@@ -151,7 +153,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}.${containerOf(result.mimeType)}`
         setDownload({ url: URL.createObjectURL(result.blob), name })
         setMode('saving'); setStatus('Guardando el vídeo en la nube…')
-        const savedAsset = await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets, onUploadProgress: f => setStatus(`Subiendo a la nube… ${Math.round(f * 100)} %`) })
+        const savedAsset = await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets, renderer, onUploadProgress: f => setStatus(`Subiendo a la nube… ${Math.round(f * 100)} %`) })
         setSaved({ blob: result.blob, assetId: savedAsset.id, mimeType: result.mimeType ?? 'video/webm' })
         const ig = instagramReadiness(result.mimeType)
         setStatus(`Vídeo guardado en la Biblioteca (${Math.round(result.blob.size / 1048576 * 10) / 10} MB).${ig.ok ? '' : ` Aviso: ${ig.reason}`}`)

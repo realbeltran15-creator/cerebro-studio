@@ -83,6 +83,8 @@ export async function saveRender(supabase: SupabaseClient, input: {
   mimeType: string
   durationMs: number
   assets: EditorAsset[]
+  /** Which exporter made the file: frame by frame (fast) or a real-time recording. */
+  renderer?: 'browser-fast' | 'browser-mediarecorder'
   onUploadProgress?: (fraction: number) => void
 }) {
   const { data: { user } } = await supabase.auth.getUser()
@@ -113,11 +115,11 @@ export async function saveRender(supabase: SupabaseClient, input: {
       mimeType: input.mimeType,
       container: ext,
       bytes: input.blob.size,
-      renderer: 'browser-mediarecorder',
+      renderer: input.renderer ?? 'browser-mediarecorder',
       renderedAt: new Date().toISOString(),
       settings: {
         clips: input.composition.clips.length, audioClips: input.composition.audioClips?.length ?? 0, editedManually: input.composition.editedManually === true, fadeMs: input.composition.fadeMs, subtitles: input.composition.subtitles,
-        music: Boolean(input.composition.musicAssetId), duckMusic: input.composition.duckMusic, musicVolume: input.composition.musicVolume,
+        music: Boolean(input.composition.musicAssetId) || (input.composition.audioClips ?? []).some(a => a.kind === 'music'), duckMusic: input.composition.duckMusic, musicVolume: input.composition.musicVolume,
         hookText: input.composition.hookText ?? null, sourceJobId: input.composition.origin?.sourceJobId ?? null,
       },
       inputs: inputs.map(a => ({ id: a.id, type: a.asset_type, license: a.license_status, provider: a.source_provider })),

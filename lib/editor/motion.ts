@@ -166,7 +166,10 @@ export function splitKeyframes<K extends { atMs: number; easing?: string }>(keys
   const props = Object.keys(base).filter(p => keys.some(k => (k as Record<string, unknown>)[p] !== undefined))
   const at = transformAt(base, keys as unknown as Array<{ atMs: number } & Record<string, number>>, atMs)
   const edge = Object.fromEntries(props.map(p => [p, at[p]])) as Partial<K>
-  const first = [...keys.filter(k => k.atMs < atMs), { ...edge, atMs } as K]
+  // The curve belongs to the stretch that ends at a key: the new key that closes the first half keeps the curve of the stretch it
+  // cuts (a linear movement stays linear on both sides, so a photo split into several clips keeps moving at the same speed).
+  const next = keys.find(k => k.atMs > atMs)
+  const first = [...keys.filter(k => k.atMs < atMs), { ...edge, atMs, ...(next?.easing ? { easing: next.easing } : {}) } as K]
   const second = [{ ...edge, atMs: 0 } as K, ...keys.filter(k => k.atMs > atMs).map(k => ({ ...k, atMs: k.atMs - atMs }))]
   return [first, second]
 }
