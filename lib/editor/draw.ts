@@ -1,7 +1,7 @@
 /**
  * Canvas drawing of a frame description (scene.ts). Shared by the preview player and the exporter, so both draw the same pixels.
  */
-import { TEXT_FONTS, type CaptionStyle, type TextOverlay } from './composition'
+import { TEXT_FONTS, type CaptionPosition, type CaptionStyle, type TextOverlay } from './composition'
 import type { TextFrame } from './motion'
 import type { Op, VisualOp } from './scene'
 
@@ -18,7 +18,7 @@ export function drawOps(ctx: CanvasRenderingContext2D, ops: Op[], w: number, h: 
     if (op.type === 'fill') { ctx.save(); ctx.globalAlpha = op.alpha; ctx.fillStyle = op.color; ctx.fillRect(0, 0, w, h); ctx.restore() }
     else if (op.type === 'visual') drawVisual(ctx, op, w, h, sourceOf(op))
     else if (op.type === 'text') drawText(ctx, op.text, w, h, op.frame)
-    else if (op.type === 'caption') drawCaption(ctx, op.text, w, h, op.style, op.progress)
+    else if (op.type === 'caption') drawCaption(ctx, op.text, w, h, op.style, op.progress, op.position)
     else if (op.type === 'hook') drawHook(ctx, op.text, w, h, op.alpha)
   }
 }
@@ -107,15 +107,15 @@ export function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: numb
   return lines
 }
 
-export function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, style: CaptionStyle = 'box', progress = 0) {
-  if (style !== 'box') return drawBoldCaption(ctx, text, w, h, style === 'karaoke' ? progress : null)
+export function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, style: CaptionStyle = 'box', progress = 0, position: CaptionPosition = 'bottom') {
+  if (style !== 'box') return drawBoldCaption(ctx, text, w, h, style === 'karaoke' ? progress : null, position)
   const size = Math.round(Math.min(w, h) * 0.045)
   ctx.font = `600 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
   const lines = wrap(ctx, text, w * 0.84)
   const lineH = size * 1.25
   const boxH = lines.length * lineH + size * 0.6
-  const bottom = h - Math.round(h * (w < h ? 0.18 : 0.07))
+  const bottom = position === 'top' ? Math.round(h * (w < h ? 0.12 : 0.07)) + boxH : position === 'center' ? (h + boxH) / 2 : h - Math.round(h * (w < h ? 0.18 : 0.07))
   ctx.fillStyle = 'rgba(0,0,0,0.55)'
   const boxW = Math.min(w * 0.9, Math.max(...lines.map(l => ctx.measureText(l).width)) + size * 1.2)
   ctx.fillRect((w - boxW) / 2, bottom - boxH, boxW, boxH)
@@ -133,7 +133,7 @@ export function activeWordIndex(words: string[], progress: number) {
 }
 
 /** Shorts-style captions: big, uppercase, outlined; with `progress` the spoken word is highlighted. */
-function drawBoldCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, progress: number | null) {
+function drawBoldCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, progress: number | null, position: CaptionPosition = 'bottom') {
   const size = Math.round(Math.min(w, h) * (w < h ? 0.075 : 0.06))
   ctx.save()
   ctx.font = `900 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
@@ -142,7 +142,7 @@ function drawBoldCaption(ctx: CanvasRenderingContext2D, text: string, w: number,
   const active = progress === null ? -1 : activeWordIndex(words, progress)
   const lines = wrap(ctx, words.join(' '), w * 0.86)
   const lineH = size * 1.2
-  const centerY = h * (w < h ? 0.68 : 0.8)
+  const centerY = h * (position === 'top' ? (w < h ? 0.2 : 0.16) : position === 'center' ? 0.5 : w < h ? 0.68 : 0.8)
   const top = centerY - ((lines.length - 1) * lineH) / 2
   ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(4, size * 0.16); ctx.strokeStyle = 'rgba(0,0,0,0.9)'
   let index = 0

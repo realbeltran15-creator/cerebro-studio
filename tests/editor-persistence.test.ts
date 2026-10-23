@@ -5,7 +5,7 @@ import { parseComposition, type Composition } from '@/lib/editor/composition'
 export function everything(): Composition {
   return {
     version: 1, storyboardId: 'sb', title: 'Todo', format: 'custom', customSize: { width: 1080, height: 1350 },
-    editedManually: true, subtitles: true, captionStyle: 'karaoke', fadeMs: 450, duckMusic: false, musicAssetId: 'bg', musicVolume: 0.3,
+    editedManually: true, subtitles: true, captionStyle: 'karaoke', captionPosition: 'top', fadeMs: 450, duckMusic: false, musicAssetId: 'bg', musicVolume: 0.3,
     hookText: 'Mira esto', hookMs: 2500, origin: null, autoSnapshot: null, styleRef: null,
     clips: [
       { id: 'c1', sceneId: 's1', position: 1, narration: 'Hola', visualAssetId: 'img1', voiceAssetId: null, durationMs: 4000, motion: 'none', focusX: 0.3, focusY: 0.7, zoom: 1.4, trimInMs: 0, volume: 1, muted: false,

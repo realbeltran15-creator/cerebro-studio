@@ -12,6 +12,8 @@ export const TRANSITIONS: Record<Transition, string> = { fade: 'Fundido a negro'
 export type TextAnimation = 'none' | 'fade' | 'pop' | 'slide' | 'typewriter'
 export const TEXT_ANIMATIONS: Record<TextAnimation, string> = { none: 'Sin animación', fade: 'Aparecer', pop: 'Rebote', slide: 'Subir', typewriter: 'Máquina de escribir' }
 /** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
+export type CaptionPosition = 'bottom' | 'center' | 'top'
+export const CAPTION_POSITIONS: Record<CaptionPosition, string> = { bottom: 'Abajo', center: 'Centro', top: 'Arriba' }
 export type CaptionStyle = 'box' | 'bold' | 'karaoke'
 export const CAPTION_STYLES: Record<CaptionStyle, string> = { box: 'Clásico (caja)', bold: 'Grande y en negrita', karaoke: 'Palabra a palabra (resaltada)' }
 export type TextFont = 'sans' | 'serif' | 'condensed' | 'mono'
@@ -237,6 +239,8 @@ export type Composition = {
   subtitles: boolean
   /** Subtitle look. Default «box». */
   captionStyle?: CaptionStyle
+  /** Where the subtitles go. Default «bottom». */
+  captionPosition?: CaptionPosition
   fadeMs: number
   /** Large on-screen text for the opening seconds (Shorts hook). */
   hookText?: string | null
@@ -425,6 +429,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
     duckMusic: v.duckMusic !== false,
     subtitles: v.subtitles !== false,
     captionStyle: v.captionStyle === 'bold' || v.captionStyle === 'karaoke' ? v.captionStyle : 'box',
+    ...(v.captionPosition === 'top' || v.captionPosition === 'center' ? { captionPosition: v.captionPosition } : {}),
     fadeMs: clamp(v.fadeMs ?? 300, 0, 1500, 300),
     hookText: typeof v.hookText === 'string' && v.hookText.trim() ? v.hookText.trim().slice(0, 120) : null,
     hookMs: clamp(v.hookMs ?? 3000, 1000, 8000, 3000),

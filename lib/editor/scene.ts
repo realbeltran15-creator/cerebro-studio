@@ -4,7 +4,7 @@
  */
 import {
   activeTextClips, audioStartMs, audioTrackId, clipCaptions, clipStarts, envelopeAt, projectDurationMs, textTrackId, totalDurationMs, tracksOf, trackGains,
-  type AudioClip, type CaptionStyle, type Composition, type Crop, type Filters, type TextOverlay, type TrackKind,
+  type AudioClip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type TextOverlay, type TrackKind,
 } from './composition'
 import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
@@ -43,7 +43,7 @@ export type VisualOp = {
   backdrop: boolean
 }
 export type TextOp = { type: 'text'; text: TextOverlay; frame: TextFrame }
-export type CaptionOp = { type: 'caption'; text: string; style: CaptionStyle; progress: number }
+export type CaptionOp = { type: 'caption'; text: string; style: CaptionStyle; progress: number; position?: CaptionPosition }
 export type HookOp = { type: 'hook'; text: string; alpha: number }
 export type FillOp = { type: 'fill'; color: string; alpha: number }
 export type Op = VisualOp | TextOp | CaptionOp | HookOp | FillOp
@@ -116,7 +116,7 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
     if (clip.text) ops.push({ type: 'text', text: clip.text, frame: textFrameFor(clip.text, local, clip.durationMs) })
     if (c.subtitles) {
       const cap = clipCaptions(clip).find(q => local >= q.startMs && local < q.endMs)
-      if (cap) ops.push({ type: 'caption', text: cap.text, style: c.captionStyle ?? 'box', progress: (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs) })
+      if (cap) ops.push({ type: 'caption', text: cap.text, style: c.captionStyle ?? 'box', progress: (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs), ...(c.captionPosition && c.captionPosition !== 'bottom' ? { position: c.captionPosition } : {}) })
     }
     // Dips at clip boundaries: «fundido a negro» (and at the very start and end of the main track) or «fundido a blanco».
     const prevKind = i === 0 ? 'fade' : c.clips[i - 1].transition ?? 'fade'

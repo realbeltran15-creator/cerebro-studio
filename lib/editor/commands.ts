@@ -6,7 +6,7 @@
  * Scope of an instruction: the marked fragment if there is one, else the selected clip, else the clip under the playhead;
  * «todo», «todas las imágenes», «todos los vídeos» widen it.
  */
-import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type CameraKind, type Clip, type Composition, type OutputFormat, type Transition } from './composition'
+import { audioStartMs, clipStarts, compositionCues, envelopeAt, MAX_CLIP_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type CameraKind, type Clip, type Composition, type OutputFormat, type Transition } from './composition'
 import { addAudioClip, addTextClip, deleteClip, duplicateClip, moveClip, setLevelBetween, setSpeed, splitClip, updateClip } from './timeline'
 import { cutSfxClips, defaultCutSfx, removeCutSfx, setCutSfx } from './cut-sfx'
 import { clipIdsInRange, deleteRange, isolateRange, type Range } from './range'
@@ -280,7 +280,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   // ---- Music under the voice: «baja la música cuando hable», «no bajes la música»
   if (/\bmusica\b/.test(s) && /\b((cuando|mientras) (habla|hable|hablo|hay voz|suena la voz|se habla|(empieza|comienza|entra) la voz)|bajo la voz|con la voz|al hablar|ducking)\b/.test(s)) {
     const on = !/\b(no|nunca|sin)\b/.test(s)
-    return ok({ ...c, duckMusic: on }, on ? 'La música bajará cuando suene la voz.' : 'La música ya no baja con la voz.')
+    return ok({ ...c, duckMusic: on }, on ? (c.duckMusic ? 'La música ya baja sola cuando suena la voz (estaba activado; no había que cambiar nada).' : 'La música bajará cuando suene la voz.') : 'La música ya no baja con la voz.')
   }
   if (/\b(no bajes la musica|musica constante|musica siempre igual)\b/.test(s)) return ok({ ...c, duckMusic: false }, 'La música ya no baja con la voz.')
 
@@ -314,6 +314,36 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
     return ok({ ...c, audioClips: (c.audioClips ?? []).filter(a => !ids.has(a.id)), ...(global ? { musicAssetId: null } : {}) }, `Quitad${kind === 'music' ? 'a la música' : kind === 'voice' ? 'a la voz' : 'os los efectos'} (${gone.length + (global ? 1 : 0)}).`)
   }
 
+  // ---- Length of the whole video: «haz que el vídeo dure exactamente 30 segundos». Photos absorb the difference (their length is free);
+  // with only videos the last one is shortened. Sound that would run past the new end is cut there.
+  if (/\b(dure|duracion|dura|mida)\b/.test(s) && /\b(el video|el montaje|todo el video|todo el montaje|en total|el proyecto|video entero|montaje entero)\b/.test(s) && !/\b(texto|titulo|musica|voz|efecto|clip|escena)\b/.test(s)) {
+    const t = timeAfter(s, /\b(?:a|en|dure|dura|de|exactamente)\b/) ?? parseTime(s)
+    if (t === null || t < MIN_CLIP_MS) return fail('Dime cuánto: por ejemplo, que el vídeo dure 30 segundos.')
+    if (!c.clips.length) return fail('El montaje no tiene clips todavía.')
+    const total = totalDurationMs(c)
+    let diff = t - total
+    const photos = c.clips.filter(k => !ctx.isVideo(k))
+    let next = c
+    if (diff !== 0 && photos.length) {
+      const sum = photos.reduce((a, k) => a + k.durationMs, 0)
+      photos.forEach((k, i) => {
+        const want = i === photos.length - 1 ? k.durationMs + diff : Math.round(k.durationMs + (t - total) * k.durationMs / sum)
+        const d = Math.min(Math.max(want, MIN_CLIP_MS), MAX_CLIP_MS)
+        diff -= d - k.durationMs
+        next = updateClip(next, k.id, { durationMs: d })
+      })
+    } else if (diff < 0) {
+      const last = c.clips[c.clips.length - 1]
+      const d = Math.max(MIN_CLIP_MS, last.durationMs + diff); diff -= d - last.durationMs
+      next = updateClip(next, last.id, { durationMs: d })
+    }
+    const got = totalDurationMs(next)
+    if (got !== t) return fail(photos.length ? `No llego a ${fmt(t)} sin pasar del límite por clip: ahora dura ${fmt(total)}. Añade otra foto o ajusta los clips a mano.` : `Los vídeos no tienen más material: para que dure ${fmt(t)} añade una foto o alarga un vídeo con cámara lenta.`)
+    const cut = (next.audioClips ?? []).map(a => { const st = audioStartMs(next, a); return st >= t ? null : st + a.durationMs > t ? { ...a, durationMs: t - st } : a }).filter((a): a is AudioClip => !!a)
+    next = { ...next, audioClips: cut }
+    return ok(next, `El vídeo dura ahora exactamente ${fmt(t)} (antes ${fmt(total)})${photos.length ? '; se han ajustado las fotos' : ''}. El sonido que pasaba del final se corta ahí.`)
+  }
+
   // ---- Clip length: «que dure 4 segundos», «acorta este clip a 3 segundos», «alarga las imágenes a 6 s»
   if (/\b(que dure|que duren|dure|duren|duracion|acorta|alarga|estira)\b/.test(s) && !/\b(texto|titulo|musica|voz|efecto)\b/.test(s)) {
     const t = timeAfter(s, /\b(?:a|en|dure|duren|de)\b/) ?? parseTime(s)
@@ -325,7 +355,7 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   }
 
   // ---- Move a clip: «mueve este clip al principio», «pasa la escena al final»
-  if (/^(mueve|pasa|lleva|coloca)\b/.test(s) && /\b(clip|escena|esto|plano)\b/.test(s) && /\b(al principio|al inicio|al comienzo|al final)\b/.test(s)) {
+  if (/^(mueve|pasa|lleva|coloca|pon)\b/.test(s) && /\b(clip|escena|esto|este|plano|video|foto|fotografia|imagen)\b/.test(s) && /\b(al principio|al inicio|al comienzo|al final)\b/.test(s)) {
     const sc = scope(c, s, ctx)
     if (sc.ids.length !== 1) return fail('Selecciona un solo clip para moverlo.')
     const toEnd = /\bal final\b/.test(s)
@@ -518,7 +548,12 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   }
   if (/\bsubtitulos?\b/.test(s)) {
     const on = !/\b(quita|desactiva|sin|oculta|elimina)\b/.test(s)
-    return ok({ ...c, subtitles: on }, `Subtítulos ${on ? 'activados' : 'desactivados'}.`)
+    // «pon subtítulos en la parte inferior / arriba / en el centro»
+    const pos = !on ? null : /\b(arriba|parte superior|superior|en lo alto)\b/.test(s) ? 'top' : /\b(centro|centrados?|en medio|mitad)\b/.test(s) ? 'center' : /\b(abajo|parte inferior|inferior|debajo)\b/.test(s) ? 'bottom' : null
+    const next = { ...c, subtitles: on, ...(pos ? { captionPosition: pos === 'bottom' ? undefined : pos } : {}) } as Composition
+    const where = pos === 'top' ? ' arriba' : pos === 'center' ? ' en el centro' : pos === 'bottom' ? ' en la parte inferior' : ''
+    const cues = compositionCues(c).length > 0
+    return ok(next, `Subtítulos ${on ? `activados${where}` : 'desactivados'}.${on && !cues ? ' Ojo: el montaje aún no tiene texto de subtítulos (impórtalos en «Textos» o escríbelos en cada clip).' : ''}`)
   }
 
   return fail('No he entendido la instrucción.')

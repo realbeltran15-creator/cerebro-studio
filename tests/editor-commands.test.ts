@@ -230,3 +230,36 @@ describe('more Spanish instructions', () => {
     expect(off.ok && off.composition.audioClips!.filter(a => a.origin === 'cut-sfx').length).toBe(0)
   })
 })
+
+// The owner's own sentences (Ejercicio E): each one must change the timeline, not just answer.
+describe('ejercicio E: órdenes en español del propietario', () => {
+  const withVoice = (): Composition => ({ ...comp(), audioClips: [...comp().audioClips!, { id: 'v', assetId: 'vo', kind: 'voice', linkedClipId: null, offsetMs: 0, startMs: 6000, trimInMs: 0, durationMs: 4000, volume: 1, muted: false }] })
+  it.each([
+    ['Pon una transición suave entre todos los clips', {}],
+    ['Haz un zoom lento sobre esta fotografía', { selectedClipId: 'a' }],
+    ['Baja la música cuando empieza la voz', {}],
+    ['Mueve este vídeo al principio', { selectedClipId: 'b' }],
+    ['Duplica esta escena', { selectedClipId: 'c' }],
+    ['Pon subtítulos en la parte inferior', {}],
+    ['Haz que el vídeo dure exactamente 30 segundos', {}],
+  ] as Array<[string, Partial<CommandContext>]>)('«%s»', (text, o) => {
+    // Ducking and subtitles start switched off here so the order has something to change.
+    const before = { ...withVoice(), duckMusic: false, subtitles: false }
+    const r = runInstruction(before, text, ctx(o))
+    expect(r.ok ? 'ok' : r.message).toBe('ok')
+    expect(r.ok && JSON.stringify(r.composition) !== JSON.stringify(before)).toBe(true)
+  })
+  it('the results are the ones asked for', () => {
+    const base = { ...withVoice(), duckMusic: false, subtitles: false }
+    const moved = runInstruction(base, 'Mueve este vídeo al principio', ctx({ selectedClipId: 'b' }))
+    expect(moved.ok && moved.composition.clips[0].id).toBe('b')
+    const top = runInstruction(base, 'pon los subtítulos arriba', ctx())
+    expect(top.ok && [top.composition.subtitles, top.composition.captionPosition]).toEqual([true, 'top'])
+    const bottom = runInstruction(top.ok ? top.composition : base, 'Pon subtítulos en la parte inferior', ctx())
+    expect(bottom.ok && [bottom.composition.subtitles, bottom.composition.captionPosition ?? 'bottom']).toEqual([true, 'bottom'])
+    const dur = runInstruction(base, 'Haz que el vídeo dure exactamente 30 segundos', ctx())
+    expect(dur.ok && totalDurationMs(dur.composition)).toBe(30000)
+    const already = runInstruction({ ...base, duckMusic: true }, 'Baja la música cuando empieza la voz', ctx())
+    expect(already.ok && already.done.join(' ')).toMatch(/ya baja/)
+  })
+})

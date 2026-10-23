@@ -149,3 +149,10 @@ Ninguna prueba usa ni modifica el proyecto «Lofi prueba».
 - Tableta y móvil: una columna con el visor primero; los separadores se ocultan; las pestañas se desplazan en horizontal.
 
 Prueba de navegador 28: barra lateral en sus tres modos y el ancho liberado, grupos, propiedades según la selección, pestañas, efectos, redimensionar, ocultar y restaurar, modos, búsqueda, diseño recordado tras recargar, guardado, reproducción y línea de tiempo, en 1500, 820 y 390 px con la hoja de estilos real.
+
+## 7. Instrucciones probadas con frases reales
+
+Prueba unitaria «ejercicio E» con las frases del propietario: «Pon una transición suave entre todos los clips», «Haz un zoom lento sobre esta fotografía», «Baja la música cuando empieza la voz», «Mueve este vídeo al principio», «Duplica esta escena», «Pon subtítulos en la parte inferior» y «Haz que el vídeo dure exactamente 30 segundos». Cada una cambia la línea de tiempo (o dice que ya estaba así).
+
+- «Que el vídeo dure exactamente N segundos»: las fotos absorben la diferencia; con solo vídeos se acorta el último; el sonido que pasa del final se corta ahí.
+- Los subtítulos pueden ir abajo, en el centro o arriba (instrucción o «Proyecto → Subtítulos»); el visor y la exportación los dibujan igual.
