@@ -629,3 +629,8 @@ button.tlTransition{display:flex;align-items:center;justify-content:center;gap:0
 button.tlTransition:hover{background:rgba(91,91,255,.55)}
 button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-shadow:0 0 0 2px #fff}
 .tlTrEdge{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;background:rgba(255,255,255,.35)}
+.ctxMenu{min-width:220px;padding:5px;background:var(--panel);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 14px 34px #000b;display:flex;flex-direction:column}
+.ctxMenu button{justify-content:space-between;background:transparent;color:var(--text);border:0;border-radius:6px;padding:7px 10px;font-size:13px;font-weight:500}
+.ctxMenu button:hover:not(:disabled),.ctxMenu button:focus-visible{background:var(--panel-2);outline:none}
+.ctxMenu kbd{font:11px ui-monospace,monospace;color:var(--muted)}
+.ctxMenu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}

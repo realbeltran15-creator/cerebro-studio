@@ -156,3 +156,33 @@ export function Splitter({ label, orientation, value, min, max, onChange, invert
       if (e.key === back || e.key === fwd) { e.preventDefault(); e.stopPropagation(); const d = (e.key === fwd ? step : -step) * (invert ? -1 : 1); onChange(Math.min(max, Math.max(min, value + d))) }
     }} />
 }
+
+export type MenuItem = { label: string; hint?: string; disabled?: boolean; run: () => void } | 'sep'
+/** A right-click menu (also opens with the context-menu key or Mayús+F10). Arrows move, Enter runs, Escape or a click outside closes. */
+export function ContextMenu({ x, y, label, items, onClose }: { x: number; y: number; label: string; items: MenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Keep it on screen.
+    const r = el.getBoundingClientRect()
+    if (r.right > window.innerWidth - 8) el.style.left = `${Math.max(8, window.innerWidth - r.width - 8)}px`
+    if (r.bottom > window.innerHeight - 8) el.style.top = `${Math.max(8, window.innerHeight - r.height - 8)}px`
+    ;(el.querySelector('[role=menuitem]:not([disabled])') as HTMLElement | null)?.focus()
+    const down = (e: PointerEvent) => { if (!el.contains(e.target as Node)) onClose() }
+    document.addEventListener('pointerdown', down, true)
+    return () => document.removeEventListener('pointerdown', down, true)
+  }, [onClose])
+  const move = (e: React.KeyboardEvent) => {
+    const list = [...(ref.current?.querySelectorAll('[role=menuitem]:not([disabled])') ?? [])] as HTMLElement[]
+    const i = list.indexOf(document.activeElement as HTMLElement)
+    if (e.key === 'ArrowDown') { e.preventDefault(); list[(i + 1) % list.length]?.focus() }
+    if (e.key === 'ArrowUp') { e.preventDefault(); list[(i - 1 + list.length) % list.length]?.focus() }
+    if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); onClose() }
+  }
+  return <div ref={ref} className="ctxMenu" role="menu" aria-label={label} style={{ position: 'fixed', left: x, top: y, zIndex: 80 }} onKeyDown={move} onContextMenu={e => e.preventDefault()}>
+    {items.map((it, i) => it === 'sep' ? <hr key={i} /> : <button key={it.label} type="button" role="menuitem" disabled={it.disabled} onClick={() => { onClose(); it.run() }}>
+      <span>{it.label}</span>{it.hint && <kbd>{it.hint}</kbd>}
+    </button>)}
+  </div>
+}

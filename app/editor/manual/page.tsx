@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { readSidebarMode, StudioShell, writeSidebarMode, type SidebarMode } from '../../components/studio-shell'
-import { DEFAULT_LAYOUT, MODES, Section, Splitter, ToolSearch, ToolTabs, useWorkspaceState, WorkspaceProvider, type ToolEntry, type WorkspaceMode } from '../../components/editor-workspace'
+import { ContextMenu, DEFAULT_LAYOUT, MODES, Section, type MenuItem, Splitter, ToolSearch, ToolTabs, useWorkspaceState, WorkspaceProvider, type ToolEntry, type WorkspaceMode } from '../../components/editor-workspace'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
@@ -61,6 +61,9 @@ export default function ManualEditorPage() {
   const [copiedAnim, setCopiedAnim] = useState<{ target: 'clip' | 'layer'; keys: AnimKey[] } | null>(null)
   // The selected transition: the cut after this clip (selecting a clip or anything else clears it).
   const [selTr, setSelTrState] = useState<string | null>(null)
+  // Right-click menu on the timeline (items, a transition or the empty timeline).
+  const [menu, setMenu] = useState<{ x: number; y: number; kind: 'item' | 'transition' | 'empty' } | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
   const selectTransition = useCallback((clipId: string | null) => { setSelTrState(clipId); if (clipId) setSelState([]) }, [])
   const [copiedTransition, setCopiedTransition] = useState<Pick<Clip, 'transition' | 'transitionMs' | 'transitionOpts'> | null>(null)
   // Favourite transitions and animations, saved in the account (every montage, every device).
@@ -609,6 +612,47 @@ export default function ManualEditorPage() {
     onSavePreset={name => void storePresets({ ...presets, transitions: [...presets.transitions.filter(t => t.name !== name), { id: `tp-${Date.now().toString(36)}`, name, transition: clip.transition ?? 'fade', ms: clip.transitionMs ?? comp.fadeMs, opts: clip.transitionOpts ?? {} }] }).then(() => setNotice(`Transición favorita «${name}» guardada en tu cuenta.`))}
     onDeletePreset={id => void storePresets({ ...presets, transitions: presets.transitions.filter(t => t.id !== id) })} />
 
+  function openMenu(e: React.MouseEvent) {
+    const el = (e.target as HTMLElement).closest('[data-ref],[data-transition]') as HTMLElement | null
+    if (!el && !(e.target as HTMLElement).closest('.tlScroll')) return
+    e.preventDefault()
+    const x = e.clientX, y = e.clientY
+    if (el?.dataset.transition) { selectTransition(el.dataset.transition); setMenu({ x, y, kind: 'transition' }); return }
+    if (el?.dataset.ref) {
+      const [kind, id] = el.dataset.ref.split(':') as [ItemRef['kind'], string]
+      if (!sel.some(r => r.kind === kind && r.id === id)) setSel(expandGroups(comp!, [{ kind, id }]))
+      setMenu({ x, y, kind: 'item' }); return
+    }
+    setMenu({ x, y, kind: 'empty' })
+  }
+  const menuItems: MenuItem[] = !menu ? [] : menu.kind === 'transition' && selTrClip ? [
+    { label: 'Editar la transición', run: () => ws.reveal({ section: 'tr-basic' }) },
+    { label: 'Ver la transición', run: () => { const i = cutIndex(selTrClip.id); const ms = selTrClip.transitionMs ?? comp.fadeMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, starts[i] + selTrClip.durationMs - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) } },
+    'sep',
+    { label: 'Copiar transición', hint: 'Ctrl+C', run: () => { setCopiedTransition(trOf(selTrClip)); setNotice('Transición copiada.') } },
+    { label: 'Pegar transición', hint: 'Ctrl+V', disabled: !copiedTransition, run: pasteTransition },
+    { label: 'Aplicar a todos los cortes', run: () => { apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, ...trOf(selTrClip) } : k)) })); setNotice('Transición aplicada a todos los cortes. Ctrl+Z lo deshace.') } },
+    'sep',
+    { label: 'Quitar transición', hint: 'Supr', run: () => { apply(c => updateClip(c, selTrClip.id, { transition: 'cut', transitionMs: undefined, transitionOpts: undefined })); setSelTrState(null) } },
+  ] : menu.kind === 'item' ? [
+    { label: 'Propiedades', run: () => ws.reveal({ right: true, selector: '#ed-props' }) },
+    'sep',
+    { label: 'Dividir en el cabezal', hint: 'S', run: splitHere },
+    { label: 'Copiar', hint: 'Ctrl+C', run: copySel },
+    { label: 'Pegar en el cabezal', hint: 'Ctrl+V', disabled: !clipboard.current, run: pasteHere },
+    { label: 'Duplicar', hint: 'Ctrl+D', run: duplicateSel },
+    'sep',
+    { label: 'Agrupar', hint: 'Ctrl+G', disabled: sel.length < 2, run: groupSel },
+    { label: 'Desagrupar', hint: 'Ctrl+Mayús+G', run: ungroupSel },
+    'sep',
+    { label: 'Eliminar', hint: 'Supr', run: deleteSel },
+  ] : [
+    { label: 'Pegar en el cabezal', hint: 'Ctrl+V', disabled: !clipboard.current, run: pasteHere },
+    { label: 'Añadir texto en el cabezal', run: addTextHere },
+    { label: 'Añadir marcador', hint: 'M', run: () => apply(c => addMarker(c, playheadMs)) },
+    { label: 'Ver todo el proyecto', run: () => { const w = scroller.current?.clientWidth ?? 1000; setPxPerSec(Math.max(1, Math.min(200, Math.floor((w - 60) / Math.max(1, total / 1000))))) } },
+  ]
+
   // «Buscar herramienta»: where each tool lives depends on what is selected.
   const toProject = (section: string) => { setSel([]); ws.reveal({ section }) }
   const toolEntries: ToolEntry[] = [
@@ -938,6 +982,7 @@ export default function ManualEditorPage() {
     </div>
 
     <section className="panel timelinePanel" style={{ marginBottom: 12, outline: dropping ? '2px dashed var(--accent, #7c4fe0)' : undefined }} aria-label="Edición multipista"
+      onContextMenu={openMenu}
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={() => setDropping(false)} onDrop={() => setDropping(false)}>
       <div className="tlToolbar" role="toolbar" aria-label="Herramientas de la línea de tiempo">
         <button type="button" className="ghost small" onClick={splitHere} aria-label="Dividir en el cabezal" title="Corta en el cabezal lo seleccionado o, sin selección, todo lo que pasa por él (S)">✂ Dividir (S)</button>
@@ -993,6 +1038,7 @@ export default function ManualEditorPage() {
       </details>}
       <p className="muted small" style={{ marginTop: 8 }}>Arrastra materiales a cualquier pista. Clic selecciona; Mayús/Ctrl + clic suma a la selección. Arrastra los clips para moverlos (también a otra pista del mismo tipo) y sus bordes para recortarlos; los clips del vídeo principal se reordenan arrastrándolos. S divide en el cabezal · Ctrl+C / Ctrl+V / Ctrl+D copian, pegan y duplican · Ctrl+G agrupa · M añade un marcador · Supr borra · Ctrl+Z / Ctrl+Mayús+Z deshacen y rehacen · Espacio reproduce.</p>
     </section>
+    {menu && menuItems.length > 0 && <ContextMenu x={menu.x} y={menu.y} label={menu.kind === 'transition' ? 'Menú de la transición' : menu.kind === 'item' ? 'Menú de la selección' : 'Menú de la línea de tiempo'} items={menuItems} onClose={closeMenu} />}
     </WorkspaceProvider>
   </StudioShell>
 }

@@ -206,7 +206,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           if (i < windowed.from || i >= windowed.to) return null
           const ref = { kind: 'clip' as const, id: clip.id }
           const thumb = p.thumbOf(clip.visualAssetId)
-          return <div key={clip.id} draggable={!t.locked}
+          return <div key={clip.id} data-ref={`clip:${clip.id}`} draggable={!t.locked}
             onDragStart={e => { if (drag.current || t.locked) { e.preventDefault(); return } dragMain.current = clip.id }} onDragOver={e => e.preventDefault()}
             onDrop={e => {
               if (e.dataTransfer.types.includes(ASSET_MIME)) return
@@ -241,7 +241,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
         {(comp.overlays ?? []).filter(o => o.trackId === t.id && onScreen(o.startMs, o.durationMs)).map(o => {
           const ref = { kind: 'overlay' as const, id: o.id }
           const thumb = p.thumbOf(o.assetId)
-          return <div key={o.id} onPointerDown={e => startItem(e, ref, 'move')} title={`${p.labelOf(o.assetId)} · ${secs(o.startMs)}–${secs(o.startMs + o.durationMs)} s`}
+          return <div key={o.id} data-ref={`overlay:${o.id}`} onPointerDown={e => startItem(e, ref, 'move')} title={`${p.labelOf(o.assetId)} · ${secs(o.startMs)}–${secs(o.startMs + o.durationMs)} s`}
             style={itemStyle(o.startMs / 1000 * pxPerSec, o.durationMs / 1000 * pxPerSec, 3, h - 6, thumb ? `linear-gradient(rgba(0,40,60,.55), rgba(0,40,60,.55)), url(${thumb}) center / cover` : kindColor.overlay, ref)}>
             ▣ {p.labelOf(o.assetId)}{o.keyframes?.length ? ` · ◆${o.keyframes.length}` : ''}{groupMark(o.groupId)}
             {o.keyframes?.map(k => <i key={k.atMs} className="tlKey" style={{ left: k.atMs / 1000 * pxPerSec }} aria-hidden />)}
@@ -254,7 +254,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
       return <div key={t.id} {...common} aria-label={`Pista de ${t.name}`} style={{ position: 'relative', height: h, marginTop: 6, background: 'var(--bg-2)', borderRadius: 6 }}>
         {(comp.textClips ?? []).filter(x => textTrackId(x) === t.id && onScreen(x.startMs, x.durationMs)).map(x => {
           const ref = { kind: 'text' as const, id: x.id }
-          return <div key={x.id} onPointerDown={e => startItem(e, ref, 'move')} onClick={e => e.stopPropagation()} title={`${x.content} · ${secs(x.startMs)}–${secs(x.startMs + x.durationMs)} s`}
+          return <div key={x.id} data-ref={`text:${x.id}`} onPointerDown={e => startItem(e, ref, 'move')} onClick={e => e.stopPropagation()} title={`${x.content} · ${secs(x.startMs)}–${secs(x.startMs + x.durationMs)} s`}
             style={itemStyle(x.startMs / 1000 * pxPerSec, x.durationMs / 1000 * pxPerSec, 3, h - 6, kindColor.text, ref)}>
             T {x.content}{groupMark(x.groupId)}
             {edges(ref, 'del texto')}
@@ -271,7 +271,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
         const ref = { kind: 'audio' as const, id: a.id }
         const wf = p.waveformOf(a.assetId)
         const w = Math.max(a.durationMs / 1000 * pxPerSec, 8)
-        return <div key={a.id} onPointerDown={e => startItem(e, ref, 'move')} title={`${p.labelOf(a.assetId)} · ${secs(start)}–${secs(start + a.durationMs)} s${a.linkedClipId ? ' · enlazado a su clip' : ''}`}
+        return <div key={a.id} data-ref={`audio:${a.id}`} onPointerDown={e => startItem(e, ref, 'move')} title={`${p.labelOf(a.assetId)} · ${secs(start)}–${secs(start + a.durationMs)} s${a.linkedClipId ? ' · enlazado a su clip' : ''}`}
           style={itemStyle(start / 1000 * pxPerSec, w, 3, h - 6, kindColor[a.kind], ref, { opacity: a.muted ? 0.4 : 1, padding: '6px 8px' })}>
           {wf && wf !== 'loading' && <WaveformSvg w={wf} fromMs={a.trimInMs} toMs={a.trimInMs + a.durationMs} width={w} height={h - 6} />}
           {(a.envelope?.length || a.fadeInMs || a.fadeOutMs) ? <svg aria-label="Automatización de volumen" width={w} height={h - 6} style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}><polyline fill="none" stroke="#ffe08a" strokeWidth={1.5} points={envelopeBreakpoints(a).map(pt => `${pt.atMs / 1000 * pxPerSec},${h - 8 - Math.min(2, pt.gain) / 2 * (h - 10)}`).join(' ')} /></svg> : null}
@@ -340,7 +340,7 @@ function TransitionChip({ comp, clip, index: i, pxPerSec, locked, selected, onSe
   const drag = useRef<{ x: number; ms: number; max: number; base: Composition } | null>(null)
   const ms = clip.transitionMs ?? comp.fadeMs, kind = clip.transition ?? 'fade'
   const w = Math.max(18, Math.min(clip.durationMs, ms) / 1000 * pxPerSec)
-  return <button type="button" className={selected ? 'tlTransition on' : 'tlTransition'} draggable={!locked} aria-pressed={selected}
+  return <button type="button" data-transition={clip.id} className={selected ? 'tlTransition on' : 'tlTransition'} draggable={!locked} aria-pressed={selected}
     aria-label={`Transición ${TRANSITIONS[kind]} entre el clip ${i + 1} y el ${i + 2} (${secs(ms)} s)`} title={`${TRANSITIONS[kind]} · ${secs(ms)} s — clic para editarla, arrástrala a otro corte, Supr para quitarla`}
     style={{ position: 'absolute', right: 8, bottom: 3, width: w, height: 18, maxWidth: 'calc(100% - 12px)', padding: '0 4px', overflow: 'hidden' }}
     onClick={e => { e.stopPropagation(); onSelect() }}
