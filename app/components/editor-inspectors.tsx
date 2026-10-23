@@ -8,13 +8,21 @@ import { assetLabel, type EditorAsset } from '@/lib/editor/client'
 import { transformAt } from '@/lib/editor/motion'
 import { setKeyframe } from '@/lib/editor/tracks'
 import { canvasFiltersSupported } from '@/lib/editor/draw'
+import { Section } from './editor-workspace'
 
 const secs = (ms: number) => Math.round(ms / 100) / 10
 const pct = (n: number) => Math.round(n * 100)
 
 /** Picture adjustments shared by main clips and overlays: filter presets, brightness/contrast/saturation/blur, crop, rotation, opacity. */
-export function VisualFields({ filters, crop, rotation, opacity, onChange, label = 'Imagen' }: {
+/** A fold of its own, or (inside a property group) just its content. */
+function Fold({ bare, open, summary, children }: { bare: boolean; open: boolean; summary: React.ReactNode; children: React.ReactNode }) {
+  return bare ? <div className="small foldBare">{children}</div> : <details className="small" open={open}><summary>{summary}</summary>{children}</details>
+}
+
+export function VisualFields({ filters, crop, rotation, opacity, onChange, label = 'Imagen', bare = false }: {
   filters: Filters | null | undefined; crop: Crop | null | undefined; rotation?: number; opacity?: number
+  /** Inside a property group: no fold of its own. */
+  bare?: boolean
   onChange: (p: { filters?: Filters | null; crop?: Crop | null; rotation?: number; opacity?: number }) => void
   label?: string
 }) {
@@ -23,8 +31,7 @@ export function VisualFields({ filters, crop, rotation, opacity, onChange, label
   const setF = (p: Partial<Filters>) => { const n = { ...f, ...p }; onChange({ filters: n.brightness === 1 && n.contrast === 1 && n.saturation === 1 && n.blur === 0 ? null : n }) }
   const setC = (p: Partial<Crop>) => { const n = { ...c, ...p }; onChange({ crop: n.left || n.top || n.right || n.bottom ? n : null }) }
   const preset = Object.entries(FILTER_PRESETS).find(([, v]) => JSON.stringify(v.f) === JSON.stringify(f))?.[0] ?? ''
-  return <details className="small" open={!!filters || !!crop || !!rotation || (opacity !== undefined && opacity < 1)}>
-    <summary><b>{label}: filtros, recorte, rotación y opacidad</b></summary>
+  return <Fold bare={bare} open={!!filters || !!crop || !!rotation || (opacity !== undefined && opacity < 1)} summary={<b>{label}: filtros, recorte, rotación y opacidad</b>}>
     {!canvasFiltersSupported() && <p className="warnBox small">Este navegador no aplica filtros al lienzo (Safari): se verán y exportarán en Chrome o Edge.</p>}
     <div className="field-row" style={{ marginTop: 6 }}>
       <label>Filtro<select aria-label="Filtro" value={preset} onChange={e => { const v = FILTER_PRESETS[e.target.value]; if (v) onChange({ filters: e.target.value === 'none' ? null : v.f }) }}>{preset === '' && <option value="">Personalizado</option>}{Object.entries(FILTER_PRESETS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></label>
@@ -41,7 +48,7 @@ export function VisualFields({ filters, crop, rotation, opacity, onChange, label
       {opacity !== undefined && <label>Opacidad ({pct(opacity)} %)<input type="range" aria-label="Opacidad" min={0} max={1} step={0.01} value={opacity} onChange={e => onChange({ opacity: Number(e.target.value) })} /></label>}
       <button type="button" className="ghost small" onClick={() => onChange({ filters: null, crop: null, ...(rotation !== undefined ? { rotation: 0 } : {}), ...(opacity !== undefined ? { opacity: 1 } : {}) })}>Restablecer</button>
     </div>
-  </details>
+  </Fold>
 }
 
 /** A layer above the main track: picture, timing, position/size/rotation/opacity, keyframes, Ken Burns, fades, sound, filters and crop. */
@@ -63,12 +70,19 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
     else onChange({ transform: { ...o.transform, ...p } })
   }
   return <>
+    <Section id="layer-basic" title={isVideo ? 'Vídeo superpuesto' : 'Foto superpuesta'} defaultOpen>
     <label>Imagen o vídeo<select aria-label="Material de la superposición" value={o.assetId} onChange={e => onChange({ assetId: e.target.value, trimInMs: 0 })}>{visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select></label>
     <div className="field-row">
       <label>Aparece en (s)<input type="number" aria-label="Inicio de la superposición" min={0} step={0.1} value={secs(o.startMs)} onChange={e => onChange({ startMs: Number(e.target.value) * 1000 })} /></label>
       <label>Dura (s)<input type="number" aria-label="Duración de la superposición" min={0.1} step={0.1} value={secs(o.durationMs)} onChange={e => onChange({ durationMs: Number(e.target.value) * 1000 })} /></label>
       {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(o.trimInMs)} onChange={e => onChange({ trimInMs: Number(e.target.value) * 1000 })} /></label>}
     </div>
+    <div className="pageActions">
+      <button type="button" className="ghost" onClick={onDuplicate}>Duplicar</button>
+      <button type="button" className="ghost" onClick={onDelete}>Eliminar</button>
+    </div>
+    </Section>
+    <Section id="layer-transform" title="Posición y tamaño" defaultOpen>
     <div className="field-row">
       <label>Horizontal ({pct(now.x)} %)<input type="range" aria-label="Posición horizontal de la superposición" min={-0.5} max={1.5} step={0.01} value={now.x} onChange={e => setT({ x: Number(e.target.value) })} /></label>
       <label>Vertical ({pct(now.y)} %)<input type="range" aria-label="Posición vertical de la superposición" min={-0.5} max={1.5} step={0.01} value={now.y} onChange={e => setT({ y: Number(e.target.value) })} /></label>
@@ -81,22 +95,25 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
       <button type="button" className="ghost small" onClick={() => setT({ x: 0.8, y: 0.78, scale: 0.3, rotation: 0 })}>Esquina (PiP)</button>
       <button type="button" className="ghost small" onClick={() => setT({ x: 0.5, y: 0.5 })}>Centrar</button>
     </div>
+    </Section>
+    <Section id="layer-anim" title="Animación y movimiento" defaultOpen={(o.keyframes?.length ?? 0) > 0}>
     {animation}
     <div className="field-row">
       <label>Movimiento (Ken Burns)<select value={o.camera?.kind ?? 'none'} onChange={e => onChange({ camera: e.target.value === 'none' ? null : { kind: e.target.value as CameraKind, amount: o.camera?.amount ?? 0.12 } })}>{(Object.keys(CAMERA_MOVES) as CameraKind[]).map(k => <option key={k} value={k}>{CAMERA_MOVES[k]}</option>)}</select></label>
       <label>Entrada gradual (s)<input type="number" min={0} max={10} step={0.1} value={secs(o.fadeInMs ?? 0)} onChange={e => onChange({ fadeInMs: Math.max(0, Number(e.target.value) * 1000) || undefined })} /></label>
       <label>Salida gradual (s)<input type="number" min={0} max={10} step={0.1} value={secs(o.fadeOutMs ?? 0)} onChange={e => onChange({ fadeOutMs: Math.max(0, Number(e.target.value) * 1000) || undefined })} /></label>
     </div>
-    {isVideo && <div className="field-row">
+    </Section>
+    {isVideo && <Section id="layer-sound" title="Velocidad y sonido" defaultOpen>
+    <div className="field-row">
       <label>Velocidad<select value={String(o.speed ?? 1)} onChange={e => { const v = Number(e.target.value); onChange({ speed: v, durationMs: o.durationMs * (o.speed ?? 1) / v }) }}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>
       <label>Volumen ({pct(o.volume ?? 1)} %)<input type="range" min={0} max={2} step={0.05} value={o.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
       <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={o.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
-    </div>}
-    <VisualFields filters={o.filters} crop={o.crop} onChange={p => onChange(p as Partial<OverlayClip>)} label="Capa" />
-    <div className="pageActions">
-      <button type="button" className="ghost" onClick={onDuplicate}>Duplicar</button>
-      <button type="button" className="ghost" onClick={onDelete}>Eliminar</button>
     </div>
+    </Section>}
+    <Section id="layer-color" title="Color y efectos" defaultOpen={!!o.filters || !!o.crop}>
+    <VisualFields bare filters={o.filters} crop={o.crop} onChange={p => onChange(p as Partial<OverlayClip>)} label="Capa" />
+    </Section>
   </>
 }
 
@@ -104,8 +121,8 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
  * Everything about the transition out of a clip, beyond its type and length: direction, intensity, easing, preview, copy/paste,
  * remove, apply to the other selected cuts, and favourites saved in the account (usable in every montage).
  */
-export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset }: {
-  clip: Clip; defaultMs: number
+export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset, bare = false }: {
+  clip: Clip; defaultMs: number; bare?: boolean
   onChange: (p: Partial<Clip>) => void
   canPaste: boolean; onCopy: () => void; onPaste: () => void; onPreview: () => void
   /** Other main clips selected (their cut gets the same transition). */
@@ -116,8 +133,7 @@ export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, o
   const kind = clip.transition ?? 'fade'
   const o = clip.transitionOpts ?? {}
   const setO = (p: Partial<TransitionOptions>) => onChange({ transitionOpts: { ...o, ...p } })
-  return <details className="small" open={!!clip.transitionOpts || presets.length > 0}>
-    <summary><b>Ajustes de la transición</b> <span className="muted">({TRANSITIONS[kind]}, {clip.transitionMs ?? defaultMs} ms)</span></summary>
+  return <Fold bare={bare} open={!!clip.transitionOpts || presets.length > 0} summary={<><b>Ajustes de la transición</b> <span className="muted">({TRANSITIONS[kind]}, {clip.transitionMs ?? defaultMs} ms)</span></>}>
     <div className="field-row" style={{ marginTop: 6 }}>
       {HAS_DIRECTION.has(kind) && <label>Dirección<select aria-label="Dirección de la transición" value={o.direction ?? (kind === 'slide_up' ? 'up' : kind === 'wipe_down' ? 'down' : kind === 'wipe' ? 'right' : 'left')} onChange={e => setO({ direction: e.target.value as TransitionDirection })}>{(Object.keys(DIRECTIONS) as TransitionDirection[]).map(d => <option key={d} value={d}>{DIRECTIONS[d]}</option>)}</select></label>}
       {HAS_INTENSITY.has(kind) && <label>Intensidad ({Math.round((o.intensity ?? 1) * 100)} %)<input type="range" aria-label="Intensidad de la transición" min={0.2} max={3} step={0.1} value={o.intensity ?? 1} onChange={e => setO({ intensity: Number(e.target.value) })} /></label>}
@@ -137,7 +153,7 @@ export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, o
     {presets.length > 0 && <div className="pageActions" role="group" aria-label="Transiciones favoritas">
       {presets.map(p => <span key={p.id} className="pill small"><button type="button" className="ghost small" onClick={() => onChange({ transition: p.transition, transitionMs: p.ms, transitionOpts: Object.keys(p.opts).length ? p.opts : undefined })} title={`${TRANSITIONS[p.transition]} · ${p.ms} ms`}>★ {p.name}</button><button type="button" className="ghost small" aria-label={`Borrar la favorita ${p.name}`} onClick={() => onDeletePreset(p.id)}>✕</button></span>)}
     </div>}
-  </details>
+  </Fold>
 }
 
 export type AnimProp = { key: string; label: string; min: number; max: number; step: number; show: (v: number) => string }
@@ -162,8 +178,8 @@ type AnyKey = { atMs: number; easing?: KeyEasing } & Record<string, number | str
  * Keyframes of a clip or layer: add one at the playhead with the current values, edit time / values / curve of each, remove,
  * copy and paste to another clip, apply ready-made movements (smooth moves on still photos for lo-fi videos) and save your own.
  */
-export function KeyframeEditor({ title, props, keys, current, localMs, durationMs, inside, onKeys, canPaste, onCopy, onPaste, presets, onApplyPreset, onSavePreset, onDeletePreset }: {
-  title: string; props: AnimProp[]
+export function KeyframeEditor({ title, props, keys, current, localMs, durationMs, inside, onKeys, canPaste, onCopy, onPaste, presets, onApplyPreset, onSavePreset, onDeletePreset, bare = false }: {
+  title: string; props: AnimProp[]; bare?: boolean
   keys: AnyKey[] | undefined; current: Record<string, number>; localMs: number; durationMs: number; inside: boolean
   onKeys: (next: AnyKey[] | undefined) => void
   canPaste: boolean; onCopy: () => void; onPaste: () => void
@@ -177,8 +193,7 @@ export function KeyframeEditor({ title, props, keys, current, localMs, durationM
     const rest = list.filter(k => Math.abs(k.atMs - at) > 20)
     onKeys([...rest, { atMs: at, ...Object.fromEntries(props.map(p => [p.key, Math.round(current[p.key] * 1000) / 1000])) }].sort((a, b) => a.atMs - b.atMs))
   }
-  return <details className="small" open={list.length > 0}>
-    <summary><b>{title}</b> {list.length ? `(${list.length} fotogramas clave)` : ''}</summary>
+  return <Fold bare={bare} open={list.length > 0} summary={<><b>{title}</b> {list.length ? `(${list.length} fotogramas clave)` : ''}</>}>
     <p className="muted">Pon el cabezal donde quieras, ajusta los valores (aquí o en el visor) y pulsa «Fotograma clave». Entre dos fotogramas clave los valores cambian con la curva del segundo. Son efectos de edición: mueven, escalan, giran o atenúan la imagen entera; no animan objetos dentro de una foto.</p>
     <div className="pageActions">
       <button type="button" className="ghost small" disabled={!inside} onClick={addHere}>◆ Fotograma clave en el cabezal ({Math.round(localMs / 100) / 10} s)</button>
@@ -201,6 +216,6 @@ export function KeyframeEditor({ title, props, keys, current, localMs, durationM
       <label>Guardar esta animación<input aria-label="Nombre de la animación" value={name} maxLength={40} placeholder="p. ej. Zoom lofi" onChange={e => setName(e.target.value)} /></label>
       <button type="button" className="ghost small" disabled={!name.trim() || !list.length} onClick={() => { onSavePreset(name.trim()); setName('') }}>Guardar</button>
     </div>
-  </details>
+  </Fold>
 }
 const cleanKey = (k: AnyKey): AnyKey => Object.fromEntries(Object.entries(k).filter(([, v]) => v !== undefined)) as AnyKey

@@ -134,7 +134,7 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
   const pct = dur ? Math.min(100, time / dur * 100) : 0
 
   return <section className={`panel playerPanel${full ? ' isFull' : ''}`} aria-label="Reproductor">
-    <div ref={box} className="playerStage" style={{ aspectRatio: `${pw} / ${ph}`, position: 'relative', background: '#000', overflow: 'hidden' }}>
+    <div ref={box} className="playerStage" style={{ aspectRatio: `${pw} / ${ph}`, position: 'relative', background: '#000', overflow: 'hidden', width: `min(100%, calc(var(--ed-viewer, 62vh) * ${pw / ph}))`, maxHeight: 'none', marginInline: 'auto' }}>
       <canvas ref={canvas} width={pw} height={ph} className="playerCanvas" style={{ display: 'block', width: '100%', height: '100%' }} aria-label={`Visor del montaje, ${timecode(time)}`} onDoubleClick={() => void toggleFull()} onClick={e => { if (e.target === canvas.current && !overlay) p?.toggle() }} />
       {overlay}
       {st.waiting && <span className="playerWaiting" role="status">Cargando…</span>}

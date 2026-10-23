@@ -2,10 +2,11 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { StudioShell } from '../../components/studio-shell'
+import { readSidebarMode, StudioShell, writeSidebarMode, type SidebarMode } from '../../components/studio-shell'
+import { DEFAULT_LAYOUT, MODES, Section, Splitter, ToolSearch, ToolTabs, useWorkspaceState, WorkspaceProvider, type ToolEntry, type WorkspaceMode } from '../../components/editor-workspace'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat } from '@/lib/editor/composition'
+import { FILTER_PRESETS, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
 import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
@@ -31,7 +32,7 @@ import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
 import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, TransitionTools, VisualFields } from '../../components/editor-inspectors'
-import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
+import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
 import { extractProfile } from '@/lib/editor/profile'
@@ -64,10 +65,25 @@ export default function ManualEditorPage() {
   const dragging = useRef(false)
   const [trackScale, setTrackScale] = useState(1)
   const [allProjects, setAllProjects] = useState(false)
-  // Panel widths (materials | viewer | properties), adjustable by dragging the separators and remembered in this browser.
-  const [cols, setCols] = useState<{ left: number; right: number }>(() => { try { const v = JSON.parse(localStorage.getItem('cerebro-editor-cols') ?? 'null'); if (v && v.left > 150 && v.right > 200) return v } catch { /* ignore */ } return { left: 250, right: 340 } })
-  useEffect(() => { try { localStorage.setItem('cerebro-editor-cols', JSON.stringify(cols)) } catch { /* ignore */ } }, [cols])
-  const colDrag = useRef<{ side: 'left' | 'right'; x: number; w: number } | null>(null)
+  // Workspace: tool tabs | viewer | properties, panel sizes, open property groups and the workspace mode (remembered in this browser).
+  const ws = useWorkspaceState()
+  const sidebarBeforeWide = useRef<SidebarMode | null>(null)
+  const setMode = (m: WorkspaceMode) => {
+    const was = ws.layout.mode
+    if (m === 'wide' && was !== 'wide') { sidebarBeforeWide.current = readSidebarMode(); writeSidebarMode('hidden') }
+    if (was === 'wide' && m !== 'wide') writeSidebarMode(sidebarBeforeWide.current && sidebarBeforeWide.current !== 'hidden' ? sidebarBeforeWide.current : 'expanded')
+    if (m === 'edit') ws.set({ mode: m, left: true, right: true, viewerH: DEFAULT_LAYOUT.viewerH, rightW: DEFAULT_LAYOUT.rightW })
+    if (m === 'audio') { ws.set({ mode: m, left: true, right: true, tab: 'audio', viewerH: 300 }); setTrackScale(1.4) }
+    if (m === 'effects') ws.set({ mode: m, left: true, right: true, tab: 'effects', rightW: 440 })
+    if (m === 'wide') ws.set({ mode: m, left: false, right: false })
+    if (m !== 'audio') setTrackScale(1)
+  }
+  // Ctrl+K (⌘K): tool search.
+  useEffect(() => {
+    const onK = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); (document.getElementById('tool-search') as HTMLInputElement | null)?.focus() } }
+    window.addEventListener('keydown', onK)
+    return () => window.removeEventListener('keydown', onK)
+  }, [])
   const [relinkTo, setRelinkTo] = useState<Record<string, string>>({})
   const [magnet, setMagnet] = useState(true)
   const [pxPerSec, setPxPerSec] = useState(40)
@@ -110,7 +126,7 @@ export default function ManualEditorPage() {
   // Recovery and automatic saving.
   const [recovery, setRecovery] = useState<LocalDraft | null>(null)
   const [autoSave, setAutoSave] = useState(true)
-  const [matTab, setMatTab] = useState<'visual' | 'audio' | 'transitions'>('visual')
+  const [matTab, setMatTab] = useState<'visual' | 'audio'>('visual')
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
   const requested = useRef(new Set<string>())
@@ -550,10 +566,39 @@ export default function ManualEditorPage() {
   const width = Math.max(total / 1000 * pxPerSec, 600)
   const starts = clipStarts(comp)
   const selOverlay = selection?.kind === 'overlay' ? (comp.overlays ?? []).find(o => o.id === selection.id) ?? null : null
-  const materials = matTab === 'visual' ? visuals : matTab === 'audio' ? audios : []
+  const materials = matTab === 'visual' ? visuals : audios
   const nextBeatRel = selClip ? (() => { const st = starts[comp.clips.findIndex(k => k.id === selClip.id)]; const b = beats.beatsMs.find(t => t - st >= MIN_CLIP_MS && st + selClip.durationMs - t >= MIN_CLIP_MS); return b === undefined ? null : b - st })() : null
 
-  return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor/style?project=${job.project_id}`}>Editar con mi estilo</Link><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
+  const addTextHere = () => { const at = Math.min(playheadMs, Math.max(0, total - 1000)); const r = addTextClip(comp, { content: 'Texto', startMs: at, durationMs: 3000, position: 'center', sizePct: 7, animation: 'fade', font: 'sans', color: '#ffffff' }); const t = (r.textClips ?? []).find(x => !(comp.textClips ?? []).some(y => y.id === x.id)); apply(() => r); if (t) { setSelection({ kind: 'text', id: t.id }); ws.reveal({ section: 'text-basic' }) } }
+  // «Buscar herramienta»: where each tool lives depends on what is selected.
+  const toProject = (section: string) => { setSel([]); ws.reveal({ section }) }
+  const toolEntries: ToolEntry[] = [
+    { label: 'Transición del clip seleccionado', words: 'transicion fundido disolvencia corte cortinilla', go: () => (selClip ? ws.reveal({ section: 'clip-transition' }) : ws.reveal({ tab: 'transitions' })) },
+    { label: 'Transiciones (catálogo para arrastrar)', words: 'transicion transiciones catalogo paleta', go: () => ws.reveal({ tab: 'transitions' }) },
+    { label: 'Volumen', words: 'volumen sonido nivel audio silenciar', go: () => (selAudio ? ws.reveal({ section: 'audio-basic' }) : selClip && typeOf(selClip.visualAssetId) === 'video' ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="volume"]' }) : selOverlay ? ws.reveal({ section: 'layer-sound' }) : ws.reveal({ tab: 'audio', selector: '[aria-label="Mezclador"]' })) },
+    { label: 'Mezclador de pistas', words: 'mezcla mezclador pistas solo mute volumen', go: () => ws.reveal({ tab: 'audio', selector: '[aria-label="Mezclador"]' }) },
+    { label: 'Recortar / duración', words: 'recortar recorte trim duracion acortar alargar', go: () => (selClip ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="trim"]' }) : selAudio ? ws.reveal({ section: 'audio-basic' }) : selOverlay ? ws.reveal({ section: 'layer-basic' }) : ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' })) },
+    { label: 'Recortar la imagen (encuadre)', words: 'recortar recorte crop imagen', go: () => (selOverlay ? ws.reveal({ section: 'layer-color' }) : selClip ? ws.reveal({ section: 'clip-color' }) : ws.reveal({ tab: 'effects' })) },
+    { label: 'Dividir en el cabezal', words: 'dividir cortar split tijera', go: () => ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' }) },
+    { label: 'Subtítulos', words: 'subtitulos subtitulo captions transcripcion', go: () => ws.reveal({ tab: 'texts', selector: '[data-tabpanel="texts"] section' }) },
+    { label: 'Estilo de subtítulos del proyecto', words: 'subtitulos estilo captions', go: () => toProject('proj-captions') },
+    { label: 'Textos', words: 'texto titulo rotulo añadir texto', go: () => ws.reveal({ tab: 'texts' }) },
+    { label: 'Zoom de la imagen', words: 'zoom encuadre acercar ken burns camara', go: () => (selClip ? ws.reveal({ section: 'clip-frame', selector: '[data-tool="zoom"]' }) : selOverlay ? ws.reveal({ section: 'layer-transform' }) : ws.reveal({ tab: 'effects' })) },
+    { label: 'Zoom de la línea de tiempo', words: 'zoom linea de tiempo escala', go: () => ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' }) },
+    { label: 'Animación (fotogramas clave)', words: 'animacion fotogramas clave keyframes movimiento', go: () => (selClip ? ws.reveal({ section: 'clip-anim' }) : selOverlay ? ws.reveal({ section: 'layer-anim' }) : ws.reveal({ tab: 'effects' })) },
+    { label: 'Filtros y color', words: 'filtro filtros color brillo contraste saturacion blanco y negro efectos', go: () => (selClip ? ws.reveal({ section: 'clip-color' }) : selOverlay ? ws.reveal({ section: 'layer-color' }) : ws.reveal({ tab: 'effects' })) },
+    { label: 'Efectos rápidos', words: 'efectos filtros movimientos presets', go: () => ws.reveal({ tab: 'effects' }) },
+    { label: 'Exportar el vídeo', words: 'exportar render descargar mp4 webm resolucion', go: () => ws.reveal({ section: 'export' }) },
+    { label: 'Materiales e importar archivos', words: 'materiales importar subir archivos biblioteca fotos videos', go: () => ws.reveal({ tab: 'materials' }) },
+    { label: 'Música de fondo', words: 'musica fondo ducking bajar musica voz', go: () => toProject('proj-sound') },
+    { label: 'Ritmo y pulsos de la música', words: 'ritmo pulsos beats sincronizar', go: () => ws.reveal({ tab: 'audio', selector: '[data-tabpanel="audio"] section:last-of-type' }) },
+    { label: 'Estilo, plantillas y aprendizaje (IA)', words: 'ia estilo plantilla aprender referencia comparar', go: () => ws.reveal({ tab: 'ai' }) },
+    { label: 'Formato del vídeo', words: 'formato 16:9 9:16 vertical cuadrado tamaño', go: () => ws.reveal({ selector: '[data-tool="format"]' }) },
+    { label: 'Puntos de recuperación', words: 'versiones recuperar historial guardado', go: () => setShowVersions(true) },
+    { label: 'Marcadores', words: 'marcador marcadores', go: () => ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' }) },
+  ]
+
+  return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" wide compactHead actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor/style?project=${job.project_id}`}>Editar con mi estilo</Link><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
 
@@ -592,7 +637,8 @@ export default function ManualEditorPage() {
           <button type="button" className="ghost small" onClick={() => void restoreVersion(v)}>Restaurar</button>
         </li>)}</ul>}
     </section>}
-    <div className="editorBar panel" style={{ marginBottom: 12 }}>
+    <WorkspaceProvider value={ws}>
+    <div className="editorBar edTop panel" role="region" aria-label="Barra del editor">
       <div className="stats">
         <span className="pill">{comp.clips.length} clips</span>
         <span className="pill info">{fmt(total)}</span>
@@ -602,7 +648,7 @@ export default function ManualEditorPage() {
         </span>
         <label className="pill small" title="Guarda en la nube unos segundos después de cada cambio (con control de conflictos entre sesiones)"><input type="checkbox" checked={autoSave} onChange={e => setAutoSave(e.target.checked)} /> Guardado automático</label>
         <button type="button" className="ghost small" aria-expanded={showVersions} onClick={() => setShowVersions(v => !v)}>Puntos de recuperación</button>
-        <label className="small">Formato{' '}
+        <label className="small" data-tool="format">Formato{' '}
           <select value={comp.format} onChange={e => apply(c => ({ ...c, format: e.target.value as OutputFormat }))}>
             <option value="16:9">16:9</option><option value="9:16">9:16</option><option value="1:1">1:1</option><option value="custom">Personalizado</option>
           </select>
@@ -612,18 +658,28 @@ export default function ManualEditorPage() {
           <input type="number" aria-label="Alto personalizado" min={240} max={3840} step={2} value={comp.customSize?.height ?? 720} onChange={e => apply(c => ({ ...c, customSize: { width: c.customSize?.width ?? 1280, height: Math.round(Math.min(3840, Math.max(240, Number(e.target.value) || 720)) / 2) * 2 } }))} style={{ width: 76 }} />
         </span>}
       </div>
+      <div className="edTopTools">
+        <label className="small">Espacio de trabajo{' '}
+          <select aria-label="Espacio de trabajo" value={ws.layout.mode} title={MODES[ws.layout.mode].hint} onChange={e => setMode(e.target.value as WorkspaceMode)}>
+            {(Object.keys(MODES) as WorkspaceMode[]).map(m => <option key={m} value={m}>{MODES[m].label}</option>)}
+          </select>
+        </label>
+        <button type="button" className={ws.layout.left ? 'small' : 'ghost small'} aria-pressed={ws.layout.left} aria-controls="ed-tools" onClick={() => ws.set({ left: !ws.layout.left })} title="Muestra u oculta el panel de herramientas (materiales, transiciones, efectos…)">Herramientas</button>
+        <button type="button" className={ws.layout.right ? 'small' : 'ghost small'} aria-pressed={ws.layout.right} aria-controls="ed-props" onClick={() => ws.set({ right: !ws.layout.right })} title="Muestra u oculta el panel de propiedades">Propiedades</button>
+        <ToolSearch entries={toolEntries} />
+      </div>
       <div className="pageActions">
         <button type="button" className="ghost" title="Divide en el cabezal lo seleccionado o todo lo que pasa por él (S)" onClick={splitHere}>Cortar en el cabezal</button>
         <button type="button" className="ghost" title="Tecla I" onClick={() => markAt('in')}>Marcar entrada</button>
         <button type="button" className="ghost" title="Tecla O" onClick={() => markAt('out')}>Marcar salida</button>
-        <button type="button" className="ghost" onClick={() => { const at = Math.min(playheadMs, Math.max(0, total - 1000)); apply(c => addTextClip(c, { content: 'Texto', startMs: at, durationMs: 3000, position: 'center', sizePct: 7, animation: 'fade', font: 'sans', color: '#ffffff' })) }}>Añadir texto</button>
+        <button type="button" className="ghost" onClick={addTextHere}>Añadir texto</button>
         <button type="button" className="ghost" disabled={!history?.past.length} onClick={() => { setHistory(h => (h ? undo(h) : h)); setDirty(true) }} title="Ctrl+Z">Deshacer</button>
         <button type="button" className="ghost" disabled={!history?.future.length} onClick={() => { setHistory(h => (h ? redo(h) : h)); setDirty(true) }} title="Ctrl+Shift+Z">Rehacer</button>
         <button type="button" onClick={() => void saveClick()} disabled={busy === 'save' || saveState === 'saving'} title="Guarda en la nube y crea un punto de recuperación">{busy === 'save' ? 'Guardando…' : 'Guardar ahora'}</button>
       </div>
     </div>
 
-    <form className="panel instructionBar" style={{ marginBottom: 12 }} onSubmit={e => { e.preventDefault(); runText(instruction) }} aria-label="Instrucciones">
+    <form className="panel instructionBar" style={{ marginBottom: 10 }} onSubmit={e => { e.preventDefault(); runText(instruction) }} aria-label="Instrucciones">
       <label htmlFor="ed-instr" className="small"><b>Dile al editor qué hacer</b> {range ? <span className="pill info">Se aplica al fragmento {secs(range.startMs)}–{secs(range.endMs)} s</span> : selection?.kind === 'clip' ? <span className="pill">Se aplica al clip seleccionado</span> : <span className="muted">· se aplica al clip bajo el cabezal</span>}</label>
       <div className="field-row" style={{ alignItems: 'center' }}>
         <input id="ed-instr" list="ed-instr-examples" value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="p. ej. pon esta música desde el minuto 2 · corta aquí · haz un zoom lento · cambia de imagen siguiendo el ritmo" style={{ flex: 1 }} />
@@ -633,38 +689,18 @@ export default function ManualEditorPage() {
       {proposal && <div className="styleBox" role="group" aria-label="Propuesta de preferencia" style={{ marginTop: 8 }}>
         <span className="small">Has cambiado «{PREF_LABELS[proposal.key].phrase}» de <b>{PREF_LABELS[proposal.key].show(proposal.from)}</b> a <b>{PREF_LABELS[proposal.key].show(proposal.to)}</b>. ¿Uso {PREF_LABELS[proposal.key].show(proposal.to)} la próxima vez?</span>
         <div className="pageActions"><button type="button" className="small" onClick={() => void answerProposal(true)}>Guardar como preferencia</button><button type="button" className="ghost small" onClick={() => void answerProposal(false)}>No, solo esta vez</button></div>
-      </div>}
-      <details className="small"><summary>Mis preferencias ({prefs.history.length} cambios confirmados)</summary>
-        <ul className="plainList">{(Object.keys(PREF_LABELS) as Array<keyof typeof PREF_LABELS>).map(k => <li key={k}>{PREF_LABELS[k].label}: <b>{PREF_LABELS[k].show(prefs[k])}</b>{prefs[k] !== DEFAULT_PREFS[k] ? <span className="muted"> (por defecto {PREF_LABELS[k].show(DEFAULT_PREFS[k])})</span> : null}</li>)}</ul>
-      </details>
-      {instructionLog.length > 0 && <details className="small"><summary>Últimas instrucciones ({instructionLog.length})</summary><ul className="plainList">{instructionLog.map((l, i) => <li key={i}><button type="button" className="ghost small" onClick={() => runText(l.text)} title="Repetir">↻</button> «{l.text}» → {l.done.join(' ')}</li>)}</ul></details>}
-    </form>
+      </div>}    </form>
 
-    <div className="editorLayout" style={{ ['--ed-left' as string]: `${cols.left}px`, ['--ed-right' as string]: `${cols.right}px` }}
-      onPointerMove={e => { const d = colDrag.current; if (!d) return; const dx = e.clientX - d.x; setCols(c => ({ ...c, [d.side]: Math.round(Math.min(640, Math.max(170, d.side === 'left' ? d.w + dx : d.w - dx))) })) }}
-      onPointerUp={() => { colDrag.current = null }}>
-      <aside className="panel editorMaterials" aria-label="Materiales">
-        <div className="cardHead" style={{ marginBottom: 6 }}><h3>Materiales</h3><span className="muted small">{assets.length}</span></div>
-        <div className="pageActions" role="tablist" aria-label="Tipo de material">
-          <button type="button" role="tab" aria-selected={matTab === 'visual'} className={matTab === 'visual' ? 'small' : 'ghost small'} onClick={() => setMatTab('visual')}>Vídeo e imagen</button>
-          <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Audio</button>
-          <button type="button" role="tab" aria-selected={matTab === 'transitions'} className={matTab === 'transitions' ? 'small' : 'ghost small'} onClick={() => setMatTab('transitions')}>Transiciones</button>
-        </div>
-        {matTab === 'transitions' ? <>
-          <ul className="materialList" role="listbox" aria-label="Transiciones">
-            {(Object.keys(TRANSITIONS) as Transition[]).map(t => <li key={t} role="option" aria-selected={selClip?.transition === t} draggable aria-label={`Transición ${TRANSITIONS[t]}`} title="Arrástrala entre dos clips del vídeo principal, o selecciona un clip y haz clic"
-              onDragStart={e => { e.dataTransfer.setData(TRANSITION_MIME, t); e.dataTransfer.effectAllowed = 'copy' }}
-              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } apply(c => updateClip(c, selClip.id, { transition: t })); setNotice(`Transición «${TRANSITIONS[t]}» al final del clip seleccionado.`) }}>
-              <span className="matThumb" aria-hidden="true" style={{ background: '#333', display: 'grid', placeItems: 'center' }}>{TRANSITION_ICONS[t]}</span>
-              <span className="matName">{TRANSITIONS[t]}</span>
-            </li>)}
-          </ul>
-          <div className="field-row" style={{ alignItems: 'end' }}>
-            <label>Duración (ms)<input type="number" aria-label="Duración de las transiciones" min={0} max={3000} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
-            <button type="button" className="ghost small" onClick={() => { const t = selClip?.transition ?? 'dissolve'; apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, transition: t } : k)) })); setNotice(`«${TRANSITIONS[t]}» aplicada entre todos los clips.`) }}>Aplicar a todos los cortes</button>
-          </div>
-          <p className="muted small">La transición se ve en el visor al momento, sin exportar. Cada clip puede tener su propia duración en sus propiedades.</p>
-        </> : <>
+    <div className="editorLayout edWork" data-mode={ws.layout.mode} data-left={ws.layout.left ? 'on' : 'off'} data-right={ws.layout.right ? 'on' : 'off'}
+      style={{ ['--ed-cols' as string]: `${ws.layout.left ? `${ws.layout.leftW}px 8px ` : ''}minmax(0,1fr)${ws.layout.right ? ` 8px ${ws.layout.rightW}px` : ''}`, ['--ed-viewer' as string]: `${ws.layout.viewerH}px` }}>
+      <aside id="ed-tools" className="panel editorMaterials edTools" aria-label="Herramientas" hidden={!ws.layout.left}>
+        <ToolTabs panels={{
+          materials: <>
+            <div className="cardHead" style={{ marginBottom: 6 }}><h3>Materiales</h3><span className="muted small">{assets.length}</span></div>
+            <div className="pageActions" role="tablist" aria-label="Tipo de material">
+              <button type="button" role="tab" aria-selected={matTab === 'visual'} className={matTab === 'visual' ? 'small' : 'ghost small'} onClick={() => setMatTab('visual')}>Vídeo e imagen</button>
+              <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Música y sonidos</button>
+            </div>
         <ul className="materialList" role="listbox" aria-label="Materiales del proyecto">
           {materials.map(a => <li key={a.id} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
             <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
@@ -674,7 +710,6 @@ export default function ManualEditorPage() {
         </ul>
         <label className="pill small"><input type="checkbox" checked={allProjects} onChange={e => setAllProjects(e.target.checked)} /> Ver también otros proyectos</label>
         <p className="muted small">Arrastra un material a cualquier pista; se coloca donde lo sueltas. Los materiales de la Biblioteca general y de otros proyectos se usan sin copiar el archivo.</p>
-        </>}
         <details open={assets.length === 0}><summary className="small"><b>Importar o añadir</b></summary>
           <section style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             <label htmlFor="mi-files"><b>Importar desde tu equipo</b>
@@ -704,31 +739,76 @@ export default function ManualEditorPage() {
             })()}>{busy === 'audio' ? 'Midiendo…' : addAudioKind === 'voice' && selClip ? 'Añadir enlazado al clip seleccionado' : 'Añadir al inicio'}</button>
           </section>
         </details>
+          </>,
+          transitions: <>
+          <ul className="materialList" role="listbox" aria-label="Transiciones">
+            {(Object.keys(TRANSITIONS) as Transition[]).map(t => <li key={t} role="option" aria-selected={selClip?.transition === t} draggable aria-label={`Transición ${TRANSITIONS[t]}`} title="Arrástrala entre dos clips del vídeo principal, o selecciona un clip y haz clic"
+              onDragStart={e => { e.dataTransfer.setData(TRANSITION_MIME, t); e.dataTransfer.effectAllowed = 'copy' }}
+              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } apply(c => updateClip(c, selClip.id, { transition: t })); setNotice(`Transición «${TRANSITIONS[t]}» al final del clip seleccionado.`); ws.reveal({ section: 'clip-transition' }) }}>
+              <span className="matThumb" aria-hidden="true" style={{ background: '#333', display: 'grid', placeItems: 'center' }}>{TRANSITION_ICONS[t]}</span>
+              <span className="matName">{TRANSITIONS[t]}</span>
+            </li>)}
+          </ul>
+          <div className="field-row" style={{ alignItems: 'end' }}>
+            <label>Duración (ms)<input type="number" aria-label="Duración de las transiciones" min={0} max={3000} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
+            <button type="button" className="ghost small" onClick={() => { const t = selClip?.transition ?? 'dissolve'; apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, transition: t } : k)) })); setNotice(`«${TRANSITIONS[t]}» aplicada entre todos los clips.`) }}>Aplicar a todos los cortes</button>
+          </div>
+          <p className="muted small">La transición se ve en el visor al momento, sin exportar. Cada clip puede tener su propia duración en sus propiedades.</p>
+          </>,
+          effects: <EffectsTab selClips={sel.filter(r => r.kind === 'clip').map(r => comp.clips.find(k => k.id === r.id)).filter((k): k is Clip => !!k)}
+            selLayers={sel.filter(r => r.kind === 'overlay').map(r => (comp.overlays ?? []).find(o => o.id === r.id)).filter((o): o is NonNullable<typeof o> => !!o)}
+            presets={[...BUILTIN_ANIMATIONS, ...presets.animations]} apply={apply} onNotice={setNotice} onReveal={(id: string) => ws.reveal({ section: id })} />,
+          texts: <>
+            <div className="pageActions">
+              <button type="button" className="small" onClick={addTextHere}>Añadir texto en el cabezal</button>
+            </div>
+            <ul className="materialList" aria-label="Textos del montaje">
+              {(comp.textClips ?? []).map(t => <li key={t.id}><button type="button" className={selText?.id === t.id ? 'small' : 'ghost small'} style={{ width: '100%', textAlign: 'left' }} onClick={() => { setSelection({ kind: 'text', id: t.id }); setPlayheadMs(t.startMs); ws.set({ right: true }) }}>{secs(t.startMs)} s · {t.content}</button></li>)}
+              {!(comp.textClips ?? []).length && <li className="muted small">Todavía no hay textos.</li>}
+            </ul>
+    <EditorSubtitlesPanel comp={comp} apply={apply} onNotice={setNotice} />
+          </>,
+          audio: <>
+            <MixerStrip comp={comp} onChange={mix => apply(c => ({ ...c, mix }))} />
+    <EditorSyncPanel comp={comp} assets={assets} beats={beats} showBeats={showBeats} setShowBeats={setShowBeats} snap={snap} setSnap={setSnap} toleranceMs={toleranceMs} setToleranceMs={setToleranceMs}
+      isVideo={k => typeOf(k.visualAssetId) === 'video'} apply={apply} onNotice={setNotice} />
+          </>,
+          ai: <>
+            <section className="panel" aria-label="Preferencias e historial de instrucciones">
+      <details className="small"><summary>Mis preferencias ({prefs.history.length} cambios confirmados)</summary>
+        <ul className="plainList">{(Object.keys(PREF_LABELS) as Array<keyof typeof PREF_LABELS>).map(k => <li key={k}>{PREF_LABELS[k].label}: <b>{PREF_LABELS[k].show(prefs[k])}</b>{prefs[k] !== DEFAULT_PREFS[k] ? <span className="muted"> (por defecto {PREF_LABELS[k].show(DEFAULT_PREFS[k])})</span> : null}</li>)}</ul>
+      </details>
+      {instructionLog.length > 0 && <details className="small"><summary>Últimas instrucciones ({instructionLog.length})</summary><ul className="plainList">{instructionLog.map((l, i) => <li key={i}><button type="button" className="ghost small" onClick={() => runText(l.text)} title="Repetir">↻</button> «{l.text}» → {l.done.join(' ')}</li>)}</ul></details>}
+            </section>
+    <StylePanel composition={comp} kindOf={kindOf} refreshKey={stylesKey} sessionStart={sessionStart} onApply={(next, changes) => { apply(() => next); setNotice(`${changes.join(' ')} (puedes deshacerlo)`) }} />
+    <MontageTemplatePanel composition={comp} typeOf={id => assets.find(a => a.id === id)?.asset_type ?? 'other'} />
+    <EditorReferencePanel comp={comp} kindOf={kindOf} beatsMs={beats.beatsMs} apply={apply} onNotice={setNotice} onStylesChanged={() => setStylesKey(k => k + 1)} />
+    <EditorComparePanel comp={comp} jobId={job.id} projectId={job.project_id} beatsMs={beats.beatsMs} />
+    <LearnPanel composition={comp} beatsMs={beats.beatsMs} refreshKey={stylesKey} kindOf={kindOf}
+      onApply={(next, changes) => { apply(() => next); setNotice(`Estilo aplicado (puedes deshacerlo): ${changes.join(' ')}`) }} />
+          </>,
+        }} />
       </aside>
-
-      <div className="colSplit" role="separator" aria-orientation="vertical" aria-label="Ancho del panel de materiales" tabIndex={0} aria-valuenow={cols.left} aria-valuemin={170} aria-valuemax={640}
-        onPointerDown={e => { (e.target as HTMLElement).setPointerCapture(e.pointerId); colDrag.current = { side: 'left', x: e.clientX, w: cols.left } }}
-        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setCols(c => ({ ...c, left: Math.min(640, Math.max(170, c.left + (e.key === 'ArrowRight' ? 20 : -20))) })) } }} />
-      <div className="editorViewer">
+      {ws.layout.left && <Splitter label="Ancho del panel de herramientas" orientation="vertical" value={ws.layout.leftW} min={200} max={640} onChange={v => ws.set({ leftW: v })} />}
+      <div className="editorViewer edViewer">
         <EditorPlayerView composition={comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
           overlay={<ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
-        <details className="panel exportBox" style={{ marginTop: 12 }}>
-          <summary><b>Exportar el vídeo</b> <span className="muted small">resolución, calidad, destino</span></summary>
+        <Splitter label="Alto del visor" orientation="horizontal" value={ws.layout.viewerH} min={180} max={1400} onChange={v => ws.set({ viewerH: v })} />
+        <div className="panel exportBox" style={{ marginTop: 8 }}>
+          <Section id="export" title="Exportación" extra={<span className="muted small">resolución, calidad, destino</span>}>
           <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} exportOnly />
-        </details>
+          </Section>
+        </div>
       </div>
-
-      <div className="colSplit" role="separator" aria-orientation="vertical" aria-label="Ancho del panel de propiedades" tabIndex={0} aria-valuenow={cols.right} aria-valuemin={170} aria-valuemax={640}
-        onPointerDown={e => { (e.target as HTMLElement).setPointerCapture(e.pointerId); colDrag.current = { side: 'right', x: e.clientX, w: cols.right } }}
-        onKeyDown={e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); setCols(c => ({ ...c, right: Math.min(640, Math.max(170, c.right + (e.key === 'ArrowLeft' ? 20 : -20))) })) } }} />
-      <section className="panel editorProps" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-label="Propiedades">
-        <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1}` : selAudio ? 'Audio' : selText ? 'Texto' : selOverlay ? 'Superposición' : 'Montaje'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
+      {ws.layout.right && <Splitter label="Ancho del panel de propiedades" orientation="vertical" invert value={ws.layout.rightW} min={240} max={640} onChange={v => ws.set({ rightW: v })} />}
+      <section id="ed-props" className="panel editorProps edProps" aria-label="Propiedades" hidden={!ws.layout.right}>
+        <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1} · ${typeOf(selClip.visualAssetId) === 'video' ? 'vídeo' : selClip.visualAssetId ? 'foto' : 'sin visual'}` : selAudio ? `Audio · ${({ music: 'música', voice: 'voz', sfx: 'efecto' } as const)[selAudio.kind]}` : selText ? 'Texto' : selOverlay ? `Capa · ${typeOf(selOverlay.assetId) === 'video' ? 'vídeo' : 'foto'}` : 'Proyecto'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
         {selection && isLocked(comp, selection) && <p className="warnBox small" role="status">Este elemento está en una pista bloqueada: desbloquéala (🔒) para cambiarlo.</p>}
-        <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {selOverlay && <OverlayInspector animation={(() => {
             const local = Math.min(Math.max(playheadMs - selOverlay.startMs, 0), selOverlay.durationMs)
             const cur = frameValuesAt({ ...selOverlay.transform }, selOverlay.keyframes, local)
-            return <KeyframeEditor title="Animación con fotogramas clave" props={LAYER_PROPS} keys={selOverlay.keyframes as never} current={cur} localMs={local} durationMs={selOverlay.durationMs}
+            return <KeyframeEditor bare title="Animación con fotogramas clave" props={LAYER_PROPS} keys={selOverlay.keyframes as never} current={cur} localMs={local} durationMs={selOverlay.durationMs}
               inside={playheadMs >= selOverlay.startMs && playheadMs <= selOverlay.startMs + selOverlay.durationMs}
               onKeys={k => apply(c => updateOverlay(c, selOverlay.id, { keyframes: k as never }))}
               canPaste={copiedAnim?.target === 'layer'} onCopy={() => { setCopiedAnim({ target: 'layer', keys: keysToPreset((selOverlay.keyframes ?? []) as never, selOverlay.durationMs) }); setNotice('Animación copiada: selecciona otra capa y pulsa «Pegar animación».') }}
@@ -745,7 +825,7 @@ export default function ManualEditorPage() {
             const i = comp.clips.findIndex(k => k.id === selClip.id)
             const local = Math.min(Math.max(playheadMs - starts[i], 0), selClip.durationMs)
             const cur = frameValuesAt({ zoom: selClip.zoom ?? 1, focusX: selClip.focusX ?? 0.5, focusY: selClip.focusY ?? 0.5, rotation: selClip.rotation ?? 0, opacity: selClip.opacity ?? 1 }, selClip.keyframes, local)
-            return <KeyframeEditor title="Animación de la imagen (zoom, encuadre, giro, opacidad)" props={CLIP_PROPS} keys={selClip.keyframes as never} current={cur} localMs={local} durationMs={selClip.durationMs}
+            return <KeyframeEditor bare title="Animación de la imagen (zoom, encuadre, giro, opacidad)" props={CLIP_PROPS} keys={selClip.keyframes as never} current={cur} localMs={local} durationMs={selClip.durationMs}
               inside={playheadMs >= starts[i] && playheadMs <= starts[i] + selClip.durationMs}
               onKeys={k => apply(c => setClipKeyframes(c, selClip.id, k as never))}
               canPaste={copiedAnim?.target === 'clip'} onCopy={() => { setCopiedAnim({ target: 'clip', keys: keysToPreset((selClip.keyframes ?? []) as never, selClip.durationMs) }); setNotice('Animación copiada: selecciona otro clip y pulsa «Pegar animación».') }}
@@ -754,7 +834,7 @@ export default function ManualEditorPage() {
               onApplyPreset={pr => { apply(c => setClipKeyframes(updateClip(c, selClip.id, { camera: { kind: 'none', amount: 0.1 } }), selClip.id, presetKeys(pr, selClip.durationMs) as never)); setNotice(`Movimiento «${pr.name}» aplicado (sustituye al movimiento de cámara). Ctrl+Z lo deshace.`) }}
               onSavePreset={name => void storePresets({ ...presets, animations: [...presets.animations.filter(a => a.name !== name), { id: `ap-${Date.now().toString(36)}`, name, target: 'clip', camera: null, keyframes: keysToPreset((selClip.keyframes ?? []) as never, selClip.durationMs) }] }).then(() => setNotice(`Animación «${name}» guardada en tu cuenta.`))}
               onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
-          })()} transitionTools={<TransitionTools clip={selClip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, selClip.id, p))}
+          })()} transitionTools={<TransitionTools bare clip={selClip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, selClip.id, p))}
             canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition({ transition: selClip.transition, transitionMs: selClip.transitionMs, transitionOpts: selClip.transitionOpts }); setNotice('Transición copiada: selecciona otro clip y pulsa «Pegar transición».') }}
             onPaste={() => { if (!copiedTransition) return; const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, { ...copiedTransition }), c)) }}
             onPreview={() => { const i = comp.clips.findIndex(k => k.id === selClip.id); const ms = selClip.transitionMs ?? comp.fadeMs; const end = starts[i] + selClip.durationMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, end - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) }}
@@ -773,6 +853,7 @@ export default function ManualEditorPage() {
           onMove={dir => apply(c => moveClip(c, selClip.id, c.clips.findIndex(k => k.id === selClip.id) + dir))} />}
         {selText && <TextInspector t={selText} onChange={p => apply(c => updateTextClip(c, selText.id, p))} onDuplicate={() => apply(c => duplicateTextClip(c, selText.id))} onDelete={() => { apply(c => deleteTextClip(c, selText.id)); setSelection(null) }} />}
         {selAudio && <>
+          <Section id="audio-basic" title="Sonido" defaultOpen>
           <p className="small">{label(selAudio.assetId)} · {selAudio.linkedClipId ? 'enlazado a su clip' : 'posición absoluta'}</p>
           <div className="field-row">
             <label>Inicio (s)<input type="number" min={0} step={0.1} value={secs(audioStartMs(comp, selAudio))} onChange={e => apply(c => moveAudioClip(c, selAudio.id, Number(e.target.value) * 1000))} /></label>
@@ -782,29 +863,38 @@ export default function ManualEditorPage() {
           <label>Volumen ({Math.round(selAudio.volume * 100)}%)<input type="range" min={0} max={2} step={0.05} value={selAudio.volume} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { volume: Number(e.target.value) }))} /></label>
           <label>Panorámica ({!selAudio.pan ? 'centro' : `${selAudio.pan < 0 ? 'izquierda' : 'derecha'} ${Math.round(Math.abs(selAudio.pan) * 100)} %`})<input type="range" aria-label="Panorámica" min={-1} max={1} step={0.05} value={selAudio.pan ?? 0} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { pan: Number(e.target.value) || undefined }))} /></label>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={selAudio.muted} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { muted: e.target.checked }))} /> Silenciar</label>
-          <AutomationEditor a={selAudio} startMs={audioStartMs(comp, selAudio)} playheadMs={playheadMs} range={range} onChange={p => apply(c => updateAudioClip(c, selAudio.id, p))} />
           <div className="pageActions">
             {selAudio.linkedClipId === null && <span className="muted small">Para enlazarlo a un clip, bórralo y añádelo con ese clip seleccionado.</span>}
             <button type="button" className="ghost" onClick={() => { apply(c => deleteAudioClip(c, selAudio.id)); setSelection(null) }}>Eliminar audio</button>
           </div>
+          </Section>
+          <Section id="audio-auto" title="Automatización y fundidos" defaultOpen={(selAudio.envelope?.length ?? 0) > 0 || Boolean(selAudio.fadeInMs || selAudio.fadeOutMs)}>
+          <AutomationEditor a={selAudio} startMs={audioStartMs(comp, selAudio)} playheadMs={playheadMs} range={range} onChange={p => apply(c => updateAudioClip(c, selAudio.id, p))} />
+          </Section>
         </>}
         {!selClip && !selAudio && !selText && !selOverlay && <>
+          <Section id="proj-basic" title="Proyecto" defaultOpen>
+            <p className="small">{comp.clips.length} clips · {fmt(total)} · formato {comp.format === 'custom' ? `${comp.customSize?.width ?? 1280}×${comp.customSize?.height ?? 720}` : comp.format}</p>
+          <label>Duración de las transiciones (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
+          <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
+          </Section>
+          <Section id="proj-sound" title="Sonido del proyecto" defaultOpen>
           <label>Música de fondo
             <select value={comp.musicAssetId ?? ''} onChange={e => apply(c => ({ ...c, musicAssetId: e.target.value || null }))}><option value="">— Sin música</option>{assets.filter(a => musicTypes.includes(a.asset_type)).map(a => <option key={a.id} value={a.id}>{assetLabel(a)}</option>)}</select>
           </label>
           <label>Volumen de música ({Math.round(comp.musicVolume * 100)}%)<input type="range" min={0} max={1} step={0.05} value={comp.musicVolume} onChange={e => apply(c => ({ ...c, musicVolume: Number(e.target.value) }))} /></label>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={comp.duckMusic} onChange={e => apply(c => ({ ...c, duckMusic: e.target.checked }))} /> Bajar música bajo la voz</label>
+          </Section>
+          <Section id="proj-captions" title="Subtítulos">
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={comp.subtitles} onChange={e => apply(c => ({ ...c, subtitles: e.target.checked }))} /> Subtítulos (texto de cada clip)</label>
           {comp.subtitles && <label>Estilo de subtítulos<select value={comp.captionStyle ?? 'box'} onChange={e => apply(c => ({ ...c, captionStyle: e.target.value as CaptionStyle }))}>{(Object.keys(CAPTION_STYLES) as CaptionStyle[]).map(k => <option key={k} value={k}>{CAPTION_STYLES[k]}</option>)}</select></label>}
-          <label>Duración de las transiciones (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
-          <label>Hook inicial en pantalla<input value={comp.hookText ?? ''} maxLength={120} onChange={e => apply(c => ({ ...c, hookText: e.target.value || null }))} /></label>
-                    <p className="muted small">Selecciona un clip, un audio o un texto en la línea de tiempo para editarlo.</p>
+          </Section>
+          <p className="muted small">Selecciona un clip, un audio, un texto o una capa en la línea de tiempo para ver sus herramientas.</p>
         </>}
         </fieldset>
       </section>
     </div>
 
-    <MixerStrip comp={comp} onChange={mix => apply(c => ({ ...c, mix }))} />
     <section className="panel timelinePanel" style={{ marginBottom: 12, outline: dropping ? '2px dashed var(--accent, #7c4fe0)' : undefined }} aria-label="Edición multipista"
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropping(true) } }} onDragLeave={() => setDropping(false)} onDrop={() => setDropping(false)}>
       <div className="tlToolbar" role="toolbar" aria-label="Herramientas de la línea de tiempo">
@@ -832,7 +922,7 @@ export default function ManualEditorPage() {
         waveformOf={id => { const an = analyses[id]; return an === 'loading' ? 'loading' : typeof an === 'object' ? an.waveform ?? null : null }}
         thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf}
         begin={beginDrag} live={liveDrag} end={endDrag} apply={apply} onReorderMain={(id, to) => apply(c => moveClip(c, id, to))}
-        onDropTransition={(clipId, t) => { apply(c => updateClip(c, clipId, { transition: t })); setSelection({ kind: 'clip', id: clipId }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
+        onDropTransition={(clipId, t) => { apply(c => updateClip(c, clipId, { transition: t })); setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}
         onTrackAction={trackAction} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
         scrollerRef={scroller} playheadRef={playheadEl} view={view} onScroll={measureView}>
@@ -860,17 +950,7 @@ export default function ManualEditorPage() {
       </details>}
       <p className="muted small" style={{ marginTop: 8 }}>Arrastra materiales a cualquier pista. Clic selecciona; Mayús/Ctrl + clic suma a la selección. Arrastra los clips para moverlos (también a otra pista del mismo tipo) y sus bordes para recortarlos; los clips del vídeo principal se reordenan arrastrándolos. S divide en el cabezal · Ctrl+C / Ctrl+V / Ctrl+D copian, pegan y duplican · Ctrl+G agrupa · M añade un marcador · Supr borra · Ctrl+Z / Ctrl+Mayús+Z deshacen y rehacen · Espacio reproduce.</p>
     </section>
-
-    <h2 className="sectionTitle" style={{ margin: '18px 0 8px' }}>Ritmo, subtítulos, estilos y aprendizaje</h2>
-    <EditorSyncPanel comp={comp} assets={assets} beats={beats} showBeats={showBeats} setShowBeats={setShowBeats} snap={snap} setSnap={setSnap} toleranceMs={toleranceMs} setToleranceMs={setToleranceMs}
-      isVideo={k => typeOf(k.visualAssetId) === 'video'} apply={apply} onNotice={setNotice} />
-    <EditorSubtitlesPanel comp={comp} apply={apply} onNotice={setNotice} />
-    <StylePanel composition={comp} kindOf={kindOf} refreshKey={stylesKey} sessionStart={sessionStart} onApply={(next, changes) => { apply(() => next); setNotice(`${changes.join(' ')} (puedes deshacerlo)`) }} />
-    <MontageTemplatePanel composition={comp} typeOf={id => assets.find(a => a.id === id)?.asset_type ?? 'other'} />
-    <EditorReferencePanel comp={comp} kindOf={kindOf} beatsMs={beats.beatsMs} apply={apply} onNotice={setNotice} onStylesChanged={() => setStylesKey(k => k + 1)} />
-    <EditorComparePanel comp={comp} jobId={job.id} projectId={job.project_id} beatsMs={beats.beatsMs} />
-    <LearnPanel composition={comp} beatsMs={beats.beatsMs} refreshKey={stylesKey} kindOf={kindOf}
-      onApply={(next, changes) => { apply(() => next); setNotice(`Estilo aplicado (puedes deshacerlo): ${changes.join(' ')}`) }} />
+    </WorkspaceProvider>
   </StudioShell>
 }
 
@@ -884,52 +964,116 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
   const cam = effectiveCamera(clip, !isVideo)
   const canSplit = splitMs >= MIN_CLIP_MS && clip.durationMs - splitMs >= MIN_CLIP_MS
   return <>
-    <label>Imagen o vídeo
-      <select value={clip.visualAssetId ?? ''} onChange={e => onChange({ visualAssetId: e.target.value || null, trimInMs: 0 })}><option value="">— Sin visual (negro)</option>{visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
-    </label>
-    <div className="field-row">
-      <label>Duración (s)<input type="number" min={MIN_CLIP_MS / 1000} max={MAX_CLIP_MS / 1000} step={0.1} value={secs(clip.durationMs)} onChange={e => onChange({ durationMs: Number(e.target.value) * 1000 })} /></label>
-      {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
-      <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
-      <label>Duración de la transición (ms)<input type="number" aria-label="Duración de la transición" min={0} max={3000} step={50} value={clip.transitionMs ?? ''} placeholder="la del montaje" onChange={e => onChange({ transitionMs: e.target.value === '' ? undefined : Math.min(3000, Math.max(0, Number(e.target.value) || 0)) })} /></label>
-    </div>
-    {transitionTools}
-    <div className="field-row">
-      <label>Zoom ({(clip.zoom ?? 1).toFixed(2)}×)<input type="range" min={1} max={3} step={0.05} value={clip.zoom ?? 1} onChange={e => onChange({ zoom: Number(e.target.value) })} /></label>
-      <label>Posición horizontal<input type="range" min={0} max={1} step={0.01} value={clip.focusX ?? 0.5} onChange={e => onChange({ focusX: Number(e.target.value) })} /></label>
-      <label>Posición vertical<input type="range" min={0} max={1} step={0.01} value={clip.focusY ?? 0.5} onChange={e => onChange({ focusY: Number(e.target.value) })} /></label>
-    </div>
-    <div className="field-row">
-      <label>Movimiento de cámara<select value={cam?.kind ?? 'none'} onChange={e => onChange({ camera: { kind: e.target.value as CameraKind, amount: cam?.amount ?? 0.1 } })}>{(Object.keys(CAMERA_MOVES) as CameraKind[]).map(k => <option key={k} value={k}>{CAMERA_MOVES[k]}</option>)}</select></label>
-      <label>Intensidad ({Math.round((cam?.amount ?? 0.1) * 100)} %)<input type="range" min={0.02} max={0.5} step={0.01} value={cam?.amount ?? 0.1} disabled={!cam || cam.kind === 'none'} onChange={e => onChange({ camera: { kind: cam?.kind ?? 'zoom_in', amount: Number(e.target.value) } })} /></label>
-      {isVideo && <label>Velocidad<select value={String(clip.speed ?? 1)} onChange={e => onSpeed(Number(e.target.value))}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>}
-    </div>
-    {isVideo && <div className="field-row">
-      <label>Volumen del vídeo ({Math.round((clip.volume ?? 1) * 100)}%)<input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
-      <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
-    </div>}
-    {animation}
-    <VisualFields filters={clip.filters} crop={clip.crop} rotation={clip.rotation ?? 0} opacity={clip.opacity ?? 1} onChange={p => onChange(p as Partial<Clip>)} />
-    <label>Subtítulo de este clip<textarea className="viText" value={clip.narration ?? ''} onChange={e => onChange({ narration: e.target.value || null })} /></label>
-    <div className="field-row">
-      <label>Texto en pantalla<input value={clip.text?.content ?? ''} maxLength={200} onChange={e => onChange({ text: e.target.value ? { content: e.target.value, position: clip.text?.position ?? 'center', sizePct: clip.text?.sizePct ?? 6 } : null })} /></label>
-      <label>Posición del texto<select value={clip.text?.position ?? 'center'} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, position: e.target.value as 'top' | 'center' | 'bottom' } })}><option value="top">Arriba</option><option value="center">Centro</option><option value="bottom">Abajo</option></select></label>
-      <label>Tamaño<input type="range" min={2} max={15} step={0.5} value={clip.text?.sizePct ?? 6} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, sizePct: Number(e.target.value) } })} /></label>
-      <label>Animación del texto<select value={clip.text?.animation ?? 'none'} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, animation: e.target.value as TextAnimation } })}>{(Object.keys(TEXT_ANIMATIONS) as TextAnimation[]).map(a => <option key={a} value={a}>{TEXT_ANIMATIONS[a]}</option>)}</select></label>
-      {clip.text && <TextStyleFields t={clip.text} onChange={p => onChange({ text: { ...clip.text!, ...p } })} />}
-    </div>
-    <div className="field-row" style={{ alignItems: 'end' }}>
-      <label>Dividir en (s desde el inicio del clip)<input type="number" min={1} step={0.1} value={splitAt} onChange={e => setSplitAt(e.target.value)} placeholder={`1 – ${secs(clip.durationMs - MIN_CLIP_MS)}`} /></label>
-      <button type="button" className="ghost" disabled={!canSplit} onClick={() => onSplit(splitMs)}>Dividir</button>
-      <button type="button" className="ghost" disabled={nextBeatMs === null} title="Divide el clip en el primer pulso de la música que deja al menos 1 s a cada lado" onClick={() => nextBeatMs !== null && onSplit(nextBeatMs)}>Dividir en el siguiente pulso</button>
-    </div>
-    <div className="pageActions">
-      <button type="button" className="ghost" onClick={() => onMove(-1)}>← Mover</button>
-      <button type="button" className="ghost" onClick={() => onMove(1)}>Mover →</button>
-      <button type="button" className="ghost" onClick={onDuplicate}>Duplicar</button>
-      <button type="button" className="ghost" onClick={onDelete}>Eliminar</button>
-    </div>
+    <Section id="clip-basic" title={isVideo ? 'Vídeo' : 'Foto'} defaultOpen>
+      <label>Imagen o vídeo
+        <select value={clip.visualAssetId ?? ''} onChange={e => onChange({ visualAssetId: e.target.value || null, trimInMs: 0 })}><option value="">— Sin visual (negro)</option>{visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
+      </label>
+      <div className="field-row" data-tool="trim">
+        <label>Duración (s)<input type="number" min={MIN_CLIP_MS / 1000} max={MAX_CLIP_MS / 1000} step={0.1} value={secs(clip.durationMs)} onChange={e => onChange({ durationMs: Number(e.target.value) * 1000 })} /></label>
+        {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
+        {isVideo && <label>Velocidad<select value={String(clip.speed ?? 1)} onChange={e => onSpeed(Number(e.target.value))}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>}
+      </div>
+      {isVideo && <div className="field-row" data-tool="volume">
+        <label>Volumen del vídeo ({Math.round((clip.volume ?? 1) * 100)}%)<input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
+        <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
+      </div>}
+      <div className="field-row" style={{ alignItems: 'end' }}>
+        <label>Dividir en (s desde el inicio del clip)<input type="number" min={1} step={0.1} value={splitAt} onChange={e => setSplitAt(e.target.value)} placeholder={`1 – ${secs(clip.durationMs - MIN_CLIP_MS)}`} /></label>
+        <button type="button" className="ghost" disabled={!canSplit} onClick={() => onSplit(splitMs)}>Dividir</button>
+        <button type="button" className="ghost" disabled={nextBeatMs === null} title="Divide el clip en el primer pulso de la música que deja al menos 1 s a cada lado" onClick={() => nextBeatMs !== null && onSplit(nextBeatMs)}>Dividir en el siguiente pulso</button>
+      </div>
+      <div className="pageActions">
+        <button type="button" className="ghost" onClick={() => onMove(-1)}>← Mover</button>
+        <button type="button" className="ghost" onClick={() => onMove(1)}>Mover →</button>
+        <button type="button" className="ghost" onClick={onDuplicate}>Duplicar</button>
+        <button type="button" className="ghost" onClick={onDelete}>Eliminar</button>
+      </div>
+    </Section>
+    <Section id="clip-transition" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[clip.transition ?? 'fade']}</span>}>
+      <div className="field-row">
+        <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
+        <label>Duración de la transición (ms)<input type="number" aria-label="Duración de la transición" min={0} max={3000} step={50} value={clip.transitionMs ?? ''} placeholder="la del montaje" onChange={e => onChange({ transitionMs: e.target.value === '' ? undefined : Math.min(3000, Math.max(0, Number(e.target.value) || 0)) })} /></label>
+      </div>
+      {transitionTools}
+    </Section>
+    <Section id="clip-frame" title="Encuadre y movimiento" defaultOpen={(clip.zoom ?? 1) !== 1 || !!clip.camera}>
+      <div className="field-row" data-tool="zoom">
+        <label>Zoom ({(clip.zoom ?? 1).toFixed(2)}×)<input type="range" min={1} max={3} step={0.05} value={clip.zoom ?? 1} onChange={e => onChange({ zoom: Number(e.target.value) })} /></label>
+        <label>Posición horizontal<input type="range" min={0} max={1} step={0.01} value={clip.focusX ?? 0.5} onChange={e => onChange({ focusX: Number(e.target.value) })} /></label>
+        <label>Posición vertical<input type="range" min={0} max={1} step={0.01} value={clip.focusY ?? 0.5} onChange={e => onChange({ focusY: Number(e.target.value) })} /></label>
+      </div>
+      <div className="field-row">
+        <label>Movimiento de cámara<select value={cam?.kind ?? 'none'} onChange={e => onChange({ camera: { kind: e.target.value as CameraKind, amount: cam?.amount ?? 0.1 } })}>{(Object.keys(CAMERA_MOVES) as CameraKind[]).map(k => <option key={k} value={k}>{CAMERA_MOVES[k]}</option>)}</select></label>
+        <label>Intensidad ({Math.round((cam?.amount ?? 0.1) * 100)} %)<input type="range" min={0.02} max={0.5} step={0.01} value={cam?.amount ?? 0.1} disabled={!cam || cam.kind === 'none'} onChange={e => onChange({ camera: { kind: cam?.kind ?? 'zoom_in', amount: Number(e.target.value) } })} /></label>
+      </div>
+    </Section>
+    <Section id="clip-anim" title="Animación (fotogramas clave)" defaultOpen={(clip.keyframes?.length ?? 0) > 0}>
+      {animation}
+    </Section>
+    <Section id="clip-color" title="Color y efectos" defaultOpen={!!clip.filters || !!clip.crop || !!clip.rotation || (clip.opacity ?? 1) < 1}>
+      <VisualFields bare filters={clip.filters} crop={clip.crop} rotation={clip.rotation ?? 0} opacity={clip.opacity ?? 1} onChange={p => onChange(p as Partial<Clip>)} />
+    </Section>
+    <Section id="clip-text" title="Texto y subtítulo" defaultOpen={!!clip.text}>
+      <label>Subtítulo de este clip<textarea className="viText" value={clip.narration ?? ''} onChange={e => onChange({ narration: e.target.value || null })} /></label>
+      <div className="field-row">
+        <label>Texto en pantalla<input value={clip.text?.content ?? ''} maxLength={200} onChange={e => onChange({ text: e.target.value ? { content: e.target.value, position: clip.text?.position ?? 'center', sizePct: clip.text?.sizePct ?? 6 } : null })} /></label>
+        <label>Posición del texto<select value={clip.text?.position ?? 'center'} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, position: e.target.value as 'top' | 'center' | 'bottom' } })}><option value="top">Arriba</option><option value="center">Centro</option><option value="bottom">Abajo</option></select></label>
+        <label>Tamaño<input type="range" min={2} max={15} step={0.5} value={clip.text?.sizePct ?? 6} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, sizePct: Number(e.target.value) } })} /></label>
+        <label>Animación del texto<select value={clip.text?.animation ?? 'none'} disabled={!clip.text} onChange={e => clip.text && onChange({ text: { ...clip.text, animation: e.target.value as TextAnimation } })}>{(Object.keys(TEXT_ANIMATIONS) as TextAnimation[]).map(a => <option key={a} value={a}>{TEXT_ANIMATIONS[a]}</option>)}</select></label>
+        {clip.text && <TextStyleFields t={clip.text} onChange={p => onChange({ text: { ...clip.text!, ...p } })} />}
+      </div>
+    </Section>
   </>
+}
+
+/**
+ * «Efectos»: quick looks and movements applied to every selected clip or layer at once (one undo step).
+ * The fine controls stay in the properties panel («Color y efectos», «Animación»).
+ */
+function EffectsTab({ selClips, selLayers, presets, apply, onNotice, onReveal }: {
+  selClips: Clip[]; selLayers: OverlayClip[]; presets: AnimationPreset[]
+  apply: (fn: (c: Composition) => Composition) => void; onNotice: (m: string) => void; onReveal: (section: string) => void
+}) {
+  const n = selClips.length + selLayers.length
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  const filterOn = (k: string) => n > 0 && [...selClips, ...selLayers].every(x => same(x.filters, k === 'none' ? null : FILTER_PRESETS[k].f))
+  const setFilter = (k: string) => {
+    const f = k === 'none' ? null : FILTER_PRESETS[k].f
+    apply(c => selLayers.reduce((x, o) => updateOverlay(x, o.id, { filters: f }), selClips.reduce((x, k2) => updateClip(x, k2.id, { filters: f }), c)))
+    onNotice(`Filtro «${FILTER_PRESETS[k].label}» aplicado a ${n} elemento${n === 1 ? '' : 's'}. Ctrl+Z lo deshace.`)
+  }
+  const move = (p: AnimationPreset) => {
+    apply(c => p.target === 'clip'
+      ? selClips.reduce((x, k) => setClipKeyframes(updateClip(x, k.id, { camera: { kind: 'none', amount: 0.1 } }), k.id, presetKeys(p, k.durationMs) as never), c)
+      : selLayers.reduce((x, o) => updateOverlay(x, o.id, { keyframes: presetKeys(p, o.durationMs) as never }), c))
+    onNotice(`Movimiento «${p.name}» aplicado. Ctrl+Z lo deshace.`)
+  }
+  return <div className="edEffects" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    {n === 0 ? <p className="muted small" role="status">Selecciona uno o varios clips o capas en la línea de tiempo (Mayús/Ctrl + clic para varios) y elige aquí un filtro o un movimiento.</p>
+      : <p className="small" role="status">Se aplica a {n} elemento{n === 1 ? '' : 's'} seleccionado{n === 1 ? '' : 's'}.</p>}
+    <section aria-label="Color rápido">
+      <b className="small">Filtros</b>
+      <div className="pageActions" role="group" aria-label="Looks de color">
+        {Object.entries(FILTER_PRESETS).map(([k, v]) => <button key={k} type="button" className={filterOn(k) ? 'small' : 'ghost small'} aria-pressed={filterOn(k)} disabled={!n} onClick={() => setFilter(k)}>{v.label}</button>)}
+      </div>
+    </section>
+    <section aria-label="Movimientos rápidos">
+      <b className="small">Movimientos</b>
+      <div className="pageActions" role="group" aria-label="Movimientos">
+        {presets.filter(p => (p.target === 'clip' ? selClips.length : selLayers.length) > 0 || n === 0).map(p => <button key={p.id} type="button" className="ghost small" disabled={(p.target === 'clip' ? selClips.length : selLayers.length) === 0} title={p.target === 'clip' ? 'Para clips del vídeo principal' : 'Para capas superpuestas'} onClick={() => move(p)}>{p.id.startsWith('b-') ? '' : '★ '}{p.name}</button>)}
+      </div>
+    </section>
+    {selClips.length > 0 && <section aria-label="Movimiento de cámara">
+      <b className="small">Movimiento de cámara (clips)</b>
+      <div className="pageActions" role="group" aria-label="Movimiento de cámara">
+        {(Object.keys(CAMERA_MOVES) as CameraKind[]).map(k => <button key={k} type="button" className={selClips.every(c => (c.camera?.kind ?? 'none') === k) ? 'small' : 'ghost small'} onClick={() => apply(c => selClips.reduce((x, cl) => updateClip(x, cl.id, { camera: { kind: k, amount: cl.camera?.amount ?? 0.1 } }), c))}>{CAMERA_MOVES[k]}</button>)}
+      </div>
+    </section>}
+    {n > 0 && <div className="pageActions">
+      <button type="button" className="ghost small" onClick={() => onReveal(selClips.length ? 'clip-color' : 'layer-color')}>Ajustar color a mano</button>
+      <button type="button" className="ghost small" onClick={() => onReveal(selClips.length ? 'clip-anim' : 'layer-anim')}>Editar la animación</button>
+    </div>}
+  </div>
 }
 
 function TextStyleFields({ t, onChange }: { t: TextOverlay; onChange: (p: Partial<TextOverlay>) => void }) {
@@ -950,21 +1094,25 @@ function TextStyleFields({ t, onChange }: { t: TextOverlay; onChange: (p: Partia
 
 function TextInspector({ t, onChange, onDuplicate, onDelete }: { t: TextClip; onChange: (p: Partial<TextClip>) => void; onDuplicate: () => void; onDelete: () => void }) {
   return <>
+    <Section id="text-basic" title="Texto" defaultOpen>
     <label>Texto<input aria-label="Contenido del texto" value={t.content} maxLength={200} onChange={e => onChange({ content: e.target.value || ' ' })} /></label>
     <div className="field-row">
       <label>Aparece en (s)<input type="number" min={0} step={0.1} value={secs(t.startMs)} onChange={e => onChange({ startMs: Number(e.target.value) * 1000 })} /></label>
       <label>Dura (s)<input type="number" min={0.3} step={0.1} value={secs(t.durationMs)} onChange={e => onChange({ durationMs: Number(e.target.value) * 1000 })} /></label>
     </div>
+    <div className="pageActions">
+      <button type="button" className="ghost" onClick={onDuplicate}>Duplicar texto</button>
+      <button type="button" className="ghost" onClick={onDelete}>Eliminar texto</button>
+    </div>
+    </Section>
+    <Section id="text-style" title="Estilo y animación" defaultOpen>
     <div className="field-row">
       <label>Posición<select value={t.position} onChange={e => onChange({ position: e.target.value as TextClip['position'] })}><option value="top">Arriba</option><option value="center">Centro</option><option value="bottom">Abajo</option></select></label>
       <label>Tamaño ({t.sizePct} %)<input type="range" min={2} max={15} step={0.5} value={t.sizePct} onChange={e => onChange({ sizePct: Number(e.target.value) })} /></label>
       <label>Animación<select value={t.animation ?? 'none'} onChange={e => onChange({ animation: e.target.value as TextAnimation })}>{(Object.keys(TEXT_ANIMATIONS) as TextAnimation[]).map(a => <option key={a} value={a}>{TEXT_ANIMATIONS[a]}</option>)}</select></label>
       <TextStyleFields t={t} onChange={onChange} />
     </div>
-    <div className="pageActions">
-      <button type="button" className="ghost" onClick={onDuplicate}>Duplicar texto</button>
-      <button type="button" className="ghost" onClick={onDelete}>Eliminar texto</button>
-    </div>
+    </Section>
   </>
 }
 
@@ -989,8 +1137,7 @@ function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: Audi
   const rel = Math.min(Math.max(playheadMs - startMs, 0), a.durationMs)
   const setPt = (i: number, p: Partial<{ atMs: number; gain: number }>) => onChange({ envelope: pts.map((x, n) => (n === i ? { ...x, ...p } : x)).sort((x, y) => x.atMs - y.atMs) })
   const inRange = range && range.endMs > startMs && range.startMs < startMs + a.durationMs
-  return <details open={pts.length > 0 || Boolean(a.fadeInMs || a.fadeOutMs)} className="small">
-    <summary><b>Automatización de volumen</b></summary>
+  return <div className="small">
     <div className="field-row" style={{ marginTop: 6 }}>
       <label>Entrada gradual (s)<input type="number" min={0} max={60} step={0.1} value={secs(a.fadeInMs ?? 0)} onChange={e => onChange({ fadeInMs: Math.max(0, Number(e.target.value) * 1000) })} /></label>
       <label>Salida gradual (s)<input type="number" min={0} max={60} step={0.1} value={secs(a.fadeOutMs ?? 0)} onChange={e => onChange({ fadeOutMs: Math.max(0, Number(e.target.value) * 1000) })} /></label>
@@ -1008,7 +1155,7 @@ function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: Audi
       {pts.length > 0 && <button type="button" className="ghost small" onClick={() => onChange({ envelope: [] })}>Quitar puntos</button>}
     </div>
     <p className="muted">Los puntos multiplican el volumen del clip y se unen en línea recta; también se aplican sobre la bajada automática bajo la voz.</p>
-  </details>
+  </div>
 }
 
 /**

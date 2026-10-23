@@ -118,5 +118,28 @@ El visor y los dos exportadores usan la misma descripción de cada fotograma (`l
 | 25 | Verificación en el editor real |
 | 26 | Persistencia: guardado automático, recargar, sesión limpia en otro navegador, conflicto, puntos de recuperación, exportar tras cambiar una transición |
 | 27 | Transiciones, favoritas, animaciones, sesión limpia y exportación igual al visor |
+| 28 | Espacio de trabajo: barra lateral, grupos, propiedades, paneles, pestañas, modos, búsqueda, escritorio, tableta y móvil |
 
 Ninguna prueba usa ni modifica el proyecto «Lofi prueba».
+
+## 6. Espacio de trabajo
+
+**Barra lateral** (todas las páginas): expandida (iconos y nombres), compacta (solo iconos, se despliega al pasar el ratón o con el teclado; cada icono tiene su nombre como información emergente) u oculta. Se cambia con el botón de la barra superior o con «Contraer / Ocultar» al pie de la barra. La elección se recuerda en el navegador. Contraída u oculta, el contenido ocupa el espacio liberado (no queda columna vacía). En el móvil sigue siendo el menú desplegable.
+
+**Editor manual**
+
+| Zona | Qué contiene |
+|---|---|
+| Barra superior | Estado del guardado, guardado automático, puntos de recuperación, formato, espacio de trabajo, mostrar u ocultar «Herramientas» y «Propiedades», búsqueda de herramientas, cortar, marcar, añadir texto, deshacer, rehacer y guardar. Debajo, una línea para dar instrucciones. |
+| Izquierda: pestañas | Materiales (lista e importación), Transiciones (para arrastrar o aplicar), Efectos (filtros, movimientos y cámara para todo lo seleccionado), Textos (lista, subtítulos SRT/VTT), Audio (mezclador, ritmo y pulsos), IA (preferencias, historial de instrucciones, estilos, plantillas, referencia, comparar, aprender). |
+| Centro | Visor con altura ajustable y el grupo «Exportación». |
+| Derecha: propiedades | Cambian con la selección: foto, vídeo (además inicio, velocidad, volumen), capa superpuesta, audio (sonido, automatización), texto (texto, estilo) y, sin selección, el proyecto (formato, transiciones, gancho, música, subtítulos). Grupos desplegables: los esenciales abiertos, los avanzados cerrados salvo que ya tengan valores. |
+| Abajo | Línea de tiempo multipista a todo el ancho. |
+
+- Los paneles laterales se redimensionan arrastrando o con las flechas en sus separadores; se ocultan y vuelven sin perder la pestaña ni lo escrito.
+- Modos: Edición, Audio (mezclador y pistas más altas), Efectos (pestaña Efectos y propiedades más anchas) y Pantalla amplia (oculta paneles y barra lateral; al salir vuelve la barra como estaba).
+- «Buscar herramienta» (Ctrl+K): transición, volumen, recortar, subtítulos, zoom, exportar, filtros, animación, música, formato, marcadores… abre la pestaña o el grupo que corresponde a lo seleccionado y lo resalta.
+- El diseño (tamaños, pestaña, grupos abiertos, modo) se guarda en este navegador (`cerebro-editor-layout`); no forma parte del montaje.
+- Tableta y móvil: una columna con el visor primero; los separadores se ocultan; las pestañas se desplazan en horizontal.
+
+Prueba de navegador 28: barra lateral en sus tres modos y el ancho liberado, grupos, propiedades según la selección, pestañas, efectos, redimensionar, ocultar y restaurar, modos, búsqueda, diseño recordado tras recargar, guardado, reproducción y línea de tiempo, en 1500, 820 y 390 px con la hoja de estilos real.

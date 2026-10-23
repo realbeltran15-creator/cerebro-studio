@@ -565,3 +565,56 @@ textarea.viText{width:100%;min-height:70px}
 .tlMarker{position:absolute;top:0;width:10px!important;min-width:0!important;height:12px;padding:0!important;margin-left:-5px;border:none;border-radius:2px;clip-path:polygon(0 0,100% 0,100% 60%,50% 100%,0 60%);cursor:pointer;z-index:3}
 .tlMarkerLine{position:absolute;top:18px;bottom:0;border-left:1px dashed;pointer-events:none;opacity:.6;z-index:1}
 @media (max-width:720px){.tlGrid{grid-template-columns:120px minmax(0,1fr)}.tlFlags{flex-wrap:wrap}}
+/* Editor workspace: top bar, tool tabs | viewer | properties (resizable, hideable), collapsible property groups, tool search */
+.edTop{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;justify-content:space-between;padding:8px 10px;margin-bottom:8px}
+.edTop .pageActions{gap:4px}.edTop .pageActions button{padding:6px 10px;font-size:12.5px;border-radius:8px}
+.edTopTools{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.edWork{grid-template-columns:var(--ed-cols,280px 8px minmax(0,1fr) 8px 340px);gap:4px;align-items:start}
+.edTools,.edProps{max-height:calc(100vh - 110px);overflow:auto;position:sticky;top:8px;padding:10px}
+.edProps h3{margin:0 0 4px;font-size:15px}
+.edViewer{min-width:0}
+.edTools[hidden],.edProps[hidden]{display:none}
+.edSplit{touch-action:none;border-radius:4px;background:rgba(255,255,255,.05);flex:none}
+.edSplit.vertical{cursor:col-resize;width:8px;align-self:stretch;min-height:160px}
+.edSplit.horizontal{cursor:row-resize;height:8px;margin:6px 0}
+.edSplit:hover,.edSplit:focus-visible{background:var(--accent);outline:none}
+.edSection{border-top:1px solid var(--line)}
+.edSection:first-of-type{border-top:0}
+button.edSectionHead{display:flex;width:100%;justify-content:flex-start;gap:8px;background:transparent;color:var(--text);border:0;border-radius:6px;padding:9px 4px;font-size:13px;text-align:left}
+button.edSectionHead:hover{background:var(--panel-2)}
+.edChevron{width:12px;color:var(--muted)}
+.edSectionExtra{margin-left:auto;font-weight:400}
+.edSectionBody{display:flex;flex-direction:column;gap:8px;padding:2px 4px 12px}
+.edSectionBody[hidden]{display:none}
+.edTabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+button.edTab{background:transparent;color:var(--muted);border:1px solid var(--line);padding:6px 9px;font-size:12px;border-radius:8px}
+button.edTab.active{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border-color:transparent}
+.edTabPanel{display:flex;flex-direction:column;gap:8px}
+.edTabPanel[hidden]{display:none}
+.edTabPanel .panel{padding:10px}
+.toolSearch{position:relative}
+.toolSearch input{width:230px;padding:6px 10px;font-size:13px}
+.toolSearchList{position:absolute;z-index:60;top:calc(100% + 4px);left:0;min-width:270px;margin:0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 12px 30px #0009}
+.toolSearchList li{padding:7px 9px;border-radius:7px;cursor:pointer;font-size:13px}
+.toolSearchList li.active,.toolSearchList li:hover{background:var(--panel-2)}
+.flashFound{outline:2px solid #b49cff!important;outline-offset:3px;border-radius:8px}
+.foldBare{display:flex;flex-direction:column;gap:6px}
+@media (max-width:1100px){
+  .edWork{grid-template-columns:minmax(0,1fr)}
+  .edWork .edSplit.vertical{display:none}
+  .edViewer{order:-1}
+  .edTools,.edProps{position:static;max-height:none}
+}
+@media (max-width:860px){
+  .edTop{flex-direction:column;align-items:stretch}
+  .edTopTools{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .edTopTools .toolSearch{grid-column:1/-1}.toolSearch input{width:100%}
+  .edTabs{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px}
+  button.edTab{flex:none;min-height:40px}
+  button.edSectionHead{min-height:44px}
+  .edSplit.horizontal{display:none}
+}
+.edTop~.instructionBar{padding:8px 10px}
+.instructionBar .field-row{display:flex;gap:6px;align-items:center}
+.instructionBar .field-row input{min-width:0}
+.instructionBar .field-row button{flex:none}
