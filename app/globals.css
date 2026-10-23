@@ -624,3 +624,8 @@ button.edTab.active{background:linear-gradient(135deg,var(--accent),var(--accent
 .instructionBar .field-row{display:flex;gap:6px;align-items:center}
 .instructionBar .field-row input{min-width:0}
 .instructionBar .field-row button{flex:none}
+/* Transitions on the timeline: a band at the end of the outgoing clip, as long as the transition; selectable, draggable, resizable */
+button.tlTransition{display:flex;align-items:center;justify-content:center;gap:0;height:18px;padding:0 4px;font-size:11px;border-radius:5px;background:rgba(10,12,30,.72);border:1px solid rgba(180,156,255,.7);color:#fff;cursor:pointer;z-index:2;overflow:hidden}
+button.tlTransition:hover{background:rgba(91,91,255,.55)}
+button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-shadow:0 0 0 2px #fff}
+.tlTrEdge{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;background:rgba(255,255,255,.35)}

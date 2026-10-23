@@ -121,12 +121,14 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
  * Everything about the transition out of a clip, beyond its type and length: direction, intensity, easing, preview, copy/paste,
  * remove, apply to the other selected cuts, and favourites saved in the account (usable in every montage).
  */
-export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset, bare = false }: {
+export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset, bare = false, cuts = 0, onApplyToAll }: {
   clip: Clip; defaultMs: number; bare?: boolean
   onChange: (p: Partial<Clip>) => void
   canPaste: boolean; onCopy: () => void; onPaste: () => void; onPreview: () => void
   /** Other main clips selected (their cut gets the same transition). */
   others: number; onApplyToOthers: () => void
+  /** Number of cuts in the montage and «apply to all of them». */
+  cuts?: number; onApplyToAll?: () => void
   presets: TransitionPreset[]; onSavePreset: (name: string) => void; onDeletePreset: (id: string) => void
 }) {
   const [name, setName] = useState('')
@@ -145,6 +147,7 @@ export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, o
       <button type="button" className="ghost small" onClick={onPaste} disabled={!canPaste}>Pegar transición</button>
       <button type="button" className="ghost small" onClick={() => onChange({ transition: 'cut', transitionOpts: undefined, transitionMs: undefined })} disabled={kind === 'cut'}>Quitar transición</button>
       {others > 0 && <button type="button" className="ghost small" onClick={onApplyToOthers}>Aplicar a los {others} cortes seleccionados</button>}
+      {onApplyToAll && cuts > 1 && <button type="button" className="ghost small" onClick={onApplyToAll}>Aplicar a todos los cortes ({cuts})</button>}
     </div>
     <div className="field-row" style={{ alignItems: 'end' }}>
       <label>Guardar como favorita<input aria-label="Nombre de la transición favorita" value={name} maxLength={40} placeholder="p. ej. Disolvencia lenta" onChange={e => setName(e.target.value)} /></label>

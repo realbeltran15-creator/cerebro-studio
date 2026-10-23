@@ -52,11 +52,16 @@ export default function ManualEditorPage() {
   const [history, setHistory] = useState<History | null>(null)
   const [assets, setAssets] = useState<EditorAsset[]>([])
   // Several items can be selected (Mayús/Ctrl + clic); the last one is the one the inspector shows.
-  const [sel, setSel] = useState<ItemRef[]>([])
+  const [sel, setSelState] = useState<ItemRef[]>([])
+  // Selecting items clears the selected transition (the selection setter is declared once here, the transition one just below).
+  const setSel = useCallback((r: ItemRef[]) => { setSelState(r); setSelTrState(null) }, [])
   const selection: ItemRef | null = sel.length ? sel[sel.length - 1] : null
   const setSelection = useCallback((r: ItemRef | null) => setSel(r ? [r] : []), [])
   const clipboard = useRef<Clipboard | null>(null)
   const [copiedAnim, setCopiedAnim] = useState<{ target: 'clip' | 'layer'; keys: AnimKey[] } | null>(null)
+  // The selected transition: the cut after this clip (selecting a clip or anything else clears it).
+  const [selTr, setSelTrState] = useState<string | null>(null)
+  const selectTransition = useCallback((clipId: string | null) => { setSelTrState(clipId); if (clipId) setSelState([]) }, [])
   const [copiedTransition, setCopiedTransition] = useState<Pick<Clip, 'transition' | 'transitionMs' | 'transitionOpts'> | null>(null)
   // Favourite transitions and animations, saved in the account (every montage, every device).
   const [presets, setPresets] = useState<Presets>(EMPTY_PRESETS)
@@ -373,11 +378,21 @@ export default function ManualEditorPage() {
   // Keyboard: undo/redo, delete, split, copy/paste/duplicate, group, markers, select all (never while typing in a field).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.closest('input,textarea,select')) return
       const mod = e.ctrlKey || e.metaKey
       const k = e.key.toLowerCase()
+      const field = (e.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable="true"]') as HTMLInputElement | null
+      // Undo / redo also work right after changing a list, a slider or a checkbox; only text fields keep their own Ctrl+Z.
+      const textField = !!field && (field.tagName === 'TEXTAREA' || field.isContentEditable || (field.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'color', 'button'].includes(field.type)))
+      if (field && !(mod && (k === 'z' || k === 'y') && !textField)) return
       if (mod && k === 'z') { e.preventDefault(); setHistory(h => (h ? (e.shiftKey ? redo(h) : undo(h)) : h)); setDirty(true); return }
       if (mod && k === 'y') { e.preventDefault(); setHistory(h => (h ? redo(h) : h)); setDirty(true); return }
+      if (selTr && history) {
+        const k2 = history.present.clips.find(x => x.id === selTr)
+        if (k2 && mod && k === 'c') { e.preventDefault(); setCopiedTransition({ transition: k2.transition, transitionMs: k2.transitionMs, transitionOpts: k2.transitionOpts }); setNotice('Transición copiada.'); return }
+        if (mod && k === 'v' && copiedTransition) { e.preventDefault(); pasteTransition(); return }
+        if (k2 && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); apply(c => updateClip(c, selTr, { transition: 'cut', transitionMs: undefined, transitionOpts: undefined })); setSelTrState(null); setNotice('Transición quitada (ahora es un corte directo). Ctrl+Z la recupera.'); return }
+        if (e.key === 'Escape') { setSelTrState(null); return }
+      }
       if (mod && k === 'c' && sel.length) { e.preventDefault(); copySel(); return }
       if (mod && k === 'x' && sel.length) { e.preventDefault(); copySel(); deleteSel(); return }
       if (mod && k === 'v') { e.preventDefault(); pasteHere(); return }
@@ -394,8 +409,16 @@ export default function ManualEditorPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [apply, sel, playheadMs, markIn, range]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apply, sel, playheadMs, markIn, range, selTr, copiedTransition]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Pastes the copied transition on the selected transition, or on the cuts after the selected clips. */
+  function pasteTransition() {
+    if (!copiedTransition || !history) return
+    const ids = selTr ? [selTr] : sel.filter(r => r.kind === 'clip').map(r => r.id)
+    if (!ids.length) { setError('Selecciona una transición o un clip para pegar la transición.'); return }
+    apply(c => ids.reduce((x, id) => updateClip(x, id, { ...copiedTransition }), c))
+    setNotice(`Transición pegada en ${ids.length} corte${ids.length === 1 ? '' : 's'}.`)
+  }
   function copySel() { if (!history) return; clipboard.current = copyItems(history.present, sel); if (clipboard.current) setNotice(`${clipboard.current.items.length} elemento(s) copiados. Ctrl+V los pega en el cabezal.`) }
   function pasteHere() { const cb = clipboard.current; if (!cb || !history) return; const r = pasteItems(history.present, cb, playheadMs); apply(() => r.composition); setSel(r.refs) }
   function deleteSel() { apply(c => deleteItems(c, expandGroups(c, sel))); setSel([]) }
@@ -570,6 +593,22 @@ export default function ManualEditorPage() {
   const nextBeatRel = selClip ? (() => { const st = starts[comp.clips.findIndex(k => k.id === selClip.id)]; const b = beats.beatsMs.find(t => t - st >= MIN_CLIP_MS && st + selClip.durationMs - t >= MIN_CLIP_MS); return b === undefined ? null : b - st })() : null
 
   const addTextHere = () => { const at = Math.min(playheadMs, Math.max(0, total - 1000)); const r = addTextClip(comp, { content: 'Texto', startMs: at, durationMs: 3000, position: 'center', sizePct: 7, animation: 'fade', font: 'sans', color: '#ffffff' }); const t = (r.textClips ?? []).find(x => !(comp.textClips ?? []).some(y => y.id === x.id)); apply(() => r); if (t) { setSelection({ kind: 'text', id: t.id }); ws.reveal({ section: 'text-basic' }) } }
+  // Transitions are objects of their own: a selected transition (the cut after clip `selTr`) has its own properties.
+  const selTrClip = selTr ? comp.clips.find(k => k.id === selTr) ?? null : null
+  const cutIndex = (id: string) => comp.clips.findIndex(k => k.id === id)
+  const trOf = (k: Clip) => ({ transition: k.transition, transitionMs: k.transitionMs, transitionOpts: k.transitionOpts })
+  const trTools = (clip: Clip) => <TransitionTools bare clip={clip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, clip.id, p))}
+    canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition(trOf(clip)); setNotice('Transición copiada: selecciona otra transición o clip y pulsa «Pegar transición» (o Ctrl+V).') }}
+    onPaste={pasteTransition}
+    onPreview={() => { const i = cutIndex(clip.id); const ms = clip.transitionMs ?? comp.fadeMs; const end = starts[i] + clip.durationMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, end - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) }}
+    others={sel.filter(r => r.kind === 'clip' && r.id !== clip.id).length}
+    onApplyToOthers={() => { const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, trOf(clip)), c)); setNotice(`Transición aplicada a ${ids.length} cortes.`) }}
+    cuts={Math.max(0, comp.clips.length - 1)}
+    onApplyToAll={() => { apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, ...trOf(clip) } : k)) })); setNotice(`«${TRANSITIONS[clip.transition ?? 'fade']}» (${clip.transitionMs ?? comp.fadeMs} ms) en los ${comp.clips.length - 1} cortes. Ctrl+Z lo deshace.`) }}
+    presets={presets.transitions}
+    onSavePreset={name => void storePresets({ ...presets, transitions: [...presets.transitions.filter(t => t.name !== name), { id: `tp-${Date.now().toString(36)}`, name, transition: clip.transition ?? 'fade', ms: clip.transitionMs ?? comp.fadeMs, opts: clip.transitionOpts ?? {} }] }).then(() => setNotice(`Transición favorita «${name}» guardada en tu cuenta.`))}
+    onDeletePreset={id => void storePresets({ ...presets, transitions: presets.transitions.filter(t => t.id !== id) })} />
+
   // «Buscar herramienta»: where each tool lives depends on what is selected.
   const toProject = (section: string) => { setSel([]); ws.reveal({ section }) }
   const toolEntries: ToolEntry[] = [
@@ -802,9 +841,17 @@ export default function ManualEditorPage() {
       </div>
       {ws.layout.right && <Splitter label="Ancho del panel de propiedades" orientation="vertical" invert value={ws.layout.rightW} min={240} max={640} onChange={v => ws.set({ rightW: v })} />}
       <section id="ed-props" className="panel editorProps edProps" aria-label="Propiedades" hidden={!ws.layout.right}>
-        <h3>{selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1} · ${typeOf(selClip.visualAssetId) === 'video' ? 'vídeo' : selClip.visualAssetId ? 'foto' : 'sin visual'}` : selAudio ? `Audio · ${({ music: 'música', voice: 'voz', sfx: 'efecto' } as const)[selAudio.kind]}` : selText ? 'Texto' : selOverlay ? `Capa · ${typeOf(selOverlay.assetId) === 'video' ? 'vídeo' : 'foto'}` : 'Proyecto'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
+        <h3>{selTrClip ? `Transición · clip ${cutIndex(selTrClip.id) + 1} → ${cutIndex(selTrClip.id) + 2}` : selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1} · ${typeOf(selClip.visualAssetId) === 'video' ? 'vídeo' : selClip.visualAssetId ? 'foto' : 'sin visual'}` : selAudio ? `Audio · ${({ music: 'música', voice: 'voz', sfx: 'efecto' } as const)[selAudio.kind]}` : selText ? 'Texto' : selOverlay ? `Capa · ${typeOf(selOverlay.assetId) === 'video' ? 'vídeo' : 'foto'}` : 'Proyecto'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
         {selection && isLocked(comp, selection) && <p className="warnBox small" role="status">Este elemento está en una pista bloqueada: desbloquéala (🔒) para cambiarlo.</p>}
         <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {selTrClip && <Section id="tr-basic" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[selTrClip.transition ?? 'fade']}</span>}>
+          <div className="field-row">
+            <label>Tipo<select aria-label="Tipo de transición" value={selTrClip.transition ?? 'fade'} onChange={e => apply(c => updateClip(c, selTrClip.id, { transition: e.target.value as Transition }))}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
+            <label>Duración (s)<input type="number" aria-label="Duración de esta transición en segundos" min={0.1} max={3} step={0.1} value={secs(selTrClip.transitionMs ?? comp.fadeMs)} onChange={e => apply(c => updateClip(c, selTrClip.id, { transitionMs: Math.round(Math.min(3000, Math.max(100, Number(e.target.value) * 1000 || 0))) }))} /></label>
+          </div>
+          {trTools(selTrClip)}
+          <p className="muted small">Arrastra la transición a otro corte para moverla, o su borde izquierdo para alargarla. Supr la quita; Ctrl+C / Ctrl+V la copian.</p>
+        </Section>}
         {selOverlay && <OverlayInspector animation={(() => {
             const local = Math.min(Math.max(playheadMs - selOverlay.startMs, 0), selOverlay.durationMs)
             const cur = frameValuesAt({ ...selOverlay.transform }, selOverlay.keyframes, local)
@@ -834,15 +881,7 @@ export default function ManualEditorPage() {
               onApplyPreset={pr => { apply(c => setClipKeyframes(updateClip(c, selClip.id, { camera: { kind: 'none', amount: 0.1 } }), selClip.id, presetKeys(pr, selClip.durationMs) as never)); setNotice(`Movimiento «${pr.name}» aplicado (sustituye al movimiento de cámara). Ctrl+Z lo deshace.`) }}
               onSavePreset={name => void storePresets({ ...presets, animations: [...presets.animations.filter(a => a.name !== name), { id: `ap-${Date.now().toString(36)}`, name, target: 'clip', camera: null, keyframes: keysToPreset((selClip.keyframes ?? []) as never, selClip.durationMs) }] }).then(() => setNotice(`Animación «${name}» guardada en tu cuenta.`))}
               onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
-          })()} transitionTools={<TransitionTools bare clip={selClip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, selClip.id, p))}
-            canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition({ transition: selClip.transition, transitionMs: selClip.transitionMs, transitionOpts: selClip.transitionOpts }); setNotice('Transición copiada: selecciona otro clip y pulsa «Pegar transición».') }}
-            onPaste={() => { if (!copiedTransition) return; const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, { ...copiedTransition }), c)) }}
-            onPreview={() => { const i = comp.clips.findIndex(k => k.id === selClip.id); const ms = selClip.transitionMs ?? comp.fadeMs; const end = starts[i] + selClip.durationMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, end - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) }}
-            others={sel.filter(r => r.kind === 'clip' && r.id !== selClip.id).length}
-            onApplyToOthers={() => { const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, { transition: selClip.transition, transitionMs: selClip.transitionMs, transitionOpts: selClip.transitionOpts }), c)); setNotice(`Transición aplicada a ${ids.length} cortes.`) }}
-            presets={presets.transitions}
-            onSavePreset={name => void storePresets({ ...presets, transitions: [...presets.transitions.filter(t => t.name !== name), { id: `tp-${Date.now().toString(36)}`, name, transition: selClip.transition ?? 'fade', ms: selClip.transitionMs ?? comp.fadeMs, opts: selClip.transitionOpts ?? {} }] }).then(() => setNotice(`Transición favorita «${name}» guardada en tu cuenta.`))}
-            onDeletePreset={id => void storePresets({ ...presets, transitions: presets.transitions.filter(t => t.id !== id) })} />}
+          })()} transitionTools={trTools(selClip)}
           clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
           onChange={p => apply(c => updateClip(c, selClip.id, p))}
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
@@ -872,7 +911,7 @@ export default function ManualEditorPage() {
           <AutomationEditor a={selAudio} startMs={audioStartMs(comp, selAudio)} playheadMs={playheadMs} range={range} onChange={p => apply(c => updateAudioClip(c, selAudio.id, p))} />
           </Section>
         </>}
-        {!selClip && !selAudio && !selText && !selOverlay && <>
+        {!selClip && !selAudio && !selText && !selOverlay && !selTrClip && <>
           <Section id="proj-basic" title="Proyecto" defaultOpen>
             <p className="small">{comp.clips.length} clips · {fmt(total)} · formato {comp.format === 'custom' ? `${comp.customSize?.width ?? 1280}×${comp.customSize?.height ?? 720}` : comp.format}</p>
           <label>Duración de las transiciones (ms)<input type="number" min={0} max={1500} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
@@ -917,7 +956,8 @@ export default function ManualEditorPage() {
         <button type="button" className="ghost small" title="Ajusta el zoom para ver todo el proyecto" onClick={() => { const w = scroller.current?.clientWidth ?? 1000; setPxPerSec(Math.max(1, Math.min(200, Math.floor((w - 60) / Math.max(1, total / 1000))))) }}>Ver todo</button>
         {sel.length > 0 && <span className="pill info small">{sel.length} seleccionado(s)</span>}
       </div>
-      <EditorTimeline comp={comp} selection={sel} onSelect={setSel} pxPerSec={pxPerSec} trackScale={trackScale} playheadMs={playheadMs} onSeek={setPlayheadMs}
+      <EditorTimeline comp={comp} selection={sel} onSelect={setSel} selectedTransition={selTr} onSelectTransition={id => { selectTransition(id); if (id) ws.reveal({ section: 'tr-basic' }) }}
+        onMoveTransition={(from, to) => { apply(c => { const k = c.clips.find(x => x.id === from); return k ? updateClip(updateClip(c, to, trOf(k)), from, { transition: 'cut', transitionMs: undefined, transitionOpts: undefined }) : c }); selectTransition(to); setNotice('Transición movida a otro corte (el anterior queda como corte directo). Ctrl+Z la devuelve.') }} pxPerSec={pxPerSec} trackScale={trackScale} playheadMs={playheadMs} onSeek={setPlayheadMs}
         range={range} setRange={r => { setRange(r); setMarkIn(null) }} markIn={markIn} magnet={magnet || snap} beatsMs={beats.beatsMs} showBeats={showBeats}
         waveformOf={id => { const an = analyses[id]; return an === 'loading' ? 'loading' : typeof an === 'object' ? an.waveform ?? null : null }}
         thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf}

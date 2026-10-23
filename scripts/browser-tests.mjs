@@ -2085,6 +2085,10 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const head = () => page.locator('#ed-props h3').textContent()
   const expanded = title => page.locator('button.edSectionHead', { hasText: title }).first().getAttribute('aria-expanded')
 
+  const centre = () => page.evaluate(() => { const c = document.querySelector('canvas.playerCanvas'); return [...c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data].slice(0, 3) })
+  await page.waitForTimeout(1200)
+  const still = await centre()
+  check('viewer: paused at 0:00 it shows the first picture, not the black of the opening fade', still[0] > 150 && still[2] < 90, still)
   // Sidebar: fixed → automatic → hidden; the editor really gets the space and never jumps while it opens temporarily.
   const peek = () => page.evaluate(() => document.querySelector('.studio')?.hasAttribute('data-peek'))
   const radio = name => page.getByRole('radiogroup', { name: 'Comportamiento de la barra lateral' }).getByRole('radio', { name })
@@ -2262,6 +2266,69 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
     await p.close()
   }
   await ctx.close(); server.close()
+}
+
+// 29. Transiciones como objetos de la línea de tiempo: seleccionar, cambiar tipo y duración, dirección, alargar arrastrando el borde,
+//     copiar y pegar, mover a otro corte, quitar, deshacer, favorita en la cuenta, ver sin exportar, guardar y reabrir.
+{
+  const server = serve(8829, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8829/editor/manual?job=job1')
+  await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
+  const chips = page.getByRole('button', { name: /^Transición .* entre el clip/ })
+  const chip = n => page.getByRole('button', { name: new RegExp(`^Transición .* entre el clip ${n} y el ${n + 1}`) })
+  const head = () => page.locator('#ed-props h3').textContent()
+  const comp = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.render_jobs[0].composition)))
+  check('transitions: every cut with a transition shows it on the timeline as its own object', await chips.count() === 2, await chips.count())
+  await chip(1).click()
+  check('transitions: clicking one selects it and shows only its properties', await head() === 'Transición · clip 1 → 2' && await chip(1).getAttribute('aria-pressed') === 'true' && await page.getByLabel('Tipo de transición').isVisible())
+  await page.getByLabel('Tipo de transición').selectOption('slide')
+  await page.getByLabel('Duración de esta transición en segundos').fill('1')
+  await page.getByLabel('Dirección de la transición').selectOption('right')
+  const w1 = (await chip(1).boundingBox()).width
+  check('transitions: type, duration and direction change from its panel (the band on the timeline is as long as the transition)', /Deslizar .* \(1 s\)/.test(await chip(1).getAttribute('aria-label')) && w1 >= 38, [await chip(1).getAttribute('aria-label'), w1])
+  const eb = await chip(1).locator('.tlTrEdge').boundingBox()
+  await page.mouse.move(eb.x + 2, eb.y + 5); await page.mouse.down(); await page.mouse.move(eb.x - 18, eb.y + 5, { steps: 5 }); await page.mouse.up()
+  check('transitions: dragging its left edge makes it longer (1 s → 1.5 s)', /\(1\.5 s\)/.test(await chip(1).getAttribute('aria-label')), await chip(1).getAttribute('aria-label'))
+  await page.keyboard.press('Control+z')
+  check('transitions: the edge drag is one undo step', /\(1 s\)/.test(await chip(1).getAttribute('aria-label')), await chip(1).getAttribute('aria-label'))
+  await chip(1).click(); await page.keyboard.press('Control+c')
+  await chip(2).click(); await page.keyboard.press('Control+v')
+  check('transitions: Ctrl+C / Ctrl+V copy one transition onto another cut (type, length and direction)', /Deslizar .* \(1 s\)/.test(await chip(2).getAttribute('aria-label')))
+  await page.keyboard.press('Control+z')
+  check('transitions: pasting is undoable', /Fundido a negro/.test(await chip(2).getAttribute('aria-label')))
+  // Move the first transition onto the second cut (drop it on the left half of clip 3).
+  await page.evaluate(() => {
+    const src = [...document.querySelectorAll('button.tlTransition')].find(b => /entre el clip 1 y el 2/.test(b.getAttribute('aria-label')))
+    const target = document.querySelectorAll('[aria-label="Pista de vídeo"] > div')[2]
+    const dt = new DataTransfer(), r = target.getBoundingClientRect(), at = { clientX: r.left + 3, clientY: r.top + 10, bubbles: true, cancelable: true, dataTransfer: dt }
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
+    target.dispatchEvent(new DragEvent('dragover', at)); target.dispatchEvent(new DragEvent('drop', at))
+  })
+  await page.waitForTimeout(200)
+  check('transitions: dragging one to another cut moves it there (the old cut becomes a straight cut)', await chips.count() === 1 && /Deslizar entre el clip 2 y el 3 \(1 s\)/.test(await chips.first().getAttribute('aria-label')), await chips.evaluateAll(b => b.map(x => x.getAttribute('aria-label'))))
+  await chip(2).click(); await page.keyboard.press('Delete')
+  const afterDelete = await chips.count()
+  await page.keyboard.press('Control+z')
+  check('transitions: Supr removes the selected one and Ctrl+Z brings it back', afterDelete === 0 && await chips.count() === 1)
+  await chip(2).click()
+  await page.getByLabel('Nombre de la transición favorita').fill('Deslizar suave')
+  await page.locator('#ed-props').getByRole('button', { name: 'Guardar', exact: true }).click()
+  await page.getByText('Transición favorita «Deslizar suave» guardada en tu cuenta.').waitFor()
+  const fav = (await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.connector_configs ?? [])))).find(r => r.capability === 'edit_presets')?.config?.transitions?.[0]
+  check('transitions: saved as a favourite in the account', fav?.name === 'Deslizar suave' && fav.transition === 'slide' && fav.ms === 1000, fav)
+  await page.locator('#ed-props').getByRole('button', { name: /Ver la transición/ }).click()
+  await page.waitForTimeout(600)
+  const t = await page.locator('.playerTime b').textContent()
+  check('transitions: «Ver la transición» plays it in the viewer without exporting', /00:0[3-5]/.test(t), t)
+  await page.waitForTimeout(2200)
+  await page.getByRole('button', { name: 'Guardar ahora' }).click(); await page.getByText('Montaje guardado en la nube.').waitFor()
+  const saved = await comp()
+  check('transitions: saved with the montage', saved.clips[0].transition === 'cut' && saved.clips[1].transition === 'slide' && saved.clips[1].transitionMs === 1000 && saved.clips[1].transitionOpts?.direction === 'right', saved.clips.map(k => [k.transition, k.transitionMs, k.transitionOpts]))
+  check('transitions: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
 }
 
 await browser.close()

@@ -71,6 +71,11 @@ En los tres casos tu versión queda antes como punto de recuperación.
   - quitar;
   - aplicar a los cortes seleccionados o a todos;
   - favoritas guardadas en la cuenta.
+- **En la línea de tiempo cada transición es un objeto propio**: una banda al final del clip que sale, tan larga como dura.
+  - Clic: se selecciona y el panel de propiedades muestra solo la transición (tipo, duración, dirección, intensidad, curva, ver, copiar, pegar, quitar, aplicar a todos los cortes, favoritas).
+  - Arrastrar su borde izquierdo: más larga o más corta (un solo paso de deshacer).
+  - Arrastrarla a otro corte: se mueve allí y el corte anterior queda directo.
+  - Supr la quita; Ctrl+C / Ctrl+V la copian a otra transición o a los clips seleccionados; Ctrl+Z deshace también justo después de cambiar una lista o un control deslizante.
 - **Durante una transición se ven los dos clips.**
   - Si el vídeo entrante tiene material antes de su inicio (está recortado), se reproduce durante la transición.
   - Si no lo tiene, mantiene su primer fotograma hasta que le toca. Así nunca cambia su propio tiempo.
@@ -119,6 +124,7 @@ El visor y los dos exportadores usan la misma descripción de cada fotograma (`l
 | 26 | Persistencia: guardado automático, recargar, sesión limpia en otro navegador, conflicto, puntos de recuperación, exportar tras cambiar una transición |
 | 27 | Transiciones, favoritas, animaciones, sesión limpia y exportación igual al visor |
 | 28 | Espacio de trabajo: barra lateral, grupos, propiedades, paneles, pestañas, modos, búsqueda, escritorio, tableta y móvil |
+| 29 | Transiciones como objetos: seleccionar, tipo, duración, dirección, alargar arrastrando, copiar y pegar, mover, quitar, deshacer, favorita, ver y guardar |
 
 Ninguna prueba usa ni modifica el proyecto «Lofi prueba».
 
