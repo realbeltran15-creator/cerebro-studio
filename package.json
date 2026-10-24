@@ -17,7 +17,8 @@
     "render": "node scripts/render.mjs",
     "test:parity": "node scripts/parity-test.mjs",
     "test:looks": "node scripts/looks-test.mjs",
-    "test:upload": "node scripts/upload-test.mjs"
+    "test:upload": "node scripts/upload-test.mjs",
+    "test:ticket": "node scripts/ticket-test.mjs"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "1.61.3",
