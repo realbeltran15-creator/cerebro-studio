@@ -13,7 +13,9 @@
     "research:run": "node scripts/research-run.mjs",
     "research:live": "node scripts/research-live.mjs",
     "test:migrations": "bash scripts/test-migrations.sh",
-    "research:validate": "node scripts/validate-real.mjs"
+    "research:validate": "node scripts/validate-real.mjs",
+    "render": "node scripts/render.mjs",
+    "test:parity": "node scripts/parity-test.mjs"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "1.61.3",
@@ -28,6 +30,7 @@
   "devDependencies": {
     "@ffmpeg/core": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
+    "@napi-rs/canvas": "^1.0.13",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
