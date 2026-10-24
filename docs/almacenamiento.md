@@ -94,3 +94,11 @@ No se ha hecho nada de esto.
 - `tests/storage-multipart.test.ts` (5 pruebas): servidor S3 de mentira que valida la firma de cada petición; cubre crear, listar partes con paginación, firmar partes con tamaño exacto, completar con las ETag correctas, abortar, cuota y propiedad de la ruta.
 - `node scripts/upload-test.mjs` (Chromium real): el código del navegador habla con las rutas reales del servidor y con un S3 simulado. Sube 150 MiB (5 partes), **cierra la página a mitad**, la vuelve a abrir y comprueba que continúa la **misma** subida, que no se repite ninguna parte, que las 5 partes llegan con el tamaño correcto y que devuelve la ruta `r2:` dentro de la carpeta del usuario.
 - **No probado contra Cloudflare real**: sin cuenta no se puede. Lo único que depende del servicio real son la regla CORS (`ETag` expuesta) y que R2 acepte `uploadId` en la firma V4 tal como lo hace S3; está documentado como paso de activación.
+
+### Limpieza segura de restos en R2 (`POST /api/storage/cleanup`)
+
+- `{ "action": "report" }` **no cambia nada**. Lista (solo tu carpeta) los archivos de R2 a los que **ninguna fila de la Biblioteca apunta**, con más de 24 h de antigüedad y que no están en `versions/` (puntos de recuperación), y las subidas por partes abandonadas hace más de 7 días (R2 sigue guardando sus partes hasta que se abortan).
+- `{ "action": "delete", "confirm": true, "keys": [...], "uploads": [...] }` borra solo lo que un informe **nuevo** vuelve a listar en ese momento: una clave enviada por el navegador que esté referenciada, sea reciente, esté en `versions/` o sea de otra persona se salta. Si no se puede leer la Biblioteca no se borra nada.
+- Orden de lectura: primero la Biblioteca y después R2, para que una subida que acaba durante la consulta nunca parezca huérfana.
+- `tests/storage-cleanup.test.ts` (4 pruebas, servidor S3 simulado). Sin pantalla propia todavía: se usa por API. Tampoco probado contra Cloudflare real.
+- Complemento recomendado en Cloudflare: la regla de ciclo de vida «abortar subidas por partes incompletas» a los 7 días.
