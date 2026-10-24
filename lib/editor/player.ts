@@ -268,6 +268,12 @@ export class EditorPlayer {
   private draw(ops: Op[]) {
     const { width, height } = this.init.canvas
     this.lastOps = ops
+    // Diagnostics (off unless a page sets window.__cerebroTrace = []): which layers each drawn frame contains, from which source time, with
+    // which opacity, and whether the picture of each video was ready to draw.
+    const trace = (globalThis as { __cerebroTrace?: unknown[] }).__cerebroTrace
+    if (Array.isArray(trace) && trace.length < 5000) {
+      trace.push({ t: Math.round(this.t), layers: ops.flatMap(o => (o.type === 'visual' ? [{ slot: o.slot, media: o.media, srcMs: Math.round(o.sourceMs), alpha: Math.round(o.alpha * 100) / 100, live: o.live, drawn: this.sourceOf(o) !== null, elMs: o.media === 'video' ? Math.round(((this.videos.get(o.slot)?.el as HTMLVideoElement | undefined)?.currentTime ?? -1) * 1000) : null }] : [])) })
+    }
     drawOps(this.g, ops, width, height, op => this.sourceOf(op))
   }
 

@@ -59,8 +59,8 @@ export type TransitionHandles = {
 
 /** Does video clip A have material after its end for `postMs` of timeline, and video clip B before its start for `preMs`? */
 function handleOf(clip: Clip | undefined, media: 'video' | 'image' | 'audio' | null, side: 'after-end' | 'before-start') {
-  if (!clip || media === 'image') return { have: Infinity, unknown: false }
-  if (media !== 'video') return { have: 0, unknown: false }
+  // Only a video can run out of frames: a photo (or a clip with no picture at all) has nothing to hold.
+  if (!clip || media !== 'video') return { have: Infinity, unknown: false }
   const rate = clip.speed ?? 1, trim = clip.trimInMs ?? 0
   if (side === 'before-start') return { have: trim / rate, unknown: false }
   if (!clip.sourceDurationMs) return { have: 0, unknown: true }

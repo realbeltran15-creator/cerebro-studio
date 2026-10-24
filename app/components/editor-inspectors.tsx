@@ -234,16 +234,18 @@ export type SliderDrag = { begin: () => void; live: (v: number) => void; end: ()
  * A slider with its value written beside it (editable for an exact value) and its unit.
  * Dragging is one undo step (`drag`); typing a value is another. The range comes from the real limits of what it changes.
  */
-export function SliderField({ label, value, min, max, step, unit, show, onChange, drag, ariaLabel, decimals = 2 }: {
+export function SliderField({ label, value, min, max, step, unit, show, onChange, drag, ariaLabel, decimals = 2, onCommit }: {
   label: string; value: number; min: number; max: number; step: number; unit: string
   /** How the value is written for people (e.g. «1,50 s»). */
   show?: (v: number) => string
   onChange: (v: number) => void; drag?: SliderDrag; ariaLabel?: string; decimals?: number
+  /** The value is settled: the slider was released, or the number was typed and left (Enter / focus out). */
+  onCommit?: () => void
 }) {
   const clampV = (v: number) => Math.min(max, Math.max(min, v))
   const dragging = useRef(false)
   const startDrag = () => { if (drag && !dragging.current) { dragging.current = true; drag.begin() } }
-  const stopDrag = () => { if (drag && dragging.current) { dragging.current = false; drag.end() } }
+  const stopDrag = () => { if (drag && dragging.current) { dragging.current = false; drag.end(); onCommit?.() } }
   const name = ariaLabel ?? label
   return <div className="sliderField" role="group" aria-label={label}>
     <span className="sliderLabel">{label} <b>{show ? show(value) : `${value.toLocaleString('es-ES', { maximumFractionDigits: decimals })} ${unit}`}</b></span>
@@ -252,7 +254,7 @@ export function SliderField({ label, value, min, max, step, unit, show, onChange
         onPointerDown={startDrag} onPointerUp={stopDrag} onKeyDown={e => { if (/^(Arrow|Page|Home|End)/.test(e.key) && !e.ctrlKey && !e.metaKey) startDrag() }} onKeyUp={stopDrag} onBlur={stopDrag}
         onChange={e => { const v = clampV(Number(e.target.value)); if (drag && dragging.current) drag.live(v); else onChange(v) }} />
       <input type="number" aria-label={name} min={min} max={max} step={step} value={Number(value.toFixed(decimals))}
-        onChange={e => { if (e.target.value === '') return; onChange(clampV(Number(e.target.value))) }} style={{ width: 72 }} />
+        onChange={e => { if (e.target.value === '') return; onChange(clampV(Number(e.target.value))) }} onBlur={() => onCommit?.()} onKeyDown={e => { if (e.key === 'Enter') onCommit?.() }} style={{ width: 72 }} />
       <span className="muted small">{unit}</span>
     </span>
   </div>

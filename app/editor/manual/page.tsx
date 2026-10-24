@@ -31,6 +31,7 @@ import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
+import { makeRoomForTransition } from '@/lib/editor/transition-room'
 import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
@@ -675,13 +676,26 @@ export default function ManualEditorPage() {
     change: (p: Partial<Clip>) => { const b = sliderBase.current; if (b) liveDrag(updateClip(b, id, p)) },
     end: () => { sliderBase.current = null; endDrag() },
   })
+  /**
+   * Gives a transition real material: the end of A and the start of B are trimmed by what their files lack (see transition-room.ts), so both
+   * videos play during the overlap. Applied when a person chooses or changes a transition, never on opening a project; the message says how
+   * much was trimmed and that the project is shorter by it.
+   */
+  const roomFor = (clipId: string, base: Composition): Composition => {
+    const i = base.clips.findIndex(k => k.id === clipId)
+    if (i < 0) return base
+    const r = makeRoomForTransition(base, i, id => typeOf(id) as 'video' | 'image' | 'audio' | null)
+    if (r.message) setNotice(r.message)
+    return r.composition
+  }
+  const ensureRoom = (clipId: string) => { const r = roomFor(clipId, comp); if (r !== comp) apply(() => r) }
   /** Transition length: never longer than the clip that ends nor than the one that starts (nor 3 s). */
   const trMaxMs = (clip: Clip) => { const i = cutIndex(clip.id); return Math.max(100, Math.min(3000, clip.durationMs, comp.clips[i + 1]?.durationMs ?? clip.durationMs)) }
   const secsLabel = (s2: number) => `${s2.toLocaleString('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} s`
   const trDuration = (clip: Clip, ariaLabel: string) => { const lv = clipLive(clip.id); const max = trMaxMs(clip); return <SliderField label="Duración" ariaLabel={ariaLabel} unit="s" step={0.05} min={0.1} max={max / 1000}
     value={Math.min(max, clip.transitionMs ?? comp.fadeMs) / 1000} show={secsLabel}
     onChange={v => apply(c => updateClip(c, clip.id, { transitionMs: Math.round(v * 1000) }))}
-    drag={{ begin: lv.begin, live: v => lv.change({ transitionMs: Math.round(v * 1000) }), end: lv.end }} /> }
+    drag={{ begin: lv.begin, live: v => lv.change({ transitionMs: Math.round(v * 1000) }), end: lv.end }} onCommit={() => ensureRoom(clip.id)} /> }
   /** Plays the transition with a little before and after: from 0.7 s before its window starts to 0.7 s after it ends. */
   const previewTransition = (clip: Clip) => {
     const i = cutIndex(clip.id), p = playerRef.current
@@ -710,6 +724,7 @@ export default function ManualEditorPage() {
         {h.missingB > 0 && <> El clip {i + 2} no tiene {secs1(h.missingB)} de vídeo antes de su entrada: en ese tramo mantiene su primer fotograma.</>}
         {' '}Puedes recortar menos esos extremos del clip, cambiar el punto de alineación o limitar la duración.
         <div className="pageActions">
+          {!h.unknown && <button type="button" className="small" onClick={() => ensureRoom(clip.id)}>Crear el material recortando los extremos (el proyecto dura {secs1(h.missingA + h.missingB)} menos)</button>}
           {h.maxCoveredMs >= 100 && <button type="button" className="ghost small" onClick={() => fix({ transitionMs: h.maxCoveredMs })}>Ajustar la duración al material disponible ({secs1(h.maxCoveredMs)})</button>}
           {alts.map(x => <button key={x.a} type="button" className="ghost small" onClick={() => fix({ transitionOpts: { ...(clip.transitionOpts ?? {}), align: x.a } })}>Alinear: {ALIGNS[x.a].toLowerCase()} (cubre toda la ventana)</button>)}
         </div>
@@ -720,7 +735,7 @@ export default function ManualEditorPage() {
       </div>
     </div>
   }
-  const trTools = (clip: Clip) => <TransitionTools bare clip={clip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, clip.id, p))} live={clipLive(clip.id)}
+  const trTools = (clip: Clip) => <TransitionTools bare clip={clip} defaultMs={comp.fadeMs} onChange={p => { if ('transition' in p || p.transitionOpts?.align !== undefined) { const next = updateClip(comp, clip.id, p); apply(() => roomFor(clip.id, next)) } else apply(c => updateClip(c, clip.id, p)) }} live={clipLive(clip.id)}
     canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition(trOf(clip)); setNotice('Transición copiada: selecciona otra transición o clip y pulsa «Pegar transición» (o Ctrl+V).') }}
     onPaste={pasteTransition}
     onPreview={() => previewTransition(clip)}
@@ -960,7 +975,7 @@ export default function ManualEditorPage() {
           <ul className="materialList" role="listbox" aria-label="Transiciones">
             {(Object.keys(TRANSITIONS) as Transition[]).map(t => <li key={t} role="option" aria-selected={selClip?.transition === t} draggable aria-label={`Transición ${TRANSITIONS[t]}`} title="Arrástrala entre dos clips del vídeo principal, o selecciona un clip y haz clic"
               onDragStart={e => { e.dataTransfer.setData(TRANSITION_MIME, t); e.dataTransfer.effectAllowed = 'copy' }}
-              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } apply(c => updateClip(c, selClip.id, transitionPatch(selClip, t))); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip seleccionado y el siguiente.`); ws.reveal({ section: 'clip-transition' }) }}>
+              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } { const next = updateClip(comp, selClip.id, transitionPatch(selClip, t)); apply(() => roomFor(selClip.id, next)); setNotice(n => n || `Transición «${TRANSITIONS[t]}» entre el clip seleccionado y el siguiente.`) }; ws.reveal({ section: 'clip-transition' }) }}>
               <span className="matThumb" aria-hidden="true" style={{ background: '#333', display: 'grid', placeItems: 'center' }}>{TRANSITION_ICONS[t]}</span>
               <span className="matName">{TRANSITIONS[t]}</span>
             </li>)}
@@ -1024,7 +1039,7 @@ export default function ManualEditorPage() {
         <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {selTrClip && <Section id="tr-basic" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[selTrClip.transition ?? 'fade']}</span>}>
           <div className="field-row">
-            <label>Tipo<select aria-label="Tipo de transición" value={selTrClip.transition ?? 'fade'} onChange={e => apply(c => updateClip(c, selTrClip.id, transitionPatch(selTrClip, e.target.value as Transition)))}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
+            <label>Tipo<select aria-label="Tipo de transición" value={selTrClip.transition ?? 'fade'} onChange={e => { const next = updateClip(comp, selTrClip.id, transitionPatch(selTrClip, e.target.value as Transition)); apply(() => roomFor(selTrClip.id, next)) }}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
           </div>
           {trMaterial(selTrClip)}
           {trDuration(selTrClip, 'Duración de esta transición en segundos')}
@@ -1062,7 +1077,7 @@ export default function ManualEditorPage() {
               onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
           })()} transitionTools={trTools(selClip)} transitionDuration={trDuration(selClip, 'Duración de la transición')}
           clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
-          onChange={p => apply(c => updateClip(c, selClip.id, p))}
+          onChange={p => { if ('transition' in p) { const next = updateClip(comp, selClip.id, p); apply(() => roomFor(selClip.id, next)) } else apply(c => updateClip(c, selClip.id, p)) }}
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
           onSplit={ms => { apply(c => splitClip(c, selClip.id, ms)); setSplitAt('') }}
@@ -1146,7 +1161,7 @@ export default function ManualEditorPage() {
         waveformOf={id => { const an = analyses[id]; return an === 'loading' ? 'loading' : typeof an === 'object' ? an.waveform ?? null : null }}
         thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf} resolveUrl={resolveUrl}
         begin={beginDrag} live={liveDrag} end={endDrag} apply={apply} onReorderMain={(id, to) => apply(c => moveClip(c, id, to))}
-        onDropTransition={(clipId, t) => { apply(c => { const k = c.clips.find(x => x.id === clipId); return updateClip(c, clipId, k ? transitionPatch(k, t) : { transition: t }) }); setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
+        onDropTransition={(clipId, t) => { { const k = comp.clips.find(x => x.id === clipId); const next = updateClip(comp, clipId, k ? transitionPatch(k, t) : { transition: t }); apply(() => roomFor(clipId, next)) }; setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}
         onTrackAction={trackAction} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
         scrollerRef={scroller} playheadRef={playheadEl} view={view} onScroll={measureView}>
