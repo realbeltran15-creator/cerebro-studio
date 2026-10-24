@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { CAMERA_MOVES, FILTER_PRESETS, NO_FILTERS, TRANSITIONS, type CameraKind, type Clip, type Composition, type Crop, type Filters, type KeyEasing, type OverlayClip, type TransitionOptions } from '@/lib/editor/composition'
 import { DIRECTIONS, EASINGS, HAS_DIRECTION, HAS_INTENSITY, type TransitionDirection, type TransitionEasing } from '@/lib/editor/motion'
 import type { AnimationPreset, TransitionPreset } from '@/lib/editor/presets'
@@ -121,7 +121,7 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
  * Everything about the transition out of a clip, beyond its type and length: direction, intensity, easing, preview, copy/paste,
  * remove, apply to the other selected cuts, and favourites saved in the account (usable in every montage).
  */
-export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset, bare = false, cuts = 0, onApplyToAll }: {
+export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, onPaste, onPreview, others, onApplyToOthers, presets, onSavePreset, onDeletePreset, bare = false, cuts = 0, onApplyToAll, live }: {
   clip: Clip; defaultMs: number; bare?: boolean
   onChange: (p: Partial<Clip>) => void
   canPaste: boolean; onCopy: () => void; onPaste: () => void; onPreview: () => void
@@ -129,6 +129,8 @@ export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, o
   others: number; onApplyToOthers: () => void
   /** Number of cuts in the montage and «apply to all of them». */
   cuts?: number; onApplyToAll?: () => void
+  /** Live changes while dragging a slider (one undo step per drag). */
+  live?: { begin: () => void; change: (p: Partial<Clip>) => void; end: () => void }
   presets: TransitionPreset[]; onSavePreset: (name: string) => void; onDeletePreset: (id: string) => void
 }) {
   const [name, setName] = useState('')
@@ -138,7 +140,8 @@ export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, o
   return <Fold bare={bare} open={!!clip.transitionOpts || presets.length > 0} summary={<><b>Ajustes de la transición</b> <span className="muted">({TRANSITIONS[kind]}, {clip.transitionMs ?? defaultMs} ms)</span></>}>
     <div className="field-row" style={{ marginTop: 6 }}>
       {HAS_DIRECTION.has(kind) && <label>Dirección<select aria-label="Dirección de la transición" value={o.direction ?? (kind === 'slide_up' ? 'up' : kind === 'wipe_down' ? 'down' : kind === 'wipe' ? 'right' : 'left')} onChange={e => setO({ direction: e.target.value as TransitionDirection })}>{(Object.keys(DIRECTIONS) as TransitionDirection[]).map(d => <option key={d} value={d}>{DIRECTIONS[d]}</option>)}</select></label>}
-      {HAS_INTENSITY.has(kind) && <label>Intensidad ({Math.round((o.intensity ?? 1) * 100)} %)<input type="range" aria-label="Intensidad de la transición" min={0.2} max={3} step={0.1} value={o.intensity ?? 1} onChange={e => setO({ intensity: Number(e.target.value) })} /></label>}
+      {HAS_INTENSITY.has(kind) && <SliderField label="Intensidad" ariaLabel="Intensidad de la transición" value={Math.round((o.intensity ?? 1) * 100)} min={20} max={300} step={5} unit="%" decimals={0}
+        onChange={v => setO({ intensity: v / 100 })} drag={live && { begin: live.begin, live: v => live.change({ transitionOpts: { ...o, intensity: v / 100 } }), end: live.end }} />}
       {kind !== 'cut' && <label>Curva<select aria-label="Curva de la transición" value={o.easing ?? 'smooth'} onChange={e => setO({ easing: e.target.value as TransitionEasing })}>{(Object.keys(EASINGS) as TransitionEasing[]).map(k => <option key={k} value={k}>{EASINGS[k]}</option>)}</select></label>}
     </div>
     <div className="pageActions">
@@ -222,3 +225,32 @@ export function KeyframeEditor({ title, props, keys, current, localMs, durationM
   </Fold>
 }
 const cleanKey = (k: AnyKey): AnyKey => Object.fromEntries(Object.entries(k).filter(([, v]) => v !== undefined)) as AnyKey
+
+export type SliderDrag = { begin: () => void; live: (v: number) => void; end: () => void }
+/**
+ * A slider with its value written beside it (editable for an exact value) and its unit.
+ * Dragging is one undo step (`drag`); typing a value is another. The range comes from the real limits of what it changes.
+ */
+export function SliderField({ label, value, min, max, step, unit, show, onChange, drag, ariaLabel, decimals = 2 }: {
+  label: string; value: number; min: number; max: number; step: number; unit: string
+  /** How the value is written for people (e.g. «1,50 s»). */
+  show?: (v: number) => string
+  onChange: (v: number) => void; drag?: SliderDrag; ariaLabel?: string; decimals?: number
+}) {
+  const clampV = (v: number) => Math.min(max, Math.max(min, v))
+  const dragging = useRef(false)
+  const startDrag = () => { if (drag && !dragging.current) { dragging.current = true; drag.begin() } }
+  const stopDrag = () => { if (drag && dragging.current) { dragging.current = false; drag.end() } }
+  const name = ariaLabel ?? label
+  return <div className="sliderField" role="group" aria-label={label}>
+    <span className="sliderLabel">{label} <b>{show ? show(value) : `${value.toLocaleString('es-ES', { maximumFractionDigits: decimals })} ${unit}`}</b></span>
+    <span className="sliderRow">
+      <input type="range" aria-label={`${name} (deslizador)`} min={min} max={max} step={step} value={clampV(value)} aria-valuetext={show ? show(value) : `${value} ${unit}`}
+        onPointerDown={startDrag} onPointerUp={stopDrag} onKeyDown={e => { if (/^(Arrow|Page|Home|End)/.test(e.key) && !e.ctrlKey && !e.metaKey) startDrag() }} onKeyUp={stopDrag} onBlur={stopDrag}
+        onChange={e => { const v = clampV(Number(e.target.value)); if (drag && dragging.current) drag.live(v); else onChange(v) }} />
+      <input type="number" aria-label={name} min={min} max={max} step={step} value={Number(value.toFixed(decimals))}
+        onChange={e => { if (e.target.value === '') return; onChange(clampV(Number(e.target.value))) }} style={{ width: 72 }} />
+      <span className="muted small">{unit}</span>
+    </span>
+  </div>
+}

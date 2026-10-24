@@ -31,7 +31,7 @@ import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
-import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, TransitionTools, VisualFields } from '../../components/editor-inspectors'
+import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, SliderField, TransitionTools, VisualFields } from '../../components/editor-inspectors'
 import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
@@ -64,6 +64,8 @@ export default function ManualEditorPage() {
   // Right-click menu on the timeline (items, a transition or the empty timeline).
   const [menu, setMenu] = useState<{ x: number; y: number; kind: 'item' | 'transition' | 'empty' } | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
+  // Sliders: the composition when a drag started (the whole drag becomes one undo step).
+  const sliderBase = useRef<Composition | null>(null)
   // Export lives in its own panel (opened from the top bar) so nothing separates the viewer from the timeline.
   const [exportOpen, setExportOpen] = useState(false)
   const selectTransition = useCallback((clipId: string | null) => { setSelTrState(clipId); if (clipId) setSelState([]) }, [])
@@ -602,7 +604,19 @@ export default function ManualEditorPage() {
   const selTrClip = selTr ? comp.clips.find(k => k.id === selTr) ?? null : null
   const cutIndex = (id: string) => comp.clips.findIndex(k => k.id === id)
   const trOf = (k: Clip) => ({ transition: k.transition, transitionMs: k.transitionMs, transitionOpts: k.transitionOpts })
-  const trTools = (clip: Clip) => <TransitionTools bare clip={clip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, clip.id, p))}
+  const clipLive = (id: string) => ({
+    begin: () => { sliderBase.current = comp; beginDrag() },
+    change: (p: Partial<Clip>) => { const b = sliderBase.current; if (b) liveDrag(updateClip(b, id, p)) },
+    end: () => { sliderBase.current = null; endDrag() },
+  })
+  /** Transition length: never longer than the clip that ends nor than the one that starts (nor 3 s). */
+  const trMaxMs = (clip: Clip) => { const i = cutIndex(clip.id); return Math.max(100, Math.min(3000, clip.durationMs, comp.clips[i + 1]?.durationMs ?? clip.durationMs)) }
+  const secsLabel = (s2: number) => `${s2.toLocaleString('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} s`
+  const trDuration = (clip: Clip, ariaLabel: string) => { const lv = clipLive(clip.id); const max = trMaxMs(clip); return <SliderField label="Duración" ariaLabel={ariaLabel} unit="s" step={0.05} min={0.1} max={max / 1000}
+    value={Math.min(max, clip.transitionMs ?? comp.fadeMs) / 1000} show={secsLabel}
+    onChange={v => apply(c => updateClip(c, clip.id, { transitionMs: Math.round(v * 1000) }))}
+    drag={{ begin: lv.begin, live: v => lv.change({ transitionMs: Math.round(v * 1000) }), end: lv.end }} /> }
+  const trTools = (clip: Clip) => <TransitionTools bare clip={clip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, clip.id, p))} live={clipLive(clip.id)}
     canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition(trOf(clip)); setNotice('Transición copiada: selecciona otra transición o clip y pulsa «Pegar transición» (o Ctrl+V).') }}
     onPaste={pasteTransition}
     onPreview={() => { const i = cutIndex(clip.id); const ms = clip.transitionMs ?? comp.fadeMs; const end = starts[i] + clip.durationMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, end - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) }}
@@ -902,8 +916,8 @@ export default function ManualEditorPage() {
         {selTrClip && <Section id="tr-basic" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[selTrClip.transition ?? 'fade']}</span>}>
           <div className="field-row">
             <label>Tipo<select aria-label="Tipo de transición" value={selTrClip.transition ?? 'fade'} onChange={e => apply(c => updateClip(c, selTrClip.id, { transition: e.target.value as Transition }))}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
-            <label>Duración (s)<input type="number" aria-label="Duración de esta transición en segundos" min={0.1} max={3} step={0.1} value={secs(selTrClip.transitionMs ?? comp.fadeMs)} onChange={e => apply(c => updateClip(c, selTrClip.id, { transitionMs: Math.round(Math.min(3000, Math.max(100, Number(e.target.value) * 1000 || 0))) }))} /></label>
           </div>
+          {trDuration(selTrClip, 'Duración de esta transición en segundos')}
           {trTools(selTrClip)}
           <p className="muted small">Arrastra la transición a otro corte para moverla, o su borde izquierdo para alargarla. Supr la quita; Ctrl+C / Ctrl+V la copian.</p>
         </Section>}
@@ -936,7 +950,7 @@ export default function ManualEditorPage() {
               onApplyPreset={pr => { apply(c => setClipKeyframes(updateClip(c, selClip.id, { camera: { kind: 'none', amount: 0.1 } }), selClip.id, presetKeys(pr, selClip.durationMs) as never)); setNotice(`Movimiento «${pr.name}» aplicado (sustituye al movimiento de cámara). Ctrl+Z lo deshace.`) }}
               onSavePreset={name => void storePresets({ ...presets, animations: [...presets.animations.filter(a => a.name !== name), { id: `ap-${Date.now().toString(36)}`, name, target: 'clip', camera: null, keyframes: keysToPreset((selClip.keyframes ?? []) as never, selClip.durationMs) }] }).then(() => setNotice(`Animación «${name}» guardada en tu cuenta.`))}
               onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
-          })()} transitionTools={trTools(selClip)}
+          })()} transitionTools={trTools(selClip)} transitionDuration={trDuration(selClip, 'Duración de la transición')}
           clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
           onChange={p => apply(c => updateClip(c, selClip.id, p))}
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
@@ -1052,8 +1066,9 @@ export default function ManualEditorPage() {
   </StudioShell>
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onDelete, onMove, transitionTools, animation }: {
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onDelete, onMove, transitionTools, transitionDuration, animation }: {
   transitionTools?: React.ReactNode
+  transitionDuration?: React.ReactNode
   animation?: React.ReactNode
   clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
   onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
@@ -1090,8 +1105,9 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
     <Section id="clip-transition" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[clip.transition ?? 'fade']}</span>}>
       <div className="field-row">
         <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
-        <label>Duración de la transición (ms)<input type="number" aria-label="Duración de la transición" min={0} max={3000} step={50} value={clip.transitionMs ?? ''} placeholder="la del montaje" onChange={e => onChange({ transitionMs: e.target.value === '' ? undefined : Math.min(3000, Math.max(0, Number(e.target.value) || 0)) })} /></label>
+
       </div>
+      {transitionDuration}
       {transitionTools}
     </Section>
     <Section id="clip-frame" title="Encuadre y movimiento" defaultOpen={(clip.zoom ?? 1) !== 1 || !!clip.camera}>

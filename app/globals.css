@@ -668,3 +668,8 @@ button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-sh
 :is(.edTools,.edProps) :is(input:not([type=checkbox]):not([type=range]):not([type=color]),select,textarea){padding:6px 9px;font-size:13px;border-radius:8px}
 :is(.edTools,.edProps) label{gap:3px;font-size:12.5px}
 :is(.edTools,.edProps) .field-row{gap:8px}
+.sliderField{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sliderLabel{font-size:12.5px;color:var(--muted)}.sliderLabel b{color:var(--text);font-weight:600}
+.sliderRow{display:flex;align-items:center;gap:6px}
+.sliderRow input[type=range]{flex:1;min-width:80px;padding:0;border:0;background:transparent;accent-color:var(--accent)}
+.sliderRow input[type=number]{width:72px;padding:4px 6px;font-size:12.5px}
