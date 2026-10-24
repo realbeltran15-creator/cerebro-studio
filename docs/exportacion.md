@@ -39,22 +39,47 @@ Fuente sobre la congelación: [Chrome for Developers, «Freezing on Energy Saver
   - el archivo exportado se analiza con **ffprobe**: vídeo 1280×720 con audio y 13 s de duración.
 - Las secciones 24 y 25 ya comparaban la exportación con el visor en los mismos instantes: capas, fotos, dos músicas, voz, efecto, transiciones a mitad y automatización de volumen.
 
-## Exportaciones largas sin la pestaña abierta (diseño, **no activado**)
+## Exportación sin navegador: el motor offline (hecho, gratuito)
 
-Una exportación en el navegador siempre depende de que la pestaña siga viva. Para sesiones largas (por ejemplo 90 min de lo-fi), la única solución completa es renderizar en un servidor:
+`lib/render/engine.ts` (Node + FFmpeg + `@napi-rs/canvas`) renderiza el mismo montaje **sin navegador y sin pestaña abierta**, con el mismo código que el editor para decidir qué se ve (`frameAt`), cómo se dibuja (`drawOps`) y cómo suena (`audioVoices`, `voiceGainAt`, `busLevels`…). No hay coste: corre en tu PC con FFmpeg.
 
-1. El editor guarda el montaje como hoy y crea un `render_jobs` con estado `queued`.
-2. Un trabajador con ffmpeg hace lo siguiente:
-   - lee el montaje;
-   - descarga los materiales con enlaces firmados;
-   - reproduce el mismo dibujo (el código de `lib/editor/scene.ts` y `draw.ts` puede ejecutarse en Node con un canvas) o traduce el montaje a un grafo de filtros de ffmpeg;
-   - sube el resultado a R2 y marca el trabajo como `completed`.
-3. El editor muestra el progreso leyendo `render_jobs`. Se puede cerrar el navegador.
+Cómo trabaja:
 
-Dónde ejecutar el trabajador:
+- **Trozos**: la línea de tiempo se corta en cada clip y en tramos de ≤ 60 s. Cada trozo tiene una huella (ajustes + lo que se dibuja en cada fotograma, con los archivos identificados por nombre/tamaño/fecha). **Trozos idénticos se renderizan una sola vez** y se reutilizan (un lo-fi de 90 min con 4 escenas en bucle: 180 trozos, 10 distintos).
+- **Reanudable**: si se corta, se vuelve a lanzar con la misma carpeta de trabajo y solo se rehacen los trozos que faltan (archivo `.part` + renombrado al terminar).
+- **Vídeo**: FFmpeg lee cada vídeo en su propio proceso; los fotogramas van a x264 (veryfast, crf 20, `maxrate` del plan, GOP de 2 s, etiquetado bt709).
+- **Audio**: se mezcla en bloques de 10 s con la misma automatización de volumen, ducking, bucles y paneo que el editor; AAC 128 kbit/s a 48 kHz.
+- **Unión**: concat sin recodificar + audio → MP4 con `+faststart`.
+- **Cancelable** (AbortSignal), con progreso (plan / vídeo / audio / unión), `--from/--to` para renderizar solo un tramo y `--font` para registrar tipografías.
 
-- Las funciones de Vercel no sirven, por el límite de tiempo de cada ejecución.
-- Opciones con coste mensual: un servidor pequeño o una cola de trabajos en segundo plano.
-- Opción gratuita: **el propio PC** con ffmpeg y un script que consulte la cola. Funciona con el navegador cerrado, pero solo con el PC encendido.
+Uso (en tu PC, con Node y FFmpeg):
 
-No se ha contratado ni activado nada. Antes de elegir, se presentarán los precios comprobados.
+```
+node scripts/render.mjs ticket paquete-render.json --out video.mp4      # lo que descarga el editor
+node scripts/render.mjs render proyecto.json --assets assets.json --out video.mp4
+node scripts/render.mjs lofi --music m.mp3 --scenes a.mp4,b.jpg --minutes 90 --out lofi.mp4
+```
+
+- **Paquete de render** (botón «Paquete para renderizar en mi PC» en el panel de exportación): guarda el montaje, crea una fila `render_jobs` en estado `queued` y descarga un JSON con el montaje y **enlaces firmados de 4 h** a tus materiales. No contiene contraseñas ni claves. El CLI descarga los materiales (reanudable con `Range`, no repite los ya descargados) y renderiza. El vídeo resultante se sube a la Biblioteca con la subida normal (por partes y reanudable si es grande).
+- **Instrucción tipo «Prepara un vídeo lo-fi de 90 minutos…»**: `lofi` analiza con ffprobe las duraciones, reparte las escenas en bucle (`lib/editor/loop-montage.ts`, determinista, sin IA ni créditos), aplica transiciones de disolución de 1,5 s, cámara lenta de zoom en las fotos, música en bucle y exportación a 1080p, guarda `project.json` + `assets.json` (el montaje es un montaje normal: se puede abrir en el editor) y renderiza.
+
+### Paridad con el editor (comprobada, no supuesta)
+
+- `node scripts/parity-test.mjs` (Chromium real): el motor y el navegador renderizan el mismo montaje de 13 s (transiciones disolución/cortina/deslizar, vídeo superpuesto, título, subtítulos, dos músicas con automatización, voz con ducking, efecto de sonido). Los píxeles coinciden (±24) en puntos normales y a mitad de transición, y los niveles de cada tono de audio coinciden (±25 %), silencios incluidos.
+- `node scripts/looks-test.mjs` (Chromium real): filtros (brillo, contraste, saturación), desenfoque, «Igualar imagen» con temperatura, opacidad, rotación, recorte, cámara (zoom, panorámica, zoom/foco), vídeo a cámara lenta y subtítulos en los tres estilos: diferencia media de 2–4 niveles sobre 255; ≥ 98 % de la rejilla de 32×18 puntos dentro de ±40 en los ocho casos.
+- Diferencia **conocida y documentada**: la exportación rápida del navegador pinta distinto un vídeo VP9 sin etiqueta de color (170 frente a 200 en el verde de prueba); el motor y el visor coinciden entre sí.
+- **Tipografías**: el texto pide fuentes del sistema por nombre (Segoe UI, Georgia, Impact, Consolas…). Si el equipo no las tiene, el motor dibuja una sustituta y **lo avisa** («Fuente … no instalada», con la opción `--font archivo.ttf`). En Windows con las fuentes habituales no debería haber diferencia; en este entorno de pruebas (Linux) sí hay sustitutas, por eso los subtítulos se comparan por posición y color, no por forma de letra.
+- Funciones que el motor **no** aproxima en silencio: todo lo que `frameAt` produce pasa por `drawOps`; si en el futuro se añade un tipo nuevo de operación al editor sin soportarlo aquí, la prueba de paridad lo detecta al compararlo.
+
+### Prueba real de 90 minutos (octubre de 2026)
+
+- Proyecto de prueba: música instrumental sintética en bucle y cuatro escenas generadas con FFmpeg (materiales propios, sin derechos de terceros), tramos de 30 s con disolución de 1,5 s y cámara lenta de zoom, 1080p a 30 fps (`node scripts/render.mjs lofi … --minutes 90`).
+- Resultado verificado con ffprobe y ffmpeg: **5400,000 s exactos**, 162 000 fotogramas, 1920×1080, H.264 High yuv420p con etiquetas bt709, AAC LC 48 kHz estéreo (253 126 paquetes = 5400 s), `+faststart`, 652 MB (≈ 0,97 Mbit/s), inicio de vídeo y audio en 0,000.
+- **Decodificación completa** del archivo de principio a fin sin ningún error. Nivel de audio estable en cinco puntos distintos (media −28…−30 dB, pico −17 dB, sin recortes; −26,3 LUFS integrado).
+- Tiempo: unos 23 min en un entorno de 2 CPU (≈ 7–10 fps en los trozos únicos; los 170 trozos repetidos se reutilizan). Un PC de sobremesa irá más deprisa.
+- Alcance honesto: esta prueba usa material sintético y una sola secuencia repetida; demuestra la duración, la estabilidad, la sincronía global (misma duración de vídeo y audio, inicio común) y la reutilización de trozos. La sincronía fina entre un vídeo con audio propio y la imagen se comprobó en la prueba de paridad corta (tonos de los vídeos en el instante correcto). No se ha repetido con vídeos reales con audio de 90 min.
+
+### Qué sigue sin estar hecho
+
+- No hay un servidor que renderice solo: el motor corre en tu PC (gratis). Un servidor tendría coste mensual y no se ha contratado.
+- El resultado local se sube a la Biblioteca con la subida normal; no hay todavía un trabajador que consulte `render_jobs` y lo suba solo.

@@ -41,7 +41,7 @@ Estado: octubre de 2026, rama `fase1-seguridad`. Sin migraciones ni servicios nu
 
 ## 5. Exportaciones largas en servidor
 
-La exportación rápida del navegador va fotograma a fotograma (30 s a 1080p en ≈ 21 s en este equipo). Una sesión de 90 minutos tardaría del orden de una hora y necesita la pestaña abierta, y a 1080p pasaría de 50 MB (hace falta R2). Las funciones de Vercel no sirven para render largos (límite de tiempo por ejecución). La opción realista es un trabajador con ffmpeg (servidor pequeño o cola en segundo plano) que lea el montaje y los archivos de la nube y suba el resultado; tiene coste mensual y **no se ha activado**: se presentará con precios verificados antes de contratar nada.
+Los renders largos ya no dependen del navegador: el motor offline (Node + FFmpeg, gratuito, en tu PC) se describe en `docs/exportacion.md`. El editor genera un «paquete de render» (el montaje y enlaces firmados a tus materiales, válidos 4 h; no lleva ninguna clave) y `node scripts/render.mjs ticket paquete-render.json --out video.mp4` descarga los materiales —reanudable— y renderiza. Un servidor en la nube sería la única opción con coste mensual y **no se ha activado**.
 
 ## 6. Límites honestos
 
@@ -60,20 +60,21 @@ Lo comprobado en el código, sin cuenta de Cloudflare:
 - **Subidas grandes.**
   - El archivo va directo del navegador a R2, sin pasar por Vercel, y no hay límite de 50 MB.
   - **Nuevo:** el enlace de subida queda firmado también con el **tamaño declarado** además del tipo. Antes se podía declarar un archivo pequeño para pasar la cuota y subir uno mayor.
-  - Por encima de 5 GB hace falta una subida por partes. No está hecha, porque no hace falta para los tamaños actuales.
+  - **Nuevo: subida por partes y reanudable.** Los archivos de 64 MiB o más se suben en partes de 32 MiB (hasta 10 000 partes, ≈ 312 GB). El servidor, que es el único que tiene las claves, crea la subida, firma cada parte y la completa; el navegador envía las partes directamente a R2. Si se cierra la pestaña o se corta la red, al volver a subir el mismo archivo se consulta qué partes ya tiene R2 y solo se envían las que faltan (la clave de reanudación vive en el navegador: proyecto + carpeta + nombre + tamaño + fecha del archivo). Cada parte se reintenta 4 veces. La cuota se comprueba al crear la subida con el mismo cálculo que las subidas simples.
 - **Descargas privadas y visor.**
   - Los enlaces firmados GET admiten lectura por rangos, que es lo que usa la exportación rápida.
   - El bucket necesita una regla CORS:
     - origen: la URL de la app;
     - métodos: GET, PUT y HEAD;
-    - cabeceras: `content-type` y `range`;
-    - cabeceras expuestas: `content-length`, `content-range` y `accept-ranges`.
+    - cabeceras: `content-type`, `content-length` y `range`;
+    - cabeceras expuestas: `ETag` (imprescindible para las subidas por partes), `content-length`, `content-range` y `accept-ranges`.
+  - Regla de ciclo de vida recomendada: «abortar subidas por partes incompletas» a los 7 días, para que una subida abandonada no ocupe espacio.
 - **Compatibilidad con la Biblioteca.**
   - Los archivos de R2 se guardan con el prefijo `r2:` y los de Supabase siguen igual. Ambos funcionan a la vez y no hay que migrar nada.
   - Los puntos de recuperación y las subidas desde iPhone siguen en Supabase, porque son pequeños.
 - **Recuperación.**
   - Si R2 falla, la subida da un error claro y el vídeo exportado sigue disponible para descargar en el panel.
-  - Si una subida a R2 se corta, hay que repetirla entera: no es reanudable, a diferencia de Supabase.
+  - Si una subida a R2 se corta, se reanuda con las partes que ya están (las de 64 MiB o más); las pequeñas se repiten enteras.
 - **Costes.**
   - El plan gratuito de R2 incluye 10 GB-mes, 1 millón de operaciones de escritura y 10 millones de lectura al mes, y la salida de datos es gratis.
   - La cuota de la app se queda en 9 GB (`STORAGE_QUOTA_GB`) para no salir de lo gratuito.
@@ -87,3 +88,9 @@ Lo comprobado en el código, sin cuenta de Cloudflare:
 4. Añadir las 4 variables en Vercel, solo en Preview.
 
 No se ha hecho nada de esto.
+
+### Pruebas de la subida por partes (sin cuenta de Cloudflare)
+
+- `tests/storage-multipart.test.ts` (5 pruebas): servidor S3 de mentira que valida la firma de cada petición; cubre crear, listar partes con paginación, firmar partes con tamaño exacto, completar con las ETag correctas, abortar, cuota y propiedad de la ruta.
+- `node scripts/upload-test.mjs` (Chromium real): el código del navegador habla con las rutas reales del servidor y con un S3 simulado. Sube 150 MiB (5 partes), **cierra la página a mitad**, la vuelve a abrir y comprueba que continúa la **misma** subida, que no se repite ninguna parte, que las 5 partes llegan con el tamaño correcto y que devuelve la ruta `r2:` dentro de la carpeta del usuario.
+- **No probado contra Cloudflare real**: sin cuenta no se puede. Lo único que depende del servicio real son la regla CORS (`ETag` expuesta) y que R2 acepte `uploadId` en la firma V4 tal como lo hace S3; está documentado como paso de activación.
