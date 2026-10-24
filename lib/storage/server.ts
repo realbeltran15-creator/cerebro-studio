@@ -18,6 +18,8 @@ const env = () => ({
   key: process.env.R2_ACCESS_KEY_ID?.trim() ?? '',
   secret: process.env.R2_SECRET_ACCESS_KEY?.trim() ?? '',
   bucket: process.env.R2_BUCKET?.trim() ?? '',
+  /** Only for tests or a local S3-compatible server (MinIO): `http://127.0.0.1:9000`. Absent = Cloudflare's own host. */
+  endpoint: process.env.R2_ENDPOINT?.trim() ?? '',
 })
 export const r2Configured = () => { const e = env(); return Boolean(e.account && e.key && e.secret && e.bucket) }
 export const storageDriver = (): 'r2' | 'supabase' => (r2Configured() ? 'r2' : 'supabase')
@@ -30,10 +32,11 @@ export const ownerOfPath = (p: string) => (isR2Path(p) ? r2Key(p) : p).split('/'
 /** Largest single PUT R2 accepts (5 GiB); bigger files would need a multipart upload. */
 export const R2_SINGLE_PUT_MAX = 5 * 1024 ** 3 - 5 * 1024 ** 2
 
-export function r2Url(method: 'GET' | 'PUT' | 'DELETE' | 'HEAD', key: string, expiresSeconds = 300, contentType?: string, contentLength?: number) {
+export function r2Url(method: 'GET' | 'PUT' | 'POST' | 'DELETE' | 'HEAD', key: string, expiresSeconds = 300, contentType?: string, contentLength?: number, query?: Record<string, string>) {
   const e = env()
   if (!r2Configured()) throw new Error('Cloudflare R2 no está configurado.')
-  return presignUrl({ method, host: `${e.account}.r2.cloudflarestorage.com`, path: `/${e.bucket}/${key}`, accessKeyId: e.key, secretAccessKey: e.secret, region: 'auto', expiresSeconds, contentType, contentLength })
+  const ep = e.endpoint ? new URL(e.endpoint) : null
+  return presignUrl({ method, host: ep ? ep.host : `${e.account}.r2.cloudflarestorage.com`, scheme: ep ? (ep.protocol === 'http:' ? 'http' : 'https') : 'https', path: `/${e.bucket}/${key}`, accessKeyId: e.key, secretAccessKey: e.secret, region: 'auto', expiresSeconds, contentType, contentLength, query })
 }
 
 /**

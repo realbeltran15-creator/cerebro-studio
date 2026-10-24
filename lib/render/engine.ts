@@ -104,7 +104,8 @@ export async function renderProject(o: RenderOptions) {
   const maxFrames = Math.round(MAX_SEGMENT_S * fps)
   const segs: Array<{ from: number; to: number; hash: string }> = []
   const opsAt = (f: number) => frameAt(c, Math.min(f * frameMs, fullTotal - 1), kindOf, starts)
-  const finger = (ops: Op[]) => JSON.stringify(ops, (k, v) => (k === 'id' || k === 'slot' ? undefined : k === 'assetId' ? sig.get(v as string) ?? v : v))
+  // Numbers are rounded to 1e-5: the same scene drawn at another position of the timeline differs only by floating-point noise.
+  const finger = (ops: Op[]) => JSON.stringify(ops, (k, v) => (k === 'id' || k === 'slot' ? undefined : k === 'assetId' ? sig.get(v as string) ?? v : typeof v === 'number' ? Math.round(v * 1e5) / 1e5 : v))
   const settings = `v1|${W}x${H}|${fps}|${o.crf ?? 20}|${o.preset ?? 'veryfast'}|${plan.wantedBps}`
   for (let i = 0; i + 1 < cuts.length; i++) {
     for (let a = cuts[i]; a < cuts[i + 1]; a += maxFrames) {
@@ -146,11 +147,18 @@ export async function renderProject(o: RenderOptions) {
     const encDone = new Promise<void>((res, rej) => { enc.on('close', code => (code === 0 ? res() : rej(new Error(`FFmpeg (codificador) terminó con código ${code}: ${encErr.slice(-400)}`)))) })
     encDone.catch(() => undefined)
     const readers = new Map<string, VideoReader>()
+    let prevKey = '', prevBuf: Buffer | null = null
     const t0 = Date.now()
     try {
       for (let f = s.from; f < s.to; f++) {
         if (o.signal?.aborted) throw ABORT()
         const ops = opsAt(f)
+        // Nothing changed since the previous frame (a still picture, a held frame): the same pixels again, no drawing and no decoding.
+        const key = finger(ops)
+        if (key === prevKey && prevBuf) {
+          if (!enc.stdin!.write(prevBuf)) await new Promise<void>(r => enc.stdin!.once('drain', () => r()))
+          continue
+        }
         const srcs = new Map<VisualOp, DrawSource | null>()
         for (const op of ops) {
           if (op.type !== 'visual') continue
@@ -163,7 +171,8 @@ export async function renderProject(o: RenderOptions) {
         }
         drawOps(g, ops, W, H, op => srcs.get(op) ?? null)
         const buf = canvas.data()
-        if (!enc.stdin!.write(buf)) await new Promise<void>(r => enc.stdin!.once('drain', () => r()))
+        prevKey = key; prevBuf = Buffer.from(buf)
+        if (!enc.stdin!.write(prevBuf)) await new Promise<void>(r => enc.stdin!.once('drain', () => r()))
         const n = f - s.from + 1
         if (n % 30 === 0) o.onEvent?.({ phase: 'video', doneFrames: doneFrames + n, totalFrames: total, segment: si + 1, segments: segs.length, fps: n / Math.max(0.001, (Date.now() - t0) / 1000) })
       }

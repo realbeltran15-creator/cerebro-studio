@@ -5,7 +5,7 @@ import { createHash, createHmac } from 'node:crypto'
  * Server-only. No SDK: the algorithm is small and checked against AWS's documented test vector.
  */
 export type PresignInput = {
-  method: 'GET' | 'PUT' | 'HEAD' | 'DELETE'
+  method: 'GET' | 'PUT' | 'POST' | 'HEAD' | 'DELETE'
   host: string
   /** Absolute path, e.g. `/bucket/user/project/file.mp4` (path-style) or `/file.mp4` (virtual-host). */
   path: string
@@ -18,6 +18,10 @@ export type PresignInput = {
   /** When set (PUT), the upload must be exactly this many bytes (the browser sends Content-Length itself), so a client cannot
    *  declare a small file to pass the quota check and then upload a larger one. */
   contentLength?: number
+  /** Extra query parameters that are part of the request itself (multipart: `uploads`, `uploadId`, `partNumber`…) and are signed with it. */
+  query?: Record<string, string>
+  /** `https` (default) or `http` for a local S3-compatible server in tests. */
+  scheme?: 'https' | 'http'
   now?: Date
 }
 
@@ -46,6 +50,7 @@ export function presignUrl(i: PresignInput) {
   if (i.contentType) signed.push(['content-type', i.contentType.trim()])
   signed.push(['host', i.host])
   params['X-Amz-SignedHeaders'] = signed.map(([k]) => k).join(';')
+  Object.assign(params, i.query ?? {})
   const query = Object.keys(params).sort().map(k => `${enc(k)}=${enc(params[k])}`).join('&')
   const canonicalPath = encodePath(i.path)
   const headers = signed.map(([k, v]) => `${k}:${v}`).join('\n')
@@ -53,5 +58,5 @@ export function presignUrl(i: PresignInput) {
   const toSign = ['AWS4-HMAC-SHA256', stamp, scope, sha256(canonical)].join('\n')
   const key = hmac(hmac(hmac(hmac(`AWS4${i.secretAccessKey}`, day), i.region), 's3'), 'aws4_request')
   const signature = createHmac('sha256', key).update(toSign, 'utf8').digest('hex')
-  return `https://${i.host}${canonicalPath}?${query}&X-Amz-Signature=${signature}`
+  return `${i.scheme ?? 'https'}://${i.host}${canonicalPath}?${query}&X-Amz-Signature=${signature}`
 }
