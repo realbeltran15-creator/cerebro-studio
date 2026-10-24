@@ -107,9 +107,10 @@ export default function ManualEditorPage() {
       const h = Math.round(Math.min(1000, Math.max(200, window.innerHeight - 10 - below - top)))
       setAutoViewerH(prev => (prev !== null && Math.abs(prev - h) < 4 ? prev : h))
     }
-    const t = window.setTimeout(fit, 60)
+    // Measured again once fonts, thumbnails and panels have settled (their height changes what is left for the picture).
+    const ts = [60, 700, 2000].map(ms => window.setTimeout(fit, ms))
     window.addEventListener('resize', fit)
-    return () => { window.clearTimeout(t); window.removeEventListener('resize', fit) }
+    return () => { ts.forEach(t => window.clearTimeout(t)); window.removeEventListener('resize', fit) }
   }, [ws.layout.viewerAuto, ws.layout.left, ws.layout.right, trackCount, trackScale, !!history])
   // Ctrl+K (⌘K): tool search.
   useEffect(() => {
