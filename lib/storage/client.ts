@@ -10,6 +10,7 @@ export async function uploadToCloud(supabase: SupabaseClient, input: { projectId
   const target = await r.json().catch(() => ({})) as { driver?: 'r2' | 'supabase'; storagePath?: string; uploadUrl?: string; maxBytes?: number; error?: string }
   if (!r.ok || !target.storagePath) throw new Error(target.error ?? 'No se pudo preparar la subida.')
   const mb = Math.round(input.body.size / 1048576)
+  if (target.driver === 'r2' && !target.uploadUrl) throw new Error(target.error ?? 'No se pudo preparar la subida a la nube.')
   if (target.driver === 'r2' && target.uploadUrl) {
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest()

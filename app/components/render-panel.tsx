@@ -11,6 +11,7 @@ import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/t
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
 import { fastExport, FastExportUnsupported } from '@/lib/editor/fast-export'
+import { startExportGuard, type ExportGuard } from '@/lib/editor/export-guard'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
 import { Icon } from './studio-icon'
 
@@ -55,6 +56,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const [progress, setProgress] = useState({ elapsed: 0, total: 0 })
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  // What the export guard noticed (tab hidden, progress stopped…), shown under the status.
+  const [notice, setNotice] = useState('')
   const [download, setDownload] = useState<{ url: string; name: string } | null>(null)
   // The last saved render, kept so it can be converted to an Instagram-ready MP4 without rendering again.
   const [saved, setSaved] = useState<{ blob: Blob; assetId: string; mimeType: string } | null>(null)
@@ -97,6 +100,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     abortRef.current = controller
     abortReason.current = 'user'
     let jobId: string | null = null
+    let guard: ExportGuard | null = null
+    setNotice('')
     try {
       if (record) await beforeRender?.()
       // Media is streamed from signed URLs while it records (nothing is downloaded up front, so long montages fit in memory).
@@ -110,11 +115,17 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         if (e) throw new Error(e.message)
         jobId = (data as { id: string }).id
       }
+      if (record) guard = startExportGuard(ev => {
+        if (ev.type === 'hidden') setNotice('La pestaña está oculta: la exportación sigue, pero el navegador puede frenarla. Vuelve a esta pestaña para que vaya a toda velocidad.')
+        else if (ev.type === 'visible') setNotice(ev.hiddenMs > 3000 ? `La pestaña estuvo oculta ${Math.round(ev.hiddenMs / 1000)} s; la exportación continúa desde donde iba.` : '')
+        else if (ev.type === 'stalled') setNotice(ev.hidden ? `Sin avance desde hace ${Math.round(ev.sinceMs / 1000)} s porque la pestaña está oculta: el navegador la ha pausado. Al volver a la pestaña continúa sola; no se pierde nada.` : `Sin avance desde hace ${Math.round(ev.sinceMs / 1000)} s. Si no se mueve en un rato, cancela y vuelve a exportar (en «Ajustes de exportación» puedes probar el modo en tiempo real).`)
+        else setNotice('')
+      })
       setMode(record ? 'render' : 'preview')
       setStatus(record ? 'Grabando en tiempo real. Mantén esta pestaña visible hasta que termine.' : 'Vista previa en reproducción.')
       const realtime = () => renderComposition({
         composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), record, signal: controller.signal,
-        onProgress: (elapsed, t) => setProgress({ elapsed, total: t }),
+        onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) },
       })
       let result: Awaited<ReturnType<typeof renderComposition>>
       let renderer: 'browser-fast' | 'browser-mediarecorder' = 'browser-mediarecorder'
@@ -122,7 +133,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       if (record && (exp.mode ?? 'fast') === 'fast') {
         try {
           setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real). Mantén esta pestaña a la vista: en segundo plano el navegador la frena.')
-          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), signal: controller.signal, onProgress: (elapsed, t) => setProgress({ elapsed, total: t }) })
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), signal: controller.signal, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
           renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
@@ -145,7 +156,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}-${plan.height}p.${containerOf(result.mimeType)}`
         const url = URL.createObjectURL(result.blob)
         setDownload({ url, name })
-        await supabase.from('render_jobs').update({ status: 'completed', error: null, output_manifest: { destination: 'download', bytes: result.blob.size, mimeType: result.mimeType, width: plan.width, height: plan.height, videoBps: plan.videoBps }, updated_at: new Date().toISOString() }).eq('id', jobId)
+        await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
         const a = document.createElement('a'); a.href = url; a.download = name; a.click()
         setStatus(`Vídeo listo (${Math.round(result.blob.size / 1048576 * 10) / 10} MB): se ha descargado a tu equipo y no se ha subido a la Biblioteca.`)
         onRendered?.()
@@ -153,7 +164,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}.${containerOf(result.mimeType)}`
         setDownload({ url: URL.createObjectURL(result.blob), name })
         setMode('saving'); setStatus('Guardando el vídeo en la nube…')
-        const savedAsset = await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets, renderer, onUploadProgress: f => setStatus(`Subiendo a la nube… ${Math.round(f * 100)} %`) })
+        const savedAsset = await saveRender(supabase, { projectId, jobId, composition, blob: result.blob, mimeType: result.mimeType ?? 'video/webm', durationMs: result.durationMs, assets, renderer, onUploadProgress: f => { guard?.progress(); setStatus(`Subiendo a la nube… ${Math.round(f * 100)} %`) } })
         setSaved({ blob: result.blob, assetId: savedAsset.id, mimeType: result.mimeType ?? 'video/webm' })
         const ig = instagramReadiness(result.mimeType)
         setStatus(`Vídeo guardado en la Biblioteca (${Math.round(result.blob.size / 1048576 * 10) / 10} MB).${ig.ok ? '' : ` Aviso: ${ig.reason}`}`)
@@ -164,6 +175,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       setError(message)
       if (jobId) await supabase.from('render_jobs').update({ status: 'failed', error: message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', jobId)
     } finally {
+      guard?.stop()
+      setNotice('')
       abortRef.current = null
       busyRef.current = false
       setMode('idle')
@@ -211,6 +224,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
     {mode !== 'idle' && progress.total > 0 && <progress value={progress.elapsed} max={progress.total} style={{ width: '100%' }} aria-label="Progreso" />}
     {status && <p className="muted small" role="status">{status}</p>}
+    {notice && <p className="small" role="status" aria-label="Aviso de la exportación" style={{ color: '#ffd23f' }}>{notice}</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {issues.length > 0 && <ul className="warnList">{issues.map((i, k) => <li key={k}>{i.message}</li>)}</ul>}
     {!recordingSupported() && <p className="warnBox">Este navegador no puede grabar vídeo desde canvas. Usa Chrome, Edge o Firefox de escritorio.</p>}

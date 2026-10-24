@@ -2535,6 +2535,51 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 33. Exportación protegida: mientras exporta, la pestaña tiene un Web Lock, pide confirmar antes de
+//     cerrarla, avisa si se oculta y cuánto estuvo oculta; al terminar lo suelta todo. El archivo exportado se analiza con ffprobe.
+{
+  const server = serve(8833, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.addInitScript(() => {
+    // Lets the test pretend the tab is hidden (the real property cannot be changed in headless Chromium).
+    let vis = 'visible'
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => vis })
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => vis === 'hidden' })
+    window.__setVis = v => { vis = v; document.dispatchEvent(new Event('visibilitychange')) }
+  })
+  await page.goto('http://127.0.0.1:8833/editor/manual?job=jv')
+  await page.getByRole('toolbar', { name: 'Controles de reproducción' }).waitFor({ timeout: 30000 })
+  await openExport(page)
+  const locks = () => page.evaluate(async () => (await navigator.locks.query()).held.map(l => l.name))
+  check('export guard: no lock before exporting', !(await locks()).includes('cerebro-export'))
+  await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
+  await page.waitForFunction(async () => (await navigator.locks.query()).held.some(l => l.name === 'cerebro-export'), null, { timeout: 30000 })
+  check('export guard: the tab holds the «cerebro-export» Web Lock while exporting', true)
+  const prevented = await page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented })
+  check('export guard: closing or reloading the tab asks first while exporting', prevented)
+  await page.evaluate(() => window.__setVis('hidden'))
+  const hiddenNote = await page.getByLabel('Aviso de la exportación').innerText({ timeout: 5000 }).catch(() => '')
+  await page.waitForTimeout(3500)
+  await page.evaluate(() => window.__setVis('visible'))
+  const backNote = await page.getByLabel('Aviso de la exportación').innerText({ timeout: 5000 }).catch(() => '')
+  check('export guard: hiding the tab shows a warning, coming back says how long it was hidden', /oculta/.test(hiddenNote) && /estuvo oculta \d+ s/.test(backNote), { hiddenNote, backNote })
+  await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 120000 })
+  check('export guard: after the export the lock and the close warning are gone', !(await locks()).includes('cerebro-export') && !(await page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented })))
+  const b64 = await page.evaluate(async () => { const buf = new Uint8Array(await window.__LAST_RENDER.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000)); return btoa(s) })
+  const { writeFileSync, mkdtempSync } = await import('fs'), os = (await import('os')).default, { execFileSync } = await import('child_process')
+  const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'cerebro-export-')), 'out.bin')
+  writeFileSync(file, Buffer.from(b64, 'base64'))
+  let probe = null
+  try { probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file]).toString()) } catch (e) { probe = { error: String(e) } }
+  const v = probe.streams?.find(x => x.codec_type === 'video'), a = probe.streams?.find(x => x.codec_type === 'audio')
+  console.log('PROBE', JSON.stringify({ format: probe.format?.format_name, duration: probe.format?.duration, v: v && [v.codec_name, v.width, v.height, v.avg_frame_rate], a: a && [a.codec_name, a.sample_rate, a.channels] }))
+  check('export file: ffprobe reads it, with video 1280×720 and audio, 13 s long', !!v && !!a && v.width === 1280 && v.height === 720 && Math.abs(Number(probe.format.duration) - 13) < 0.7, probe.format ?? probe)
+  check('export guard: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

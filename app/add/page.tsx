@@ -112,7 +112,7 @@ export default function AddMaterialsPage() {
   // The real per-file limit of the active storage (Supabase Free: 50 MB).
   useEffect(() => {
     void fetch('/api/storage/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'library', folder: 'uploads', ext: 'mp4', contentType: 'video/mp4', size: 0 }) })
-      .then(r => r.json()).then((j: { maxBytes?: number; driver?: string }) => { if (j.driver === 'r2') setMaxBytes(Number.MAX_SAFE_INTEGER); else if (j.maxBytes) setMaxBytes(j.maxBytes) }).catch(() => undefined)
+      .then(r => r.json()).then((j: { maxBytes?: number; driver?: string }) => { if (j.maxBytes) setMaxBytes(j.maxBytes); else if (j.driver === 'r2') setMaxBytes(Number.MAX_SAFE_INTEGER) }).catch(() => undefined)
   }, [])
 
   const destName = (d: Destination) => (d === 'library' ? 'Biblioteca general' : projects.find(p => p.id === d)?.name ?? 'Proyecto')

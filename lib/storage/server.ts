@@ -27,10 +27,13 @@ export const r2Key = (p: string) => p.slice(R2_PREFIX.length)
 /** Owner of a stored path: the first folder of the key. */
 export const ownerOfPath = (p: string) => (isR2Path(p) ? r2Key(p) : p).split('/')[0] ?? ''
 
-export function r2Url(method: 'GET' | 'PUT' | 'DELETE' | 'HEAD', key: string, expiresSeconds = 300, contentType?: string) {
+/** Largest single PUT R2 accepts (5 GiB); bigger files would need a multipart upload. */
+export const R2_SINGLE_PUT_MAX = 5 * 1024 ** 3 - 5 * 1024 ** 2
+
+export function r2Url(method: 'GET' | 'PUT' | 'DELETE' | 'HEAD', key: string, expiresSeconds = 300, contentType?: string, contentLength?: number) {
   const e = env()
   if (!r2Configured()) throw new Error('Cloudflare R2 no está configurado.')
-  return presignUrl({ method, host: `${e.account}.r2.cloudflarestorage.com`, path: `/${e.bucket}/${key}`, accessKeyId: e.key, secretAccessKey: e.secret, region: 'auto', expiresSeconds, contentType })
+  return presignUrl({ method, host: `${e.account}.r2.cloudflarestorage.com`, path: `/${e.bucket}/${key}`, accessKeyId: e.key, secretAccessKey: e.secret, region: 'auto', expiresSeconds, contentType, contentLength })
 }
 
 /**
@@ -71,7 +74,7 @@ export async function putObject(db: SupabaseClient, ownerId: string, key: string
   assertOwnPath(key, ownerId)
   if (r2Configured()) {
     const payload = body instanceof Blob ? body : new Blob([new Uint8Array(body)], { type: contentType })
-    const r = await fetch(r2Url('PUT', key, 900, contentType), { method: 'PUT', headers: { 'Content-Type': contentType }, body: payload })
+    const r = await fetch(r2Url('PUT', key, 900, contentType, payload.size), { method: 'PUT', headers: { 'Content-Type': contentType }, body: payload })
     if (!r.ok) throw new Error(`No se pudo guardar el archivo en la nube (${r.status}).`)
     return `${R2_PREFIX}${key}`
   }

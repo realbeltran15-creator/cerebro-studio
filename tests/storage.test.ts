@@ -46,6 +46,13 @@ describe('ownership of stored paths (R2 credentials bypass RLS)', () => {
     await expect(signedReadUrl({} as never, 'attacker', 'r2:victim/p/renders/x.mp4')).rejects.toThrow()
     expect(await signedReadUrl({} as never, 'victim', 'r2:victim/p/renders/x.mp4')).toContain('X-Amz-Signature=')
   })
+  it('binds a PUT to its declared size as well, so a bigger upload is rejected by the store', () => {
+    const base = { method: 'PUT' as const, host: 'h', path: '/b/k', accessKeyId: 'a', secretAccessKey: 's', region: 'auto', expiresSeconds: 900, contentType: 'video/mp4', now: new Date('2026-10-07T00:00:00Z') }
+    const sized = new URL(presignUrl({ ...base, contentLength: 1234 }))
+    expect(sized.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;content-type;host')
+    expect(sized.searchParams.get('X-Amz-Signature')).not.toBe(new URL(presignUrl({ ...base, contentLength: 1235 })).searchParams.get('X-Amz-Signature'))
+    expect(new URL(presignUrl(base)).searchParams.get('X-Amz-SignedHeaders')).toBe('content-type;host')
+  })
   it('binds a PUT to its content type', () => {
     const url = presignUrl({ method: 'PUT', host: 'h', path: '/b/k', accessKeyId: 'a', secretAccessKey: 's', region: 'auto', expiresSeconds: 900, contentType: 'video/mp4', now: new Date('2026-10-07T00:00:00Z') })
     expect(url).toContain('X-Amz-SignedHeaders=content-type%3Bhost')

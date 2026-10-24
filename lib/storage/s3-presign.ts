@@ -15,6 +15,9 @@ export type PresignInput = {
   expiresSeconds: number
   /** When set (PUT), the upload must send exactly this Content-Type. */
   contentType?: string
+  /** When set (PUT), the upload must be exactly this many bytes (the browser sends Content-Length itself), so a client cannot
+   *  declare a small file to pass the quota check and then upload a larger one. */
+  contentLength?: number
   now?: Date
 }
 
@@ -36,11 +39,16 @@ export function presignUrl(i: PresignInput) {
     'X-Amz-Credential': `${i.accessKeyId}/${scope}`,
     'X-Amz-Date': stamp,
     'X-Amz-Expires': String(Math.max(1, Math.min(604800, Math.floor(i.expiresSeconds)))),
-    'X-Amz-SignedHeaders': i.contentType ? 'content-type;host' : 'host',
+    'X-Amz-SignedHeaders': '',
   }
+  const signed: Array<[string, string]> = []
+  if (i.contentLength !== undefined) signed.push(['content-length', String(Math.floor(i.contentLength))])
+  if (i.contentType) signed.push(['content-type', i.contentType.trim()])
+  signed.push(['host', i.host])
+  params['X-Amz-SignedHeaders'] = signed.map(([k]) => k).join(';')
   const query = Object.keys(params).sort().map(k => `${enc(k)}=${enc(params[k])}`).join('&')
   const canonicalPath = encodePath(i.path)
-  const headers = i.contentType ? `content-type:${i.contentType.trim()}\nhost:${i.host}` : `host:${i.host}`
+  const headers = signed.map(([k, v]) => `${k}:${v}`).join('\n')
   const canonical = [i.method, canonicalPath, query, headers, '', params['X-Amz-SignedHeaders'], 'UNSIGNED-PAYLOAD'].join('\n')
   const toSign = ['AWS4-HMAC-SHA256', stamp, scope, sha256(canonical)].join('\n')
   const key = hmac(hmac(hmac(hmac(`AWS4${i.secretAccessKey}`, day), i.region), 's3'), 'aws4_request')

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { r2Url, R2_PREFIX, storageDriver, SUPABASE_MAX_BYTES } from '@/lib/storage/server'
+import { r2Url, R2_PREFIX, R2_SINGLE_PUT_MAX, storageDriver, SUPABASE_MAX_BYTES } from '@/lib/storage/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,6 +36,11 @@ export async function POST(request: Request) {
   }
   const name = /^[A-Za-z0-9-]{8,64}$/.test(body.name ?? '') ? body.name : crypto.randomUUID()
   const key = `${user.id}/${library ? 'library' : body.projectId}/${body.folder}/${name}.${ext}`
-  if (storageDriver() === 'r2') return NextResponse.json({ driver: 'r2', storagePath: `${R2_PREFIX}${key}`, uploadUrl: r2Url('PUT', key, 900, contentType), contentType }, { headers: { 'Cache-Control': 'no-store' } })
+  if (storageDriver() === 'r2') {
+    // Only asking for the limits (size 0): no upload link. A real upload link is bound to the declared type AND size.
+    if (incoming <= 0) return NextResponse.json({ driver: 'r2', maxBytes: R2_SINGLE_PUT_MAX }, { headers: { 'Cache-Control': 'no-store' } })
+    if (incoming > R2_SINGLE_PUT_MAX) return NextResponse.json({ error: 'El archivo pasa de 5 GB, el máximo de una sola subida.' }, { status: 413 })
+    return NextResponse.json({ driver: 'r2', storagePath: `${R2_PREFIX}${key}`, uploadUrl: r2Url('PUT', key, 900, contentType, incoming), contentType, maxBytes: R2_SINGLE_PUT_MAX }, { headers: { 'Cache-Control': 'no-store' } })
+  }
   return NextResponse.json({ driver: 'supabase', storagePath: key, maxBytes: SUPABASE_MAX_BYTES, resumable: true }, { headers: { 'Cache-Control': 'no-store' } })
 }

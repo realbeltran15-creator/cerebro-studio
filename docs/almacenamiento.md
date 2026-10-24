@@ -47,3 +47,43 @@ La exportación rápida del navegador va fotograma a fotograma (30 s a 1080p en 
 
 - Editar y exportar usa memoria y caché del dispositivo mientras se trabaja; lo que no se guarda en local de forma permanente son los materiales, proyectos y exportaciones.
 - En el plan gratuito de Supabase no se puede subir un archivo de más de 50 MB.
+
+## 7. Auditoría de la integración con Cloudflare R2 (octubre de 2026)
+
+Lo comprobado en el código, sin cuenta de Cloudflare:
+
+- **Credenciales solo en el servidor.**
+  - `R2_*` se leen únicamente en `lib/storage/server.ts` y en las rutas `/api`.
+  - El navegador solo recibe enlaces firmados que caducan: 5 min para leer y 15 min para subir.
+  - Ninguna variable `R2_*` lleva el prefijo `NEXT_PUBLIC_`.
+- **Permisos.** Toda lectura, escritura o borrado comprueba que la ruta empieza por el id del usuario y que no contiene `..` ni caracteres de control (`assertOwnPath`). Así, una fila de `assets` que apunte al archivo de otro usuario no sirve de nada.
+- **Subidas grandes.**
+  - El archivo va directo del navegador a R2, sin pasar por Vercel, y no hay límite de 50 MB.
+  - **Nuevo:** el enlace de subida queda firmado también con el **tamaño declarado** además del tipo. Antes se podía declarar un archivo pequeño para pasar la cuota y subir uno mayor.
+  - Por encima de 5 GB hace falta una subida por partes. No está hecha, porque no hace falta para los tamaños actuales.
+- **Descargas privadas y visor.**
+  - Los enlaces firmados GET admiten lectura por rangos, que es lo que usa la exportación rápida.
+  - El bucket necesita una regla CORS:
+    - origen: la URL de la app;
+    - métodos: GET, PUT y HEAD;
+    - cabeceras: `content-type` y `range`;
+    - cabeceras expuestas: `content-length`, `content-range` y `accept-ranges`.
+- **Compatibilidad con la Biblioteca.**
+  - Los archivos de R2 se guardan con el prefijo `r2:` y los de Supabase siguen igual. Ambos funcionan a la vez y no hay que migrar nada.
+  - Los puntos de recuperación y las subidas desde iPhone siguen en Supabase, porque son pequeños.
+- **Recuperación.**
+  - Si R2 falla, la subida da un error claro y el vídeo exportado sigue disponible para descargar en el panel.
+  - Si una subida a R2 se corta, hay que repetirla entera: no es reanudable, a diferencia de Supabase.
+- **Costes.**
+  - El plan gratuito de R2 incluye 10 GB-mes, 1 millón de operaciones de escritura y 10 millones de lectura al mes, y la salida de datos es gratis.
+  - La cuota de la app se queda en 9 GB (`STORAGE_QUOTA_GB`) para no salir de lo gratuito.
+  - Las operaciones que hace el editor (una lectura por rango por fragmento) quedan muy por debajo de esos límites con el uso actual.
+
+**Para activarlo hace falta tu autorización**, porque Cloudflare pide registrar un método de pago para activar R2, aunque el uso esté dentro de lo gratuito. Los pasos son:
+
+1. Crear el bucket.
+2. Crear una clave con permiso solo sobre ese bucket.
+3. Poner la regla CORS.
+4. Añadir las 4 variables en Vercel, solo en Preview.
+
+No se ha hecho nada de esto.
