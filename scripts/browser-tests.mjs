@@ -2391,6 +2391,38 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 30. Miniaturas reales en los clips de vídeo: fotogramas de un vídeo con tres escenas, tantos como caben según el zoom,
+//     que siguen al recorte del clip.
+{
+  const server = serve(8830, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'scenes.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8830/editor/manual?job=job1')
+  await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
+  const strip = page.locator('[aria-label="Pista de vídeo"] > div').nth(3).locator('.tlFilm')
+  const colours = () => strip.evaluate(el => Promise.all([...el.children].map(t => new Promise(res => {
+    const m = t.style.backgroundImage.match(/url\("?(data:[^")]+)"?\)/); if (!m) return res(null)
+    const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = 4; c.height = 4; const g = c.getContext('2d'); g.drawImage(im, 0, 0, 4, 4); const d = g.getImageData(2, 2, 1, 1).data; res(d[0] > 150 && d[2] < 90 ? 'red' : d[2] > 150 && d[0] < 90 ? 'blue' : d[1] > 150 && d[0] < 90 ? 'green' : 'other') }; im.src = m[1]
+  }))))
+  const filled = async n => { for (let i = 0; i < 60; i++) { const c = await colours(); if (c.length >= n && c.every(Boolean)) return c; await page.waitForTimeout(250) } return colours() }
+  await page.getByLabel('Zoom horizontal').fill('120')
+  const wide = await filled(4)
+  check('thumbnails: a video clip shows real frames of its scenes in order (red → blue → green)', wide.length >= 4 && wide[0] === 'red' && wide[wide.length - 1] === 'green' && wide.includes('blue'), wide)
+  await page.getByLabel('Zoom horizontal').fill('12')
+  const narrow = await filled(1)
+  check('thumbnails: zoomed out there are fewer tiles (at least one representative frame)', narrow.length >= 1 && narrow.length < wide.length, [narrow.length, wide.length])
+  // Trim the start of the clip in the video (to 3 s): the strip follows the part used.
+  await page.getByLabel('Zoom horizontal').fill('120')
+  await page.locator('[aria-label="Pista de vídeo"] > div').nth(3).click()
+  await page.locator('#ed-props').getByLabel('Inicio en el vídeo (s)').fill('3')
+  await page.waitForTimeout(300)
+  const trimmed = await filled(1)
+  check('thumbnails: after trimming the start, the frames come from the new part of the video (green)', trimmed.length >= 1 && trimmed.every(c => c === 'green'), trimmed)
+  check('thumbnails: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

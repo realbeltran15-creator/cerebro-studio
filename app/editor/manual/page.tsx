@@ -1031,7 +1031,7 @@ export default function ManualEditorPage() {
         onMoveTransition={(from, to) => { apply(c => { const k = c.clips.find(x => x.id === from); return k ? updateClip(updateClip(c, to, trOf(k)), from, { transition: 'cut', transitionMs: undefined, transitionOpts: undefined }) : c }); selectTransition(to); setNotice('Transición movida a otro corte (el anterior queda como corte directo). Ctrl+Z la devuelve.') }} pxPerSec={pxPerSec} trackScale={trackScale} playheadMs={playheadMs} onSeek={setPlayheadMs}
         range={range} setRange={r => { setRange(r); setMarkIn(null) }} markIn={markIn} magnet={magnet || snap} beatsMs={beats.beatsMs} showBeats={showBeats}
         waveformOf={id => { const an = analyses[id]; return an === 'loading' ? 'loading' : typeof an === 'object' ? an.waveform ?? null : null }}
-        thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf}
+        thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf} resolveUrl={resolveUrl}
         begin={beginDrag} live={liveDrag} end={endDrag} apply={apply} onReorderMain={(id, to) => apply(c => moveClip(c, id, to))}
         onDropTransition={(clipId, t) => { apply(c => updateClip(c, clipId, { transition: t })); setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}

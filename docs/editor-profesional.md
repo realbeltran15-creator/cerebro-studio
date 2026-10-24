@@ -124,6 +124,7 @@ El visor y los dos exportadores usan la misma descripción de cada fotograma (`l
 | 26 | Persistencia: guardado automático, recargar, sesión limpia en otro navegador, conflicto, puntos de recuperación, exportar tras cambiar una transición |
 | 27 | Transiciones, favoritas, animaciones, sesión limpia y exportación igual al visor |
 | 28 | Espacio de trabajo: barra lateral, grupos, propiedades, paneles, pestañas, modos, búsqueda, escritorio, tableta y móvil |
+| 30 | Miniaturas reales de los vídeos en la línea de tiempo: escenas en orden, menos con zoom alejado, siguen al recorte |
 | 29 | Transiciones como objetos: seleccionar, tipo, duración, dirección, alargar arrastrando, copiar y pegar, mover, quitar, deshacer, favorita, ver y guardar |
 
 Ninguna prueba usa ni modifica el proyecto «Lofi prueba».
@@ -159,3 +160,7 @@ Prueba unitaria «ejercicio E» con las frases del propietario: «Pon una transi
 
 - «Que el vídeo dure exactamente N segundos»: las fotos absorben la diferencia; con solo vídeos se acorta el último; el sonido que pasa del final se corta ahí.
 - Los subtítulos pueden ir abajo, en el centro o arriba (instrucción o «Proyecto → Subtítulos»); el visor y la exportación los dibujan igual.
+
+## 8. Miniaturas de vídeo en la línea de tiempo
+
+Cada clip de vídeo (principal o superpuesto) muestra fotogramas reales de la parte del archivo que usa: tantos como caben con el zoom actual (uno en un clip corto), en orden, y cambian al recortar o cambiar la velocidad. Se piden solo los instantes necesarios (el navegador lee solo esas partes del archivo), se guardan en memoria mientras el editor está abierto y aparecen poco a poco en vídeos largos. Límite: la caché no se conserva al recargar la página (se vuelven a leer los fotogramas visibles).

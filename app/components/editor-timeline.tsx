@@ -1,6 +1,7 @@
 'use client'
 
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { frameAt, onFrames, requestFrames, tileTimes } from '@/lib/editor/video-frames'
 import { audioStartMs, audioTrackId, clipStarts, compositionCues, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta, type Transition } from '@/lib/editor/composition'
 import { expandGroups, isLocked, moveItems, moveToTrack, setItemEnd, snap, snapBlock, snapPoints, trimItemStart, type ItemRef } from '@/lib/editor/tracks'
 import { updateClip } from '@/lib/editor/timeline'
@@ -42,6 +43,8 @@ export type TimelineProps = {
   showBeats: boolean
   waveformOf: (assetId: string) => Waveform | null | 'loading'
   thumbOf: (assetId: string | null) => string | undefined
+  /** Signed URLs of the files (for the filmstrips of video clips). */
+  resolveUrl?: (assetId: string) => Promise<string>
   labelOf: (assetId: string | null) => string
   typeOf: (assetId: string | null) => string
   /** One undoable step for a whole drag: begin, then live updates replacing the present, then end. */
@@ -227,7 +230,8 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
             onClick={e => select(e, ref)}
             style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumb ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumb}) center / cover` : kindColor[p.typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: t.locked ? 'not-allowed' : 'grab', outline: isSel(ref) ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
             title={`${p.labelOf(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
-            <b>{i + 1}</b> {p.labelOf(clip.visualAssetId)}{groupMark(clip.groupId)}<br />{secs(clip.durationMs)} s{clip.speed && clip.speed !== 1 ? ` · ${clip.speed}×` : ''}{clip.transition && clip.transition !== 'fade' ? ` · ${TRANSITIONS[clip.transition].toLowerCase()}` : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}{clip.filters ? ' · fx' : ''}
+            {clip.visualAssetId && p.typeOf(clip.visualAssetId) === 'video' && p.resolveUrl && <Filmstrip assetId={clip.visualAssetId} trimInMs={clip.trimInMs ?? 0} durationMs={clip.durationMs} speed={clip.speed ?? 1} width={clip.durationMs / 1000 * pxPerSec} height={h} resolveUrl={p.resolveUrl} />}
+            <span style={{ position: 'relative', textShadow: '0 1px 2px #000' }}><b>{i + 1}</b> {p.labelOf(clip.visualAssetId)}{groupMark(clip.groupId)}<br />{secs(clip.durationMs)} s{clip.speed && clip.speed !== 1 ? ` · ${clip.speed}×` : ''}{clip.transition && clip.transition !== 'fade' ? ` · ${TRANSITIONS[clip.transition].toLowerCase()}` : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}{clip.filters ? ' · fx' : ''}</span>
             {i < comp.clips.length - 1 && (clip.transition ?? 'fade') !== 'cut' && <TransitionChip comp={comp} clip={clip} index={i} pxPerSec={pxPerSec} locked={!!t.locked}
               selected={p.selectedTransition === clip.id} onSelect={() => p.onSelectTransition?.(clip.id)} begin={p.begin} live={p.live} end={p.end} />}
             {!t.locked && <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); p.begin(); drag.current = { mode: 'resizeMain', id: clip.id, startX: e.clientX, base: comp, clipStart: starts[i], dur: clip.durationMs } }} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />}
@@ -243,7 +247,8 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           const thumb = p.thumbOf(o.assetId)
           return <div key={o.id} data-ref={`overlay:${o.id}`} onPointerDown={e => startItem(e, ref, 'move')} title={`${p.labelOf(o.assetId)} · ${secs(o.startMs)}–${secs(o.startMs + o.durationMs)} s`}
             style={itemStyle(o.startMs / 1000 * pxPerSec, o.durationMs / 1000 * pxPerSec, 3, h - 6, thumb ? `linear-gradient(rgba(0,40,60,.55), rgba(0,40,60,.55)), url(${thumb}) center / cover` : kindColor.overlay, ref)}>
-            ▣ {p.labelOf(o.assetId)}{o.keyframes?.length ? ` · ◆${o.keyframes.length}` : ''}{groupMark(o.groupId)}
+            {p.typeOf(o.assetId) === 'video' && p.resolveUrl && <Filmstrip assetId={o.assetId} trimInMs={o.trimInMs ?? 0} durationMs={o.durationMs} speed={o.speed ?? 1} width={o.durationMs / 1000 * pxPerSec} height={h - 6} resolveUrl={p.resolveUrl} />}
+            <span style={{ position: 'relative', textShadow: '0 1px 2px #000' }}>▣ {p.labelOf(o.assetId)}{o.keyframes?.length ? ` · ◆${o.keyframes.length}` : ''}{groupMark(o.groupId)}</span>
             {o.keyframes?.map(k => <i key={k.atMs} className="tlKey" style={{ left: k.atMs / 1000 * pxPerSec }} aria-hidden />)}
             {edges(ref, 'de la superposición')}
           </div>
@@ -353,4 +358,21 @@ function TransitionChip({ comp, clip, index: i, pxPerSec, locked, selected, onSe
       onPointerUp={() => { if (drag.current) { drag.current = null; end() } }} />}
     <span aria-hidden>{TRANSITION_ICONS[kind]}</span>
   </button>
+}
+
+/**
+ * Real frames of a video clip across its length: as many tiles as fit at the current zoom (one on a short clip), taken from the part of
+ * the file the clip actually uses (follows trims and speed). Frames arrive progressively and are cached; the clip keeps its colour meanwhile.
+ */
+function Filmstrip({ assetId, trimInMs, durationMs, speed, width, height, resolveUrl }: { assetId: string; trimInMs: number; durationMs: number; speed: number; width: number; height: number; resolveUrl: (id: string) => Promise<string> }) {
+  const [, setTick] = useState(0)
+  useEffect(() => onFrames(() => setTick(n => n + 1)), [])
+  const tileW = Math.max(36, Math.round(height * 16 / 9))
+  const tiles = Math.max(1, Math.min(80, Math.floor(width / tileW)))
+  const times = tileTimes(trimInMs, durationMs, speed, tiles)
+  const key = times.join(',')
+  useEffect(() => { requestFrames(assetId, key.split(',').map(Number), resolveUrl) }, [assetId, key, resolveUrl])
+  return <span className="tlFilm" data-tiles={tiles} aria-hidden style={{ position: 'absolute', inset: 0, display: 'flex', pointerEvents: 'none', borderRadius: 'inherit', overflow: 'hidden' }}>
+    {times.map((t, i) => { const u = frameAt(assetId, t); return <span key={i} data-frame={u ? 'yes' : 'no'} style={{ flex: 1, minWidth: 0, background: u ? `url(${u}) center / cover` : 'transparent', opacity: 0.8, borderRight: i < tiles - 1 ? '1px solid rgba(0,0,0,.35)' : undefined }} /> })}
+  </span>
 }
