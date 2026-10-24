@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { frameAt, onFrames, requestFrames, tileTimes } from '@/lib/editor/video-frames'
+import { frameAt, nearestFrame, onFrames, requestFrames, tileTimes } from '@/lib/editor/video-frames'
 import { audioStartMs, audioTrackId, clipStarts, compositionCues, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta, type Transition } from '@/lib/editor/composition'
 import { expandGroups, isLocked, moveItems, moveToTrack, setItemEnd, snap, snapBlock, snapPoints, trimItemStart, type ItemRef } from '@/lib/editor/tracks'
 import { updateClip } from '@/lib/editor/timeline'
@@ -373,6 +373,6 @@ function Filmstrip({ assetId, trimInMs, durationMs, speed, width, height, resolv
   const key = times.join(',')
   useEffect(() => { requestFrames(assetId, key.split(',').map(Number), resolveUrl) }, [assetId, key, resolveUrl])
   return <span className="tlFilm" data-tiles={tiles} aria-hidden style={{ position: 'absolute', inset: 0, display: 'flex', pointerEvents: 'none', borderRadius: 'inherit', overflow: 'hidden' }}>
-    {times.map((t, i) => { const u = frameAt(assetId, t); return <span key={i} data-frame={u ? 'yes' : 'no'} style={{ flex: 1, minWidth: 0, background: u ? `url(${u}) center / cover` : 'transparent', opacity: 0.8, borderRight: i < tiles - 1 ? '1px solid rgba(0,0,0,.35)' : undefined }} /> })}
+    {times.map((t, i) => { const exact = frameAt(assetId, t); const u = exact ?? nearestFrame(assetId, t, Math.max(500, durationMs * (speed || 1) / tiles)); return <span key={i} data-frame={exact ? 'yes' : u ? 'near' : 'no'} style={{ flex: 1, minWidth: 0, background: u ? `url(${u}) center / cover` : 'transparent', opacity: 0.8, borderRight: i < tiles - 1 ? '1px solid rgba(0,0,0,.35)' : undefined }} /> })}
   </span>
 }

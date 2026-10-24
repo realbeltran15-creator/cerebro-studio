@@ -13,6 +13,7 @@ type Job = { assetId: string; atMs: number }
 type Source = { video: HTMLVideoElement; ready: Promise<boolean>; failed: boolean }
 
 const cache = new Map<string, string>() // `${assetId}@${ms}` → data URL
+const timesOf = new Map<string, number[]>() // assetId → instants already in the cache (sorted)
 const listeners = new Set<() => void>()
 const sources = new Map<string, Source>()
 const queue: Job[] = []
@@ -23,6 +24,17 @@ const W = 112, H = 64
 
 const keyOf = (assetId: string, ms: number) => `${assetId}@${ms}`
 export const frameAt = (assetId: string, ms: number) => cache.get(keyOf(assetId, quantise(ms)))
+/**
+ * The cached frame closest to `ms` within `maxDistMs`: shown while the exact one is decoded (after zooming the tiles move to new
+ * instants), so a tile never goes blank when a frame of that part of the video is already known.
+ */
+export function nearestFrame(assetId: string, ms: number, maxDistMs: number) {
+  const ts = timesOf.get(assetId)
+  if (!ts?.length) return undefined
+  let best = -1, bd = Infinity
+  for (const t of ts) { const d = Math.abs(t - ms); if (d < bd) { bd = d; best = t } else if (t > ms) break }
+  return best >= 0 && bd <= maxDistMs ? cache.get(keyOf(assetId, best)) : undefined
+}
 export function onFrames(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn) } }
 const notify = () => { for (const fn of listeners) fn() }
 
@@ -77,7 +89,7 @@ async function pump(resolveUrl: (id: string) => Promise<string>) {
         const src = sourceFor(job.assetId, resolveUrl)
         if (await src.ready && !src.failed) {
           const url = await grab(src, job.atMs)
-          if (url) { cache.set(keyOf(job.assetId, job.atMs), url); notify() }
+          if (url) { cache.set(keyOf(job.assetId, job.atMs), url); const ts = timesOf.get(job.assetId) ?? []; ts.push(job.atMs); ts.sort((a, b) => a - b); timesOf.set(job.assetId, ts); notify() }
         }
       } catch { /* a frame that cannot be read leaves the tile with its colour */ }
       finally { queued.delete(keyOf(job.assetId, job.atMs)); running--; runningFor.delete(job.assetId); void pump(resolveUrl) }
@@ -106,4 +118,4 @@ export function tileTimes(trimInMs: number, durationMs: number, speed: number, t
 }
 
 /** For tests: forget everything cached. */
-export function resetFrames() { cache.clear(); queued.clear(); queue.length = 0; for (const s of sources.values()) s.video.removeAttribute('src'); sources.clear() }
+export function resetFrames() { cache.clear(); timesOf.clear(); queued.clear(); queue.length = 0; for (const s of sources.values()) s.video.removeAttribute('src'); sources.clear() }
