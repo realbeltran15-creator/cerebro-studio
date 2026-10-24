@@ -1987,8 +1987,35 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   })
   const near = (a, b) => a && b && a.every((x, i) => Math.abs(x - b[i]) <= 60)
   check('export: mid-transition (vertical wipe) the export matches the preview (incoming clip on top, outgoing below)', exp && near(exp.top, prev.top) && near(exp.bottom, prev.bottom) && prev.top.reduce((t, v, i) => t + Math.abs(v - prev.bottom[i]), 0) > 100, { prev, exp })
+  // Third session (another device): keep editing what session 2 saved, save again, then restore an older point; a fourth clean
+  // session must see exactly the restored state.
+  keep = await keepOf(page)
+  const afterS2 = (await job()).composition
+  await ctx2.close()
+  const ctx3 = await browser.newContext({ viewport: { width: 1500, height: 1000 } })
+  page = await open(ctx3, keep)
+  check('session 3: opens with session 2\'s last save (wipe transition)', canon((await job()).composition) === canon(afterS2))
+  await page.locator('[aria-label="Pista de Texto"] > div').first().click()
+  await page.getByLabel('Contenido del texto').fill('TITULO SESION 3')
+  await savedOk()
+  const s3 = (await job()).composition
+  check('session 3: a further edit is saved on top (session 2\'s changes kept)', s3.clips[1].transition === 'wipe_down' && (s3.textClips ?? []).some(t => t.content === 'TITULO SESION 3'), s3.textClips)
+  await page.getByRole('button', { name: 'Puntos de recuperación' }).click()
+  const manual = page.locator('[aria-label="Puntos de recuperación"] li', { hasText: 'Guardado a mano' })
+  await manual.first().waitFor({ timeout: 10000 })
+  await manual.last().getByRole('button', { name: 'Restaurar' }).click()
+  await page.waitForTimeout(4000)
+  const restored = (await job()).composition
+  check('session 3: restoring the oldest manual point puts back that state on the server', canon(restored) === canon(before), { title: (restored.textClips ?? []).map(t => t.content), tr: restored.clips[1].transition })
+  const s3points = await page.evaluate(() => Object.keys(window.__STORE ?? {}).filter(k => /versions\/jv\/\d+-before-restore\.json$/.test(k)).length)
+  check('session 3: restoring first keeps the state it replaces as a recovery point', s3points >= 1, s3points)
+  keep = await keepOf(page)
+  await ctx3.close()
+  const ctx4 = await browser.newContext({ viewport: { width: 1500, height: 1000 } })
+  page = await open(ctx4, keep)
+  check('session 4: a clean browser sees the restored montage', canon((await job()).composition) === canon(before))
   check('persistence: no page errors', errors.length === 0, errors)
-  await ctx2.close(); server.close()
+  await ctx4.close(); server.close()
 }
 
 // 27. Transiciones y animaciones de verdad: type, direction, curve, copy/paste, favourites in the account, ready-made movements on
