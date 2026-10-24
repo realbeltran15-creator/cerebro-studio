@@ -49,6 +49,11 @@ async function openSection(page, title) {
   await b.waitFor()
   if (await b.getAttribute('aria-expanded') === 'false') await b.click()
 }
+async function openExport(page) {
+  const b = page.getByRole('button', { name: 'Exportar', exact: true })
+  if (await b.getAttribute('aria-expanded') === 'false') await b.click()
+  await page.locator('#ed-export').waitFor()
+}
 const toolTab = (page, name) => page.getByRole('tablist', { name: 'Herramientas' }).getByRole('tab', { name, exact: true }).click()
 const browser = await chromium.launch({ executablePath: chrome, args: ['--autoplay-policy=no-user-gesture-required'] })
 
@@ -152,7 +157,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByText(/actualizado a la versión 2/).waitFor()
   const shorts = (await db()).connector_configs.find(r => r.capability === 'edit_profiles').config.profiles.find(p => p.id === 'preset-shorts')
   check('style: only the accepted correction is added, as a new version that keeps the previous one', shorts?.format === '1:1' && shorts.version === 2 && shorts.previous?.[0]?.version === 1 && shorts.transitions.betweenMaterials === 'cut', shorts)
-  await openSection(page, 'Exportación')
+  await openExport(page)
   await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 60000 })
   const final = await db()
@@ -638,7 +643,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   page.on('dialog', d => d.accept())
   await page.goto('http://127.0.0.1:8801/editor/manual?job=job1')
   await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
-  await openSection(page, 'Exportación')
+  await openExport(page)
   await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 90000 })
   const convert = page.getByRole('button', { name: /Convertir a MP4 compatible/ })
@@ -1494,7 +1499,7 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   await page.getByRole('button', { name: 'Recuperar cambios' }).click()
   check('recovery: recovering restores them as unsaved changes', (await page.locator('label', { hasText: /^Formato/ }).locator('select').inputValue()) === '1:1' && (await page.getByText('Cambios sin guardar').count()) === 1)
   // Export: 480p downloaded to the computer, not uploaded; the montage keeps the export settings.
-  await openSection(page, 'Exportación')
+  await openExport(page)
   await page.getByLabel('Resolución').selectOption('480')
   await page.getByLabel('Destino').selectOption('download')
   check('export: the estimate follows the settings (the montage is square by now)', /480×480/.test(await page.locator('[aria-label="Estimación"]').textContent()))
@@ -1862,7 +1867,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.reload()
   await bar.waitFor({ timeout: 30000 })
   check('verify-ui: saved and reopened with everything (marker included)', await page.getByRole('button', { name: /^Marcador Marcador 1/ }).count() === 1 && await page.locator('[aria-label="Pista de Superposición 1"] > div').count() === 1 && await page.locator('[aria-label="Pista de Música"] > div').count() === 2)
-  await openSection(page, 'Exportación')
+  await openExport(page)
   check('verify-ui: the export defaults to the fast mode', (await page.getByLabel('Modo de exportación').inputValue()) === 'fast')
   await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 120000 })
@@ -1920,7 +1925,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.locator('[aria-label="Pista de Voz"] > div').first().click()
   await page.getByLabel('Panorámica').fill('0.5')
   await page.getByLabel('Nombre de la pista Música').fill('Pianos'); await page.getByLabel('Nombre de la pista Música').press('Enter')
-  await openSection(page, 'Exportación')
+  await openExport(page)
   await page.getByLabel('Resolución').selectOption('720')
   check('save: the state says there are changes, then saves by itself a few seconds later', /Cambios sin guardar|Guardando/.test(await status()), await status())
   await savedOk()
@@ -1967,7 +1972,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' })
   await bar.getByLabel('Ir a un tiempo').fill('0:06.6'); await bar.getByLabel('Ir a un tiempo').press('Enter'); await page.waitForTimeout(1500)
   const prev = await page.evaluate(() => { const c = document.querySelector('canvas.playerCanvas'); const g = c.getContext('2d'); const px = (x, y) => [...g.getImageData(Math.floor(c.width * x), Math.floor(c.height * y), 1, 1).data.slice(0, 3)]; return { top: px(0.3, 0.15), bottom: px(0.3, 0.85) } })
-  await openSection(page, 'Exportación')
+  await openExport(page)
   await page.getByRole('button', { name: /Renderizar y descargar|Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca|se ha descargado a tu equipo/).waitFor({ timeout: 120000 })
   const exp = await page.evaluate(async () => {
@@ -2051,7 +2056,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const mix = await settle(0.5, 0.5, c => c[0] > 60 && c[1] > 60)
   check('instruction: «una disolvencia de un segundo» mixes both clips in the viewer', mix[0] > 60 && mix[1] > 60, mix)
   await page.waitForFunction(() => /^Guardado en la nube/.test(document.querySelector('[aria-label="Estado del guardado"]')?.textContent ?? ''), null, { timeout: 15000 })
-  await openSection(page, 'Exportación')
+  await openExport(page)
   await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 120000 })
   const exp = await page.evaluate(async () => {
@@ -2229,7 +2234,8 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await search('Zoom', 'Zoom de la imagen')
   check('search: «Zoom» opens framing and movement', await expanded('Encuadre y movimiento') === 'true' && await page.locator('[data-tool="zoom"]').isVisible())
   await search('Exportar')
-  check('search: «Exportar» opens the export group', await expanded('Exportación') === 'true' && await page.getByLabel('Resolución').isVisible())
+  check('search: «Exportar» opens the export panel', await page.locator('#ed-export').isVisible() && await page.getByLabel('Resolución').isVisible())
+  await page.getByRole('button', { name: 'Cerrar exportación' }).click()
 
   // Layout remembered after reloading; playback, timeline and saving still work.
   const before = { left: await w('#ed-tools'), right: await w('#ed-props'), tab: await page.locator('.edTabPanel:not([hidden])').getAttribute('data-tabpanel') }
@@ -2238,7 +2244,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const saved = await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.render_jobs[0].composition)))
   await open()
   const after = { left: await w('#ed-tools'), right: await w('#ed-props'), tab: await page.locator('.edTabPanel:not([hidden])').getAttribute('data-tabpanel') }
-  check('layout: panel sizes, tab and open groups are remembered after reloading', Math.abs(after.left - before.left) < 2 && Math.abs(after.right - before.right) < 2 && after.tab === before.tab && await expanded('Exportación') === 'true', { before, after })
+  check('layout: panel sizes, tab and open groups are remembered after reloading', Math.abs(after.left - before.left) < 2 && Math.abs(after.right - before.right) < 2 && after.tab === before.tab, { before, after })
   check('saving: the montage saved from the new workspace keeps the edits (look and transition)', saved.clips[0].filters?.saturation === 0 && saved.clips[0].transition === 'dissolve', saved.clips[0])
   const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' })
   await bar.getByRole('button', { name: 'Reproducir' }).click(); await page.waitForTimeout(1200); await bar.getByRole('button', { name: 'Pausa' }).click()
@@ -2249,6 +2255,18 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('timeline: still edits (Ctrl+D duplicates)', await clips.count() === n0 + 1)
   check('workspace: no page errors (desktop)', errors.length === 0, errors)
 
+  // The viewer sits right on top of the timeline (no export panel or empty space between them) on common screen sizes.
+  for (const [vw, vh] of [[1366, 768], [1500, 1000], [1920, 1080]]) {
+    const fresh = await browser.newContext()
+    const p = await fresh.newPage()
+    await p.addInitScript(() => localStorage.removeItem('cerebro-editor-layout'))
+    await p.setViewportSize({ width: vw, height: vh })
+    await p.goto('http://127.0.0.1:8828/editor/manual?job=job1'); await p.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 }); await p.waitForTimeout(500)
+    const g = await p.evaluate(() => { const v = document.querySelector('.edViewer .playerControls').getBoundingClientRect(), t = document.querySelector('.timelinePanel').getBoundingClientRect(), tr = document.querySelector('[aria-label="Pista de vídeo"]').getBoundingClientRect(), st = document.querySelector('.playerStage').getBoundingClientRect(); return { gap: Math.round(t.top - v.bottom), timelineTop: Math.round(t.top), firstTrackBottom: Math.round(tr.bottom), stageH: Math.round(st.height), vh: innerHeight } })
+    console.log('LAYOUT', vw, vh, JSON.stringify(g))
+    await fresh.close().catch(() => {})
+    check(`layout ${vw}×${vh}: the timeline starts right under the viewer controls${vh >= 900 ? ' and its main track is on screen' : ' and on screen'} without scrolling`, g.gap <= 24 && (vh >= 900 ? g.firstTrackBottom <= vh : g.timelineTop < vh - 40) && g.stageH >= 200, g)
+  }
   // Tablet and phone with the real stylesheet: no horizontal scroll, viewer first, groups still toggle, search reachable.
   for (const [name, vw, vh] of [['tablet', 820, 1180], ['mobile', 390, 844]]) {
     const p = await ctx.newPage()
@@ -2262,7 +2280,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
     await p.locator('button.edSectionHead', { hasText: 'Color y efectos' }).click()
     const toggled = (await p.getByLabel('Brillo').isVisible()) !== was
     await p.getByLabel('Buscar herramienta').fill('Exportar'); await p.keyboard.press('Enter'); await p.waitForTimeout(250)
-    check(`${name}: the workspace fits ${vw} px (no horizontal scroll), the viewer comes first, groups toggle and the search works`, m.over <= 1 && m.viewerTop < m.toolsTop && m.splitters === 0 && toggled && await p.locator('button.edSectionHead', { hasText: 'Exportación' }).getAttribute('aria-expanded') === 'true' && errs.length === 0, { m, toggled, errs })
+    check(`${name}: the workspace fits ${vw} px (no horizontal scroll), the viewer comes first, groups toggle and the search works`, m.over <= 1 && m.viewerTop < m.toolsTop && m.splitters === 0 && toggled && await p.locator('#ed-export').isVisible() && errs.length === 0, { m, toggled, errs })
     await p.close()
   }
   await ctx.close(); server.close()

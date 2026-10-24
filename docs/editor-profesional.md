@@ -134,11 +134,14 @@ Ninguna prueba usa ni modifica el proyecto «Lofi prueba».
 
 **Editor manual**
 
+- La exportación se abre con «Exportar» en la barra superior, en un panel flotante que sigue trabajando aunque se cierre. Los avisos flotan abajo y no empujan el visor.
+- Medido: con 1500×1000 y 1920×1080 la pista de vídeo se ve sin desplazar la página; con 1366×768 se ve la parte superior de la línea de tiempo (para más espacio: reducir el visor con su separador, barra lateral automática o «Pantalla amplia»).
+
 | Zona | Qué contiene |
 |---|---|
 | Barra superior | Estado del guardado, guardado automático, puntos de recuperación, formato, espacio de trabajo, mostrar u ocultar «Herramientas» y «Propiedades», búsqueda de herramientas, cortar, marcar, añadir texto, deshacer, rehacer y guardar. Debajo, una línea para dar instrucciones. |
 | Izquierda: pestañas | Materiales (lista e importación), Transiciones (para arrastrar o aplicar), Efectos (filtros, movimientos y cámara para todo lo seleccionado), Textos (lista, subtítulos SRT/VTT), Audio (mezclador, ritmo y pulsos), IA (preferencias, historial de instrucciones, estilos, plantillas, referencia, comparar, aprender). |
-| Centro | Visor con altura ajustable y el grupo «Exportación». |
+| Centro | Visor con altura ajustable, pegado a la línea de tiempo (sin nada entre ellos). Los paneles laterales toman la altura del visor y se desplazan por dentro. |
 | Derecha: propiedades | Cambian con la selección: foto, vídeo (además inicio, velocidad, volumen), capa superpuesta, audio (sonido, automatización), texto (texto, estilo) y, sin selección, el proyecto (formato, transiciones, gancho, música, subtítulos). Grupos desplegables: los esenciales abiertos, los avanzados cerrados salvo que ya tengan valores. |
 | Abajo | Línea de tiempo multipista a todo el ancho. |
 

@@ -576,7 +576,15 @@ textarea.viText{width:100%;min-height:70px}
 .edTop .pageActions{gap:4px}.edTop .pageActions button{padding:6px 10px;font-size:12.5px;border-radius:8px}
 .edTopTools{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .edWork{grid-template-columns:var(--ed-cols,280px 8px minmax(0,1fr) 8px 340px);gap:4px;align-items:start}
-.edTools,.edProps{max-height:calc(100vh - 110px);overflow:auto;position:sticky;top:8px;padding:10px}
+.edWork{align-items:stretch;margin-bottom:2px}
+/* The side panels take the height of the viewer (not the other way round) and scroll inside: the timeline starts right under the viewer. */
+.edTools,.edProps{height:0;min-height:100%;overflow:auto;padding:10px;box-sizing:border-box}
+.edViewer{align-self:start}
+.edViewer .playerPanel{padding:6px}
+.timelinePanel{margin-top:0}
+.instructionBar label{white-space:nowrap}
+.edTop~.instructionBar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.edTop~.instructionBar>.field-row{flex:1;min-width:260px}
 .edProps h3{margin:0 0 4px;font-size:15px}
 .edViewer{min-width:0}
 .edTools[hidden],.edProps[hidden]{display:none}
@@ -609,7 +617,7 @@ button.edTab.active{background:linear-gradient(135deg,var(--accent),var(--accent
   .edWork{grid-template-columns:minmax(0,1fr)}
   .edWork .edSplit.vertical{display:none}
   .edViewer{order:-1}
-  .edTools,.edProps{position:static;max-height:none}
+  .edTools,.edProps{position:static;max-height:none;height:auto;min-height:0}
 }
 @media (max-width:860px){
   .edTop{flex-direction:column;align-items:stretch}
@@ -634,3 +642,29 @@ button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-sh
 .ctxMenu button:hover:not(:disabled),.ctxMenu button:focus-visible{background:var(--panel-2);outline:none}
 .ctxMenu kbd{font:11px ui-monospace,monospace;color:var(--muted)}
 .ctxMenu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+/* Compact controls in the editor: labels beside their field (not above), small fields, one row when it fits */
+:is(.edTop,.tlToolbar,.playerControls) label{flex-direction:row;align-items:center;gap:4px;margin:0;white-space:nowrap}
+:is(.edTop,.tlToolbar,.playerControls) :is(select,input:not([type=checkbox]):not([type=range])){width:auto;padding:4px 6px;font-size:12.5px;border-radius:7px}
+.playerControls{gap:3px;row-gap:4px}
+.playerControls button.small{padding:4px 7px;min-width:0}
+.playerControls .playerPlay{padding:5px 12px}
+.playerJump input{width:84px}
+.tlToolbar{gap:4px;margin-bottom:4px}
+.tlToolbar input[type=range]{width:90px}
+.edTop{padding:6px 10px;gap:4px 8px}
+.edTop .stats{gap:4px}.edTop .pill{padding:3px 8px;font-size:12px}
+.edTop .pill input[type=checkbox]{width:auto;margin:0 4px 0 0}
+.edToasts .notice,.edToasts .error{box-shadow:0 10px 30px #000a;background-color:var(--panel)}
+.content.wide{padding-top:12px}
+.content.wide .pageHead.compact{margin-bottom:6px}
+.edViewer .edSplit.horizontal{margin:2px 0}
+.edTop~.instructionBar{padding:5px 10px;margin-bottom:6px!important}
+.edTop~.instructionBar label{flex-direction:row;align-items:center;gap:6px}
+.edTop~.instructionBar input{padding:6px 10px;font-size:13.5px}
+.edTop~.instructionBar button[type=submit]{padding:6px 14px}
+.sideModes button span{display:none}
+.sideModes button{flex:1;justify-content:center}
+/* Side panels of the editor: compact fields (less scrolling) */
+:is(.edTools,.edProps) :is(input:not([type=checkbox]):not([type=range]):not([type=color]),select,textarea){padding:6px 9px;font-size:13px;border-radius:8px}
+:is(.edTools,.edProps) label{gap:3px;font-size:12.5px}
+:is(.edTools,.edProps) .field-row{gap:8px}

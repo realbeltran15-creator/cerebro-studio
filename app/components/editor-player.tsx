@@ -159,7 +159,7 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
       <button type="button" className="ghost small" onClick={() => p?.seek(dur)} aria-label="Ir al final" title="Final (Fin)">⏭</button>
       <span className="playerTime" aria-live="off"><b>{timecode(time)}</b> / {timecode(dur)}</span>
       <button type="button" className={looping ? 'small' : 'ghost small'} aria-pressed={looping} disabled={!loop} onClick={() => setLooping(v => !v)} title={loop ? 'Repetir el fragmento marcado' : 'Marca un fragmento (I / O o Mayús+arrastrar en la regla) para repetirlo'}>⟲ Bucle</button>
-      <label className="small playerRate">Velocidad
+      <label className="small playerRate" title="Velocidad de reproducción"><span aria-hidden>Vel.</span>
         <select value={String(st.rate)} onChange={e => p?.setRate(Number(e.target.value))} aria-label="Velocidad de reproducción">
           {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map(r => <option key={r} value={String(r)}>{r}×</option>)}
         </select>

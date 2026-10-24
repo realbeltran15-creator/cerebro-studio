@@ -32,7 +32,8 @@ const clampN = (n: unknown, lo: number, hi: number, d: number) => { const x = Nu
 export function readLayout(): Layout {
   try {
     const v = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? 'null') as Partial<Layout> | null
-    if (!v || typeof v !== 'object') return DEFAULT_LAYOUT
+    // First visit: a viewer that leaves room for the timeline on this screen.
+    if (!v || typeof v !== 'object') return { ...DEFAULT_LAYOUT, viewerH: Math.round(Math.min(560, Math.max(220, window.innerHeight * 0.36))) }
     return {
       left: v.left !== false, right: v.right !== false,
       leftW: clampN(v.leftW, 200, 640, DEFAULT_LAYOUT.leftW), rightW: clampN(v.rightW, 240, 640, DEFAULT_LAYOUT.rightW),

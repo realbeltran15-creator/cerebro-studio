@@ -64,6 +64,8 @@ export default function ManualEditorPage() {
   // Right-click menu on the timeline (items, a transition or the empty timeline).
   const [menu, setMenu] = useState<{ x: number; y: number; kind: 'item' | 'transition' | 'empty' } | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
+  // Export lives in its own panel (opened from the top bar) so nothing separates the viewer from the timeline.
+  const [exportOpen, setExportOpen] = useState(false)
   const selectTransition = useCallback((clipId: string | null) => { setSelTrState(clipId); if (clipId) setSelState([]) }, [])
   const [copiedTransition, setCopiedTransition] = useState<Pick<Clip, 'transition' | 'transitionMs' | 'transitionOpts'> | null>(null)
   // Favourite transitions and animations, saved in the account (every montage, every device).
@@ -671,7 +673,7 @@ export default function ManualEditorPage() {
     { label: 'Animación (fotogramas clave)', words: 'animacion fotogramas clave keyframes movimiento', go: () => (selClip ? ws.reveal({ section: 'clip-anim' }) : selOverlay ? ws.reveal({ section: 'layer-anim' }) : ws.reveal({ tab: 'effects' })) },
     { label: 'Filtros y color', words: 'filtro filtros color brillo contraste saturacion blanco y negro efectos', go: () => (selClip ? ws.reveal({ section: 'clip-color' }) : selOverlay ? ws.reveal({ section: 'layer-color' }) : ws.reveal({ tab: 'effects' })) },
     { label: 'Efectos rápidos', words: 'efectos filtros movimientos presets', go: () => ws.reveal({ tab: 'effects' }) },
-    { label: 'Exportar el vídeo', words: 'exportar render descargar mp4 webm resolucion', go: () => ws.reveal({ section: 'export' }) },
+    { label: 'Exportar el vídeo', words: 'exportar render descargar mp4 webm resolucion', go: () => { setExportOpen(true); setTimeout(() => (document.querySelector('#ed-export select, #ed-export button') as HTMLElement | null)?.focus(), 50) } },
     { label: 'Materiales e importar archivos', words: 'materiales importar subir archivos biblioteca fotos videos', go: () => ws.reveal({ tab: 'materials' }) },
     { label: 'Música de fondo', words: 'musica fondo ducking bajar musica voz', go: () => toProject('proj-sound') },
     { label: 'Ritmo y pulsos de la música', words: 'ritmo pulsos beats sincronizar', go: () => ws.reveal({ tab: 'audio', selector: '[data-tabpanel="audio"] section:last-of-type' }) },
@@ -682,8 +684,11 @@ export default function ManualEditorPage() {
   ]
 
   return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" wide compactHead actions={<><a className="buttonLink ghost" href="/editor/manual">Mis montajes</a><Link className="buttonLink ghost" href={`/editor/style?project=${job.project_id}`}>Editar con mi estilo</Link><Link className="buttonLink ghost" href={`/editor?project=${job.project_id}&storyboard=${comp.storyboardId}`}>Editor automático</Link></>}>
-    {error && <p className="error" role="alert">{error}</p>}
-    {notice && <p className="notice" role="status">{notice}</p>}
+    {/* Messages float over the bottom of the editor instead of pushing the viewer and the timeline down. */}
+    {(error || notice) && <div className="edToasts" style={{ position: 'fixed', left: '50%', bottom: 16, transform: 'translateX(-50%)', zIndex: 75, width: 'min(680px, calc(100vw - 24px))', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {error && <p className="error" role="alert" style={{ margin: 0, display: 'flex', gap: 8, alignItems: 'flex-start' }}><span style={{ flex: 1 }}>{error}</span><button type="button" className="ghost small" aria-label="Cerrar el aviso de error" onClick={() => setError('')}>✕</button></p>}
+      {notice && <p className="notice" role="status" style={{ margin: 0, display: 'flex', gap: 8, alignItems: 'flex-start' }}><span style={{ flex: 1 }}>{notice}</span><button type="button" className="ghost small" aria-label="Cerrar el aviso" onClick={() => setNotice('')}>✕</button></p>}
+    </div>}
 
     {recovery && <div className="panel warning" role="alert" aria-label="Recuperar cambios" style={{ marginBottom: 12 }}>
       <b>Hay cambios sin guardar de este montaje</b> (copia local del {new Date(recovery.savedAt).toLocaleString()}){recovery.baseUpdatedAt !== savedAt ? '. Ojo: el montaje se guardó después desde otro sitio; si recuperas, al guardar se te avisará del conflicto.' : '.'}
@@ -759,11 +764,20 @@ export default function ManualEditorPage() {
         <button type="button" className="ghost" disabled={!history?.past.length} onClick={() => { setHistory(h => (h ? undo(h) : h)); setDirty(true) }} title="Ctrl+Z">Deshacer</button>
         <button type="button" className="ghost" disabled={!history?.future.length} onClick={() => { setHistory(h => (h ? redo(h) : h)); setDirty(true) }} title="Ctrl+Shift+Z">Rehacer</button>
         <button type="button" onClick={() => void saveClick()} disabled={busy === 'save' || saveState === 'saving'} title="Guarda en la nube y crea un punto de recuperación">{busy === 'save' ? 'Guardando…' : 'Guardar ahora'}</button>
+        <button type="button" className={exportOpen ? 'small' : 'ghost'} aria-expanded={exportOpen} aria-controls="ed-export" onClick={() => setExportOpen(v => !v)} title="Resolución, calidad y destino (la nube o tu equipo)">Exportar</button>
       </div>
     </div>
 
+    {/* Kept mounted while closed: an export in progress continues. */}
+    <section id="ed-export" className="panel edExport" role="dialog" aria-label="Exportar el vídeo" hidden={!exportOpen}
+      style={{ position: 'fixed', right: 12, top: 72, zIndex: 70, width: 'min(460px, calc(100vw - 24px))', maxHeight: 'calc(100vh - 90px)', overflow: 'auto', boxShadow: '0 18px 40px #000a' }}
+      onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setExportOpen(false) } }}>
+      <div className="cardHead" style={{ marginBottom: 6 }}><h3>Exportar el vídeo</h3><button type="button" className="ghost small" onClick={() => setExportOpen(false)} aria-label="Cerrar exportación">✕</button></div>
+      <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} exportOnly />
+    </section>
+
     <form className="panel instructionBar" style={{ marginBottom: 10 }} onSubmit={e => { e.preventDefault(); runText(instruction) }} aria-label="Instrucciones">
-      <label htmlFor="ed-instr" className="small"><b>Dile al editor qué hacer</b> {range ? <span className="pill info">Se aplica al fragmento {secs(range.startMs)}–{secs(range.endMs)} s</span> : selection?.kind === 'clip' ? <span className="pill">Se aplica al clip seleccionado</span> : <span className="muted">· se aplica al clip bajo el cabezal</span>}</label>
+      <label htmlFor="ed-instr" className="small"><b>Dile al editor qué hacer</b><span className="srOnly">:</span> {range ? <span className="pill info">Se aplica al fragmento {secs(range.startMs)}–{secs(range.endMs)} s</span> : selection?.kind === 'clip' ? <span className="pill">Se aplica al clip seleccionado</span> : <span className="muted">· se aplica al clip bajo el cabezal</span>}</label>
       <div className="field-row" style={{ alignItems: 'center' }}>
         <input id="ed-instr" list="ed-instr-examples" value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="p. ej. pon esta música desde el minuto 2 · corta aquí · haz un zoom lento · cambia de imagen siguiendo el ritmo" style={{ flex: 1 }} />
         <datalist id="ed-instr-examples">{COMMAND_EXAMPLES.map(x => <option key={x} value={x} />)}</datalist>
@@ -879,11 +893,6 @@ export default function ManualEditorPage() {
         <EditorPlayerView composition={comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
           overlay={<ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
         <Splitter label="Alto del visor" orientation="horizontal" value={ws.layout.viewerH} min={180} max={1400} onChange={v => ws.set({ viewerH: v })} />
-        <div className="panel exportBox" style={{ marginTop: 8 }}>
-          <Section id="export" title="Exportación" extra={<span className="muted small">resolución, calidad, destino</span>}>
-          <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} exportOnly />
-          </Section>
-        </div>
       </div>
       {ws.layout.right && <Splitter label="Ancho del panel de propiedades" orientation="vertical" invert value={ws.layout.rightW} min={240} max={640} onChange={v => ws.set({ rightW: v })} />}
       <section id="ed-props" className="panel editorProps edProps" aria-label="Propiedades" hidden={!ws.layout.right}>

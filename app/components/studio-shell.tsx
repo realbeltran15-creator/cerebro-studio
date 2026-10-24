@@ -128,7 +128,7 @@ export function StudioShell({ title, eyebrow = 'WORKSPACE', actions, children, w
             aria-label={side === 'pinned' ? 'Desfijar la barra lateral (pasa a automática)' : 'Fijar la barra lateral'} title={side === 'pinned' ? 'Desfijar: se ocultará sola cuando no la uses' : 'Fijar: se queda abierta'}
             onClick={() => setMode(side === 'pinned' ? 'auto' : 'pinned')}><Icon name="pin" size={16} /></button>
           <div className="sideModes" role="radiogroup" aria-label="Comportamiento de la barra lateral">
-            {(['pinned', 'auto', 'hidden'] as SidebarMode[]).map(m => <button key={m} type="button" role="radio" aria-checked={side === m} className={side === m ? 'small' : 'ghost small'}
+            {(['pinned', 'auto', 'hidden'] as SidebarMode[]).map(m => <button key={m} type="button" role="radio" aria-checked={side === m} aria-label={SIDEBAR_LABELS[m]} className={side === m ? 'small' : 'ghost small'}
               title={m === 'pinned' ? 'Siempre abierta' : m === 'auto' ? 'Solo iconos; se abre al acercar el ratón y se cierra sola' : 'Sin barra; vuelve con el botón del borde izquierdo'}
               onClick={() => setMode(m)}><Icon name={m === 'pinned' ? 'pin' : m === 'auto' ? 'auto' : 'hide'} size={14} /><span>{SIDEBAR_LABELS[m]}</span></button>)}
           </div>
