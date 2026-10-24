@@ -677,7 +677,7 @@ button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-sh
 .tlToolbar{gap:4px;margin-bottom:6px}
 .tlToolbar button.small{padding:5px 8px}
 .tlToolbar input[type=range]{width:88px}
-.playerJump input{width:74px}
+.playerJump input{width:74px!important}
 .playerVolume{width:62px}
 .playerTime{font-size:12px}
 /* Short screens (laptops): the page title of the editor gives its height to the picture (its links are also in the sidebar). */
@@ -686,4 +686,15 @@ button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-sh
   .content.wide:has(.edWork) .pageHead.compact{display:none}
   .edTop{padding:6px 8px;margin-bottom:6px}
   .edTop~.instructionBar{padding:5px 8px;margin-bottom:6px!important}
+}
+/* Narrow viewer (laptops with both side panels open): the player controls fit in two rows instead of three, so the picture gets that height. */
+.playerPanel{container-type:inline-size;container-name:player}
+@container player (max-width:600px){
+  .playerControls{gap:2px}
+  .playerControls button.small{padding:3px 5px}
+  .playerControls .playerPlay{padding:4px 10px;min-width:40px!important}
+  .playerTime{margin:0 3px;font-size:11.5px}
+  .playerRate>span{display:none}
+  .playerVolume{width:44px}
+  .playerJump input{width:60px!important}
 }

@@ -3,6 +3,9 @@ const db: Record<string, Row[]> = (window as any).__DB
 let seq = 0
 // Ids stay unique across full page loads (the counter alone restarts at 0 on every load), like real uuids.
 const uid = () => `new-${Date.now().toString(36)}${(++seq).toString(36)}`
+const KNOWN_COLUMNS: Record<string, string[]> = {
+  render_jobs: ['id', 'owner_id', 'project_id', 'output_format', 'status', 'composition', 'output_asset_id', 'error', 'created_at', 'updated_at'],
+}
 function q(table: string) {
   const filters: Array<(r: Row) => boolean> = []
   let op = 'select', payload: any = null, ret = false
@@ -25,6 +28,12 @@ function q(table: string) {
   function run() {
     // A table whose migration is not applied yet answers like PostgREST does.
     if (((window as any).__MISSING_TABLES ?? []).includes(table)) return { data: null, error: { code: 'PGRST205', message: `Could not find the table 'public.${table}' in the schema cache` } }
+    // Columns of the real tables (checked against the live database): writing any other column fails, as PostgREST does.
+    const cols = KNOWN_COLUMNS[table]
+    if (cols && (op === 'update' || op === 'insert' || op === 'upsert')) {
+      const bad = (Array.isArray(payload) ? payload : [payload]).flatMap((p: Row) => Object.keys(p)).find((k: string) => !cols.includes(k))
+      if (bad) return { data: null, error: { code: 'PGRST204', message: `Could not find the '${bad}' column of '${table}' in the schema cache` } }
+    }
     const rows = (db[table] ??= [])
     const m = rows.filter(r => filters.every(f => f(r)))
     if (op === 'select') return { data: JSON.parse(JSON.stringify(m)), error: null }
