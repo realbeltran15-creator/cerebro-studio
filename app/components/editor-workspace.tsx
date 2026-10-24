@@ -13,12 +13,14 @@ export type Layout = {
   leftW: number; rightW: number
   /** Height of the viewer area in px (the timeline gets the rest). */
   viewerH: number
+  /** The viewer height follows the screen (fits the timeline below it) until the owner drags it. */
+  viewerAuto: boolean
   tab: ToolTab
   mode: WorkspaceMode
   /** Property groups and their open state (absent = its default). */
   sections: Record<string, boolean>
 }
-export const DEFAULT_LAYOUT: Layout = { left: true, right: true, leftW: 280, rightW: 340, viewerH: 460, tab: 'materials', mode: 'edit', sections: {} }
+export const DEFAULT_LAYOUT: Layout = { left: true, right: true, leftW: 280, rightW: 340, viewerH: 460, viewerAuto: true, tab: 'materials', mode: 'edit', sections: {} }
 export const LAYOUT_KEY = 'cerebro-editor-layout'
 export const TOOL_TABS: Record<ToolTab, string> = { materials: 'Materiales', transitions: 'Transiciones', effects: 'Efectos', texts: 'Textos', audio: 'Audio', ai: 'IA' }
 export const MODES: Record<WorkspaceMode, { label: string; hint: string }> = {
@@ -37,7 +39,7 @@ export function readLayout(): Layout {
     return {
       left: v.left !== false, right: v.right !== false,
       leftW: clampN(v.leftW, 200, 640, DEFAULT_LAYOUT.leftW), rightW: clampN(v.rightW, 240, 640, DEFAULT_LAYOUT.rightW),
-      viewerH: clampN(v.viewerH, 180, 1400, DEFAULT_LAYOUT.viewerH),
+      viewerH: clampN(v.viewerH, 180, 1400, DEFAULT_LAYOUT.viewerH), viewerAuto: v.viewerAuto !== false,
       tab: v.tab && v.tab in TOOL_TABS ? v.tab : 'materials',
       mode: v.mode && v.mode in MODES ? v.mode : 'edit',
       sections: v.sections && typeof v.sections === 'object' ? Object.fromEntries(Object.entries(v.sections).filter(([, b]) => typeof b === 'boolean')) : {},
@@ -144,10 +146,10 @@ export function ToolSearch({ entries }: { entries: ToolEntry[] }) {
 }
 
 /** A drag handle between two areas (keyboard: arrows). */
-export function Splitter({ label, orientation, value, min, max, onChange, invert = false }: { label: string; orientation: 'vertical' | 'horizontal'; value: number; min: number; max: number; onChange: (v: number) => void; invert?: boolean }) {
+export function Splitter({ label, orientation, value, min, max, onChange, invert = false, onReset, title }: { label: string; orientation: 'vertical' | 'horizontal'; value: number; min: number; max: number; onChange: (v: number) => void; invert?: boolean; onReset?: () => void; title?: string }) {
   const start = useRef<{ p: number; v: number } | null>(null)
   const pos = (e: React.PointerEvent) => (orientation === 'vertical' ? e.clientX : e.clientY)
-  return <div className={`edSplit ${orientation}`} role="separator" aria-orientation={orientation} aria-label={label} tabIndex={0} aria-valuenow={Math.round(value)} aria-valuemin={min} aria-valuemax={max}
+  return <div className={`edSplit ${orientation}`} role="separator" aria-orientation={orientation} aria-label={label} tabIndex={0} title={title} onDoubleClick={onReset} aria-valuenow={Math.round(value)} aria-valuemin={min} aria-valuemax={max}
     onPointerDown={e => { (e.target as HTMLElement).setPointerCapture(e.pointerId); start.current = { p: pos(e), v: value } }}
     onPointerMove={e => { const s = start.current; if (!s) return; const d = (pos(e) - s.p) * (invert ? -1 : 1); onChange(Math.round(Math.min(max, Math.max(min, s.v + d)))) }}
     onPointerUp={() => { start.current = null }}

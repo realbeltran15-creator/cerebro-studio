@@ -6,7 +6,7 @@ import { readSidebarMode, StudioShell, writeSidebarMode, type SidebarMode } from
 import { ContextMenu, DEFAULT_LAYOUT, MODES, Section, type MenuItem, Splitter, ToolSearch, ToolTabs, useWorkspaceState, WorkspaceProvider, type ToolEntry, type WorkspaceMode } from '../../components/editor-workspace'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { CAPTION_POSITIONS, FILTER_PRESETS, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
+import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
 import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
@@ -87,12 +87,30 @@ export default function ManualEditorPage() {
     const was = ws.layout.mode
     if (m === 'wide' && was !== 'wide') { sidebarBeforeWide.current = readSidebarMode(); writeSidebarMode('hidden') }
     if (was === 'wide' && m !== 'wide') writeSidebarMode(sidebarBeforeWide.current && sidebarBeforeWide.current !== 'hidden' ? sidebarBeforeWide.current : 'pinned')
-    if (m === 'edit') ws.set({ mode: m, left: true, right: true, viewerH: DEFAULT_LAYOUT.viewerH, rightW: DEFAULT_LAYOUT.rightW })
-    if (m === 'audio') { ws.set({ mode: m, left: true, right: true, tab: 'audio', viewerH: 300 }); setTrackScale(1.4) }
+    if (m === 'edit') ws.set({ mode: m, left: true, right: true, viewerAuto: true, rightW: DEFAULT_LAYOUT.rightW })
+    if (m === 'audio') { ws.set({ mode: m, left: true, right: true, tab: 'audio', viewerAuto: true }); setTrackScale(1.4) }
     if (m === 'effects') ws.set({ mode: m, left: true, right: true, tab: 'effects', rightW: 440 })
     if (m === 'wide') ws.set({ mode: m, left: false, right: false })
     if (m !== 'audio') setTrackScale(1)
   }
+  // Automatic viewer height: as tall as possible while the timeline up to the main video track still fits on the screen, so the picture
+  // and the timeline can be watched together without scrolling (dragging the splitter fixes a height; double-click returns to automatic).
+  const [autoViewerH, setAutoViewerH] = useState<number | null>(null)
+  const trackCount = history ? tracksOf(history.present).length : 0
+  useEffect(() => {
+    if (!ws.layout.viewerAuto) return
+    const fit = () => {
+      const stage = document.querySelector('.playerStage'), main = document.querySelector('[aria-label="Pista de vídeo"]')
+      if (!stage || !main || window.innerWidth <= 1100) { setAutoViewerH(null); return }
+      const sb = stage.getBoundingClientRect(), mb = main.getBoundingClientRect()
+      const below = mb.bottom - sb.bottom, top = sb.top + window.scrollY
+      const h = Math.round(Math.min(1000, Math.max(200, window.innerHeight - 10 - below - top)))
+      setAutoViewerH(prev => (prev !== null && Math.abs(prev - h) < 4 ? prev : h))
+    }
+    const t = window.setTimeout(fit, 60)
+    window.addEventListener('resize', fit)
+    return () => { window.clearTimeout(t); window.removeEventListener('resize', fit) }
+  }, [ws.layout.viewerAuto, ws.layout.left, ws.layout.right, trackCount, trackScale, !!history])
   // Ctrl+K (⌘K): tool search.
   useEffect(() => {
     const onK = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); (document.getElementById('tool-search') as HTMLInputElement | null)?.focus() } }
@@ -776,10 +794,6 @@ export default function ManualEditorPage() {
         <ToolSearch entries={toolEntries} />
       </div>
       <div className="pageActions">
-        <button type="button" className="ghost" title="Divide en el cabezal lo seleccionado o todo lo que pasa por él (S)" onClick={splitHere}>Cortar en el cabezal</button>
-        <button type="button" className="ghost" title="Tecla I" onClick={() => markAt('in')}>Marcar entrada</button>
-        <button type="button" className="ghost" title="Tecla O" onClick={() => markAt('out')}>Marcar salida</button>
-        <button type="button" className="ghost" onClick={addTextHere}>Añadir texto</button>
         <button type="button" className="ghost" disabled={!history?.past.length} onClick={() => { setHistory(h => (h ? undo(h) : h)); setDirty(true) }} title="Ctrl+Z">Deshacer</button>
         <button type="button" className="ghost" disabled={!history?.future.length} onClick={() => { setHistory(h => (h ? redo(h) : h)); setDirty(true) }} title="Ctrl+Shift+Z">Rehacer</button>
         <button type="button" onClick={() => void saveClick()} disabled={busy === 'save' || saveState === 'saving'} title="Guarda en la nube y crea un punto de recuperación">{busy === 'save' ? 'Guardando…' : 'Guardar ahora'}</button>
@@ -808,7 +822,7 @@ export default function ManualEditorPage() {
       </div>}    </form>
 
     <div className="editorLayout edWork" data-mode={ws.layout.mode} data-left={ws.layout.left ? 'on' : 'off'} data-right={ws.layout.right ? 'on' : 'off'}
-      style={{ ['--ed-cols' as string]: `${ws.layout.left ? `${ws.layout.leftW}px 8px ` : ''}minmax(0,1fr)${ws.layout.right ? ` 8px ${ws.layout.rightW}px` : ''}`, ['--ed-viewer' as string]: `${ws.layout.viewerH}px` }}>
+      style={{ ['--ed-cols' as string]: `${ws.layout.left ? `${ws.layout.leftW}px 8px ` : ''}minmax(0,1fr)${ws.layout.right ? ` 8px ${ws.layout.rightW}px` : ''}`, ['--ed-viewer' as string]: `${ws.layout.viewerAuto && autoViewerH ? autoViewerH : ws.layout.viewerH}px` }}>
       <aside id="ed-tools" className="panel editorMaterials edTools" aria-label="Herramientas" hidden={!ws.layout.left}>
         <ToolTabs panels={{
           materials: <>
@@ -915,7 +929,8 @@ export default function ManualEditorPage() {
       <div className="editorViewer edViewer">
         <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
           overlay={<ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
-        <Splitter label="Alto del visor" orientation="horizontal" value={ws.layout.viewerH} min={180} max={1400} onChange={v => ws.set({ viewerH: v })} />
+        <Splitter label="Alto del visor" orientation="horizontal" value={ws.layout.viewerAuto && autoViewerH ? autoViewerH : ws.layout.viewerH} min={180} max={1400} onChange={v => ws.set({ viewerH: v, viewerAuto: false })}
+          onReset={() => ws.set({ viewerAuto: true })} title="Arrastra para cambiar el alto del visor; doble clic para que se ajuste solo a la pantalla" />
       </div>
       {ws.layout.right && <Splitter label="Ancho del panel de propiedades" orientation="vertical" invert value={ws.layout.rightW} min={240} max={640} onChange={v => ws.set({ rightW: v })} />}
       <section id="ed-props" className="panel editorProps edProps" aria-label="Propiedades" hidden={!ws.layout.right}>
@@ -1025,8 +1040,11 @@ export default function ManualEditorPage() {
         <button type="button" className="ghost small" disabled={!sel.length} onClick={deleteSel} aria-label="Eliminar selección" title="Supr">Eliminar</button>
         <button type="button" className="ghost small" disabled={sel.length < 2} onClick={groupSel} aria-label="Agrupar selección" title="Ctrl+G">Agrupar</button>
         <button type="button" className="ghost small" disabled={!sel.length} onClick={ungroupSel} aria-label="Desagrupar selección" title="Ctrl+Mayús+G">Desagrupar</button>
+        <button type="button" className="ghost small" title="Tecla I" onClick={() => markAt('in')} aria-label="Marcar entrada">[ Entrada</button>
+        <button type="button" className="ghost small" title="Tecla O" onClick={() => markAt('out')} aria-label="Marcar salida">Salida ]</button>
+        <button type="button" className="ghost small" onClick={addTextHere} aria-label="Añadir texto" title="Añade un texto en el cabezal">T+ Texto</button>
         <button type="button" className="ghost small" onClick={() => apply(c => addMarker(c, playheadMs))} aria-label="Añadir marcador" title="M">◆ Marcador</button>
-        <label className="small">Añadir pista
+        <label className="small" title="Añadir una pista">+ Pista
           <select aria-label="Añadir pista" value="" onChange={e => { const v = e.target.value as 'overlay' | 'text' | 'voice' | 'music' | 'sfx'; if (!v) return; apply(c => addTrack(c, v).composition) }}>
             <option value="">—</option><option value="overlay">Vídeo / imagen superpuesta</option><option value="text">Texto</option><option value="voice">Voz</option><option value="music">Música</option><option value="sfx">Efectos</option>
           </select>

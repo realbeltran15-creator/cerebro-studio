@@ -2261,11 +2261,11 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
     const p = await fresh.newPage()
     await p.addInitScript(() => localStorage.removeItem('cerebro-editor-layout'))
     await p.setViewportSize({ width: vw, height: vh })
-    await p.goto('http://127.0.0.1:8828/editor/manual?job=job1'); await p.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 }); await p.waitForTimeout(500)
+    await p.goto('http://127.0.0.1:8828/editor/manual?job=job1'); await p.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 }); await p.waitForTimeout(1000)
     const g = await p.evaluate(() => { const v = document.querySelector('.edViewer .playerControls').getBoundingClientRect(), t = document.querySelector('.timelinePanel').getBoundingClientRect(), tr = document.querySelector('[aria-label="Pista de vídeo"]').getBoundingClientRect(), st = document.querySelector('.playerStage').getBoundingClientRect(); return { gap: Math.round(t.top - v.bottom), timelineTop: Math.round(t.top), firstTrackBottom: Math.round(tr.bottom), stageH: Math.round(st.height), vh: innerHeight } })
     console.log('LAYOUT', vw, vh, JSON.stringify(g))
     await fresh.close().catch(() => {})
-    check(`layout ${vw}×${vh}: the timeline starts right under the viewer controls${vh >= 900 ? ' and its main track is on screen' : ' and on screen'} without scrolling`, g.gap <= 24 && (vh >= 900 ? g.firstTrackBottom <= vh : g.timelineTop < vh - 40) && g.stageH >= 200, g)
+    check(`layout ${vw}×${vh}: the timeline starts right under the viewer controls and its main video track is on screen with the viewer, without scrolling`, g.gap <= 24 && g.firstTrackBottom <= vh && g.stageH >= 200, g)
   }
   // Tablet and phone with the real stylesheet: no horizontal scroll, viewer first, groups still toggle, search reachable.
   for (const [name, vw, vh] of [['tablet', 820, 1180], ['mobile', 390, 844]]) {
