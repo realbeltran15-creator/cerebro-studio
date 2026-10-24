@@ -5,7 +5,7 @@ import { r2Configured, r2Key, r2Url, R2_PREFIX } from './server'
  * Safe clean-up of R2 leftovers: files nobody refers to (an upload that never got its Library entry) and multipart uploads that were abandoned
  * (R2 keeps charging their parts' storage until they are aborted). Nothing is ever removed by looking at the clock alone:
  *   - a file is an orphan only when NO asset row of this user points at it, it is older than a day (an upload may still be about to get its row),
- *     and it is not under `versions/` (recovery points);
+ *     and it is not inside any `versions/` folder (recovery points are `<owner>/<project>/versions/<job>/…`);
  *   - the delete action removes only the keys the same check lists again at that moment, never an arbitrary key sent by the browser.
  */
 export const ORPHAN_MIN_AGE_MS = 24 * 3600_000
@@ -70,7 +70,7 @@ export async function cleanupReport(db: SupabaseClient, ownerId: string, now = D
   // The Library is read FIRST: an upload that finishes while this runs gets its row after, and is then too recent to count as an orphan anyway.
   const refs = await referencedKeys(db, ownerId)
   const [objects, uploads] = await Promise.all([listObjects(ownerId), listUploads(ownerId)])
-  const orphans = objects.filter(o => !refs.has(o.key) && !o.key.startsWith(`${ownerId}/versions/`) && now - Date.parse(o.modifiedAt) >= ORPHAN_MIN_AGE_MS && o.key.split('/').length >= 2)
+  const orphans = objects.filter(o => !refs.has(o.key) && !o.key.split('/').includes('versions') && now - Date.parse(o.modifiedAt) >= ORPHAN_MIN_AGE_MS && o.key.split('/').length >= 2)
   const staleUploads = uploads.filter(u => now - Date.parse(u.initiatedAt) >= STALE_UPLOAD_MS)
   return { orphans, staleUploads, referenced: refs.size, objects: objects.length, orphanBytes: orphans.reduce((n, o) => n + o.bytes, 0) }
 }

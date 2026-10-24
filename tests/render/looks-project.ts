@@ -4,8 +4,9 @@
  */
 import { emptyComposition, type Composition } from '../../lib/editor/composition'
 import { addClip, addTextClip, updateClip } from '../../lib/editor/timeline'
+import type { Transition, TransitionOptions } from '../../lib/editor/composition'
 
-export const LOOK_MEDIA: Record<string, { kind: 'image' | 'video'; file: string }> = { tex: { kind: 'image', file: 'tex.png' }, mov: { kind: 'video', file: 'mov.webm' } }
+export const LOOK_MEDIA: Record<string, { kind: 'image' | 'video'; file: string }> = { tex: { kind: 'image', file: 'tex.png' }, tex2: { kind: 'image', file: 'tex2.png' }, mov: { kind: 'video', file: 'mov.webm' } }
 
 export function looksProject(): Composition {
   let c: Composition = { ...emptyComposition('lk', 'Looks'), editedManually: true, fadeMs: 0, subtitles: true, duckMusic: false, captionStyle: 'box' }
@@ -26,3 +27,22 @@ export function looksProject(): Composition {
 }
 /** One time per clip, in the middle of it (the titles run over clips 4–7, so they are compared at the same times). */
 export const LOOK_TIMES = [1500, 4500, 7500, 10500, 13500, 16500, 19500, 22500]
+
+/**
+ * Every transition between two different pictures, with its options: clip i lasts 2 s and its transition (1 s) runs over its last second, so
+ * progress p is at t = 2000·i + 1000 + 1000·p. Compared at p = 0.3, 0.5 and 0.8.
+ */
+export const TRANSITION_CASES: Array<{ name: string; kind: Transition; opts?: TransitionOptions }> = [
+  { name: 'fade (to black)', kind: 'fade' }, { name: 'fade_white', kind: 'fade_white' }, { name: 'dissolve', kind: 'dissolve' }, { name: 'dissolve, linear', kind: 'dissolve', opts: { easing: 'linear' } },
+  { name: 'slide (from the right)', kind: 'slide' }, { name: 'slide from the left', kind: 'slide', opts: { direction: 'right' } }, { name: 'slide_up', kind: 'slide_up' },
+  { name: 'wipe', kind: 'wipe' }, { name: 'wipe, from the right', kind: 'wipe', opts: { direction: 'left' } }, { name: 'wipe_down', kind: 'wipe_down' },
+  { name: 'zoom', kind: 'zoom' }, { name: 'zoom, intensity 2', kind: 'zoom', opts: { intensity: 2 } }, { name: 'zoom_out', kind: 'zoom_out' },
+  { name: 'blur', kind: 'blur' }, { name: 'flash', kind: 'flash' }, { name: 'cut', kind: 'cut' },
+]
+export function transitionsProject(): Composition {
+  let c: Composition = { ...emptyComposition('tr', 'Transiciones'), editedManually: true, fadeMs: 0, subtitles: false, duckMusic: false }
+  for (let i = 0; i <= TRANSITION_CASES.length; i++) c = addClip(c, i % 2 ? 'tex2' : 'tex', 2000)
+  TRANSITION_CASES.forEach((t, i) => { c = updateClip(c, c.clips[i].id, { transition: t.kind, transitionMs: 1000, ...(t.opts ? { transitionOpts: t.opts } : {}) }) })
+  return { ...c, exportSettings: { quality: 'normal', resolution: '720', destination: 'download' } }
+}
+export const TRANSITION_TIMES = TRANSITION_CASES.flatMap((_, i) => [0.3, 0.5, 0.8].map(p => Math.round(2000 * i + 1000 + 1000 * p)))

@@ -49,7 +49,7 @@ beforeEach(() => {
     { key: 'u1/p/kept.mp4', size: 100, at: ago(500) },          // referenced by a Library row
     { key: 'u1/p/lost.mp4', size: 700, at: ago(48) },           // nothing refers to it, old enough
     { key: 'u1/p/fresh.mp4', size: 50, at: ago(2) },            // nothing refers to it yet, but it is only 2 h old
-    { key: 'u1/versions/p/v1.json', size: 9, at: ago(900) },    // recovery point
+    { key: 'u1/p/versions/job1/170-auto.json', size: 9, at: ago(900) },    // recovery point (real layout: <owner>/<project>/versions/<job>/…)
     { key: 'u1/p/lost2.mp4', size: 300, at: ago(100) },
     { key: 'u2/p/other.mp4', size: 5, at: ago(900) },           // somebody else's
   ]
@@ -70,10 +70,10 @@ describe('R2 clean-up', () => {
     expect(log.filter(l => l.includes('list-type')).length).toBeGreaterThan(1)
   })
   it('deletes only what a fresh report lists: a referenced, recent or recovery-point key sent by the browser is skipped', async () => {
-    const r = await cleanupDelete(db(['r2:u1/p/kept.mp4']), 'u1', { keys: ['u1/p/lost.mp4', 'u1/p/kept.mp4', 'u1/p/fresh.mp4', 'u1/versions/p/v1.json', 'u2/p/other.mp4'], uploads: [{ key: 'u1/p/big.mp4', uploadId: 'old-upload-1' }, { key: 'u1/p/now.mp4', uploadId: 'new-upload-2' }] }, NOW)
+    const r = await cleanupDelete(db(['r2:u1/p/kept.mp4']), 'u1', { keys: ['u1/p/lost.mp4', 'u1/p/kept.mp4', 'u1/p/fresh.mp4', 'u1/p/versions/job1/170-auto.json', 'u2/p/other.mp4'], uploads: [{ key: 'u1/p/big.mp4', uploadId: 'old-upload-1' }, { key: 'u1/p/now.mp4', uploadId: 'new-upload-2' }] }, NOW)
     expect(r).toMatchObject({ deleted: 1, freedBytes: 700, aborted: 1 })
-    expect(r.skipped.sort()).toEqual(['u1/p/fresh.mp4', 'u1/p/kept.mp4', 'u1/p/now.mp4', 'u1/versions/p/v1.json', 'u2/p/other.mp4'].sort())
-    expect(objects.map(o => o.key).sort()).toEqual(['u1/p/fresh.mp4', 'u1/p/kept.mp4', 'u1/p/lost2.mp4', 'u1/versions/p/v1.json', 'u2/p/other.mp4'])
+    expect(r.skipped.sort()).toEqual(['u1/p/fresh.mp4', 'u1/p/kept.mp4', 'u1/p/now.mp4', 'u1/p/versions/job1/170-auto.json', 'u2/p/other.mp4'].sort())
+    expect(objects.map(o => o.key).sort()).toEqual(['u1/p/fresh.mp4', 'u1/p/kept.mp4', 'u1/p/lost2.mp4', 'u1/p/versions/job1/170-auto.json', 'u2/p/other.mp4'])
     expect(uploads.map(u => u.id)).toEqual(['new-upload-2'])
   })
   it('does nothing when the Library cannot be read (it would look like everything is unreferenced)', async () => {

@@ -55,8 +55,18 @@ const baseVisual = (): Omit<VisualOp, 'type' | 'slot' | 'assetId' | 'media' | 's
   zoom: 1, focusX: 0.5, focusY: 0.5, box: null, rotation: 0, alpha: 1, crop: null, filters: null, scale: 1, offsetX: 0, offsetY: 0, revealX: 1, revealY: 1, revealFrom: 'left', blur: 0, backdrop: false,
 })
 
-/** Transition length out of clip i (ms). */
-export const transitionMsOf = (c: Pick<Composition, 'clips' | 'fadeMs'>, i: number) => c.clips[i]?.transitionMs ?? c.fadeMs
+/**
+ * Transition length out of clip i (ms), as it is really played: the length asked for, but never longer than the clip that ends nor than the one
+ * that starts (the same rule the transition slider enforces). The stored value can exceed that after a clip is shortened, split or trimmed, when a
+ * transition is applied to every cut, copied, set by a command or built by a template; without this limit the picture jumped at the start of a
+ * clip shorter than its own transition. Picture, sound, preview and export all read it from here.
+ */
+export const transitionMsOf = (c: Pick<Composition, 'clips' | 'fadeMs'>, i: number) => {
+  const clip = c.clips[i]
+  if (!clip) return 0
+  const want = Math.max(0, clip.transitionMs ?? c.fadeMs)
+  return Math.min(want, clip.durationMs, c.clips[i + 1]?.durationMs ?? clip.durationMs)
+}
 
 /** Index of the main-track clip at `t`, or -1 when the main track has ended. */
 export function mainClipAt(c: Pick<Composition, 'clips'>, t: number, starts = clipStarts(c)) {

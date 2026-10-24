@@ -13,6 +13,7 @@ import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
 import { fastExport, FastExportUnsupported } from '@/lib/editor/fast-export'
 import { startExportGuard, type ExportGuard } from '@/lib/editor/export-guard'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
+import { browserExportAdvice } from '@/lib/editor/export-limits'
 import { Icon } from './studio-icon'
 
 /** Seconds since it was created (how long an export took). */
@@ -243,6 +244,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       <span className="small muted" aria-label="Estimación">{width}×{height} · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
     </div>}
     {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
+    {!previewOnly && plan.destination === 'download' && browserExportAdvice(plan.estimatedBytes).level === 'heavy' && <p className="warnBox small" role="status" aria-label="Aviso de memoria">{browserExportAdvice(plan.estimatedBytes).message}</p>}
     {!previewOnly && plan.destination === 'library' && !plan.fitsLibrary && <p className="warnBox small" role="alert">Este montaje no cabe en la Biblioteca ({Math.round(LIBRARY_MAX_BYTES / 1048576)} MB) ni con la calidad mínima. Elige «Descargar a mi equipo».</p>}
     {!previewOnly && plan.reduced && plan.fitsLibrary && <p className="warnBox small">Para caber en {Math.round(LIBRARY_MAX_BYTES / 1048576)} MB la calidad baja a {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 })} Mbit/s (pedías {(plan.wantedBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })}). Elige «Descargar a mi equipo» para conservarla.</p>}
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
