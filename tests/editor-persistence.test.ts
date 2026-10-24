@@ -10,7 +10,7 @@ export function everything(): Composition {
     clips: [
       { id: 'c1', sceneId: 's1', position: 1, narration: 'Hola', visualAssetId: 'img1', voiceAssetId: null, durationMs: 4000, motion: 'none', focusX: 0.3, focusY: 0.7, zoom: 1.4, trimInMs: 0, volume: 1, muted: false,
         transition: 'blur', transitionMs: 1200, transitionOpts: { intensity: 1.5, easing: 'linear' }, keyframes: [{ atMs: 0, zoom: 1 }, { atMs: 2000, zoom: 1.2, focusX: 0.4, easing: 'out' }, { atMs: 4000, rotation: 3, opacity: 0.5, easing: 'hold' }], text: { content: 'Uno', position: 'top', sizePct: 7, animation: 'pop', font: 'serif', color: '#ff0000', x: 0.4, y: 0.2, outAnimation: 'slide', outline: '#00ff00', outlineWidth: 14, shadow: true, background: '#000000', backgroundOpacity: 0.4, bold: false },
-        speed: 1, camera: { kind: 'pan_right', amount: 0.2 }, filters: { brightness: 1.2, contrast: 0.9, saturation: 0, blur: 0.5 }, crop: { left: 0.1, top: 0.05, right: 0, bottom: 0.2 }, rotation: 12, opacity: 0.8, groupId: 'g1',
+        speed: 1, camera: { kind: 'pan_right', amount: 0.2 }, filters: { brightness: 1.2, contrast: 0.9, saturation: 0, blur: 0.5 }, grade: { brightness: 1.31, contrast: 1.08, saturation: 1, warmth: -0.22, strength: 0.75, enabled: false, ref: 'clip 2' }, crop: { left: 0.1, top: 0.05, right: 0, bottom: 0.2 }, rotation: 12, opacity: 0.8, groupId: 'g1',
         cues: [{ startMs: 0, endMs: 1500, text: 'Hola' }] },
       { id: 'c2', sceneId: 's2', position: 2, narration: null, visualAssetId: 'vid1', voiceAssetId: null, durationMs: 3000, motion: 'none', focusX: 0.5, focusY: 0.5, zoom: 1, trimInMs: 2500, volume: 0.6, muted: true, transition: 'wipe', transitionOpts: { direction: 'up', easing: 'in' }, text: null, speed: 2, camera: null },
     ],

@@ -300,3 +300,20 @@ describe('instructions for transitions, animation and styles', async () => {
     expect(fl.ok && fl.composition.clips[0].transition).toBe('flash')
   })
 })
+
+describe('igualar imagen (grade)', async () => {
+  const { effectiveGrade, parseGrade } = await import('@/lib/editor/composition')
+  it('strength scales the correction; off or zero strength draws the original', () => {
+    expect(effectiveGrade({ brightness: 1.4, contrast: 1.2, saturation: 1, warmth: 0.5, strength: 0.5 })).toEqual({ brightness: 1.2, contrast: 1.1, saturation: 1, warmth: 0.25 })
+    expect(effectiveGrade({ brightness: 1.4, contrast: 1, saturation: 1, warmth: 0, strength: 1, enabled: false })).toBeNull()
+    expect(effectiveGrade({ brightness: 1.4, contrast: 1, saturation: 1, warmth: 0, strength: 0 })).toBeNull()
+    expect(parseGrade({ brightness: 9, warmth: -3 })).toMatchObject({ brightness: 3, warmth: -1, strength: 1 })
+  })
+  it('the viewer and the exporter receive the correction with each picture', () => {
+    const c = { ...emptyComposition('s', 't'), clips: [] } as Composition
+    const withClip = addClip(c, 'img1', 3000)
+    const g = { ...withClip, clips: withClip.clips.map(k => ({ ...k, grade: { brightness: 1.3, contrast: 1, saturation: 1, warmth: 0.2, strength: 1 } })) }
+    const op = frameAt(g, 1500, () => 'image').find((o): o is VisualOp => o.type === 'visual')!
+    expect(op.grade).toEqual({ brightness: 1.3, contrast: 1, saturation: 1, warmth: 0.2 })
+  })
+})

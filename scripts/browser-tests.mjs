@@ -2423,6 +2423,63 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 31. Igualar imagen: dos fotos con distinta luz; igualar con la primera y con la segunda como referencia, intensidad, antes/después,
+//     guardar y exportar (el vídeo exportado conserva la corrección).
+{
+  const server = serve(8831, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'match.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8831/editor/manual?job=job1')
+  await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
+  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' })
+  const lum = async t => { await bar.getByLabel('Ir a un tiempo').fill(t); await bar.getByLabel('Ir a un tiempo').press('Enter'); await page.waitForTimeout(700); return page.evaluate(() => { const c = document.querySelector('canvas.playerCanvas'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let s = 0, w = 0; for (let i = 0; i < d.length; i += 16) { s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; w += d[i] - d[i + 2] } const n = d.length / 16; return { y: Math.round(s / n), warm: Math.round(w / n) } }) }
+  for (let i = 0; i < 40 && (await lum('0:04.5')).y === 0; i++) await page.waitForTimeout(250)
+  const a0 = await lum('0:01.5'), b0 = await lum('0:04.5')
+  await clips.nth(0).click(); await clips.nth(1).click({ modifiers: ['Shift'] })
+  await page.locator('#ed-props').getByRole('button', { name: 'Igualar imagen' }).click()
+  const panel = page.locator('[data-section="match"]')
+  check('match: «Igualar imagen» from a multiple selection opens a small panel (reference, what, strength)', await panel.isVisible() && await panel.getByLabel('Referencia para igualar').isVisible() && await panel.getByLabel('Intensidad de la igualación', { exact: true }).isVisible())
+  await panel.getByRole('button', { name: 'Igualar selección' }).click()
+  await page.getByText(/Imagen igualada con el clip 1 como referencia/).waitFor({ timeout: 20000 })
+  const a1 = await lum('0:01.5'), b1 = await lum('0:04.5')
+  check('match: with the first (dark) photo as reference the bright one is brought down to it (light and warmth)', Math.abs(b1.y - a1.y) < Math.abs(b0.y - a0.y) * 0.35 && Math.abs(a1.y - a0.y) <= 2 && Math.abs(b1.warm - a1.warm) < Math.abs(b0.warm - a0.warm) * 0.6, { a0, b0, a1, b1 })
+  await panel.getByLabel('Referencia para igualar').selectOption('second')
+  await panel.getByRole('button', { name: 'Igualar selección' }).click()
+  await page.getByText(/Imagen igualada con el clip 2 como referencia/).waitFor({ timeout: 20000 })
+  const a2 = await lum('0:01.5'), b2 = await lum('0:04.5')
+  console.log('MATCH', JSON.stringify({ a0, b0, a1, b1, a2, b2 }))
+  const limitedNote = /hasta donde se puede sin quemar/.test(await page.locator('.notice').textContent())
+  check('match: with the second (bright) photo as reference the dark one is lifted towards it (all the way, or as far as it can without burning the highlights — and it says so)', Math.abs(b2.y - b0.y) <= 2 && (Math.abs(a2.y - b2.y) < Math.abs(b0.y - a0.y) * 0.35 || (limitedNote && a2.y > a0.y + (b0.y - a0.y) * 0.4)), { a0, b0, a2, b2, limitedNote })
+  await panel.getByRole('button', { name: 'Ver antes / después' }).click()
+  const before = await lum('0:01.5')
+  await panel.getByRole('button', { name: 'Viendo el antes' }).click()
+  check('match: «antes / después» shows the original in the viewer without touching the montage', Math.abs(before.y - a0.y) <= 2 && Math.abs((await lum('0:01.5')).y - a2.y) <= 2, { before, a0 })
+  await panel.getByLabel('Intensidad de la igualación', { exact: true }).fill('50')
+  const half = await lum('0:01.5')
+  check('match: the strength slider applies part of the correction (50 % lands in between)', half.y > a0.y + 3 && half.y < a2.y - 3, { a0, half, a2 })
+  await panel.getByLabel('Intensidad de la igualación', { exact: true }).fill('100')
+  await page.getByRole('button', { name: 'Guardar ahora' }).click(); await page.getByText('Montaje guardado en la nube.').waitFor()
+  const saved = await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.render_jobs[0].composition.clips)))
+  check('match: the correction is saved with the montage, separate from the filters', saved[0].grade?.brightness > 1.2 && saved[0].grade.strength === 1 && !saved[0].filters && !saved[1].grade, saved.map(k => [k.grade, k.filters]))
+  // Export (download to keep the test local) and compare with the viewer.
+  await openExport(page)
+  await page.getByLabel('Destino').selectOption('download')
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 90000 }), page.getByRole('button', { name: /Renderizar y descargar/ }).click()])
+  const buf = readFileSync(await dl.path())
+  const exp = await page.evaluate(async bytes => {
+    const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(new Blob([new Uint8Array(bytes)]))
+    await new Promise(r => (v.onloadeddata = r))
+    const c = document.createElement('canvas'); c.width = 320; c.height = 180; const g = c.getContext('2d'); const out = []
+    for (const t of [1.5, 4.5]) { v.currentTime = t; await new Promise(r => (v.onseeked = r)); g.drawImage(v, 0, 0, 320, 180); const d = g.getImageData(0, 0, 320, 180).data; let s = 0; for (let i = 0; i < d.length; i += 16) s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; out.push(Math.round(s / (d.length / 16))) }
+    return out
+  }, [...buf])
+  check('match: the exported video keeps the correction (same light as the viewer in both photos)', Math.abs(exp[0] - a2.y) <= 8 && Math.abs(exp[1] - b2.y) <= 8, { exp, viewer: [a2.y, b2.y] })
+  check('match: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

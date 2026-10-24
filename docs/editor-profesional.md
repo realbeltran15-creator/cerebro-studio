@@ -164,3 +164,16 @@ Prueba unitaria «ejercicio E» con las frases del propietario: «Pon una transi
 ## 8. Miniaturas de vídeo en la línea de tiempo
 
 Cada clip de vídeo (principal o superpuesto) muestra fotogramas reales de la parte del archivo que usa: tantos como caben con el zoom actual (uno en un clip corto), en orden, y cambian al recortar o cambiar la velocidad. Se piden solo los instantes necesarios (el navegador lee solo esas partes del archivo), se guardan en memoria mientras el editor está abierto y aparecen poco a poco en vídeos largos. Límite: la caché no se conserva al recargar la página (se vuelven a leer los fotogramas visibles).
+
+## 8. Igualar imagen (luminosidad y color)
+
+Selecciona dos o más fotos o vídeos (Mayús/Ctrl + clic) y pulsa «Igualar imagen» (en Propiedades, en el menú del clic derecho, en «Efectos» o buscando «igualar»).
+
+- **Referencia:** el primero seleccionado, el segundo o el promedio. «Todo el proyecto» iguala todos los clips principales.
+- **Qué igualar:** luminosidad, contraste, temperatura de color y, opcionalmente, saturación.
+- **Intensidad** con deslizador (0–100 %), **Activada**, **Ver antes / después** y **Restablecer**.
+- Se mide la imagen real (en vídeos, varios fotogramas del fragmento usado) dibujándola con el mismo código del visor y la exportación, y se corrige en varias pasadas hasta parecerse a la referencia. No quema las luces ni empasta las sombras: si no se puede llegar del todo, llega hasta donde es seguro y lo dice.
+- Es una corrección aparte de tus filtros (no destructiva), se guarda con el montaje y se ve igual en el visor y en el vídeo exportado.
+- **Límite honesto:** en un vídeo cuya luz cambia por dentro se iguala su media (no se corrige fotograma a fotograma, para no provocar parpadeos).
+
+Prueba de navegador 31: dos fotos con distinta luz, referencia primera y segunda, intensidad, antes/después, guardado y exportación.

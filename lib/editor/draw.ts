@@ -23,16 +23,37 @@ export function drawOps(ctx: CanvasRenderingContext2D, ops: Op[], w: number, h: 
   }
 }
 
-function filterString(op: VisualOp, h: number) {
-  const f = op.filters
+function filterString(op: Pick<VisualOp, 'filters' | 'grade' | 'blur'>, h: number) {
+  const f = op.filters, g = op.grade
   const parts: string[] = []
   if (f && f.brightness !== 1) parts.push(`brightness(${f.brightness})`)
   if (f && f.contrast !== 1) parts.push(`contrast(${f.contrast})`)
   if (f && f.saturation !== 1) parts.push(`saturate(${f.saturation})`)
+  // «Igualar imagen» goes after the owner's own filters (it was measured on the picture as they left it).
+  if (g && g.brightness !== 1) parts.push(`brightness(${round4(g.brightness)})`)
+  if (g && g.contrast !== 1) parts.push(`contrast(${round4(g.contrast)})`)
+  if (g && g.saturation !== 1) parts.push(`saturate(${round4(g.saturation)})`)
   const blur = (f?.blur ?? 0) + op.blur
   if (blur > 0) parts.push(`blur(${Math.round(blur * h / 100 * 10) / 10}px)`)
   return parts.length ? parts.join(' ') : 'none'
 }
+
+const round4 = (v: number) => Math.round(v * 1e4) / 1e4
+/**
+ * Colour temperature for «Igualar imagen»: a soft-light wash of warm orange or cool blue over the area just drawn
+ * (soft-light keeps black and white and moves the mid-tones, so it does not flatten the picture).
+ */
+export function drawWarmth(ctx: CanvasRenderingContext2D, warmth: number, x: number, y: number, w: number, h: number) {
+  if (!warmth) return
+  ctx.save()
+  ctx.filter = 'none'
+  ctx.globalCompositeOperation = 'soft-light'
+  ctx.globalAlpha *= Math.min(1, Math.abs(warmth))
+  ctx.fillStyle = warmth > 0 ? '#ff8a1e' : '#2a7bff'
+  ctx.fillRect(x, y, w, h)
+  ctx.restore()
+}
+export { filterString as visualFilterString }
 
 /** One picture layer: crop, fit (cover or a box), rotation, opacity, filters and the transition transforms. */
 export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: number, s: DrawSource | null) {
@@ -59,6 +80,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
     const dw = sw * scale, dh = sh * scale
     // focusX/focusY pick which part of a larger (or zoomed) source stays in frame (0 = left/top edge, 1 = right/bottom).
     ctx.drawImage(s.src, sx, sy, sw, sh, (w - dw) * op.focusX, (h - dh) * op.focusY, dw, dh)
+    if (op.grade?.warmth) drawWarmth(ctx, op.grade.warmth, Math.max(0, (w - dw) * op.focusX), Math.max(0, (h - dh) * op.focusY), Math.min(w, dw), Math.min(h, dh))
   } else if (op.box) {
     const bw = Math.max(1, op.box.scale * w), bh = bw * sh / sw
     ctx.translate(op.box.x * w, op.box.y * h)
@@ -69,6 +91,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
       const zw = bw * op.zoom, zh = bh * op.zoom
       ctx.drawImage(s.src, sx, sy, sw, sh, -bw / 2 + (bw - zw) * op.focusX, -bh / 2 + (bh - zh) * op.focusY, zw, zh)
     } else ctx.drawImage(s.src, sx, sy, sw, sh, -bw / 2, -bh / 2, bw, bh)
+    if (op.grade?.warmth) drawWarmth(ctx, op.grade.warmth, -bw / 2, -bh / 2, bw, bh)
   }
   ctx.restore()
 }

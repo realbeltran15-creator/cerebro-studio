@@ -30,6 +30,7 @@ import { effectiveCamera } from '@/lib/editor/motion'
 import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
+import { MatchPanel, withoutGrades } from '../../components/match-panel'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
 import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, SliderField, TransitionTools, VisualFields } from '../../components/editor-inspectors'
 import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
@@ -68,6 +69,8 @@ export default function ManualEditorPage() {
   const sliderBase = useRef<Composition | null>(null)
   // Export lives in its own panel (opened from the top bar) so nothing separates the viewer from the timeline.
   const [exportOpen, setExportOpen] = useState(false)
+  // «Igualar imagen»: show the viewer without the corrections (before / after).
+  const [compareBefore, setCompareBefore] = useState(false)
   const selectTransition = useCallback((clipId: string | null) => { setSelTrState(clipId); if (clipId) setSelState([]) }, [])
   const [copiedTransition, setCopiedTransition] = useState<Pick<Clip, 'transition' | 'transitionMs' | 'transitionOpts'> | null>(null)
   // Favourite transitions and animations, saved in the account (every montage, every device).
@@ -658,6 +661,7 @@ export default function ManualEditorPage() {
     { label: 'Pegar en el cabezal', hint: 'Ctrl+V', disabled: !clipboard.current, run: pasteHere },
     { label: 'Duplicar', hint: 'Ctrl+D', run: duplicateSel },
     'sep',
+    { label: 'Igualar imagen…', disabled: sel.filter(r => r.kind === 'clip' || r.kind === 'overlay').length < 2, run: () => ws.reveal({ tab: 'effects', section: 'match' }) },
     { label: 'Agrupar', hint: 'Ctrl+G', disabled: sel.length < 2, run: groupSel },
     { label: 'Desagrupar', hint: 'Ctrl+Mayús+G', run: ungroupSel },
     'sep',
@@ -686,6 +690,7 @@ export default function ManualEditorPage() {
     { label: 'Zoom de la línea de tiempo', words: 'zoom linea de tiempo escala', go: () => ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' }) },
     { label: 'Animación (fotogramas clave)', words: 'animacion fotogramas clave keyframes movimiento', go: () => (selClip ? ws.reveal({ section: 'clip-anim' }) : selOverlay ? ws.reveal({ section: 'layer-anim' }) : ws.reveal({ tab: 'effects' })) },
     { label: 'Filtros y color', words: 'filtro filtros color brillo contraste saturacion blanco y negro efectos', go: () => (selClip ? ws.reveal({ section: 'clip-color' }) : selOverlay ? ws.reveal({ section: 'layer-color' }) : ws.reveal({ tab: 'effects' })) },
+    { label: 'Igualar imagen (luminosidad y color)', words: 'igualar luminosidad brillo color temperatura exposicion', go: () => ws.reveal({ tab: 'effects', section: 'match' }) },
     { label: 'Efectos rápidos', words: 'efectos filtros movimientos presets', go: () => ws.reveal({ tab: 'effects' }) },
     { label: 'Exportar el vídeo', words: 'exportar render descargar mp4 webm resolucion', go: () => { setExportOpen(true); setTimeout(() => (document.querySelector('#ed-export select, #ed-export button') as HTMLElement | null)?.focus(), 50) } },
     { label: 'Materiales e importar archivos', words: 'materiales importar subir archivos biblioteca fotos videos', go: () => ws.reveal({ tab: 'materials' }) },
@@ -868,9 +873,13 @@ export default function ManualEditorPage() {
           </div>
           <p className="muted small">La transición se ve en el visor al momento, sin exportar. Cada clip puede tener su propia duración en sus propiedades.</p>
           </>,
-          effects: <EffectsTab selClips={sel.filter(r => r.kind === 'clip').map(r => comp.clips.find(k => k.id === r.id)).filter((k): k is Clip => !!k)}
+          effects: <><EffectsTab selClips={sel.filter(r => r.kind === 'clip').map(r => comp.clips.find(k => k.id === r.id)).filter((k): k is Clip => !!k)}
             selLayers={sel.filter(r => r.kind === 'overlay').map(r => (comp.overlays ?? []).find(o => o.id === r.id)).filter((o): o is NonNullable<typeof o> => !!o)}
-            presets={[...BUILTIN_ANIMATIONS, ...presets.animations]} apply={apply} onNotice={setNotice} onReveal={(id: string) => ws.reveal({ section: id })} />,
+            presets={[...BUILTIN_ANIMATIONS, ...presets.animations]} apply={apply} onNotice={setNotice} onReveal={(id: string) => ws.reveal({ section: id })} />
+            <Section id="match" title="Igualar imagen" defaultOpen={sel.filter(r => r.kind === 'clip' || r.kind === 'overlay').length >= 2}>
+              <MatchPanel comp={comp} sel={sel} apply={apply} resolveUrl={resolveUrl} typeOf={typeOf} onNotice={setNotice} onError={setError} compare={compareBefore} setCompare={setCompareBefore} />
+            </Section>
+          </>,
           texts: <>
             <div className="pageActions">
               <button type="button" className="small" onClick={addTextHere}>Añadir texto en el cabezal</button>
@@ -904,13 +913,14 @@ export default function ManualEditorPage() {
       </aside>
       {ws.layout.left && <Splitter label="Ancho del panel de herramientas" orientation="vertical" value={ws.layout.leftW} min={200} max={640} onChange={v => ws.set({ leftW: v })} />}
       <div className="editorViewer edViewer">
-        <EditorPlayerView composition={comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
+        <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
           overlay={<ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
         <Splitter label="Alto del visor" orientation="horizontal" value={ws.layout.viewerH} min={180} max={1400} onChange={v => ws.set({ viewerH: v })} />
       </div>
       {ws.layout.right && <Splitter label="Ancho del panel de propiedades" orientation="vertical" invert value={ws.layout.rightW} min={240} max={640} onChange={v => ws.set({ rightW: v })} />}
       <section id="ed-props" className="panel editorProps edProps" aria-label="Propiedades" hidden={!ws.layout.right}>
         <h3>{selTrClip ? `Transición · clip ${cutIndex(selTrClip.id) + 1} → ${cutIndex(selTrClip.id) + 2}` : selClip ? `Clip ${comp.clips.findIndex(c => c.id === selClip.id) + 1} · ${typeOf(selClip.visualAssetId) === 'video' ? 'vídeo' : selClip.visualAssetId ? 'foto' : 'sin visual'}` : selAudio ? `Audio · ${({ music: 'música', voice: 'voz', sfx: 'efecto' } as const)[selAudio.kind]}` : selText ? 'Texto' : selOverlay ? `Capa · ${typeOf(selOverlay.assetId) === 'video' ? 'vídeo' : 'foto'}` : 'Proyecto'}{sel.length > 1 ? <span className="muted small"> · {sel.length} seleccionados</span> : null}</h3>
+        {sel.filter(r => r.kind === 'clip' || r.kind === 'overlay').length >= 2 && <div className="pageActions"><button type="button" className="small" onClick={() => ws.reveal({ tab: 'effects', section: 'match' })}>Igualar imagen</button></div>}
         {selection && isLocked(comp, selection) && <p className="warnBox small" role="status">Este elemento está en una pista bloqueada: desbloquéala (🔒) para cambiarlo.</p>}
         <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {selTrClip && <Section id="tr-basic" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[selTrClip.transition ?? 'fade']}</span>}>

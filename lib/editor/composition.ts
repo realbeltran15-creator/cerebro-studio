@@ -71,6 +71,11 @@ export const FILTER_PRESETS: Record<string, { label: string; f: Filters }> = {
   dramatic: { label: 'Dramático', f: { brightness: 0.92, contrast: 1.35, saturation: 0.9, blur: 0 } },
   dream: { label: 'Sueño', f: { brightness: 1.1, contrast: 0.95, saturation: 1.1, blur: 0.4 } },
 }
+/**
+ * Image matching («Igualar imagen»): a correction computed by measuring the picture against a reference, kept apart from the owner's own
+ * filters (non-destructive) and applied at `strength` (0–1). `warmth` > 0 warms, < 0 cools. `enabled: false` keeps it but shows the original.
+ */
+export type Grade = { brightness: number; contrast: number; saturation: number; warmth: number; strength: number; enabled?: boolean; ref?: string | null }
 export type Crop = { left: number; top: number; right: number; bottom: number }
 /** Position of an overlay: centre (fractions of the frame), width as a fraction of the frame width, rotation in degrees, opacity 0..1. */
 export type Transform = { x: number; y: number; scale: number; rotation: number; opacity: number }
@@ -93,6 +98,8 @@ export type OverlayClip = {
   keyframes?: Keyframe[]
   crop?: Crop | null
   filters?: Filters | null
+  /** «Igualar imagen» correction. */
+  grade?: Grade | null
   /** Ken Burns style movement inside its box. */
   camera?: CameraMove | null
   fadeInMs?: number; fadeOutMs?: number
@@ -136,6 +143,8 @@ export type Clip = {
   camera?: CameraMove | null
   /** Picture adjustments (brightness/contrast/saturation 1 = unchanged; blur in % of the frame height). */
   filters?: Filters | null
+  /** «Igualar imagen» correction. */
+  grade?: Grade | null
   /** Part of the source removed at each edge (fractions). */
   crop?: Crop | null
   /** Rotation in degrees and opacity 0..1 of the picture. */
@@ -400,6 +409,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       speed: clamp(c.speed, 0.25, 4, 1),
       camera: parseCamera(c.camera),
       ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
+      ...(parseGrade(c.grade) ? { grade: parseGrade(c.grade) } : {}),
       ...(Array.isArray(c.keyframes) && c.keyframes.length ? { keyframes: parseClipKeyframes(c.keyframes, clampMs(Number(c.durationMs) || 5000)) } : {}),
       ...(c.crop ? { crop: parseCrop(c.crop) } : {}),
       ...(Number(c.rotation) ? { rotation: clamp(c.rotation, -360, 360, 0) } : {}),
@@ -450,6 +460,19 @@ function parseTransitionOpts(o: Partial<TransitionOptions>): TransitionOptions {
     ...(o.intensity !== undefined && Number.isFinite(Number(o.intensity)) ? { intensity: clamp(o.intensity, 0.1, 3, 1) } : {}),
     ...(o.easing === 'smooth' || o.easing === 'linear' || o.easing === 'in' || o.easing === 'out' ? { easing: o.easing } : {}),
   }
+}
+export function parseGrade(g: unknown): Grade | null {
+  if (!g || typeof g !== 'object') return null
+  const v = g as Partial<Grade>
+  const out: Grade = { brightness: clamp(v.brightness, 0.3, 3, 1), contrast: clamp(v.contrast, 0.5, 2, 1), saturation: clamp(v.saturation, 0.5, 2, 1), warmth: clamp(v.warmth, -1, 1, 0), strength: clamp(v.strength, 0, 1, 1), ...(v.enabled === false ? { enabled: false } : {}), ...(typeof v.ref === 'string' ? { ref: v.ref.slice(0, 80) } : {}) }
+  return out
+}
+/** The correction actually applied (strength and on/off taken into account), or null when it changes nothing. */
+export function effectiveGrade(g: Grade | null | undefined): { brightness: number; contrast: number; saturation: number; warmth: number } | null {
+  if (!g || g.enabled === false || g.strength <= 0) return null
+  const k = g.strength
+  const e = { brightness: 1 + (g.brightness - 1) * k, contrast: 1 + (g.contrast - 1) * k, saturation: 1 + (g.saturation - 1) * k, warmth: g.warmth * k }
+  return Math.abs(e.brightness - 1) < 1e-3 && Math.abs(e.contrast - 1) < 1e-3 && Math.abs(e.saturation - 1) < 1e-3 && Math.abs(e.warmth) < 1e-3 ? null : e
 }
 function parseFilters(f: unknown): Filters | null {
   if (!f || typeof f !== 'object') return null
@@ -528,6 +551,7 @@ function parseLayers(v: Partial<Composition>): Pick<Composition, 'overlays' | 't
         ...(kf ? { keyframes: kf } : {}),
         ...(o.crop ? { crop: parseCrop(o.crop) } : {}),
         ...(o.filters ? { filters: parseFilters(o.filters) } : {}),
+        ...(parseGrade(o.grade) ? { grade: parseGrade(o.grade) } : {}),
         ...(o.camera ? { camera: parseCamera(o.camera) } : {}),
         ...(Number(o.fadeInMs) > 0 ? { fadeInMs: clamp(o.fadeInMs, 0, 10_000, 0) } : {}),
         ...(Number(o.fadeOutMs) > 0 ? { fadeOutMs: clamp(o.fadeOutMs, 0, 10_000, 0) } : {}),
