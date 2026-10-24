@@ -121,7 +121,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       const clock = stopwatch()
       if (record && (exp.mode ?? 'fast') === 'fast') {
         try {
-          setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real).')
+          setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real). Mantén esta pestaña a la vista: en segundo plano el navegador la frena.')
           result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), signal: controller.signal, onProgress: (elapsed, t) => setProgress({ elapsed, total: t }) })
           renderer = 'browser-fast'
           const secs = clock()
