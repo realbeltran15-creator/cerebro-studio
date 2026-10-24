@@ -98,6 +98,14 @@ export async function renderProject(o: RenderOptions) {
     probes.set(assetId, p); return p
   }
 
+  // A transition lets a clip play on past its end (and the next one start before its entry) when its file has material there: the length of
+  // every video file is read here, whatever the montage stored, so the export and the preview agree.
+  for (const k of c.clips) {
+    if (!k.visualAssetId || kindOf(k.visualAssetId) !== 'video') continue
+    const d = (await probe(k.visualAssetId).catch(() => null))?.durationSec ?? 0
+    if (d > 0) k.sourceDurationMs = Math.round(d * 1000)
+  }
+
   // ---- Plan: segments and fingerprints.
   const bounds = new Set<number>([f0, f1])
   for (const s of starts) { const f = Math.ceil(s / frameMs); if (f > f0 && f < f1) bounds.add(f) }
