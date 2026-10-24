@@ -39,9 +39,9 @@ export async function signedUrl(assetId: string) {
   return json.url
 }
 
-/** Every asset a composition uses: visuals, clip voices, music and audio-track clips. */
+/** Every asset a composition uses: visuals, clip voices, music, audio-track clips and overlay layers. */
 export function compositionAssetIds(c: Composition) {
-  return [...new Set([...c.clips.flatMap(k => [k.visualAssetId, k.voiceAssetId]), c.musicAssetId, ...(c.audioClips ?? []).map(a => a.assetId)].filter((x): x is string => Boolean(x)))]
+  return [...new Set([...c.clips.flatMap(k => [k.visualAssetId, k.voiceAssetId]), c.musicAssetId, ...(c.audioClips ?? []).map(a => a.assetId), ...(c.overlays ?? []).map(o => o.assetId)].filter((x): x is string => Boolean(x)))]
 }
 
 const kindOf = (type: string): MediaSource['kind'] => (type === 'video' ? 'video' : visualTypes.includes(type) ? 'image' : 'audio')

@@ -205,6 +205,30 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo convertir el vídeo.'); setStatus('') } finally { setConverting(null) }
   }
 
+  /** Offline package: the montage + signed links to its materials, rendered on this computer with FFmpeg (no browser, no tab to keep open). */
+  async function preparePackage() {
+    if (busyRef.current) return
+    busyRef.current = true
+    setMode('loading'); setError(''); setStatus('Guardando el montaje…')
+    try {
+      await beforeRender?.()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('La sesión ha caducado.')
+      const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user.id, project_id: projectId, output_format: composition.format, status: 'queued', composition }).select('id').single()
+      if (e) throw new Error(e.message)
+      setStatus('Preparando los enlaces a tus materiales…')
+      const r = await fetch('/api/render/ticket', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: (data as { id: string }).id }) })
+      const j = await r.json().catch(() => ({})) as { error?: string }
+      if (!r.ok) throw new Error(j.error ?? 'No se pudo preparar el paquete.')
+      downloadText('paquete-render.json', JSON.stringify(j), 'application/json')
+      setStatus('Paquete descargado (válido 4 h). En tu PC: node scripts/render.mjs ticket paquete-render.json --out video.mp4 — luego súbelo a la Biblioteca.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo preparar el paquete.'); setStatus('')
+    } finally {
+      busyRef.current = false; setMode('idle')
+    }
+  }
+
   return <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
     <div className="cardHead" style={{ marginBottom: 0 }}>
       <h3>Vista previa y exportación</h3>
@@ -231,6 +255,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     <div className="pageActions">
       {mode === 'idle' ? <>
         {!exportOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>}
+        {!previewOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} title="Para vídeos largos: se renderiza en tu PC con FFmpeg, sin navegador abierto y sin coste" onClick={() => void preparePackage()}><Icon name="video" size={16} />Paquete para renderizar en mi PC</button>}
         {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || (plan.destination === 'library' && !plan.fitsLibrary)} onClick={() => void run(true)}><Icon name="video" size={16} />{plan.destination === 'download' ? 'Renderizar y descargar' : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}

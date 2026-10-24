@@ -3,6 +3,7 @@ import { buildImagePrompt, imagePresets, presetFrom, sizeForFormat } from '@/lib
 import { compositionAssetIds } from '@/lib/editor/client'
 import { emptyComposition } from '@/lib/editor/composition'
 import { toManual } from '@/lib/editor/timeline'
+import { addOverlay, addTrack } from '@/lib/editor/tracks'
 
 describe('image prompt pipeline', () => {
   it('offers the documentary presets requested for YouTube stories', () => {
@@ -44,5 +45,11 @@ describe('render inputs include audio tracks', () => {
     const m = toManual(c)
     m.audioClips!.push({ id: 's', assetId: 'sfx1', kind: 'sfx', linkedClipId: null, offsetMs: 0, startMs: 500, trimInMs: 0, durationMs: 800, volume: 1, muted: false })
     expect(compositionAssetIds(m).sort()).toEqual(['img', 'm', 'sfx1', 'v1'])
+  })
+  it('counts the pictures and videos used as overlay layers (the Library must warn before they are deleted)', () => {
+    let m = toManual(emptyComposition('sb', 't'))
+    const tr = addTrack(m, 'overlay'); m = tr.composition
+    m = addOverlay(m, { assetId: 'logo', startMs: 0, durationMs: 2000, trackId: tr.trackId }).composition
+    expect(compositionAssetIds(m)).toContain('logo')
   })
 })

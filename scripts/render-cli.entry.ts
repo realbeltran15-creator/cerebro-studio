@@ -1,6 +1,7 @@
 /**
  * Offline renderer (no browser). Usage:
  *   node scripts/render.mjs render project.json --assets assets.json --out video.mp4 [--work DIR] [--fps 30] [--from SEC --to SEC] [--crf 20]
+ *   node scripts/render.mjs ticket paquete-render.json --out video.mp4 [--work DIR]   (package downloaded from the editor: materials are fetched, then rendered)
  *   node scripts/render.mjs lofi --music song.mp3 --scenes a.mp4,b.jpg --minutes 90 --out lofi.mp4 [--clip 30] [--res 1080] [--work DIR]
  * assets.json: { "<assetId>": { "path": "/file", "kind": "video" | "image" | "audio" } }. project.json: a Composition (or a render_jobs row).
  * Run it again with the same --work folder to resume or to reuse segments.
@@ -10,6 +11,8 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parseComposition } from '../lib/editor/composition'
 import { buildLoopMontage } from '../lib/editor/loop-montage'
+import { readTicket } from '../lib/render/ticket'
+import { downloadTicketAssets } from '../lib/render/download'
 import { renderProject, type AssetFile, type RenderEvent } from '../lib/render/engine'
 
 const args = process.argv.slice(2)
@@ -44,6 +47,13 @@ async function main() {
     const assets = JSON.parse(await fs.readFile(need('assets'), 'utf8')) as Record<string, AssetFile>
     const from = opt('from'), to = opt('to')
     const r = await renderProject({ composition, assets, output: out, workDir: path.resolve(opt('work') ?? `${out}.work`), fps: Number(opt('fps') ?? 30), crf: Number(opt('crf') ?? 20), fontFiles: (opt('font') ?? '').split(',').filter(Boolean), onEvent, ...(from || to ? { rangeMs: { from: Number(from ?? 0) * 1000, to: Number(to ?? 1e9) * 1000 } } : {}) })
+    console.log(JSON.stringify(r))
+  } else if (cmd === 'ticket') {
+    const ticket = readTicket(JSON.parse(await fs.readFile(args[1], 'utf8')))
+    const work = path.resolve(opt('work') ?? `${out}.work`)
+    let shown = 0
+    const assets = await downloadTicketAssets(ticket, path.join(work, 'materiales'), { onProgress: p => { if (Date.now() - shown > 3000) { shown = Date.now(); console.error(`Descargando material ${p.index}/${p.count}: ${(p.done / 1048576).toFixed(0)} MB${p.total ? ` de ${(p.total / 1048576).toFixed(0)}` : ''}`) } } })
+    const r = await renderProject({ composition: ticket.composition, assets, output: out, workDir: work, fps: Number(opt('fps') ?? 30), crf: Number(opt('crf') ?? 20), fontFiles: (opt('font') ?? '').split(',').filter(Boolean), onEvent })
     console.log(JSON.stringify(r))
   } else if (cmd === 'lofi') {
     const work = path.resolve(opt('work') ?? `${out}.work`)
