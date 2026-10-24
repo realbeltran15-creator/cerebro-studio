@@ -2,6 +2,8 @@
 
 import { useRef, useState } from 'react'
 import { CAMERA_MOVES, FILTER_PRESETS, NO_FILTERS, TRANSITIONS, type CameraKind, type Clip, type Composition, type Crop, type Filters, type KeyEasing, type OverlayClip, type TransitionOptions } from '@/lib/editor/composition'
+import { ALIGNS, alignOf } from '@/lib/editor/transition-window'
+import { BLENDS } from '@/lib/editor/motion'
 import { DIRECTIONS, EASINGS, HAS_DIRECTION, HAS_INTENSITY, type TransitionDirection, type TransitionEasing } from '@/lib/editor/motion'
 import type { AnimationPreset, TransitionPreset } from '@/lib/editor/presets'
 import { assetLabel, type EditorAsset } from '@/lib/editor/client'
@@ -139,6 +141,7 @@ export function TransitionTools({ clip, defaultMs, onChange, canPaste, onCopy, o
   const setO = (p: Partial<TransitionOptions>) => onChange({ transitionOpts: { ...o, ...p } })
   return <Fold bare={bare} open={!!clip.transitionOpts || presets.length > 0} summary={<><b>Ajustes de la transición</b> <span className="muted">({TRANSITIONS[kind]}, {clip.transitionMs ?? defaultMs} ms)</span></>}>
     <div className="field-row" style={{ marginTop: 6 }}>
+      {BLENDS.has(kind) && <label>Punto de alineación<select aria-label="Alineación de la transición respecto al corte" value={alignOf(clip)} onChange={e => setO({ align: e.target.value as 'before' | 'center' | 'after' })}>{(Object.keys(ALIGNS) as Array<keyof typeof ALIGNS>).map(a => <option key={a} value={a}>{ALIGNS[a]}</option>)}</select></label>}
       {HAS_DIRECTION.has(kind) && <label>Dirección<select aria-label="Dirección de la transición" value={o.direction ?? (kind === 'slide_up' ? 'up' : kind === 'wipe_down' ? 'down' : kind === 'wipe' ? 'right' : 'left')} onChange={e => setO({ direction: e.target.value as TransitionDirection })}>{(Object.keys(DIRECTIONS) as TransitionDirection[]).map(d => <option key={d} value={d}>{DIRECTIONS[d]}</option>)}</select></label>}
       {HAS_INTENSITY.has(kind) && <SliderField label="Intensidad" ariaLabel="Intensidad de la transición" value={Math.round((o.intensity ?? 1) * 100)} min={20} max={300} step={5} unit="%" decimals={0}
         onChange={v => setO({ intensity: v / 100 })} drag={live && { begin: live.begin, live: v => live.change({ transitionOpts: { ...o, intensity: v / 100 } }), end: live.end }} />}

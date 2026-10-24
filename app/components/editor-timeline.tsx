@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { frameAt, nearestFrame, onFrames, requestFrames, tileTimes } from '@/lib/editor/video-frames'
+import { ALIGNS, alignOf, transitionHandles } from '@/lib/editor/transition-window'
+import { BLENDS } from '@/lib/editor/motion'
 import { audioStartMs, audioTrackId, clipStarts, compositionCues, envelopeBreakpoints, projectDurationMs, textTrackId, tracksOf, TRANSITIONS, type Composition, type TrackMeta, type Transition } from '@/lib/editor/composition'
 import { expandGroups, isLocked, moveItems, moveToTrack, setItemEnd, snap, snapBlock, snapPoints, trimItemStart, type ItemRef } from '@/lib/editor/tracks'
 import { updateClip } from '@/lib/editor/timeline'
@@ -220,7 +222,9 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           if (i < windowed.from || i >= windowed.to) return null
           const ref = { kind: 'clip' as const, id: clip.id }
           const thumb = p.thumbOf(clip.visualAssetId)
-          return <div key={clip.id} data-ref={`clip:${clip.id}`} draggable={!t.locked}
+          const trSel = p.selectedTransition ? comp.clips.findIndex(k => k.id === p.selectedTransition) : -1
+          const inSelectedCut = trSel >= 0 && (i === trSel || i === trSel + 1)
+          return <Fragment key={clip.id}><div data-ref={`clip:${clip.id}`} draggable={!t.locked}
             onDragStart={e => { if (drag.current || t.locked) { e.preventDefault(); return } dragMain.current = clip.id }} onDragOver={e => e.preventDefault()}
             onDrop={e => {
               if (e.dataTransfer.types.includes(ASSET_MIME)) return
@@ -239,14 +243,15 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
               if (dragMain.current && dragMain.current !== clip.id) p.onReorderMain(dragMain.current, i); dragMain.current = null
             }}
             onClick={e => select(e, ref)}
-            style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumb ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumb}) center / cover` : kindColor[p.typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: t.locked ? 'not-allowed' : 'grab', outline: isSel(ref) ? '2px solid #fff' : 'none', color: '#fff', fontSize: 11 }}
+            style={{ width: clip.durationMs / 1000 * pxPerSec, minWidth: 12, position: 'relative', flex: 'none', background: thumb ? `linear-gradient(rgba(0,0,0,0.45), rgba(0,0,0,0.45)), url(${thumb}) center / cover` : kindColor[p.typeOf(clip.visualAssetId)] ?? '#555', borderRadius: 6, marginRight: 2, padding: '4px 6px', overflow: 'hidden', cursor: t.locked ? 'not-allowed' : 'grab', outline: isSel(ref) ? '2px solid #fff' : inSelectedCut ? '2px dashed #b49cff' : 'none', color: '#fff', fontSize: 11 }}
             title={`${p.labelOf(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
             {clip.visualAssetId && p.typeOf(clip.visualAssetId) === 'video' && p.resolveUrl && <Filmstrip assetId={clip.visualAssetId} trimInMs={clip.trimInMs ?? 0} durationMs={clip.durationMs} speed={clip.speed ?? 1} width={clip.durationMs / 1000 * pxPerSec} height={h} resolveUrl={p.resolveUrl} />}
             <span style={{ position: 'relative', textShadow: '0 1px 2px #000' }}><b>{i + 1}</b> {p.labelOf(clip.visualAssetId)}{groupMark(clip.groupId)}<br />{secs(clip.durationMs)} s{clip.speed && clip.speed !== 1 ? ` · ${clip.speed}×` : ''}{clip.transition && clip.transition !== 'fade' ? ` · ${TRANSITIONS[clip.transition].toLowerCase()}` : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}{clip.filters ? ' · fx' : ''}</span>
-            {i < comp.clips.length - 1 && (clip.transition ?? 'fade') !== 'cut' && <TransitionChip comp={comp} clip={clip} index={i} pxPerSec={pxPerSec} locked={!!t.locked}
-              selected={p.selectedTransition === clip.id} onSelect={() => p.onSelectTransition?.(clip.id)} begin={p.begin} live={p.live} end={p.end} />}
             {!t.locked && <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); p.begin(); drag.current = { mode: 'resizeMain', id: clip.id, startX: e.clientX, base: comp, clipStart: starts[i], dur: clip.durationMs } }} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />}
           </div>
+          {i < comp.clips.length - 1 && (clip.transition ?? 'fade') !== 'cut' && <TransitionChip comp={comp} clip={clip} index={i} pxPerSec={pxPerSec} locked={!!t.locked} kindOf={id => p.typeOf(id) as 'video' | 'image' | 'audio' | null}
+            selected={p.selectedTransition === clip.id} onSelect={() => p.onSelectTransition?.(clip.id)} begin={p.begin} live={p.live} end={p.end} />}
+          </Fragment>
         })}
         {windowed.after > 0 && <div aria-hidden style={{ width: windowed.after, flex: 'none' }} />}
       </div>
@@ -347,28 +352,50 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   </div>
 }
 
-/** A transition on the timeline: a band as long as the transition at the end of the outgoing clip. Click = select; drag = move it to
- * another cut; drag its left edge = longer or shorter (one undo step). */
-function TransitionChip({ comp, clip, index: i, pxPerSec, locked, selected, onSelect, begin, live, end }: {
+/**
+ * A transition on the timeline: it belongs to the cut between two clips, so its icon sits exactly on the join (centred, over neither clip),
+ * and the band around it shows the stretch of time the two clips overlap (before / centred / after the cut, as aligned).
+ * Click the icon = select; drag the icon = move it to another cut; drag a band edge = longer or shorter (one undo step).
+ */
+function TransitionChip({ comp, clip, index: i, pxPerSec, locked, selected, onSelect, begin, live, end, kindOf }: {
   comp: Composition; clip: Composition['clips'][number]; index: number; pxPerSec: number; locked: boolean; selected: boolean
   onSelect: () => void; begin: () => void; live: (next: Composition) => void; end: () => void
+  kindOf: (assetId: string) => 'video' | 'image' | 'audio' | null
 }) {
-  const drag = useRef<{ x: number; ms: number; max: number; base: Composition } | null>(null)
-  const ms = clip.transitionMs ?? comp.fadeMs, kind = clip.transition ?? 'fade'
-  const w = Math.max(18, Math.min(clip.durationMs, ms) / 1000 * pxPerSec)
-  return <button type="button" data-transition={clip.id} className={selected ? 'tlTransition on' : 'tlTransition'} draggable={!locked} aria-pressed={selected}
-    aria-label={`Transición ${TRANSITIONS[kind]} entre el clip ${i + 1} y el ${i + 2} (${secs(ms)} s)`} title={`${TRANSITIONS[kind]} · ${secs(ms)} s — clic para editarla, arrástrala a otro corte, Supr para quitarla`}
-    style={{ position: 'absolute', right: 8, bottom: 3, width: w, height: 18, maxWidth: 'calc(100% - 12px)', padding: '0 4px', overflow: 'hidden' }}
-    onClick={e => { e.stopPropagation(); onSelect() }}
-    onPointerDown={e => e.stopPropagation()}
-    onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData(TRANSITION_MIME, kind); e.dataTransfer.setData(MOVE_TRANSITION_MIME, clip.id); e.dataTransfer.effectAllowed = 'move' }}>
-    {!locked && <span className="tlTrEdge" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize' }} role="separator" aria-orientation="vertical" aria-label="Alargar o acortar la transición" title="Arrastra para alargarla o acortarla"
-      onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onDragStart={e => { e.preventDefault(); e.stopPropagation() }}
-      onPointerDown={e => { e.stopPropagation(); e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); (e.target as HTMLElement).setPointerCapture(e.pointerId); begin(); drag.current = { x: e.clientX, ms, max: Math.min(3000, clip.durationMs), base: comp } }}
-      onPointerMove={e => { const d = drag.current; if (!d) return; if (e.buttons === 0) { drag.current = null; end(); return } const next = Math.round(Math.min(d.max, Math.max(100, d.ms + (d.x - e.clientX) / pxPerSec * 1000)) / 50) * 50; live({ ...d.base, clips: d.base.clips.map(k => (k.id === clip.id ? { ...k, transitionMs: next } : k)) }) }}
-      onPointerUp={() => { if (drag.current) { drag.current = null; end() } }} />}
-    <span aria-hidden>{TRANSITION_ICONS[kind]}</span>
-  </button>
+  const drag = useRef<{ x: number; ms: number; max: number; base: Composition; dir: 1 | -1; gain: number } | null>(null)
+  const kind = clip.transition ?? 'fade'
+  const blends = BLENDS.has(kind)
+  const w = transitionHandles(comp, i, kindOf)
+  const align = alignOf(clip)
+  const ms = clip.transitionMs ?? comp.fadeMs
+  // Dips (fade to black/white) have no overlap: they only show the icon.
+  const pre = blends ? w.pre : 0, post = blends ? w.post : 0
+  const missing = blends && (w.missingA > 0 || w.missingB > 0)
+  const next = comp.clips[i + 1]
+  const names = `clip ${i + 1} y el ${i + 2}`
+  const edge = (side: 'left' | 'right') => !locked && blends && (align === 'center' || (side === 'left' ? align === 'before' : align === 'after')) &&
+    <span data-tr-edge={side} className="tlTrEdge" role="separator" aria-orientation="vertical" aria-label={`Alargar o acortar la transición (${side === 'left' ? 'borde izquierdo' : 'borde derecho'})`} title="Arrastra para alargarla o acortarla"
+      style={{ position: 'absolute', top: 0, bottom: 0, [side]: -3, width: 8, cursor: 'ew-resize', pointerEvents: 'auto', background: selected ? '#b49cff' : 'rgba(180,156,255,.6)', borderRadius: 3 }}
+      onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onDragStart={e => { e.preventDefault(); e.stopPropagation() }} onClick={e => e.stopPropagation()}
+      onPointerDown={e => { e.stopPropagation(); e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); (e.target as HTMLElement).setPointerCapture(e.pointerId); begin(); drag.current = { x: e.clientX, ms, max: Math.min(3000, clip.durationMs, next?.durationMs ?? clip.durationMs), base: comp, dir: side === 'left' ? -1 : 1, gain: align === 'center' ? 2 : 1 } }}
+      onPointerMove={e => { const d = drag.current; if (!d) return; if (e.buttons === 0) { drag.current = null; end(); return } const v = Math.round(Math.min(d.max, Math.max(100, d.ms + d.dir * d.gain * (e.clientX - d.x) / pxPerSec * 1000)) / 50) * 50; live({ ...d.base, clips: d.base.clips.map(k => (k.id === clip.id ? { ...k, transitionMs: v } : k)) }) }}
+      onPointerUp={() => { if (drag.current) { drag.current = null; end() } }} />
+  // Zero-width anchor on the cut (the gap between the two clips).
+  return <div data-cut={clip.id} style={{ position: 'relative', width: 0, flex: 'none', overflow: 'visible', zIndex: selected ? 5 : 3, pointerEvents: 'none' }}>
+    {(pre > 0 || post > 0) && <div data-transition-band={clip.id} aria-hidden style={{ position: 'absolute', top: 2, bottom: 2, left: -1 - pre / 1000 * pxPerSec, width: Math.max(4, (pre + post) / 1000 * pxPerSec), borderRadius: 6, background: selected ? 'rgba(180,156,255,.38)' : 'rgba(180,156,255,.22)', border: `1px ${missing ? 'dashed #ffb000' : 'solid rgba(180,156,255,.8)'}`, pointerEvents: 'none' }}>
+      {edge('left')}{edge('right')}
+    </div>}
+    <button type="button" data-transition={clip.id} className={selected ? 'tlTransition on' : 'tlTransition'} draggable={!locked} aria-pressed={selected}
+      aria-label={`Transición ${TRANSITIONS[kind]} entre el ${names} (${secs(ms)} s)${missing ? ' — falta material' : ''}`}
+      title={`${TRANSITIONS[kind]} · ${secs(ms)} s · entre el clip ${i + 1} y el clip ${i + 2}${blends ? ` · ${ALIGNS[align].toLowerCase()}` : ''}${missing ? ' · ⚠ falta material de vídeo: se mantiene un fotograma' : ''} — clic para editarla, arrástrala a otro corte, Supr para quitarla`}
+      style={{ position: 'absolute', left: -12, top: '50%', marginTop: -12, width: 24, height: 24, borderRadius: 12, padding: 0, pointerEvents: 'auto', overflow: 'visible', fontSize: 13 }}
+      onClick={e => { e.stopPropagation(); onSelect() }}
+      onPointerDown={e => e.stopPropagation()}
+      onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData(TRANSITION_MIME, kind); e.dataTransfer.setData(MOVE_TRANSITION_MIME, clip.id); e.dataTransfer.effectAllowed = 'move' }}>
+      <span aria-hidden>{TRANSITION_ICONS[kind]}</span>
+      {missing && <span aria-hidden style={{ position: 'absolute', right: -4, top: -6, fontSize: 10, color: '#ffb000' }}>⚠</span>}
+    </button>
+  </div>
 }
 
 /**

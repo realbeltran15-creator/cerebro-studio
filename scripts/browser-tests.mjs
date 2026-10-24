@@ -86,7 +86,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   page.on('dialog', d => d.accept())
-  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
   await page.goto('http://127.0.0.1:8792/editor/manual?job=job1')
   await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
@@ -128,7 +128,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
     src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
     track.firstElementChild.dispatchEvent(new DragEvent('dragover', at)); track.firstElementChild.dispatchEvent(new DragEvent('drop', at))
   })
-  await page.waitForFunction(n => document.querySelectorAll('[aria-label="Pista de vídeo"] > div').length === n + 1, nBefore)
+  await page.waitForFunction(n => document.querySelectorAll('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').length === n + 1, nBefore)
   check('manual: a material dragged from the panel is inserted where it is dropped', (await clips.first().getAttribute('title')).startsWith('Foto roja'), await clips.first().getAttribute('title'))
   await page.getByRole('button', { name: 'Añadir texto' }).click()
   await page.locator('[aria-label="Pista de Texto"] > div').first().click()
@@ -175,7 +175,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
   page.on('dialog', d => d.accept())
-  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
   await page.goto('http://127.0.0.1:8810/editor/manual?job=job1')
   await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
@@ -259,12 +259,12 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   const lerrors = []; long.on('pageerror', e => lerrors.push(e.message))
   await long.addInitScript(() => { window.__WANT_JOB = 'long' })
   await long.goto('http://127.0.0.1:8810/editor/manual?job=long')
-  await long.locator('[aria-label="Pista de vídeo"] > div').first().waitFor({ timeout: 20000 })
-  const drawn = await long.locator('[aria-label="Pista de vídeo"] > div[draggable]').count()
+  await long.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').first().waitFor({ timeout: 20000 })
+  const drawn = await long.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"][draggable]').count()
   check('editor-pro: a 400-clip montage draws only the clips on screen', drawn > 5 && drawn < 80, drawn)
   await long.evaluate(() => { const el = document.querySelector('.tlScroll'); el.scrollLeft = el.scrollWidth })
-  await long.locator('[aria-label="Pista de vídeo"] > div[draggable]', { hasText: '400' }).first().waitFor({ timeout: 10000 })
-  const drawnEnd = await long.locator('[aria-label="Pista de vídeo"] > div[draggable]').count()
+  await long.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"][draggable]', { hasText: '400' }).first().waitFor({ timeout: 10000 })
+  const drawnEnd = await long.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"][draggable]').count()
   check('editor-pro: scrolling to the end draws the last clips and still only a few', drawnEnd < 80 && lerrors.length === 0, [drawnEnd, lerrors])
   await long.close(); server.close()
 }
@@ -1424,7 +1424,7 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
-  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   await page.goto('http://127.0.0.1:8812/editor/manual?job=job1')
   await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
   const say = async t => { await page.getByLabel('Dile al editor qué hacer').fill(t); await page.getByRole('button', { name: 'Hacer', exact: true }).click() }
@@ -1652,7 +1652,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await bar.getByRole('button', { name: 'Avanzar 10 segundos' }).click()
   check('player: the −10 s / +10 s buttons move the clock', (await time()) === '45:55.02', await time())
   // An edit shows at once in the paused viewer: give the clip under the playhead another picture.
-  await page.locator('[aria-label="Pista de vídeo"] > div[title^="Clip verde"]').click()
+  await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"][title^="Clip verde"]').click()
   await page.locator('label', { hasText: /^Imagen o vídeo/ }).locator('select').selectOption('img')
   check('player: an edit is visible immediately in the paused viewer (green video → red picture)', isRed(await settle(isRed)), await pixel())
   await page.keyboard.press('Control+z')
@@ -1907,7 +1907,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const job = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.render_jobs.find(j => j.id === 'jv'))))
   const status = () => page.getByRole('status', { name: 'Estado del guardado' }).innerText()
   const savedOk = async () => { await page.waitForFunction(() => /^Guardado en la nube/.test(document.querySelector('[aria-label="Estado del guardado"]')?.textContent ?? ''), null, { timeout: 15000 }) }
-  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   const say = async t => { await page.getByLabel('Dile al editor qué hacer').fill(t); await page.getByRole('button', { name: 'Hacer', exact: true }).click() }
   // Edit: transitions (type and duration), a filter, a camera move, the overlay (keyframes by instruction), a text, pan, a track name, export settings.
   await clips.nth(1).click()
@@ -1958,7 +1958,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.getByRole('button', { name: 'Guardar ahora' }).click()
   await page.getByText('Montaje guardado en la nube.').waitFor()
   check('new session: the montage is identical in a clean browser (as on another device)', canon((await job()).composition) === canon(before))
-  await page.locator('[aria-label="Pista de vídeo"] > div').nth(1).click()
+  await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').nth(1).click()
   check('new session: the editor shows the saved values (transition and its length)', (await page.getByLabel('Transición al siguiente').inputValue()) === 'zoom' && (await page.getByLabel('Duración de la transición', { exact: true }).inputValue()) === '0.8')
   // A conflict: another session saves first.
   await page.evaluate(() => { const j = window.__DB.render_jobs.find(x => x.id === 'jv'); j.updated_at = '2030-01-01T00:00:00.000Z'; j.composition = { ...j.composition, title: 'Desde el móvil' } })
@@ -2035,7 +2035,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const ctx1 = await browser.newContext({ viewport: { width: 1500, height: 1100 } })
   let page = await open(ctx1)
   const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))
-  const clips = () => page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = () => page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   const pixel = (fx, fy) => page.evaluate(([fx, fy]) => { const c = document.querySelector('canvas.playerCanvas'); const d = c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data; return [d[0], d[1], d[2]] }, [fx, fy])
   const settle = async (fx, fy, want) => { for (let i = 0; i < 60; i++) { const c = await pixel(fx, fy); if (want(c)) return c; await page.waitForTimeout(100) } return pixel(fx, fy) }
   const isRed = c => c[0] > 150 && c[1] < 80, isGreen = c => c[1] > 150 && c[0] < 80
@@ -2113,7 +2113,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await open()
   const w = sel => page.evaluate(s => document.querySelector(s)?.getBoundingClientRect().width ?? -1, sel)
   const side = () => page.evaluate(() => document.querySelector('.studio')?.getAttribute('data-sidebar'))
-  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   const head = () => page.locator('#ed-props h3').textContent()
   const expanded = title => page.locator('button.edSectionHead', { hasText: title }).first().getAttribute('aria-expanded')
 
@@ -2304,7 +2304,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
     p.on('pageerror', e => errs.push(e.message))
     await p.goto('http://127.0.0.1:8828/editor/manual?job=job1'); await p.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 }); await p.waitForTimeout(400)
     const m = await p.evaluate(() => ({ over: document.documentElement.scrollWidth - window.innerWidth, viewerTop: document.querySelector('.edViewer').getBoundingClientRect().top, toolsTop: document.querySelector('#ed-tools')?.getBoundingClientRect().top ?? 1e9, splitters: [...document.querySelectorAll('.edSplit.vertical')].filter(e => e.getBoundingClientRect().width > 0).length }))
-    await p.locator('[aria-label="Pista de vídeo"] > div').nth(0).click()
+    await p.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').nth(0).click()
     const was = await p.getByLabel('Brillo').isVisible()
     await p.locator('button.edSectionHead', { hasText: 'Color y efectos' }).click()
     const toggled = (await p.getByLabel('Brillo').isVisible()) !== was
@@ -2334,7 +2334,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.getByLabel('Tipo de transición').selectOption('slide')
   await page.getByLabel('Duración de esta transición en segundos', { exact: true }).fill('1')
   await page.getByLabel('Dirección de la transición').selectOption('right')
-  const w1 = (await chip(1).boundingBox()).width
+  const w1 = (await page.locator('[data-transition-band]').first().boundingBox()).width
   check('transitions: type, duration and direction change from its panel (the band on the timeline is as long as the transition)', /Deslizar .* \(1 s\)/.test(await chip(1).getAttribute('aria-label')) && w1 >= 38, [await chip(1).getAttribute('aria-label'), w1])
   // Duration slider: limited by the clips (clip 1 lasts 2 s), shows the value while dragging, one undo step.
   const slider = page.getByLabel('Duración de esta transición en segundos (deslizador)')
@@ -2350,9 +2350,9 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const intensity = await page.getByLabel('Intensidad de la transición (deslizador)').inputValue()
   await page.getByLabel('Tipo de transición').selectOption('slide')
   check('transitions: intensity has its own slider in % when the type uses it (zoom) and none when it does not (slide)', intensity === '150' && await page.getByLabel('Intensidad de la transición', { exact: true }).count() === 0, intensity)
-  const eb = await chip(1).locator('.tlTrEdge').boundingBox()
-  await page.mouse.move(eb.x + 2, eb.y + 5); await page.mouse.down(); await page.mouse.move(eb.x - 18, eb.y + 5, { steps: 5 }); await page.mouse.up()
-  check('transitions: dragging its left edge makes it longer (1 s → 1.5 s)', /\(1\.5 s\)/.test(await chip(1).getAttribute('aria-label')), await chip(1).getAttribute('aria-label'))
+  const eb = await page.locator('[data-transition-band] [data-tr-edge="left"]').first().boundingBox()
+  await page.mouse.move(eb.x + 2, eb.y + 5); await page.mouse.down(); await page.mouse.move(eb.x - 8, eb.y + 5, { steps: 5 }); await page.mouse.up()
+  check('transitions: dragging its left edge makes a centred transition longer on both sides (1 s → 1.5 s)', /\(1\.5 s\)/.test(await chip(1).getAttribute('aria-label')), await chip(1).getAttribute('aria-label'))
   await page.keyboard.press('Control+z')
   check('transitions: the edge drag is one undo step', /\(1 s\)/.test(await chip(1).getAttribute('aria-label')), await chip(1).getAttribute('aria-label'))
   await chip(1).click(); await page.keyboard.press('Control+c')
@@ -2363,7 +2363,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   // Move the first transition onto the second cut (drop it on the left half of clip 3).
   await page.evaluate(() => {
     const src = [...document.querySelectorAll('button.tlTransition')].find(b => /entre el clip 1 y el 2/.test(b.getAttribute('aria-label')))
-    const target = document.querySelectorAll('[aria-label="Pista de vídeo"] > div')[2]
+    const target = document.querySelectorAll('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')[2]
     const dt = new DataTransfer(), r = target.getBoundingClientRect(), at = { clientX: r.left + 3, clientY: r.top + 10, bubbles: true, cancelable: true, dataTransfer: dt }
     src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }))
     target.dispatchEvent(new DragEvent('dragover', at)); target.dispatchEvent(new DragEvent('drop', at))
@@ -2397,12 +2397,12 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.getByRole('button', { name: 'Guardar ahora' }).click(); await page.getByText('Montaje guardado en la nube.').waitFor()
   const saved = await comp()
   // Right-click menus.
-  const nClips = await page.locator('[aria-label="Pista de vídeo"] > div').count()
-  await page.locator('[aria-label="Pista de vídeo"] > div').first().click({ button: 'right' })
+  const nClips = await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').count()
+  await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').first().click({ button: 'right' })
   const m1 = page.getByRole('menu', { name: 'Menú de la selección' })
   const focused = await page.evaluate(() => document.activeElement?.getAttribute('role'))
   await m1.getByRole('menuitem', { name: /Duplicar/ }).click()
-  check('right-click: a clip opens its menu (keyboard focus inside) and «Duplicar» works', focused === 'menuitem' && await page.locator('[aria-label="Pista de vídeo"] > div').count() === nClips + 1 && await m1.count() === 0)
+  check('right-click: a clip opens its menu (keyboard focus inside) and «Duplicar» works', focused === 'menuitem' && await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').count() === nClips + 1 && await m1.count() === 0)
   await chips.first().click({ button: 'right' })
   const m2 = page.getByRole('menu', { name: 'Menú de la transición' })
   const nChips = await chips.count()
@@ -2413,7 +2413,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const m3 = page.getByRole('menu', { name: 'Menú de la línea de tiempo' })
   const hasEmpty = await m3.getByRole('menuitem', { name: 'Añadir marcador' }).isVisible()
   await page.keyboard.press('Escape')
-  check('right-click: a transition has its own menu («Quitar transición» works), the empty timeline too, Escape closes it', removed && hasEmpty && await m3.count() === 0 && await page.locator('[aria-label="Pista de vídeo"] > div').count() === nClips, { removed, hasEmpty })
+  check('right-click: a transition has its own menu («Quitar transición» works), the empty timeline too, Escape closes it', removed && hasEmpty && await m3.count() === 0 && await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').count() === nClips, { removed, hasEmpty })
   check('subtitles: their position is saved with the montage', saved.captionPosition === 'top', saved.captionPosition)
   check('transitions: saved with the montage', saved.clips[0].transition === 'cut' && saved.clips[1].transition === 'slide' && saved.clips[1].transitionMs === 1000 && saved.clips[1].transitionOpts?.direction === 'right', saved.clips.map(k => [k.transition, k.transitionMs, k.transitionOpts]))
   check('transitions: no page errors', errors.length === 0, errors)
@@ -2429,7 +2429,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   page.on('pageerror', e => errors.push(e.message))
   await page.goto('http://127.0.0.1:8830/editor/manual?job=job1')
   await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
-  const strip = page.locator('[aria-label="Pista de vídeo"] > div').nth(3).locator('.tlFilm')
+  const strip = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').nth(3).locator('.tlFilm')
   const colours = () => strip.evaluate(el => Promise.all([...el.children].map(t => new Promise(res => {
     const m = t.style.backgroundImage.match(/url\("?(data:[^")]+)"?\)/); if (!m) return res(null)
     const im = new Image(); im.onload = () => { const c = document.createElement('canvas'); c.width = 4; c.height = 4; const g = c.getContext('2d'); g.drawImage(im, 0, 0, 4, 4); const d = g.getImageData(2, 2, 1, 1).data; res(d[0] > 150 && d[2] < 90 ? 'red' : d[2] > 150 && d[0] < 90 ? 'blue' : d[1] > 150 && d[0] < 90 ? 'green' : 'other') }; im.src = m[1]
@@ -2446,7 +2446,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('thumbnails: zoomed out there are fewer tiles (at least one representative frame)', narrow.length >= 1 && narrow.length < wide.length, [narrow.length, wide.length])
   // Trim the start of the clip in the video (to 3 s): the strip follows the part used.
   await page.getByLabel('Zoom horizontal').fill('120')
-  await page.locator('[aria-label="Pista de vídeo"] > div').nth(3).click()
+  await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').nth(3).click()
   await page.locator('#ed-props').getByLabel('Inicio en el vídeo (s)').fill('3')
   await page.waitForTimeout(300)
   const trimmed = await filled(1)
@@ -2464,7 +2464,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   page.on('pageerror', e => errors.push(e.message))
   await page.goto('http://127.0.0.1:8831/editor/manual?job=job1')
   await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
-  const clips = page.locator('[aria-label="Pista de vídeo"] > div')
+  const clips = page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
   const bar = page.getByRole('toolbar', { name: 'Controles de reproducción' })
   const lum = async t => { await bar.getByLabel('Ir a un tiempo').fill(t); await bar.getByLabel('Ir a un tiempo').press('Enter'); await page.waitForTimeout(700); return page.evaluate(() => { const c = document.querySelector('canvas.playerCanvas'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let s = 0, w = 0; for (let i = 0; i < d.length; i += 16) { s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; w += d[i] - d[i + 2] } const n = d.length / 16; return { y: Math.round(s / n), warm: Math.round(w / n) } }) }
   for (let i = 0; i < 40 && (await lum('0:04.5')).y === 0; i++) await page.waitForTimeout(250)
@@ -2644,6 +2644,46 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const after = (await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))).render_jobs.find(j => j.composition?.title === 'Lo-fi de prueba')
   check('loop montage: saving from the editor keeps all clips, transitions and the music', after.composition.clips.length === c.clips.length && after.composition.clips.every((k, i) => k.visualAssetId === c.clips[i].visualAssetId && k.durationMs === c.clips[i].durationMs && k.transition === c.clips[i].transition) && after.composition.musicAssetId === 'm1', { before: c.clips.length, after: after.composition.clips.length })
   check('loop montage: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
+// 35. Transiciones entre dos clips: el icono está en la unión (no dentro de ningún clip), la banda muestra el solape real, ambos clips quedan
+//     marcados al seleccionarla, y Propiedades enseña los participantes, la alineación, el material que falta y «Restablecer».
+{
+  const server = serve(8836, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8836/editor/manual?job=job1')
+  await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
+  const chip = n => page.getByRole('button', { name: new RegExp(`^Transición .* entre el clip ${n} y el ${n + 1}`) })
+  const clipBox = n => page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').nth(n).boundingBox()
+  await chip(1).click()
+  await page.getByLabel('Tipo de transición').selectOption('dissolve')
+  const [c1, c2, ic] = [await clipBox(0), await clipBox(1), await chip(1).boundingBox()]
+  const join = (c1.x + c1.width + c2.x) / 2, cx = ic.x + ic.width / 2
+  check('transition icon: centred exactly on the join between the two clips (not inside either)', Math.abs(cx - join) <= 3 && ic.x < c1.x + c1.width && ic.x + ic.width > c2.x, { cx, join })
+  const outlines = await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').evaluateAll(els => els.map(e => getComputedStyle(e).outlineStyle))
+  check('transition icon: selecting it marks the two clips that take part', outlines[0] === 'dashed' && outlines[1] === 'dashed' && outlines[2] === 'none', outlines)
+  check('transition panel: names the two clips and says the project length does not change', /Participan: clip 1 .* y clip 2/.test(await page.getByTestId('transition-material').innerText()) && /No cambia la duración del proyecto/.test(await page.getByTestId('transition-material').innerText()))
+  const align = page.getByLabel('Alineación de la transición respecto al corte')
+  check('transition panel: a new blending transition is centred on the cut and offers the three alignments', await align.inputValue() === 'center' && (await align.locator('option').allTextContents()).length === 3, await align.inputValue())
+  const band = page.locator('[data-transition-band]').first(), bb1 = await band.boundingBox()
+  check('transition band: centred on the join (half in each clip)', Math.abs((bb1.x + bb1.width / 2) - join) <= 4, [bb1.x + bb1.width / 2, join])
+  await align.selectOption('after')
+  const bb2 = await band.boundingBox()
+  check('transition alignment: «empieza en el corte» moves the band to the right of the join', Math.abs(bb2.x - join) <= 4 && bb2.width >= 4, [bb2.x, join])
+  await align.selectOption('center')
+  // The clips' files have no known length here: the missing material is reported, never hidden, and the timeline marks it.
+  check('transition material: missing frames are announced with a warning on the panel and the icon', await page.getByRole('status', { name: 'Falta material en la transición' }).isVisible() && /falta material/.test(await chip(1).getAttribute('aria-label')))
+  await page.getByRole('button', { name: 'Restablecer' }).click()
+  check('transition panel: «Restablecer» returns duration and options to their defaults', /\(0\.2 s\)/.test(await chip(1).getAttribute('aria-label')), await chip(1).getAttribute('aria-label'))
+  await page.keyboard.press('Control+z')
+  check('transition panel: undo brings the previous settings back', /dissolve|Disolvencia/i.test(await chip(1).getAttribute('aria-label')))
+  await page.getByRole('button', { name: /Previsualizar ahora/ }).click()
+  await page.waitForTimeout(500)
+  check('transition panel: «Previsualizar ahora» plays around the cut', /00:0[0-3]/.test(await page.locator('.playerTime b').textContent()))
+  check('transition icon: no page errors', errors.length === 0, errors)
   await page.close(); server.close()
 }
 

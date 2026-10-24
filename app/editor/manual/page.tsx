@@ -8,7 +8,7 @@ import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
 import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
-import { assetLabel, audioDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
+import { assetLabel, audioDurationMs, videoDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
 import { MontageTemplatePanel } from '../../components/montage-template-panel'
@@ -31,6 +31,8 @@ import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
+import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
+import { BLENDS } from '@/lib/editor/motion'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
 import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, SliderField, TransitionTools, VisualFields } from '../../components/editor-inspectors'
 import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
@@ -207,6 +209,24 @@ export default function ManualEditorPage() {
       analyzeAsset(id).then(r => setAnalyses(a => ({ ...a, [id]: r })), () => { requested.current.delete(id); setAnalyses(a => ({ ...a, [id]: 'error' })) })
     }
   }, [audioIds])
+
+  // Length of the source file of every main video clip, stored on the clip: a transition needs it to know whether the file has material after the
+  // clip's end. Read from the asset's data when it has it, otherwise from the file's metadata (a few bytes). Not an undo step.
+  const durCache = useRef(new Map<string, number>()), durAsked = useRef(new Set<string>())
+  useEffect(() => {
+    if (!comp) return
+    const need = [...new Set(comp.clips.filter(k => k.visualAssetId && !k.sourceDurationMs && assets.find(a => a.id === k.visualAssetId)?.asset_type === 'video').map(k => k.visualAssetId as string))]
+    const put = (id: string, ms: number) => { durCache.current.set(id, ms); setHistory(h => (h ? { ...h, present: { ...h.present, clips: h.present.clips.map(k => (k.visualAssetId === id && !k.sourceDurationMs ? { ...k, sourceDurationMs: ms } : k)) } } : h)); setDirty(true) }
+    for (const id of need) {
+      const cached = durCache.current.get(id)
+      if (cached) { put(id, cached); continue }   // e.g. after an undo to a state older than the reading
+      if (durAsked.current.has(id)) continue
+      durAsked.current.add(id)
+      const p = assets.find(a => a.id === id)?.provenance ?? {}
+      const known = typeof p.durationMs === 'number' ? p.durationMs : typeof p.durationSeconds === 'number' ? Math.round(p.durationSeconds * 1000) : null
+      void (known ? Promise.resolve(known) : videoDurationMs(id)).then(ms => { if (ms > 0) put(id, ms) }, () => durAsked.current.delete(id))
+    }
+  }, [comp, assets])
 
   // Beats of the music, on the montage's timeline (music clips on the track, plus the global background music).
   const beats: BeatSummary = useMemo(() => summarizeBeats(comp, analyses), [comp, analyses])
@@ -662,10 +682,48 @@ export default function ManualEditorPage() {
     value={Math.min(max, clip.transitionMs ?? comp.fadeMs) / 1000} show={secsLabel}
     onChange={v => apply(c => updateClip(c, clip.id, { transitionMs: Math.round(v * 1000) }))}
     drag={{ begin: lv.begin, live: v => lv.change({ transitionMs: Math.round(v * 1000) }), end: lv.end }} /> }
+  /** Plays the transition with a little before and after: from 0.7 s before its window starts to 0.7 s after it ends. */
+  const previewTransition = (clip: Clip) => {
+    const i = cutIndex(clip.id), p = playerRef.current
+    if (i < 0 || !p) return
+    const w = transitionWindow(comp, i), cut = starts[i] + clip.durationMs, from = Math.max(0, cut - w.pre - 700)
+    p.seek(from); p.play(); setTimeout(() => p.pause(), cut + w.post + 700 - from)
+  }
+  /** Which two clips take part and whether their files cover the whole window; says what is missing instead of hiding it. */
+  const trMaterial = (clip: Clip) => {
+    const i = cutIndex(clip.id), b = comp.clips[i + 1]
+    if (i < 0 || !b) return null
+    const kindOfAsset = (id: string) => (typeOf(id) as 'video' | 'image' | 'audio' | null)
+    const kind = clip.transition ?? 'fade', h = transitionHandles(comp, i, kindOfAsset)
+    const fix = (patch: Partial<Clip>) => apply(c => updateClip(c, clip.id, patch))
+    const alts = (['center', 'before', 'after'] as const).filter(a => a !== alignOf(clip)).map(a => {
+      const t = updateClip(comp, clip.id, { transitionOpts: { ...(clip.transitionOpts ?? {}), align: a } })
+      const hh = transitionHandles(t, i, kindOfAsset)
+      return { a, ok: hh.missingA === 0 && hh.missingB === 0 && hh.ms > 0 }
+    }).filter(x => x.ok)
+    const secs1 = (ms: number) => `${(ms / 1000).toLocaleString('es-ES', { maximumFractionDigits: 2 })} s`
+    return <div className="stack" data-testid="transition-material">
+      <p className="small"><b>Participan:</b> clip {i + 1} «{label(clip.visualAssetId)}» y clip {i + 2} «{label(b.visualAssetId)}»{BLENDS.has(kind) ? <> · ventana de {secs1(h.ms)}: {secs1(h.pre)} antes del corte y {secs1(h.post)} después. No cambia la duración del proyecto ni mueve ningún clip.</> : <> · {TRANSITIONS[kind]}: cada clip se atenúa en su propio extremo.</>}</p>
+      {BLENDS.has(kind) && (h.missingA > 0 || h.missingB > 0) && <div className="warnBox small" role="status" aria-label="Falta material en la transición">
+        <b>Falta material de vídeo.</b>
+        {h.missingA > 0 && <> El clip {i + 1} no tiene {secs1(h.missingA)} de vídeo después de su salida{h.unknown ? ' (todavía se está leyendo la duración del archivo)' : ''}: en ese tramo mantiene su último fotograma.</>}
+        {h.missingB > 0 && <> El clip {i + 2} no tiene {secs1(h.missingB)} de vídeo antes de su entrada: en ese tramo mantiene su primer fotograma.</>}
+        {' '}Puedes recortar menos esos extremos del clip, cambiar el punto de alineación o limitar la duración.
+        <div className="pageActions">
+          {h.maxCoveredMs >= 100 && <button type="button" className="ghost small" onClick={() => fix({ transitionMs: h.maxCoveredMs })}>Ajustar la duración al material disponible ({secs1(h.maxCoveredMs)})</button>}
+          {alts.map(x => <button key={x.a} type="button" className="ghost small" onClick={() => fix({ transitionOpts: { ...(clip.transitionOpts ?? {}), align: x.a } })}>Alinear: {ALIGNS[x.a].toLowerCase()} (cubre toda la ventana)</button>)}
+        </div>
+      </div>}
+      <div className="pageActions">
+        <button type="button" className="ghost small" onClick={() => previewTransition(clip)} disabled={kind === 'cut'}>▶ Previsualizar ahora</button>
+        <button type="button" className="ghost small" onClick={() => { fix({ transitionMs: undefined, transitionOpts: BLENDS.has(kind) ? { align: 'center' } : undefined }); setNotice('Transición restablecida (duración, curva, intensidad y dirección por defecto). Ctrl+Z la devuelve.') }}>Restablecer</button>
+      </div>
+    </div>
+  }
   const trTools = (clip: Clip) => <TransitionTools bare clip={clip} defaultMs={comp.fadeMs} onChange={p => apply(c => updateClip(c, clip.id, p))} live={clipLive(clip.id)}
     canPaste={!!copiedTransition} onCopy={() => { setCopiedTransition(trOf(clip)); setNotice('Transición copiada: selecciona otra transición o clip y pulsa «Pegar transición» (o Ctrl+V).') }}
     onPaste={pasteTransition}
-    onPreview={() => { const i = cutIndex(clip.id); const ms = clip.transitionMs ?? comp.fadeMs; const end = starts[i] + clip.durationMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, end - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) }}
+    onPreview={() => previewTransition(clip)}
     others={sel.filter(r => r.kind === 'clip' && r.id !== clip.id).length}
     onApplyToOthers={() => { const ids = sel.filter(r => r.kind === 'clip').map(r => r.id); apply(c => ids.reduce((x, id) => updateClip(x, id, trOf(clip)), c)); setNotice(`Transición aplicada a ${ids.length} cortes.`) }}
     cuts={Math.max(0, comp.clips.length - 1)}
@@ -689,7 +747,7 @@ export default function ManualEditorPage() {
   }
   const menuItems: MenuItem[] = !menu ? [] : menu.kind === 'transition' && selTrClip ? [
     { label: 'Editar la transición', run: () => ws.reveal({ section: 'tr-basic' }) },
-    { label: 'Ver la transición', run: () => { const i = cutIndex(selTrClip.id); const ms = selTrClip.transitionMs ?? comp.fadeMs; const p = playerRef.current; if (!p) return; p.seek(Math.max(0, starts[i] + selTrClip.durationMs - ms - 700)); p.play(); setTimeout(() => p.pause(), ms + 1400) } },
+    { label: 'Ver la transición', run: () => previewTransition(selTrClip) },
     'sep',
     { label: 'Copiar transición', hint: 'Ctrl+C', run: () => { setCopiedTransition(trOf(selTrClip)); setNotice('Transición copiada.') } },
     { label: 'Pegar transición', hint: 'Ctrl+V', disabled: !copiedTransition, run: pasteTransition },
@@ -902,14 +960,14 @@ export default function ManualEditorPage() {
           <ul className="materialList" role="listbox" aria-label="Transiciones">
             {(Object.keys(TRANSITIONS) as Transition[]).map(t => <li key={t} role="option" aria-selected={selClip?.transition === t} draggable aria-label={`Transición ${TRANSITIONS[t]}`} title="Arrástrala entre dos clips del vídeo principal, o selecciona un clip y haz clic"
               onDragStart={e => { e.dataTransfer.setData(TRANSITION_MIME, t); e.dataTransfer.effectAllowed = 'copy' }}
-              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } apply(c => updateClip(c, selClip.id, { transition: t })); setNotice(`Transición «${TRANSITIONS[t]}» al final del clip seleccionado.`); ws.reveal({ section: 'clip-transition' }) }}>
+              onClick={() => { if (!selClip) { setError('Selecciona un clip del vídeo principal (la transición va de ese clip al siguiente) o arrástrala entre dos clips.'); return } apply(c => updateClip(c, selClip.id, transitionPatch(selClip, t))); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip seleccionado y el siguiente.`); ws.reveal({ section: 'clip-transition' }) }}>
               <span className="matThumb" aria-hidden="true" style={{ background: '#333', display: 'grid', placeItems: 'center' }}>{TRANSITION_ICONS[t]}</span>
               <span className="matName">{TRANSITIONS[t]}</span>
             </li>)}
           </ul>
           <div className="field-row" style={{ alignItems: 'end' }}>
             <label>Duración (ms)<input type="number" aria-label="Duración de las transiciones" min={0} max={3000} step={50} value={comp.fadeMs} onChange={e => apply(c => ({ ...c, fadeMs: Math.min(Math.max(Number(e.target.value) || 0, 0), 1500) }))} /></label>
-            <button type="button" className="ghost small" onClick={() => { const t = selClip?.transition ?? 'dissolve'; apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, transition: t } : k)) })); setNotice(`«${TRANSITIONS[t]}» aplicada entre todos los clips.`) }}>Aplicar a todos los cortes</button>
+            <button type="button" className="ghost small" onClick={() => { const t = selClip?.transition ?? 'dissolve'; apply(c => ({ ...c, clips: c.clips.map((k, i) => (i < c.clips.length - 1 ? { ...k, ...transitionPatch(k, t) } : k)) })); setNotice(`«${TRANSITIONS[t]}» aplicada entre todos los clips.`) }}>Aplicar a todos los cortes</button>
           </div>
           <p className="muted small">La transición se ve en el visor al momento, sin exportar. Cada clip puede tener su propia duración en sus propiedades.</p>
           </>,
@@ -966,11 +1024,12 @@ export default function ManualEditorPage() {
         <fieldset disabled={!!selection && isLocked(comp, selection)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {selTrClip && <Section id="tr-basic" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[selTrClip.transition ?? 'fade']}</span>}>
           <div className="field-row">
-            <label>Tipo<select aria-label="Tipo de transición" value={selTrClip.transition ?? 'fade'} onChange={e => apply(c => updateClip(c, selTrClip.id, { transition: e.target.value as Transition }))}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
+            <label>Tipo<select aria-label="Tipo de transición" value={selTrClip.transition ?? 'fade'} onChange={e => apply(c => updateClip(c, selTrClip.id, transitionPatch(selTrClip, e.target.value as Transition)))}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
           </div>
+          {trMaterial(selTrClip)}
           {trDuration(selTrClip, 'Duración de esta transición en segundos')}
           {trTools(selTrClip)}
-          <p className="muted small">Arrastra la transición a otro corte para moverla, o su borde izquierdo para alargarla. Supr la quita; Ctrl+C / Ctrl+V la copian.</p>
+          <p className="muted small">Arrastra la transición a otro corte para moverla, los bordes de su banda para alargarla o acortarla. Supr la quita; Ctrl+C / Ctrl+V la copian.</p>
         </Section>}
         {selOverlay && <OverlayInspector animation={(() => {
             const local = Math.min(Math.max(playheadMs - selOverlay.startMs, 0), selOverlay.durationMs)
@@ -1087,7 +1146,7 @@ export default function ManualEditorPage() {
         waveformOf={id => { const an = analyses[id]; return an === 'loading' ? 'loading' : typeof an === 'object' ? an.waveform ?? null : null }}
         thumbOf={id => (id ? thumbs[id] : undefined)} labelOf={label} typeOf={typeOf} resolveUrl={resolveUrl}
         begin={beginDrag} live={liveDrag} end={endDrag} apply={apply} onReorderMain={(id, to) => apply(c => moveClip(c, id, to))}
-        onDropTransition={(clipId, t) => { apply(c => updateClip(c, clipId, { transition: t })); setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
+        onDropTransition={(clipId, t) => { apply(c => { const k = c.clips.find(x => x.id === clipId); return updateClip(c, clipId, k ? transitionPatch(k, t) : { transition: t }) }); setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}
         onTrackAction={trackAction} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
         scrollerRef={scroller} playheadRef={playheadEl} view={view} onScroll={measureView}>
@@ -1158,7 +1217,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
     </Section>
     <Section id="clip-transition" title="Transición" defaultOpen extra={<span className="muted small">{TRANSITIONS[clip.transition ?? 'fade']}</span>}>
       <div className="field-row">
-        <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange({ transition: e.target.value as Clip['transition'] })}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
+        <label>Transición al siguiente<select value={clip.transition ?? 'fade'} onChange={e => onChange(transitionPatch(clip, e.target.value as Transition))}>{(Object.keys(TRANSITIONS) as Transition[]).map(t => <option key={t} value={t}>{TRANSITIONS[t]}</option>)}</select></label>
 
       </div>
       {transitionDuration}

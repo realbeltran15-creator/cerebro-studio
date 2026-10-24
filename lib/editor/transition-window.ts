@@ -10,7 +10,8 @@
  * its file has material there. Where a file has no material the picture holds its nearest frame; `transitionHandles` reports exactly how much
  * is missing so the editor can say so (never silently).
  */
-import type { Clip, Composition, TransitionAlign } from './composition'
+import type { Clip, Composition, Transition, TransitionAlign } from './composition'
+import { BLENDS } from './motion'
 
 type Plan = Pick<Composition, 'clips' | 'fadeMs'>
 
@@ -78,4 +79,14 @@ export function transitionHandles(c: Plan, i: number, kindOf: MediaKindOf): Tran
   const byA = f.post > 0 ? ha.have / f.post : Infinity, byB = f.pre > 0 ? hb.have / f.pre : Infinity
   const maxCoveredMs = Math.max(0, Math.floor(Math.min(cap, byA, byB)))
   return { ...w, missingA, missingB, maxCoveredMs, unknown: ha.unknown && w.post > 0 }
+}
+
+/**
+ * Fields to set when a transition type is chosen for a cut. A blending transition chosen where there was none (or a dip) is centred on the cut;
+ * one that already has an alignment keeps it, and a montage made before alignment existed keeps «ends at the cut» until the person changes it.
+ */
+export function transitionPatch(clip: Pick<Clip, 'transition' | 'transitionOpts'>, kind: Transition): Pick<Clip, 'transition'> & Partial<Pick<Clip, 'transitionOpts'>> {
+  const wasBlend = BLENDS.has(clip.transition ?? 'fade')
+  if (BLENDS.has(kind) && !wasBlend && clip.transitionOpts?.align === undefined) return { transition: kind, transitionOpts: { ...(clip.transitionOpts ?? {}), align: 'center' } }
+  return { transition: kind }
 }
