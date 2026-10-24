@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { emptyComposition, parseComposition, totalDurationMs, type OutputFormat } from '@/lib/editor/composition'
 import { audioDurationMs } from '@/lib/editor/client'
+import { LoopMontagePanel } from './loop-montage-panel'
 import { compositionFromAssets, parseAssetIds, parseFormat, type SourceAsset } from '@/lib/editor/from-assets'
 
 type Draft = { id: string; project_id: string; updated_at: string; composition: unknown }
@@ -110,6 +111,8 @@ export function ManualPicker() {
       <div style={{ marginTop: 10 }}><button type="button" onClick={() => void create()} disabled={!projectId || busy}>{busy ? 'Creando…' : 'Crear montaje vacío'}</button></div>
       {projects.length === 0 && <p className="muted small">Crea primero un proyecto en <Link href="/projects">Proyectos</Link>.</p>}
     </section>
+
+    {projectId && <LoopMontagePanel projectId={projectId} onError={setError} />}
 
     <section className="panel" aria-labelledby="mp-open">
       <h3 id="mp-open">Montajes guardados ({drafts.length})</h3>

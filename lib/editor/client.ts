@@ -144,6 +144,19 @@ export async function audioDurationMs(assetId: string) {
   } finally { await ctx.close() }
 }
 
+/** Length of a video file, read from its metadata only (the browser fetches a few bytes, not the whole file). */
+export async function videoDurationMs(assetId: string) {
+  const url = await signedUrl(assetId)
+  return await new Promise<number>((ok, bad) => {
+    const v = document.createElement('video')
+    v.preload = 'metadata'
+    const done = (f: () => void) => { v.removeAttribute('src'); v.load(); f() }
+    v.onloadedmetadata = () => done(() => (Number.isFinite(v.duration) ? ok(Math.round(v.duration * 1000)) : bad(new Error('Sin duración'))))
+    v.onerror = () => done(() => bad(new Error('No se pudo leer el vídeo.')))
+    v.src = url
+  })
+}
+
 /**
  * Saves a converted copy (e.g. WebM/VP9 -> MP4/H.264) as a new video asset that keeps the source's license and inputs,
  * and records how it was derived. The original stays untouched.

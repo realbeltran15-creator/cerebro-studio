@@ -2609,6 +2609,44 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 34. Montaje en bucle automático desde la Biblioteca: música + escenas + minutos → montaje normal listo para el editor.
+{
+  const server = serve(8834, { 'setup.js': readFileSync(path.join(dir, 'manual-picker.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'loop-picker.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': 'undefined' }) })
+  const page = await browser.newPage({ viewport: { width: 1300, height: 1400 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8834/editor/manual')
+  await page.getByRole('heading', { name: 'Montaje en bucle automático' }).waitFor({ timeout: 20000 })
+  await page.getByRole('checkbox', { name: /Vídeo · Lluvia/ }).waitFor()
+  check('loop montage: only pictures and videos are offered as scenes (a voice is not)', (await page.getByRole('checkbox').count()) === 3 && (await page.getByRole('checkbox', { name: /Voz que no es escena/ }).count()) === 0)
+  check('loop montage: the button is off until a scene is chosen', await page.getByRole('button', { name: /Crear montaje de 90 min/ }).isDisabled())
+  await page.getByLabel('Música (se repite en bucle)').selectOption('m1')
+  await page.getByRole('checkbox', { name: /Vídeo · Lluvia/ }).check()
+  await page.getByRole('checkbox', { name: /Imagen · Ventana/ }).check()
+  await page.getByRole('checkbox', { name: /Vídeo · Calle/ }).check()
+  await page.getByLabel('Nombre del vídeo').fill('Lo-fi de prueba')
+  await page.getByLabel('Cada escena (s)').fill('30')
+  await page.getByRole('button', { name: /Crear montaje de 90 min/ }).click()
+  await page.waitForURL(/\/editor\/manual\?job=/, { timeout: 15000 })
+  const job = (await page.evaluate(() => JSON.parse(sessionStorage.getItem('cerebro.db') || JSON.stringify(window.__DB)))).render_jobs.find(j => j.composition?.title === 'Lo-fi de prueba')
+  const c = job?.composition
+  const total = c?.clips.reduce((n, k) => n + k.durationMs, 0)
+  check('loop montage: a draft of exactly 90 min is stored in the chosen project, as an ordinary montage', job?.status === 'draft' && job.project_id === 'p1' && total === 90 * 60000 && c.editedManually === true, { status: job?.status, total })
+  check('loop montage: scenes cycle in the chosen order (video 20 s, picture 30 s, video 30 s…) and a video never runs past its file', c.clips[0].visualAssetId === 'v1' && c.clips[0].durationMs === 20000 && c.clips[1].visualAssetId === 'i1' && c.clips[1].durationMs === 30000 && c.clips[2].visualAssetId === 'v2' && c.clips[2].durationMs === 30000 && c.clips[3].visualAssetId === 'v1', c.clips.slice(0, 4).map(k => [k.visualAssetId, k.durationMs]))
+  check('loop montage: smooth transitions between scenes, a fade at the very end, the music loops under it, 1080p export', c.clips[0].transition === 'dissolve' && c.clips.at(-1).transition === 'fade' && c.musicAssetId === 'm1' && c.exportSettings.resolution === '1080', { t: c.clips[0].transition, last: c.clips.at(-1).transition, music: c.musicAssetId, res: c.exportSettings })
+  check('loop montage: pictures get a slow camera move', c.clips[1].camera?.kind === 'zoom_in' || c.clips[1].camera?.kind === 'zoom_out', c.clips[1].camera)
+  // The editor opens the 180-clip, 90-minute montage, shows its full length, and saving keeps every clip.
+  await page.getByRole('button', { name: 'Guardar ahora' }).waitFor({ timeout: 30000 })
+  const shown = await page.locator('.playerTime').first().innerText().catch(() => '')
+  check('loop montage: the editor opens the 90-minute montage and shows its length', /90:00|1:30:00/.test(shown.replace(/\s+/g, ' ')), shown)
+  await page.getByRole('button', { name: 'Guardar ahora' }).click()
+  await page.getByText('Montaje guardado en la nube.').waitFor({ timeout: 20000 })
+  const after = (await page.evaluate(() => JSON.parse(JSON.stringify(window.__DB)))).render_jobs.find(j => j.composition?.title === 'Lo-fi de prueba')
+  check('loop montage: saving from the editor keeps all clips, transitions and the music', after.composition.clips.length === c.clips.length && after.composition.clips.every((k, i) => k.visualAssetId === c.clips[i].visualAssetId && k.durationMs === c.clips[i].durationMs && k.transition === c.clips[i].transition) && after.composition.musicAssetId === 'm1', { before: c.clips.length, after: after.composition.clips.length })
+  check('loop montage: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')
