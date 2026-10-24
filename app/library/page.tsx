@@ -1,5 +1,7 @@
 'use client'
 
+import { parseComposition } from '@/lib/editor/composition'
+import { compositionAssetIds } from '@/lib/editor/client'
 import Link from 'next/link'
 import { manualEditorHref } from '@/lib/editor/from-assets'
 import { useEffect, useMemo, useState } from 'react'
@@ -102,15 +104,22 @@ export default function LibraryPage() {
   // ---------- Safe deletion ----------
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; check: ReturnType<typeof deletionCheck> } | null>(null)
   async function referencesOf(a: LibraryAsset): Promise<AssetReferences> {
-    const [pubs, renders] = await Promise.all([
+    const [pubs, renders, jobs] = await Promise.all([
       supabase.from('publication_jobs').select('id,platform,status,payload').limit(500),
       supabase.from('render_jobs').select('id').eq('output_asset_id', a.id).limit(20),
+      supabase.from('render_jobs').select('id,project_id,composition').not('composition', 'is', null).limit(1000),
     ])
     if (pubs.error) throw new Error(pubs.error.message)
+    if (jobs.error) throw new Error(jobs.error.message)
+    // Montages of any project that use this file (a clip, a layer, a sound): the file is stored once and shared.
+    const montages = ((jobs.data ?? []) as Array<{ id: string; project_id: string; composition: unknown }>).flatMap(j => {
+      const c = parseComposition(j.composition)
+      return c && compositionAssetIds(c).includes(a.id) ? [{ id: j.id, title: c.title || 'Montaje', project: projects.find(p => p.id === j.project_id)?.name ?? 'otro proyecto' }] : []
+    })
     const publications = ((pubs.data ?? []) as Array<{ id: string; platform: string; status: string; payload: Record<string, unknown> | null }>)
       .filter(j => j.payload?.videoAssetId === a.id || j.payload?.thumbnailAssetId === a.id).map(({ id, platform, status }) => ({ id, platform, status }))
     const derived = assets.filter(x => x.provenance?.sourceAssetId === a.id || (Array.isArray(x.provenance?.inputs) && (x.provenance.inputs as Array<{ id?: string }>).some(i => i.id === a.id)))
-    return { publications, renders: renders.error ? [] : ((renders.data ?? []) as Array<{ id: string }>), derived: derived.map(d => ({ id: d.id, asset_type: d.asset_type })) }
+    return { publications, montages, renders: renders.error ? [] : ((renders.data ?? []) as Array<{ id: string }>), derived: derived.map(d => ({ id: d.id, asset_type: d.asset_type })) }
   }
   async function askDelete(a: LibraryAsset) {
     setError(''); setNotice('')
@@ -182,6 +191,7 @@ export default function LibraryPage() {
 
   return (
     <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<><button type="button" className="small" onClick={() => setUploading(u => !u)}><Icon name="upload" size={14} />Subir archivo</button><Link className="buttonLink" href="/add">Añadir materiales (móvil, Drive, iPhone)</Link><Link className="buttonLink ghost" href="/usage">Costes y créditos</Link></>}>
+      <StorageUsage />
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
       {uploading && (
@@ -288,4 +298,25 @@ export default function LibraryPage() {
       </div>
     </StudioShell>
   )
+}
+
+type Usage = { driver: 'r2' | 'supabase'; usedBytes: number; quotaBytes: number; maxFileBytes: number | null; byKind: Record<string, { files: number; bytes: number }> }
+const KIND_LABELS: Record<string, string> = { video: 'Vídeos', image: 'Imágenes', music: 'Música', voice: 'Voces', sfx: 'Efectos', subtitle: 'Subtítulos', export: 'Exportaciones' }
+const mb = (b: number) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)} GB` : `${Math.max(0.1, b / 1024 ** 2).toFixed(1)} MB`)
+/** Space used in the cloud (same count the upload quota uses), by kind of file. */
+function StorageUsage() {
+  const [u, setU] = useState<Usage | null>(null)
+  useEffect(() => { void fetch('/api/storage/usage', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(setU).catch(() => setU(null)) }, [])
+  if (!u) return null
+  const pct = Math.min(100, Math.round(u.usedBytes / u.quotaBytes * 100))
+  return <details className="panel storageUsage" style={{ marginBottom: 12, padding: '8px 12px' }}>
+    <summary className="small" style={{ cursor: 'pointer' }}>
+      <b>Espacio en la nube:</b> {mb(u.usedBytes)} de {mb(u.quotaBytes)} ({pct} %) · {u.driver === 'r2' ? 'Cloudflare R2' : 'Supabase Storage (plan gratuito)'}{u.maxFileBytes ? ` · máx. ${mb(u.maxFileBytes)} por archivo` : ''}
+      <span aria-hidden style={{ display: 'inline-block', verticalAlign: 'middle', marginLeft: 8, width: 120, height: 6, borderRadius: 3, background: 'var(--line-2)' }}><span style={{ display: 'block', width: `${pct}%`, height: '100%', borderRadius: 3, background: pct > 85 ? 'var(--bad)' : 'var(--accent)' }} /></span>
+    </summary>
+    <ul className="plainList small" aria-label="Espacio por tipo" style={{ marginTop: 6 }}>
+      {Object.entries(u.byKind).sort((a, b) => b[1].bytes - a[1].bytes).map(([k, v]) => <li key={k}>{KIND_LABELS[k] ?? k}: {mb(v.bytes)} ({v.files} archivo{v.files === 1 ? '' : 's'})</li>)}
+    </ul>
+    <p className="muted small">Todo se guarda una sola vez en la nube y los montajes de cualquier proyecto lo usan sin copiarlo. Un archivo que usa algún montaje o publicación no se puede borrar.</p>
+  </details>
 }

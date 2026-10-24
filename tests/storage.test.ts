@@ -57,6 +57,9 @@ import { deletionCheck } from '@/lib/library'
 describe('library: safe deletion', () => {
   it('refuses while a publication uses the file; renders and derived files are only warnings', () => {
     expect(deletionCheck({ publications: [], renders: [], derived: [] })).toEqual({ allowed: true, reasons: [], warnings: [] })
+    // A material used by a montage of another project is not deleted (it is stored once and shared).
+    const used = deletionCheck({ publications: [], renders: [], derived: [], montages: [{ id: 'm', title: 'Lofi 30 s', project: 'Lofi prueba' }] })
+    expect(used.allowed).toBe(false); expect(used.reasons[0]).toMatch(/Lofi 30 s.*Lofi prueba/)
     const blocked = deletionCheck({ publications: [{ id: 'j', platform: 'youtube', status: 'published' }], renders: [], derived: [] })
     expect(blocked.allowed).toBe(false)
     expect(blocked.reasons[0]).toMatch(/youtube: published/)

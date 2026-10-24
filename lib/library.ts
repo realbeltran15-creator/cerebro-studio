@@ -47,7 +47,9 @@ export function describeAsset(a: LibraryAsset) {
 
 // ---------- Safe deletion ----------
 /** What still points at an asset. Publication jobs and render outputs are hard references; derived files only a warning. */
-export type AssetReferences = { publications: Array<{ id: string; platform: string; status: string }>; renders: Array<{ id: string }>; derived: Array<{ id: string; asset_type: string }> }
+export type AssetReferences = { publications: Array<{ id: string; platform: string; status: string }>; renders: Array<{ id: string }>; derived: Array<{ id: string; asset_type: string }>
+  /** Montages (any project) that use the file as a clip, layer or sound. */
+  montages?: Array<{ id: string; title: string; project: string }> }
 
 /**
  * Deleting is permanent (the file is removed from storage). It is refused while a publication job uses the file (any status: a published
@@ -56,6 +58,8 @@ export type AssetReferences = { publications: Array<{ id: string; platform: stri
  */
 export function deletionCheck(refs: AssetReferences): { allowed: boolean; reasons: string[]; warnings: string[] } {
   const reasons: string[] = []
+  // A material lives once in the cloud and many montages may point at it: deleting it would leave black or silent gaps in all of them.
+  if (refs.montages?.length) reasons.push(`Lo usa${refs.montages.length > 1 ? 'n' : ''} ${refs.montages.length} montaje${refs.montages.length > 1 ? 's' : ''} (${refs.montages.slice(0, 4).map(m => `«${m.title}» en ${m.project}`).join(', ')}${refs.montages.length > 4 ? '…' : ''}). Quítalo de ${refs.montages.length > 1 ? 'esos montajes' : 'ese montaje'} antes de borrarlo.`)
   if (refs.publications.length) reasons.push(`Lo usa${refs.publications.length > 1 ? 'n' : ''} ${refs.publications.length} publicación${refs.publications.length > 1 ? 'es' : ''} (${refs.publications.map(p => `${p.platform}: ${p.status}`).join(', ')}). Quítalo de la publicación antes de borrarlo.`)
   const warnings = [
     ...(refs.renders.length ? ['Es el resultado de un montaje guardado: el montaje se conserva y podrás volver a renderizarlo.'] : []),
