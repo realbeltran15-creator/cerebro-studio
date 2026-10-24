@@ -892,7 +892,7 @@ export default function ManualEditorPage() {
             selLayers={sel.filter(r => r.kind === 'overlay').map(r => (comp.overlays ?? []).find(o => o.id === r.id)).filter((o): o is NonNullable<typeof o> => !!o)}
             presets={[...BUILTIN_ANIMATIONS, ...presets.animations]} apply={apply} onNotice={setNotice} onReveal={(id: string) => ws.reveal({ section: id })} />
             <Section id="match" title="Igualar imagen" defaultOpen={sel.filter(r => r.kind === 'clip' || r.kind === 'overlay').length >= 2}>
-              <MatchPanel comp={comp} sel={sel} apply={apply} resolveUrl={resolveUrl} typeOf={typeOf} onNotice={setNotice} onError={setError} compare={compareBefore} setCompare={setCompareBefore} />
+              <MatchPanel comp={comp} sel={sel} apply={apply} resolveUrl={resolveUrl} typeOf={typeOf} labelOf={label} onNotice={setNotice} onError={setError} compare={compareBefore} setCompare={setCompareBefore} />
             </Section>
           </>,
           texts: <>

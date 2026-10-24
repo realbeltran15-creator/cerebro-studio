@@ -8,7 +8,6 @@ import { updateOverlay, type ItemRef } from '@/lib/editor/tracks'
 import { SliderField } from './editor-inspectors'
 
 type Item = { ref: ItemRef; label: string; assetId: string; filters: Clip['filters']; grade: Grade | null | undefined; fromMs: number; spanMs: number }
-type RefMode = 'first' | 'second' | 'average'
 
 /** Composition without any «Igualar imagen» correction (to compare before / after in the viewer). */
 export function withoutGrades(c: Composition): Composition {
@@ -19,14 +18,17 @@ export function withoutGrades(c: Composition): Composition {
  * «Igualar imagen»: a small panel. Pick the reference (first, second or average), what to match, and the strength; then match the selection
  * or the whole project. The correction is measured on the real pictures (several frames for a video) and kept apart from the owner's filters.
  */
-export function MatchPanel({ comp, sel, apply, resolveUrl, typeOf, onNotice, onError, compare, setCompare }: {
+export function MatchPanel({ comp, sel, apply, resolveUrl, typeOf, labelOf, onNotice, onError, compare, setCompare }: {
   comp: Composition; sel: ItemRef[]
   apply: (fn: (c: Composition) => Composition) => void
   resolveUrl: (id: string) => Promise<string>; typeOf: (id: string | null) => string
+  /** Name of a file (to list the selected pictures by name in «Referencia»). */
+  labelOf?: (id: string | null) => string
   onNotice: (m: string) => void; onError: (m: string) => void
   compare: boolean; setCompare: (v: boolean) => void
 }) {
-  const [refMode, setRefMode] = useState<RefMode>('first')
+  // The reference: one of the selected pictures (by its place in the selection, listed by name) or the average of all of them.
+  const [refChoice, setRefChoice] = useState<number | 'average'>(0)
   const [opts, setOpts] = useState<MatchOptions>(DEFAULT_MATCH)
   const [strength, setStrength] = useState(1)
   const [busy, setBusy] = useState(false)
@@ -48,33 +50,35 @@ export function MatchPanel({ comp, sel, apply, resolveUrl, typeOf, onNotice, onE
 
   const setGrade = (c: Composition, r: ItemRef, g: Grade | null) => (r.kind === 'clip' ? updateClip(c, r.id, { grade: g }) : updateOverlay(c, r.id, { grade: g } as Partial<OverlayClip>))
 
-  async function run(targets: Item[]) {
+  async function run(targets: Item[], choice: number | 'average' = refChoice) {
     if (targets.length < 2) { onError('Selecciona al menos dos fotos o vídeos (Mayús/Ctrl + clic) para igualarlos, o usa «Todo el proyecto».'); return }
     if (!opts.brightness && !opts.contrast && !opts.warmth && !opts.color) { onError('Elige qué igualar (luminosidad, contraste, temperatura o color).'); return }
     setBusy(true)
     try {
       const samples = await Promise.all(targets.map(async t => loadSamples(await resolveUrl(t.assetId), typeOf(t.assetId) === 'video' ? 'video' : 'image', t.fromMs, t.spanMs)))
       const stats: PictureStats[] = targets.map((t, i) => measure(samples[i], t.filters ?? null, null))
-      const refIndex = refMode === 'second' ? 1 : 0
-      const ref = refMode === 'average' ? averageStats(stats) : stats[refIndex]
-      const results = targets.map((t, i) => (refMode !== 'average' && i === refIndex ? null : { t, m: solveMatch(samples[i], t.filters ?? null, ref, opts) }))
+      const average = choice === 'average'
+      const refIndex = average ? -1 : Math.min(choice as number, targets.length - 1)
+      const ref = average ? averageStats(stats) : stats[refIndex]
+      const results = targets.map((t, i) => (!average && i === refIndex ? null : { t, m: solveMatch(samples[i], t.filters ?? null, ref, opts) }))
       apply(c => targets.reduce((x, t, i) => {
         const r = results[i]
         if (!r) return setGrade(x, t.ref, null) // the reference stays as it is
-        return setGrade(x, t.ref, { brightness: r.m.brightness, contrast: r.m.contrast, saturation: r.m.saturation, warmth: r.m.warmth, strength, ref: refMode === 'average' ? 'promedio' : targets[refIndex].label })
+        return setGrade(x, t.ref, { brightness: r.m.brightness, contrast: r.m.contrast, saturation: r.m.saturation, warmth: r.m.warmth, strength, ref: average ? 'promedio' : targets[refIndex].label })
       }, c))
       const changed = results.filter(Boolean) as Array<{ t: Item; m: ReturnType<typeof solveMatch> }>
       const pct = (v: number) => `${Math.round(v * 100)} %`
       const varies = samples.some(s => s.length > 1 && (() => { const ms = s.map(f => measure([f], null, null).mean); return Math.max(...ms) - Math.min(...ms) > 0.15 })())
-      onNotice(`Imagen igualada con ${refMode === 'average' ? 'el promedio' : `el ${targets[refIndex].label}`} como referencia: ${changed.map(({ t, m }) => `${t.label} luminosidad ${pct(m.before.mean)} → ${pct(m.after.mean)}`).join('; ')} (referencia ${pct(ref.mean)}).${changed.some(c => c.m.limited) ? ' Se ha llegado hasta donde se puede sin quemar las luces ni empastar las sombras.' : ''}${varies ? ' Un vídeo cambia de iluminación por dentro: se iguala su media.' : ''} Ctrl+Z lo deshace.`)
+      onNotice(`Imagen igualada con ${average ? 'el promedio' : `el ${targets[refIndex].label}`} como referencia: ${changed.map(({ t, m }) => `${t.label} luminosidad ${pct(m.before.mean)} → ${pct(m.after.mean)}`).join('; ')} (referencia ${pct(ref.mean)}).${changed.some(c => c.m.limited) ? ' Se ha llegado hasta donde se puede sin quemar las luces ni empastar las sombras.' : ''}${varies ? ' Un vídeo cambia de iluminación por dentro: se iguala su media.' : ''} Ctrl+Z lo deshace.`)
     } catch (e) { onError(e instanceof Error ? e.message : 'No se pudo analizar la imagen.') }
     finally { setBusy(false) }
   }
 
   return <div className="matchPanel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
     <p className="muted small" role="status">{selected.length >= 2 ? `${selected.length} fotos o vídeos seleccionados.` : 'Selecciona dos o más fotos o vídeos (Mayús/Ctrl + clic), o iguala todo el proyecto.'}</p>
-    <label>Referencia<select aria-label="Referencia para igualar" value={refMode} onChange={e => setRefMode(e.target.value as RefMode)}>
-      <option value="first">El primero seleccionado</option><option value="second">El segundo seleccionado</option><option value="average">El promedio de todos</option>
+    <label>Referencia<select aria-label="Referencia para igualar" value={String(refChoice)} onChange={e => setRefChoice(e.target.value === 'average' ? 'average' : Number(e.target.value))}>
+      {(selected.length ? selected : [null, null]).map((it, i) => <option key={i} value={i}>{it ? `${it.label[0].toUpperCase()}${it.label.slice(1)} · ${labelOf ? labelOf(it.assetId).slice(0, 28) : typeOf(it.assetId)}` : i === 0 ? 'El primero seleccionado' : 'El segundo seleccionado'}</option>)}
+      <option value="average">El promedio de todos</option>
     </select></label>
     <div className="pageActions" role="group" aria-label="Qué igualar">
       {([['brightness', 'Luminosidad'], ['contrast', 'Contraste'], ['warmth', 'Temperatura'], ['color', 'Color (saturación)']] as Array<[keyof MatchOptions, string]>).map(([k, l]) =>
@@ -84,7 +88,7 @@ export function MatchPanel({ comp, sel, apply, resolveUrl, typeOf, onNotice, onE
       onChange={v => { setStrength(v / 100); if (graded.length) apply(c => ({ ...c, clips: c.clips.map(k => (k.grade ? { ...k, grade: { ...k.grade, strength: v / 100 } } : k)), overlays: (c.overlays ?? []).map(o => (o.grade ? { ...o, grade: { ...o.grade, strength: v / 100 } } : o)) })) }} />
     <div className="pageActions">
       <button type="button" className="small" disabled={busy || selected.length < 2} onClick={() => void run(selected)}>{busy ? 'Analizando…' : 'Igualar selección'}</button>
-      <button type="button" className="ghost small" disabled={busy || project.length < 2} onClick={() => void run(refMode === 'average' ? project : [...selected.slice(0, refMode === 'second' ? 2 : 1), ...project.filter(p => !selected.slice(0, 2).some(s => s.ref.id === p.ref.id))])}>Todo el proyecto</button>
+      <button type="button" className="ghost small" disabled={busy || project.length < 2} onClick={() => { if (refChoice === 'average' || !selected.length) { void run(project, refChoice === 'average' ? 'average' : 0); return } const r = selected[Math.min(refChoice, selected.length - 1)]; void run([r, ...project.filter(p => p.ref.id !== r.ref.id)], 0) }}>Todo el proyecto</button>
     </div>
     {graded.length > 0 && <div className="pageActions">
       <button type="button" className={compare ? 'small' : 'ghost small'} aria-pressed={compare} onClick={() => setCompare(!compare)}>{compare ? 'Viendo el antes' : 'Ver antes / después'}</button>
