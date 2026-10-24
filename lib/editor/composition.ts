@@ -59,7 +59,9 @@ export type ExportSettings = {
 /** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
 export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
 
-export type TransitionOptions = { direction?: 'left' | 'right' | 'up' | 'down'; intensity?: number; easing?: 'smooth' | 'linear' | 'in' | 'out' }
+/** Where the transition sits relative to the cut: `before` = it ends at the cut (the default of montages made before alignment existed), `center` = half on each side, `after` = it starts at the cut. */
+export type TransitionAlign = 'before' | 'center' | 'after'
+export type TransitionOptions = { direction?: 'left' | 'right' | 'up' | 'down'; intensity?: number; easing?: 'smooth' | 'linear' | 'in' | 'out'; align?: TransitionAlign }
 export type Filters = { brightness: number; contrast: number; saturation: number; blur: number }
 export const NO_FILTERS: Filters = { brightness: 1, contrast: 1, saturation: 1, blur: 0 }
 export const FILTER_PRESETS: Record<string, { label: string; f: Filters }> = {
@@ -154,8 +156,10 @@ export type Clip = {
   keyframes?: ClipKeyframe[]
   /** Transition length into the next clip (ms); absent = the montage's fadeMs. */
   transitionMs?: number
-  /** Direction, intensity and easing of that transition. */
+  /** Direction, intensity, easing and alignment to the cut of that transition. */
   transitionOpts?: TransitionOptions | null
+  /** Video only: length of the source file (ms). Lets the transition know whether the file has material after the clip's end (a handle). Absent = unknown, treated as «no material». */
+  sourceDurationMs?: number
   groupId?: string
 }
 
@@ -416,6 +420,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       ...(c.opacity !== undefined && Number(c.opacity) < 1 ? { opacity: clamp(c.opacity, 0, 1, 1) } : {}),
       ...(c.transitionMs !== undefined && Number.isFinite(Number(c.transitionMs)) ? { transitionMs: clamp(c.transitionMs, 0, 3000, 300) } : {}),
       ...(c.transitionOpts && typeof c.transitionOpts === 'object' ? { transitionOpts: parseTransitionOpts(c.transitionOpts) } : {}),
+      ...(c.sourceDurationMs !== undefined && Number.isFinite(Number(c.sourceDurationMs)) && Number(c.sourceDurationMs) > 0 ? { sourceDurationMs: Math.round(Number(c.sourceDurationMs)) } : {}),
       ...(typeof c.groupId === 'string' && c.groupId ? { groupId: c.groupId.slice(0, 60) } : {}),
       ...(Array.isArray(c.cues) ? { cues: parseCues(c.cues, clampMs(Number(c.durationMs) || 5000)) } : {}),
     } satisfies Clip]
@@ -459,6 +464,7 @@ function parseTransitionOpts(o: Partial<TransitionOptions>): TransitionOptions {
     ...(o.direction === 'left' || o.direction === 'right' || o.direction === 'up' || o.direction === 'down' ? { direction: o.direction } : {}),
     ...(o.intensity !== undefined && Number.isFinite(Number(o.intensity)) ? { intensity: clamp(o.intensity, 0.1, 3, 1) } : {}),
     ...(o.easing === 'smooth' || o.easing === 'linear' || o.easing === 'in' || o.easing === 'out' ? { easing: o.easing } : {}),
+    ...(o.align === 'before' || o.align === 'center' || o.align === 'after' ? { align: o.align } : {}),
   }
 }
 export function parseGrade(g: unknown): Grade | null {

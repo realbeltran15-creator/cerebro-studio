@@ -8,6 +8,8 @@ import {
 } from './composition'
 import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
+import { transitionWindow } from './transition-window'
+export { transitionWindow } from './transition-window'
 
 export type MediaKind = 'video' | 'image' | 'audio' | null
 export type KindOf = (assetId: string) => MediaKind
@@ -61,12 +63,7 @@ const baseVisual = (): Omit<VisualOp, 'type' | 'slot' | 'assetId' | 'media' | 's
  * transition is applied to every cut, copied, set by a command or built by a template; without this limit the picture jumped at the start of a
  * clip shorter than its own transition. Picture, sound, preview and export all read it from here.
  */
-export const transitionMsOf = (c: Pick<Composition, 'clips' | 'fadeMs'>, i: number) => {
-  const clip = c.clips[i]
-  if (!clip) return 0
-  const want = Math.max(0, clip.transitionMs ?? c.fadeMs)
-  return Math.min(want, clip.durationMs, c.clips[i + 1]?.durationMs ?? clip.durationMs)
-}
+export const transitionMsOf = (c: Pick<Composition, 'clips' | 'fadeMs'>, i: number) => transitionWindow(c, i).ms
 
 /** Index of the main-track clip at `t`, or -1 when the main track has ended. */
 export function mainClipAt(c: Pick<Composition, 'clips'>, t: number, starts = clipStarts(c)) {
@@ -95,30 +92,47 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
   if (i >= 0 && !hidden.has('main')) {
     const clip = c.clips[i]
     const local = t - starts[i]
-    const fade = transitionMsOf(c, i)
-    const kind = clip.transition ?? 'fade'
-    const blending = fade > 0 && i < last && BLENDS.has(kind) && clip.durationMs - local < fade
-    const remaining = clip.durationMs - local
-    const p = blending ? 1 - remaining / fade : 0
-    const tf = blending ? transitionFrame(kind, p, clip.transitionOpts ?? {}) : null
-    const a = mainVisual(c, i, local, kindOf, mutedTrack.has('main'))
-    // During a blending transition the two clips' own sound crossfades (linear), like the picture.
-    if (a) ops.push({ ...a, scale: tf?.aScale ?? 1, blur: tf?.aBlur ?? 0, alpha: a.alpha * (tf?.aAlpha ?? 1), volume: a.volume * (tf ? 1 - p : 1) })
-    if (tf) {
-      const next = c.clips[i + 1]
-      const b = mainVisual(c, i + 1, 0, kindOf, mutedTrack.has('main'))
+    // The cut this instant belongs to, if any: the transition after clip i (we are in its last part) or the one after clip i - 1 (we are in
+    // its first part, when it reaches past the cut). Both clips are on screen for the whole window.
+    const win = (k: number) => (k >= 0 && k < last && BLENDS.has(c.clips[k].transition ?? 'fade') ? transitionWindow(c, k) : null)
+    const wi = win(i), wp = win(i - 1)
+    let k = -1
+    if (wi && wi.ms > 0 && clip.durationMs - local < wi.pre) k = i
+    else if (wp && wp.ms > 0 && local < wp.post) k = i - 1
+    if (k >= 0) {
+      const A = c.clips[k], B = c.clips[k + 1]
+      const w = k === i ? wi! : wp!
+      const cut = starts[k] + A.durationMs
+      const p = clamp01((t - (cut - w.pre)) / w.ms)
+      const kind = A.transition ?? 'fade'
+      const tf = transitionFrame(kind, p, A.transitionOpts ?? {})
+      const muted = mutedTrack.has('main')
+      const a = mainVisual(c, k, Math.min(t - starts[k], A.durationMs), kindOf, muted)
+      if (a) {
+        // A keeps playing past its end while its file has material there; otherwise it holds its last frame (reported by transitionHandles).
+        const over = t - cut, rate = A.speed ?? 1
+        const outMs = (A.trimInMs ?? 0) + A.durationMs * rate
+        const reach = outMs + Math.max(0, over) * rate
+        const past = over > 0 && a.media === 'video'
+        const have = !past || (A.sourceDurationMs !== undefined && reach <= A.sourceDurationMs)
+        ops.push({ ...a, live: have, sourceMs: past ? (have ? reach : Math.max(0, outMs - 40 * rate)) : a.sourceMs,
+          scale: tf.aScale, blur: tf.aBlur, alpha: a.alpha * tf.aAlpha, volume: have ? a.volume * (1 - p) : 0 })
+      }
+      const b = mainVisual(c, k + 1, Math.max(0, t - starts[k + 1]), kindOf, muted)
       if (b) {
-        // The incoming video plays during the transition when its file has material before its start (a «handle»: it was trimmed);
-        // otherwise it holds its first frame until its turn, so its own timing never moves.
-        const pre = (next.trimInMs ?? 0) - remaining * (next.speed ?? 1)
-        const live = b.media === 'video' && pre >= 0
+        // B plays from before its start when its file has material there (a «handle»: it was trimmed); otherwise it holds its first frame.
+        const toB = (B.trimInMs ?? 0) + (t - starts[k + 1]) * (B.speed ?? 1)
+        const live = b.media === 'video' && (t >= starts[k + 1] || toB >= 0)
         ops.push({
-          ...b, live, sourceMs: live ? pre : b.sourceMs, volume: live ? b.volume * p : 0, alpha: b.alpha * tf.bAlpha,
+          ...b, live: b.media === 'video' && live, sourceMs: live ? toB : b.sourceMs, volume: live ? b.volume * p : 0, alpha: b.alpha * tf.bAlpha,
           offsetX: tf.bOffsetX, offsetY: tf.bOffsetY, revealX: tf.bReveal, revealY: tf.bRevealY, revealFrom: tf.bRevealFrom, scale: tf.bScale, blur: tf.bBlur,
           backdrop: kind === 'slide' || kind === 'slide_up' || kind === 'wipe' || kind === 'wipe_down',
         })
       }
       if (tf.white > 0) ops.push({ type: 'fill', color: '#fff', alpha: tf.white })
+    } else {
+      const a = mainVisual(c, i, local, kindOf, mutedTrack.has('main'))
+      if (a) ops.push(a)
     }
   }
   // What belongs to the main clip (its own text and the subtitles) fades with it.
@@ -280,17 +294,21 @@ export function videoVoices(c: Composition, kindOf: KindOf): Array<Voice & { rat
   const tracks = tracksOf(c)
   const mainMuted = tracks.find(t => t.id === 'main')?.muted
   const last = c.clips.length - 1
-  const blendsOut = (i: number) => i < last && transitionMsOf(c, i) > 0 && BLENDS.has(c.clips[i].transition ?? 'fade')
+  const win = (k: number) => (k >= 0 && k < last && BLENDS.has(c.clips[k].transition ?? 'fade') ? transitionWindow(c, k) : { ms: 0, pre: 0, post: 0 })
   c.clips.forEach((k, i) => {
     if (!k.visualAssetId || kindOf(k.visualAssetId) !== 'video' || k.muted || mainMuted || (k.volume ?? 1) <= 0) return
     const rate = k.speed ?? 1, trim = k.trimInMs ?? 0
-    const fadeOut = blendsOut(i) ? transitionMsOf(c, i) : 0
-    // Pre-roll during the previous transition when the file has material before the clip's start (see frameAt).
-    const prevFade = i > 0 && blendsOut(i - 1) ? transitionMsOf(c, i - 1) : 0
-    const pre = prevFade > 0 && trim - prevFade * rate >= 0 ? prevFade : 0
-    const dur = k.durationMs + pre
-    out.push({ key: `vc:${k.id}`, assetId: k.visualAssetId, bus: 'video', trackId: 'main', startMs: starts[i] - pre, endMs: starts[i] + k.durationMs, sourceStartMs: trim - pre * rate, loop: false, volume: k.volume ?? 1, pan: 0,
-      envelope: pre || fadeOut ? { durationMs: dur, ...(pre ? { fadeInMs: pre } : {}), ...(fadeOut ? { fadeOutMs: fadeOut } : {}) } : null, duck: null, rate, trimSec: trim / 1000 })
+    const wOut = win(i), wIn = win(i - 1)
+    // Into the clip: it sounds from before its start when its file has material there (see frameAt), and fades in over its share of the window.
+    const preLive = Math.min(wIn.pre, trim / rate)
+    // Out of the clip: it keeps sounding past its end when its file has material there.
+    const haveAfter = k.sourceDurationMs ? Math.max(0, k.sourceDurationMs - (trim + k.durationMs * rate)) / rate : 0
+    const postLive = Math.min(wOut.post, haveAfter)
+    const fadeIn = wIn.ms > 0 ? preLive + wIn.post : 0
+    const fadeOut = wOut.ms > 0 ? wOut.pre + postLive : 0
+    const startMs = starts[i] - preLive, endMs = starts[i] + k.durationMs + postLive
+    out.push({ key: `vc:${k.id}`, assetId: k.visualAssetId, bus: 'video', trackId: 'main', startMs, endMs, sourceStartMs: trim - preLive * rate, loop: false, volume: k.volume ?? 1, pan: 0,
+      envelope: fadeIn || fadeOut ? { durationMs: endMs - startMs, ...(fadeIn ? { fadeInMs: fadeIn } : {}), ...(fadeOut ? { fadeOutMs: fadeOut } : {}) } : null, duck: null, rate, trimSec: trim / 1000 })
   })
   for (const o of c.overlays ?? []) {
     if (kindOf(o.assetId) !== 'video' || o.muted || (o.volume ?? 1) <= 0 || tracks.find(t => t.id === o.trackId)?.muted || tracks.find(t => t.id === o.trackId)?.hidden) continue
