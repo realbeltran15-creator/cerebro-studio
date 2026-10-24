@@ -146,6 +146,9 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   function onMove(e: React.PointerEvent) {
     const d = drag.current
     if (!d) return
+    // No button pressed any more: the drag ended somewhere we did not hear about (the pointer was released outside, the element was
+    // redrawn and lost the capture…). End it here; moving on from its old snapshot would undo everything done since it started.
+    if (e.buttons === 0) { onUp(); return }
     const delta = toMs(e.clientX - d.startX)
     const exclude = d.mode === 'move' ? d.refs : d.mode === 'resizeMain' ? [{ kind: 'clip' as const, id: d.id }] : [d.ref]
     const pts = p.magnet ? snapPoints(d.base, exclude, [p.playheadMs, ...(p.showBeats ? p.beatsMs : [])]) : []
@@ -174,6 +177,14 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
     }
   }
   function onUp() { if (drag.current) { drag.current = null; p.end() } }
+  // A release anywhere (even outside the timeline or the window) ends a drag that is still open.
+  const onUpRef = useRef(onUp)
+  useEffect(() => { onUpRef.current = onUp })
+  useEffect(() => {
+    const stop = () => onUpRef.current()
+    window.addEventListener('pointerup', stop); window.addEventListener('pointercancel', stop); window.addEventListener('blur', stop)
+    return () => { window.removeEventListener('pointerup', stop); window.removeEventListener('pointercancel', stop); window.removeEventListener('blur', stop) }
+  }, [])
 
   const ruler = <div className="muted small timelineRuler" style={{ position: 'relative', height: 20, cursor: 'pointer' }} title="Clic: mover el cabezal · Mayús + arrastrar: marcar un fragmento"
     onPointerDown={e => { const left = e.currentTarget.getBoundingClientRect().left; const ms = Math.max(0, Math.min(total, toMs(e.clientX - left))); if (e.shiftKey) { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); rangeDrag.current = { startMs: ms, left }; p.setRange(null) } else { (e.target as HTMLElement).setPointerCapture(e.pointerId); rangeDrag.current = null; p.onSeek(ms); scrubbing.current = left } }}
@@ -354,7 +365,7 @@ function TransitionChip({ comp, clip, index: i, pxPerSec, locked, selected, onSe
     {!locked && <span className="tlTrEdge" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize' }} role="separator" aria-orientation="vertical" aria-label="Alargar o acortar la transición" title="Arrastra para alargarla o acortarla"
       onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onDragStart={e => { e.preventDefault(); e.stopPropagation() }}
       onPointerDown={e => { e.stopPropagation(); e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); (e.target as HTMLElement).setPointerCapture(e.pointerId); begin(); drag.current = { x: e.clientX, ms, max: Math.min(3000, clip.durationMs), base: comp } }}
-      onPointerMove={e => { const d = drag.current; if (!d) return; const next = Math.round(Math.min(d.max, Math.max(100, d.ms + (d.x - e.clientX) / pxPerSec * 1000)) / 50) * 50; live({ ...d.base, clips: d.base.clips.map(k => (k.id === clip.id ? { ...k, transitionMs: next } : k)) }) }}
+      onPointerMove={e => { const d = drag.current; if (!d) return; if (e.buttons === 0) { drag.current = null; end(); return } const next = Math.round(Math.min(d.max, Math.max(100, d.ms + (d.x - e.clientX) / pxPerSec * 1000)) / 50) * 50; live({ ...d.base, clips: d.base.clips.map(k => (k.id === clip.id ? { ...k, transitionMs: next } : k)) }) }}
       onPointerUp={() => { if (drag.current) { drag.current = null; end() } }} />}
     <span aria-hidden>{TRANSITION_ICONS[kind]}</span>
   </button>

@@ -23,7 +23,7 @@ import { analyzeAsset, type AssetAnalysis } from '@/lib/editor/analysis-assets'
 import { nearestBeat } from '@/lib/editor/sync'
 import { COMMAND_EXAMPLES, runInstruction } from '@/lib/editor/commands'
 import { clearLocalDraft, draftDiffers, loadLocalDraft, loadLocalHistory, saveLocalDraft, saveLocalHistory, type LocalDraft } from '@/lib/editor/local-draft'
-import { listVersions, loadVersion, REASON_LABELS, saveVersion, type VersionInfo, type VersionReason } from '@/lib/editor/versions'
+import { listVersions, loadVersion, REASON_LABELS, removedItems, saveVersion, type VersionInfo, type VersionReason } from '@/lib/editor/versions'
 import { acceptProposal, DEFAULT_PREFS, detectCorrection, loadPrefs, PREF_LABELS, savePrefs, type EditPreferences, type Proposal, type Watch } from '@/lib/editor/preferences'
 import { deleteRange, isolateRange, normRange, type Range } from '@/lib/editor/range'
 import { effectiveCamera } from '@/lib/editor/motion'
@@ -78,6 +78,14 @@ export default function ManualEditorPage() {
   const [presetsAt, setPresetsAt] = useState<string | null>(null)
   const storePresets = async (next: Presets) => { try { const at = await savePresets(supabase, next, presetsAt); setPresets(next); setPresetsAt(at) } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar el preajuste.') } }
   const dragging = useRef(false)
+  const dragStartedAt = useRef(0)
+  // Whether a mouse button / finger is down anywhere in the page (to tell a real drag from one whose release was lost).
+  const pointerDown = useRef(false)
+  useEffect(() => {
+    const down = () => { pointerDown.current = true }, up = () => { pointerDown.current = false }
+    window.addEventListener('pointerdown', down, true); window.addEventListener('pointerup', up, true); window.addEventListener('pointercancel', up, true); window.addEventListener('blur', up)
+    return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true); window.removeEventListener('blur', up) }
+  }, [])
   const [trackScale, setTrackScale] = useState(1)
   const [allProjects, setAllProjects] = useState(false)
   // Workspace: tool tabs | viewer | properties, panel sizes, open property groups and the workspace mode (remembered in this browser).
@@ -309,6 +317,9 @@ export default function ManualEditorPage() {
     if (!job || !snapshot || !savedAtRef.current) return
     const run = (async () => {
       setSaveState('saving'); setSaveMessage('')
+      // Before saving a version that removes clips, layers, texts or sounds, the previous saved one is kept as a recovery point.
+      const prev = lastSaved.current
+      if (prev && prev !== snapshot && removedItems(prev, snapshot).length) await writeVersion(prev, 'before-removal')
       let q = supabase.from('render_jobs').update({ composition: snapshot, output_format: snapshot.format, updated_at: new Date().toISOString() }).eq('id', job.id)
       if (!opts.force) q = q.eq('updated_at', savedAtRef.current)
       const { data, error: e } = await q.select('updated_at')
@@ -353,6 +364,8 @@ export default function ManualEditorPage() {
     const wait = saveState === 'error' ? [5, 15, 30, 60][Math.min(failures.current, 3)] * 1000 : 2500
     if (saveState === 'error') setRetryIn(Math.round(wait / 1000))
     const t = setTimeout(function attempt() {
+      // A drag that never ended (its release was lost) must not hold the save back forever: after 20 s without a pressed button, end it.
+      if (dragging.current && Date.now() - dragStartedAt.current > 20_000 && !pointerDown.current) endDragRef.current()
       if (dragging.current || busy === 'import') { setTimeout(attempt, 800); return }
       void saveRef.current().then(() => { failures.current = 0 }, () => { failures.current++ })
     }, wait)
@@ -600,10 +613,21 @@ export default function ManualEditorPage() {
       apply(c => deleteTrack(c, t.id)); setSel([])
     }
   }
-  const beginDrag = useCallback(() => { dragging.current = true; setHistory(h => (h ? { past: [...h.past, h.present].slice(-100), present: h.present, future: [] } : h)) }, [])
+  const beginDrag = useCallback(() => { dragging.current = true; dragStartedAt.current = Date.now(); setHistory(h => (h ? { past: [...h.past, h.present].slice(-100), present: h.present, future: [] } : h)) }, [])
   const liveDrag = useCallback((next: Composition) => { setHistory(h => (h ? { ...h, present: next } : h)); setDirty(true) }, [])
   // A click without movement leaves an identical snapshot on the undo stack: drop it.
   const endDrag = useCallback(() => { dragging.current = false; setHistory(h => (h && h.past.length && h.past[h.past.length - 1] === h.present ? { ...h, past: h.past.slice(0, -1) } : h)) }, [])
+  // How long the montage has had unsaved changes (a save that does not happen must be visible, not silent).
+  const dirtySince = useRef<number | null>(null)
+  const [unsavedFor, setUnsavedFor] = useState(0)
+  useEffect(() => {
+    if (!dirty) { dirtySince.current = null; setUnsavedFor(0); return }
+    if (dirtySince.current === null) dirtySince.current = Date.now()
+    const t = setInterval(() => setUnsavedFor(Math.round((Date.now() - (dirtySince.current ?? Date.now())) / 1000)), 10_000)
+    return () => clearInterval(t)
+  }, [dirty])
+  const endDragRef = useRef(endDrag)
+  useEffect(() => { endDragRef.current = endDrag }, [endDrag])
 
   if (picking) return <StudioShell title="Editor manual" eyebrow="POSTPRODUCCIÓN" actions={<Link className="buttonLink ghost" href="/editor">Editor automático</Link>}><ManualPicker /></StudioShell>
 
@@ -754,6 +778,7 @@ export default function ManualEditorPage() {
         <button type="button" className="ghost small" onClick={() => void resolveConflict('copy')}>Guardar la mía como copia</button>
       </div>
     </div>}
+    {unsavedFor >= 60 && saveState !== 'error' && saveState !== 'conflict' && <p className="warnBox small" role="alert">Hay cambios sin guardar en la nube desde hace {unsavedFor >= 120 ? `${Math.floor(unsavedFor / 60)} min` : `${unsavedFor} s`}{autoSave ? ' (el guardado automático no ha podido hacerlo)' : ''}. <button type="button" className="ghost small" onClick={() => void saveClick()}>Guardar ahora</button></p>}
     {saveState === 'error' && <p className="warnBox small" role="alert">No se pudo guardar en la nube ({saveMessage}). Tus cambios siguen aquí y en este navegador; se reintenta solo. <button type="button" className="ghost small" onClick={() => void saveClick()}>Reintentar ahora</button></p>}
     {showVersions && <section className="panel" aria-label="Puntos de recuperación" style={{ marginBottom: 12 }}>
       <b>Puntos de recuperación en la nube</b> <span className="muted small">(se crean al pulsar «Guardar ahora», cada 5 minutos de guardado automático, antes de restaurar y en los conflictos; se guardan los {30} últimos)</span>

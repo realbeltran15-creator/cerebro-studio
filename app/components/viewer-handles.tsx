@@ -89,6 +89,7 @@ export function ViewerHandles({ comp, player, kindOf, playheadMs, selection, onS
   function move(e: React.PointerEvent) {
     const d = drag.current
     if (!d) return
+    if (e.buttons === 0) { up(); return } // released where we could not hear it: never continue from the old snapshot
     const p = toCanvas(e)
     const dx = p.x - d.x0, dy = p.y - d.y0
     const c = d.base

@@ -2485,6 +2485,56 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.close(); server.close()
 }
 
+// 32. Guardado a prueba de pérdidas: un arrastre cuya liberación se pierde ya no bloquea el guardado automático ni deshace después lo
+//     editado; quitar elementos deja antes un punto de recuperación con lo quitado; aviso visible si los cambios no llegan a la nube.
+{
+  const server = serve(8832, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 950 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8832/editor/manual?job=job1')
+  await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
+  const db = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__DB.render_jobs[0])))
+  await page.locator('select[aria-label="Añadir pista"]').selectOption('overlay')
+  await page.evaluate(() => { const src = document.querySelector('[aria-label^="Material Foto roja"]'), row = document.querySelector('[aria-label="Pista de Superposición 1"]'); const dt = new DataTransfer(), r = row.getBoundingClientRect(), at = { clientX: r.left + 60, clientY: r.top + 12, bubbles: true, cancelable: true, dataTransfer: dt }; src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt })); row.dispatchEvent(new DragEvent('dragover', at)); row.dispatchEvent(new DragEvent('drop', at)) })
+  await page.waitForTimeout(3500)
+  const saved0 = await db()
+  // A drag on the layer whose release never reaches the timeline (the pointer capture is lost, the button is released elsewhere).
+  const item = page.locator('[aria-label="Pista de Superposición 1"] > div').first()
+  const ib = await item.boundingBox()
+  await page.evaluate(() => { window.__pid = null; document.addEventListener('pointerdown', e => { window.__pid = e.pointerId }, { capture: true, once: true }) })
+  await page.mouse.move(ib.x + 30, ib.y + ib.height / 2); await page.mouse.down()
+  await page.evaluate(() => { const el = document.querySelector('[aria-label="Pista de Superposición 1"] > div'); try { el.releasePointerCapture(window.__pid) } catch { /* already lost */ } })
+  await page.mouse.move(10, 10); await page.mouse.up()
+  // Edit after it, then move the mouse over the timeline (this used to replay the old drag from its snapshot).
+  await page.getByRole('button', { name: 'Añadir texto', exact: true }).click()
+  const box = await page.locator('[aria-label="Pista de vídeo"]').boundingBox()
+  await page.mouse.move(box.x + 300, box.y + 20, { steps: 4 }); await page.mouse.move(box.x + 500, box.y + 20, { steps: 4 })
+  await page.waitForTimeout(4000)
+  const saved1 = await db()
+  check('saving: after a drag whose release was lost, later edits stay and the autosave still reaches the cloud', saved1.updated_at !== saved0.updated_at && (saved1.composition.textClips ?? []).length === 1 && (saved1.composition.overlays ?? []).length === 1, { texts: saved1.composition.textClips?.length, overlays: saved1.composition.overlays?.length, same: saved1.updated_at === saved0.updated_at })
+  // Removing a layer keeps the previous state as a recovery point first.
+  await item.click(); await page.keyboard.press('Delete')
+  await page.waitForTimeout(4000)
+  const saved2 = await db()
+  const points = await page.evaluate(() => Object.entries(window.__STORE ?? {}).filter(([k]) => /versions\/job1\/\d+-before-removal\.json$/.test(k)).map(([k, v]) => ({ k, overlays: (JSON.parse(v).overlays ?? []).length })))
+  check('saving: removing a layer saves the removal and first keeps a recovery point that still has the layer', (saved2.composition.overlays ?? []).length === 0 && points.length >= 1 && points.some(p => p.overlays === 1), { points, overlays: saved2.composition.overlays?.length })
+  await page.getByRole('button', { name: 'Puntos de recuperación' }).click()
+  const listed = page.locator('[aria-label="Puntos de recuperación"]').getByText(/Antes de quitar elementos/)
+  await listed.first().waitFor({ timeout: 10000 })
+  await page.locator('[aria-label="Puntos de recuperación"] li', { hasText: 'Antes de quitar elementos' }).first().getByRole('button', { name: 'Restaurar' }).click()
+  await page.waitForTimeout(4000)
+  check('saving: restoring that point brings the layer back (and it is saved again)', await page.locator('[aria-label="Pista de Superposición 1"] > div').count() === 1 && ((await db()).composition.overlays ?? []).length === 1)
+  // A save that does not happen is visible: with autosave off, after a minute a warning appears.
+  await page.getByLabel('Guardado automático').uncheck()
+  await page.getByRole('button', { name: 'Añadir texto', exact: true }).click()
+  await page.evaluate(() => { const n = Date.now; Date.now = () => n() + 75_000 })
+  await page.waitForTimeout(11000)
+  check('saving: unsaved changes for more than a minute show a warning with «Guardar ahora»', await page.getByText(/Hay cambios sin guardar en la nube desde hace/).isVisible())
+  check('saving: no page errors', errors.length === 0, errors)
+  await page.close(); server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

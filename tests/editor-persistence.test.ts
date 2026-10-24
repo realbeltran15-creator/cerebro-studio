@@ -46,3 +46,15 @@ describe('persistence: every property survives the round trip to the database', 
     expect(parseComposition(JSON.parse(JSON.stringify(once)))).toEqual(once)
   })
 })
+
+describe('recovery point before a removal', async () => {
+  const { removedItems } = await import('@/lib/editor/versions')
+  it('lists what a save would remove (by id), and nothing when items are only moved or added', () => {
+    const c = everything()
+    expect(removedItems(c, c)).toEqual([])
+    const moved = { ...c, overlays: (c.overlays ?? []).map(o => ({ ...o, startMs: o.startMs + 500 })) }
+    expect(removedItems(c, moved)).toEqual([])
+    const gone = { ...c, overlays: [], textClips: (c.textClips ?? []).slice(1) }
+    expect(removedItems(c, gone).map(r => r.kind).sort()).toEqual([...(c.overlays ?? []).map(() => 'overlay'), 'text'].sort())
+  })
+})

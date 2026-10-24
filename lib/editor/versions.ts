@@ -8,10 +8,24 @@ import { parseComposition, type Composition } from './composition'
  */
 const BUCKET = 'generated-assets'
 export const KEEP_VERSIONS = 30
-export type VersionReason = 'manual' | 'auto' | 'before-restore' | 'conflict'
+export type VersionReason = 'manual' | 'auto' | 'before-restore' | 'conflict' | 'before-removal'
 export type VersionInfo = { path: string; at: number; reason: VersionReason; bytes: number }
 const folder = (owner: string, projectId: string, jobId: string) => `${owner}/${projectId}/versions/${jobId}`
-export const REASON_LABELS: Record<VersionReason, string> = { manual: 'Guardado a mano', auto: 'Automático', 'before-restore': 'Antes de restaurar', conflict: 'Tu versión en un conflicto' }
+export const REASON_LABELS: Record<VersionReason, string> = { manual: 'Guardado a mano', auto: 'Automático', 'before-restore': 'Antes de restaurar', conflict: 'Tu versión en un conflicto', 'before-removal': 'Antes de quitar elementos' }
+/** Points saved before something was removed are kept apart (they are what you need when something disappeared). */
+export const KEEP_REMOVAL_VERSIONS = 30
+
+/**
+ * What a save would remove compared with the version saved before it (clips, layers, texts, sounds, by id). Used to keep a recovery point
+ * of the previous state before saving a removal, so nothing removed — on purpose or by mistake — is ever lost for good.
+ */
+export function removedItems(prev: Composition, next: Composition) {
+  const ids = (c: Composition) => ({ clip: c.clips.map(k => k.id), overlay: (c.overlays ?? []).map(o => o.id), text: (c.textClips ?? []).map(t => t.id), audio: (c.audioClips ?? []).map(a => a.id) })
+  const a = ids(prev), b = ids(next)
+  const out: Array<{ kind: 'clip' | 'overlay' | 'text' | 'audio'; id: string }> = []
+  for (const kind of ['clip', 'overlay', 'text', 'audio'] as const) for (const id of a[kind]) if (!b[kind].includes(id)) out.push({ kind, id })
+  return out
+}
 
 export async function saveVersion(db: SupabaseClient, p: { owner: string; projectId: string; jobId: string; composition: Composition; reason: VersionReason }) {
   const path = `${folder(p.owner, p.projectId, p.jobId)}/${Date.now()}-${p.reason}.json`
@@ -40,6 +54,7 @@ export async function loadVersion(db: SupabaseClient, path: string): Promise<Com
 
 async function pruneVersions(db: SupabaseClient, p: { owner: string; projectId: string; jobId: string }) {
   const all = await listVersions(db, p)
-  const old = all.slice(KEEP_VERSIONS).map(v => v.path)
+  const removal = all.filter(v => v.reason === 'before-removal'), other = all.filter(v => v.reason !== 'before-removal')
+  const old = [...other.slice(KEEP_VERSIONS), ...removal.slice(KEEP_REMOVAL_VERSIONS)].map(v => v.path)
   if (old.length) await db.storage.from(BUCKET).remove(old)
 }
