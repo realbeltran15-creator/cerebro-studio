@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto'
 import { promises as fs, createWriteStream, existsSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { clipStarts, exportPlan, projectDurationMs, type Composition } from '../editor/composition'
+import { clipStarts, exportPlan, projectDurationMs, TEXT_FONTS, type Composition } from '../editor/composition'
 import { drawOps, type DrawSource } from '../editor/draw'
 import { audioTrackFactors, audioVoices, busLevels, frameAt, videoVoices as videoVoicesOf, voiceGainAt, voiceWindows, type Bus, type KindOf, type Op, type VisualOp, type Voice } from '../editor/scene'
 
@@ -34,6 +34,7 @@ export type RenderEvent =
   | { phase: 'video'; doneFrames: number; totalFrames: number; segment: number; segments: number; fps: number }
   | { phase: 'audio'; doneMs: number; totalMs: number }
   | { phase: 'mux' }
+  | { phase: 'warning'; message: string }
   | { phase: 'done'; output: string; seconds: number }
 export type RenderOptions = {
   composition: Composition
@@ -124,6 +125,17 @@ export async function renderProject(o: RenderOptions) {
   // ---- Canvas and fonts.
   const cv = await import('@napi-rs/canvas')
   for (const f of o.fontFiles ?? []) cv.GlobalFonts.registerFromPath(f)
+  // The editor's text asks for system fonts by name; a machine without any of them draws a substitute. Say so instead of looking identical by accident.
+  {
+    const have = new Set((cv.GlobalFonts.families as { family: string }[]).map(x => x.family.toLowerCase()))
+    const used = new Set<string>(['sans', ...[...JSON.stringify(o.composition).matchAll(/"font":"(\w+)"/g)].map(m => m[1])])
+    for (const k of used) {
+      const spec = TEXT_FONTS[k as keyof typeof TEXT_FONTS]
+      if (!spec) continue
+      const names = spec.css.split(',').map(n => n.trim().replace(/^["']|["']$/g, '').toLowerCase()).filter(n => !['system-ui', 'ui-monospace', 'sans-serif', 'serif', 'monospace', '-apple-system'].includes(n))
+      if (!names.some(n => have.has(n))) o.onEvent?.({ phase: 'warning', message: `Fuente «${spec.label}» (${names.join(', ')}) no instalada en este equipo: el texto usará una sustituta y puede verse distinto al editor. Se puede pasar un archivo de fuente con --font.` })
+    }
+  }
   const canvas = cv.createCanvas(W, H)
   const g = canvas.getContext('2d') as unknown as CanvasRenderingContext2D
   const images = new Map<string, Awaited<ReturnType<typeof cv.loadImage>>>()

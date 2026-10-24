@@ -15,7 +15,9 @@
     "test:migrations": "bash scripts/test-migrations.sh",
     "research:validate": "node scripts/validate-real.mjs",
     "render": "node scripts/render.mjs",
-    "test:parity": "node scripts/parity-test.mjs"
+    "test:parity": "node scripts/parity-test.mjs",
+    "test:looks": "node scripts/looks-test.mjs",
+    "test:upload": "node scripts/upload-test.mjs"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "1.61.3",

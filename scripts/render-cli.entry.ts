@@ -23,6 +23,7 @@ const onEvent = (e: RenderEvent) => {
   if (e.phase === 'plan') console.error(`Plan: ${e.totalFrames} fotogramas · ${e.segments} trozos (${e.unique} distintos, ${e.reused} repetidos, ${e.cached} ya hechos)`)
   else if (e.phase === 'video' && Date.now() - last > 4000) { last = Date.now(); console.error(`Vídeo ${(e.doneFrames / e.totalFrames * 100).toFixed(1)} % · trozo ${e.segment}/${e.segments}${e.fps ? ` · ${e.fps.toFixed(1)} fps` : ''}`) }
   else if (e.phase === 'audio' && Date.now() - last > 4000) { last = Date.now(); console.error(`Audio ${(e.doneMs / e.totalMs * 100).toFixed(1)} %`) }
+  else if (e.phase === 'warning') console.error(`AVISO: ${e.message}`)
   else if (e.phase === 'mux') console.error('Uniendo trozos y audio…')
   else if (e.phase === 'done') console.error(`Listo en ${fmt(e.seconds)}: ${e.output}`)
 }
@@ -42,7 +43,7 @@ async function main() {
     if (!composition) throw new Error('El proyecto no es un montaje válido.')
     const assets = JSON.parse(await fs.readFile(need('assets'), 'utf8')) as Record<string, AssetFile>
     const from = opt('from'), to = opt('to')
-    const r = await renderProject({ composition, assets, output: out, workDir: path.resolve(opt('work') ?? `${out}.work`), fps: Number(opt('fps') ?? 30), crf: Number(opt('crf') ?? 20), onEvent, ...(from || to ? { rangeMs: { from: Number(from ?? 0) * 1000, to: Number(to ?? 1e9) * 1000 } } : {}) })
+    const r = await renderProject({ composition, assets, output: out, workDir: path.resolve(opt('work') ?? `${out}.work`), fps: Number(opt('fps') ?? 30), crf: Number(opt('crf') ?? 20), fontFiles: (opt('font') ?? '').split(',').filter(Boolean), onEvent, ...(from || to ? { rangeMs: { from: Number(from ?? 0) * 1000, to: Number(to ?? 1e9) * 1000 } } : {}) })
     console.log(JSON.stringify(r))
   } else if (cmd === 'lofi') {
     const work = path.resolve(opt('work') ?? `${out}.work`)
@@ -56,7 +57,7 @@ async function main() {
     for (const w of built.warnings) console.error(`Aviso: ${w}`)
     await fs.writeFile(path.join(work, 'project.json'), JSON.stringify(built.composition))
     await fs.writeFile(path.join(work, 'assets.json'), JSON.stringify(assets, null, 1))
-    const r = await renderProject({ composition: built.composition, assets, output: out, workDir: work, fps: Number(opt('fps') ?? 30), crf: Number(opt('crf') ?? 20), onEvent })
+    const r = await renderProject({ composition: built.composition, assets, output: out, workDir: work, fps: Number(opt('fps') ?? 30), crf: Number(opt('crf') ?? 20), fontFiles: (opt('font') ?? '').split(',').filter(Boolean), onEvent })
     console.log(JSON.stringify({ ...r, clips: built.clips }))
   } else { console.error('Uso: render <project.json> --assets assets.json --out video.mp4 | lofi --music m.mp3 --scenes a.mp4,b.jpg --minutes 90 --out lofi.mp4'); process.exit(2) }
 }
