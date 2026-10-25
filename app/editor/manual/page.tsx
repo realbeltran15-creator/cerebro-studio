@@ -32,6 +32,7 @@ import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
 import { makeRoomForTransition } from '@/lib/editor/transition-room'
+import { RepeatDialog, BatchTransitionsDialog } from '../../components/editor-batch'
 import { zoomAfterWheel, wheelDelta, scrollForAnchor } from '@/lib/editor/timeline-zoom'
 import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
@@ -73,6 +74,7 @@ export default function ManualEditorPage() {
   const sliderBase = useRef<Composition | null>(null)
   // Export lives in its own panel (opened from the top bar) so nothing separates the viewer from the timeline.
   const [exportOpen, setExportOpen] = useState(false)
+  const [batchDlg, setBatchDlg] = useState<null | 'repeat' | 'trans'>(null)
   // «Igualar imagen»: show the viewer without the corrections (before / after).
   const [compareBefore, setCompareBefore] = useState(false)
   const selectTransition = useCallback((clipId: string | null) => { setSelTrState(clipId); if (clipId) setSelState([]) }, [])
@@ -805,6 +807,8 @@ export default function ManualEditorPage() {
     { label: 'Copiar', hint: 'Ctrl+C', run: copySel },
     { label: 'Pegar en el cabezal', hint: 'Ctrl+V', disabled: !clipboard.current, run: pasteHere },
     { label: 'Duplicar', hint: 'Ctrl+D', run: duplicateSel },
+    { label: 'Repetir el clip N veces…', run: () => { if (selClip) setBatchDlg('repeat'); else setNotice('Selecciona primero un clip del vídeo principal.') } },
+    { label: 'Transiciones en lote…', run: () => setBatchDlg('trans') },
     'sep',
     { label: 'Igualar imagen…', disabled: sel.filter(r => r.kind === 'clip' || r.kind === 'overlay').length < 2, run: () => ws.reveal({ tab: 'effects', section: 'match' }) },
     { label: 'Agrupar', hint: 'Ctrl+G', disabled: sel.length < 2, run: groupSel },
@@ -936,6 +940,11 @@ export default function ManualEditorPage() {
       <div className="cardHead" style={{ marginBottom: 6 }}><h3>Exportar el vídeo</h3><button type="button" className="ghost small" onClick={() => setExportOpen(false)} aria-label="Cerrar exportación">✕</button></div>
       <RenderPanel key="full" projectId={job.project_id} composition={comp} assets={assets} beforeRender={dirty ? save : undefined} onExportSettings={e => apply(c => ({ ...c, exportSettings: e }))} exportOnly />
     </section>
+
+    {batchDlg === 'repeat' && selClip && <RepeatDialog comp={comp} clipId={selClip.id} kindOf={id => kindOfAsset(id)} onClose={() => setBatchDlg(null)}
+      onApply={(next, msg) => { apply(() => next); setSel([{ kind: 'clip', id: selClip.id }]); setNotice(msg) }} />}
+    {batchDlg === 'trans' && <BatchTransitionsDialog comp={comp} selectedClipIds={sel.filter(r => r.kind === 'clip').map(r => r.id)} selectedTransition={selTr} kindOf={id => kindOfAsset(id)} onClose={() => setBatchDlg(null)}
+      onApply={(next, msg) => { apply(() => next); setNotice(msg) }} />}
 
     <form className="panel instructionBar" style={{ marginBottom: 10 }} onSubmit={e => { e.preventDefault(); runText(instruction) }} aria-label="Instrucciones">
       <label htmlFor="ed-instr" className="small"><b>Dile al editor qué hacer</b><span className="srOnly">:</span> {range ? <span className="pill info">Se aplica al fragmento {secs(range.startMs)}–{secs(range.endMs)} s</span> : selection?.kind === 'clip' ? <span className="pill">Se aplica al clip seleccionado</span> : <span className="muted">· se aplica al clip bajo el cabezal</span>}</label>
@@ -1110,7 +1119,7 @@ export default function ManualEditorPage() {
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
           onSplit={ms => { apply(c => splitClip(c, selClip.id, ms)); setSplitAt('') }}
-          onDuplicate={() => apply(c => duplicateClip(c, selClip.id))}
+          onDuplicate={() => apply(c => duplicateClip(c, selClip.id))} onRepeat={() => setBatchDlg('repeat')}
           onDelete={() => { apply(c => deleteClip(c, selClip.id)); setSelection(null) }}
           onMove={dir => apply(c => moveClip(c, selClip.id, c.clips.findIndex(k => k.id === selClip.id) + dir))} />}
         {selText && <TextInspector t={selText} onChange={p => apply(c => updateTextClip(c, selText.id, p))} onDuplicate={() => apply(c => duplicateTextClip(c, selText.id))} onDelete={() => { apply(c => deleteTextClip(c, selText.id)); setSelection(null) }} />}
@@ -1166,6 +1175,8 @@ export default function ManualEditorPage() {
         <button type="button" className="ghost small" disabled={!sel.length} onClick={copySel} aria-label="Copiar selección" title="Ctrl+C">Copiar</button>
         <button type="button" className="ghost small" onClick={pasteHere} aria-label="Pegar en el cabezal" title="Pega en el cabezal (Ctrl+V)">Pegar</button>
         <button type="button" className="ghost small" disabled={!sel.length} onClick={duplicateSel} aria-label="Duplicar selección" title="Ctrl+D">Duplicar</button>
+        <button type="button" className="ghost small" disabled={!selClip} onClick={() => setBatchDlg('repeat')} aria-label="Repetir el clip varias veces" title="Repite el clip seleccionado N veces o hasta una duración (comparten el mismo archivo)">Repetir…</button>
+        <button type="button" className="ghost small" disabled={comp.clips.length < 2} onClick={() => setBatchDlg('trans')} aria-label="Transiciones en lote" title="Aplica o quita una transición en todos los cortes, en los seleccionados, en un rango o cada N">Transiciones en lote…</button>
         <button type="button" className="ghost small" disabled={!sel.length} onClick={deleteSel} aria-label="Eliminar selección" title="Supr">Eliminar</button>
         <button type="button" className="ghost small" disabled={sel.length < 2} onClick={groupSel} aria-label="Agrupar selección" title="Ctrl+G">Agrupar</button>
         <button type="button" className="ghost small" disabled={!sel.length} onClick={ungroupSel} aria-label="Desagrupar selección" title="Ctrl+Mayús+G">Desagrupar</button>
@@ -1223,12 +1234,12 @@ export default function ManualEditorPage() {
   </StudioShell>
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onDelete, onMove, transitionTools, transitionDuration, animation }: {
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
   transitionTools?: React.ReactNode
   transitionDuration?: React.ReactNode
   animation?: React.ReactNode
   clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
-  onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
+  onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onRepeat?: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
 }) {
   const splitMs = Math.round(Number(splitAt) * 1000)
   const cam = effectiveCamera(clip, !isVideo)
@@ -1256,6 +1267,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         <button type="button" className="ghost" onClick={() => onMove(-1)}>← Mover</button>
         <button type="button" className="ghost" onClick={() => onMove(1)}>Mover →</button>
         <button type="button" className="ghost" onClick={onDuplicate}>Duplicar</button>
+        {onRepeat && <button type="button" className="ghost" onClick={onRepeat} title="Repetir este clip N veces o hasta una duración">Repetir…</button>}
         <button type="button" className="ghost" onClick={onDelete}>Eliminar</button>
       </div>
     </Section>
