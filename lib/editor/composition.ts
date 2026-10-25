@@ -55,7 +55,17 @@ export type ExportSettings = {
   destination?: 'library' | 'download'
   /** fast = frame by frame with WebCodecs (faster than real time when the browser can); realtime = played and recorded. */
   mode?: 'fast' | 'realtime'
+  /** Frames per second of the finished video (fast mode; the real-time recording follows the screen's refresh rate). Absent = 30. */
+  fps?: ExportFps
+  /** AAC/Opus audio bitrate in kbit/s. Absent = 128. */
+  audioKbps?: ExportAudioKbps
 }
+export type ExportFps = 24 | 25 | 30 | 50 | 60
+export type ExportAudioKbps = 96 | 128 | 192 | 256 | 320
+export const EXPORT_FPS: readonly ExportFps[] = [24, 25, 30, 50, 60]
+export const EXPORT_AUDIO_KBPS: readonly ExportAudioKbps[] = [96, 128, 192, 256, 320]
+/** Motion needs more bits: the preset bitrates are for 30 fps and scale with the frame rate. */
+export const fpsBitrateFactor = (fps: number) => (fps >= 60 ? 1.6 : fps >= 50 ? 1.5 : fps >= 30 ? 1 : fps >= 25 ? 0.9 : 0.85)
 /** Which style built this montage and the automatic result it started from (to compare with the owner's corrections). */
 export type StyleRef = { profileId: string; profileName: string; version: number; appliedAt: string; baseline: Composition | null }
 
@@ -713,9 +723,8 @@ export function captionChunks(text: string | null, durationMs: number, maxWords 
 }
 
 /** Bitrate that keeps the output under the storage upload limit (with 10% headroom). */
-export function videoBitrateFor(durationMs: number, maxBytes = 50 * 1024 * 1024, preferred = 2_500_000) {
+export function videoBitrateFor(durationMs: number, maxBytes = 50 * 1024 * 1024, preferred = 2_500_000, audio = 128_000) {
   const seconds = Math.max(durationMs / 1000, 1)
-  const audio = 128_000
   const budget = (maxBytes * 8 * 0.9) / seconds - audio
   return Math.max(Math.min(preferred, Math.floor(budget)), 250_000)
 }
@@ -752,6 +761,8 @@ function parseExport(e: Partial<ExportSettings> | undefined): ExportSettings {
   if (Number.isFinite(k) && k >= 200 && k <= 40000) out.videoKbps = Math.round(k)
   if (e?.destination === 'download') out.destination = 'download'
   if (e?.mode === 'realtime') out.mode = 'realtime'
+  if (EXPORT_FPS.includes(Number(e?.fps) as ExportFps) && Number(e?.fps) !== 30) out.fps = Number(e?.fps) as ExportFps
+  if (EXPORT_AUDIO_KBPS.includes(Number(e?.audioKbps) as ExportAudioKbps) && Number(e?.audioKbps) !== 128) out.audioKbps = Number(e?.audioKbps) as ExportAudioKbps
   return out
 }
 
@@ -781,13 +792,14 @@ export function exportPlan(c: Pick<Composition, 'clips' | 'format' | 'exportSett
   const e = c.exportSettings ?? { quality: 'normal' }
   const total = projectDurationMs(c)
   const { width, height } = frameSize(c.format, e.resolution, c.customSize)
-  const wanted = e.videoKbps ? e.videoKbps * 1000 : e.resolution ? BITRATES[e.resolution][e.quality] : preferredBitrate(e.quality)
-  const audioBps = 128_000
+  const fps = e.fps ?? 30
+  const wanted = e.videoKbps ? e.videoKbps * 1000 : Math.round((e.resolution ? BITRATES[e.resolution][e.quality] : preferredBitrate(e.quality)) * fpsBitrateFactor(fps))
+  const audioBps = (e.audioKbps ?? 128) * 1000
   const destination = e.destination ?? 'library'
-  const videoBps = destination === 'library' ? videoBitrateFor(total, LIBRARY_MAX_BYTES, wanted) : wanted
+  const videoBps = destination === 'library' ? videoBitrateFor(total, LIBRARY_MAX_BYTES, wanted, audioBps) : wanted
   const estimatedBytes = Math.round((videoBps + audioBps) * Math.max(total, 1) / 8000)
   const reduced = destination === 'library' && videoBps < wanted
-  return { width, height, videoBps, audioBps, wantedBps: wanted, destination, estimatedBytes, reduced, durationMs: total, /** Even at the minimum bitrate a long montage may not fit in the Library: then it can only be downloaded. */ fitsLibrary: estimatedBytes <= LIBRARY_MAX_BYTES }
+  return { width, height, fps, videoBps, audioBps, wantedBps: wanted, destination, estimatedBytes, reduced, durationMs: total, /** Even at the minimum bitrate a long montage may not fit in the Library: then it can only be downloaded. */ fitsLibrary: estimatedBytes <= LIBRARY_MAX_BYTES }
 }
 
 

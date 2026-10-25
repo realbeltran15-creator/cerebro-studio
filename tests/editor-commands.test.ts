@@ -178,6 +178,24 @@ describe('export plan', () => {
   })
 })
 
+describe('export plan: frame rate and audio quality are real options', () => {
+  it('fps and audio bitrate change the plan (bitrate scales with motion; the estimate counts the chosen audio)', async () => {
+    const { exportPlan, parseComposition } = await import('@/lib/editor/composition')
+    const base = { ...comp(), exportSettings: { quality: 'normal' as const, resolution: '1080' as const, destination: 'download' as const } }
+    const p30 = exportPlan(base), p60 = exportPlan({ ...base, exportSettings: { ...base.exportSettings, fps: 60 as const } }), p24 = exportPlan({ ...base, exportSettings: { ...base.exportSettings, fps: 24 as const } })
+    expect([p30.fps, p60.fps, p24.fps]).toEqual([30, 60, 24])
+    expect(p60.videoBps).toBeGreaterThan(p30.videoBps); expect(p24.videoBps).toBeLessThan(p30.videoBps)
+    const a320 = exportPlan({ ...base, exportSettings: { ...base.exportSettings, audioKbps: 320 as const } })
+    expect(a320.audioBps).toBe(320_000); expect(a320.estimatedBytes).toBeGreaterThan(p30.estimatedBytes)
+    // an exact bitrate is never rescaled by fps; the library cap still counts the chosen audio
+    expect(exportPlan({ ...base, exportSettings: { ...base.exportSettings, videoKbps: 3000, fps: 60 as const } }).videoBps).toBe(3_000_000)
+    // stored settings survive a round trip and junk is dropped
+    const raw = JSON.parse(JSON.stringify({ ...base, exportSettings: { quality: 'high', fps: 60, audioKbps: 256 } }))
+    expect(parseComposition(raw)?.exportSettings).toMatchObject({ quality: 'high', fps: 60, audioKbps: 256 })
+    expect(parseComposition({ ...raw, exportSettings: { quality: 'normal', fps: 61, audioKbps: 1 } })?.exportSettings).toEqual({ quality: 'normal' })
+  })
+})
+
 describe('draggable volume points', () => {
   it('positions map to time and level; points never cross; adding keeps them sorted', async () => {
     const { envelopePointAt, moveEnvelopePoint, addEnvelopePoint } = await import('@/lib/editor/timeline')

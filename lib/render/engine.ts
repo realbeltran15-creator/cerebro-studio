@@ -63,9 +63,9 @@ const ABORT = () => new DOMException('Cancelado', 'AbortError')
 export async function renderProject(o: RenderOptions) {
   const started = Date.now()
   const ffmpeg = o.ffmpeg ?? 'ffmpeg', ffprobe = o.ffprobe ?? 'ffprobe'
-  const fps = o.fps ?? 30
   const c = o.composition
   const plan = exportPlan(c)
+  const fps = o.fps ?? plan.fps
   const W = plan.width, H = plan.height
   const fullTotal = projectDurationMs(c)
   const range = o.rangeMs ?? { from: 0, to: fullTotal }
@@ -300,7 +300,7 @@ async function mixAudio(p: { c: Composition; o: RenderOptions; kindOf: KindOf; p
   const info = new Map<string, Probe | null>()
   for (const v of voices) if (!info.has(v.assetId)) info.set(v.assetId, o.assets[v.assetId] ? await p.probe(v.assetId).catch(() => null) : null)
   const tmp = `${p.out}.part`
-  const enc = spawn(p.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'f32le', '-ar', String(SR), '-ac', '2', '-i', '-', '-c:a', 'aac', '-b:a', '128k', '-f', 'ipod', tmp], { stdio: ['pipe', 'ignore', 'pipe'] })
+  const enc = spawn(p.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'f32le', '-ar', String(SR), '-ac', '2', '-i', '-', '-c:a', 'aac', '-b:a', `${Math.round(exportPlan(c).audioBps / 1000)}k`, '-f', 'ipod', tmp], { stdio: ['pipe', 'ignore', 'pipe'] })
   let err = ''
   enc.stderr!.on('data', d => { err += String(d) })
   const done = new Promise<void>((res, rej) => enc.on('close', code => (code === 0 ? res() : rej(new Error(`FFmpeg (audio) terminó con código ${code}: ${err.slice(-300)}`)))))

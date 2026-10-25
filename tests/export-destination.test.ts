@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fileNameFor, folderSaveSupported, spaceAdvice } from '@/lib/editor/export-destination'
+import { exportFootprint, fileNameFor, folderSaveSupported, spaceAdvice } from '@/lib/editor/export-destination'
 
 const base = { estimatedBytes: 3 * 1024 ** 3, folderSupported: true, tempSupported: true }
 describe('export destinations', () => {
@@ -16,6 +16,18 @@ describe('export destinations', () => {
     const ok = spaceAdvice({ ...base, where: 'drive', browserFreeBytes: 50 * 1024 ** 3 })
     expect(ok.message).toMatch(/temporal/); expect(ok.message).toMatch(/No es una transferencia directa/)
     expect(spaceAdvice({ ...base, where: 'drive', browserFreeBytes: 1024 ** 3 }).level).toBe('block')
+  })
+  it('drive direct: no local file, says what the fragmented MP4 means and what happens if the tab closes', () => {
+    const a = spaceAdvice({ ...base, where: 'drive', driveMode: 'direct', browserFreeBytes: 1 })
+    expect(a.level).toBe('ok'); expect(a.message).toMatch(/no se crea ningún archivo en este equipo/); expect(a.message).toMatch(/fragmentado/); expect(a.message).toMatch(/cierra la pestaña/)
+  })
+  it('footprint: only a local temporary when asked for; download builds it all in memory', () => {
+    const est = 10 * 1024 ** 3
+    expect(exportFootprint({ where: 'drive', driveMode: 'direct', estimatedBytes: est }).diskTempBytes).toBe(0)
+    expect(exportFootprint({ where: 'drive', driveMode: 'temp', estimatedBytes: est }).diskTempBytes).toBe(est)
+    expect(exportFootprint({ where: 'folder', estimatedBytes: est }).diskTempBytes).toBe(0)
+    expect(exportFootprint({ where: 'download', estimatedBytes: est }).ramBytes).toBeGreaterThan(est)
+    expect(exportFootprint({ where: 'folder', estimatedBytes: est }).ramBytes).toBeLessThan(100 * 1048576)
   })
   it('library: blocks above the per-file limit and above the free quota', () => {
     expect(spaceAdvice({ ...base, where: 'library', libraryMaxFileBytes: 50 * 1048576 }).level).toBe('block')

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, type Composition, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
+import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, EXPORT_AUDIO_KBPS, EXPORT_FPS, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, type Composition, type ExportAudioKbps, type ExportFps, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
 import { downloadText } from '@/lib/library'
 import { saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
@@ -11,9 +11,10 @@ import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/t
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { pickMimeType, recordingSupported, renderComposition } from '@/lib/editor/renderer'
 import { fastExport, fastExportSupported, FastExportUnsupported } from '@/lib/editor/fast-export'
-import { browserFreeBytes, createExportTemp, fileNameFor, folderSaveSupported, pickSaveFile, removeExportTemp, spaceAdvice, tempStorageSupported, type ExportWhere } from '@/lib/editor/export-destination'
+import { browserFreeBytes, createExportTemp, exportFootprint, fileNameFor, folderSaveSupported, pickSaveFile, removeExportTemp, spaceAdvice, startStorageProbe, tempStorageSupported, type DriveMode, type ExportWhere } from '@/lib/editor/export-destination'
 import { pickDriveFolder, requestDriveToken } from '@/lib/ingest/drive'
 import { uploadToDrive } from '@/lib/ingest/drive-upload'
+import { openDriveSink } from '@/lib/ingest/drive-stream'
 import { pickerConfigFromEnv } from '@/lib/flow-import'
 import { startExportGuard, type ExportGuard } from '@/lib/editor/export-guard'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
@@ -71,6 +72,13 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const [where, setWhere] = useState<ExportWhere>(plan.destination === 'library' ? 'library' : 'download')
   const driveCfg = pickerConfigFromEnv()
   const [free, setFree] = useState<{ browser: number | null; library: number | null; maxFile: number | null }>({ browser: null, library: null, maxFile: null })
+  // Drive: «direct» sends the video while it renders (no local file); «temp» renders to a temporary file first (retryable).
+  const [driveMode, setDriveMode] = useState<DriveMode>('direct')
+  // Destination chosen BEFORE rendering (the system dialogs need a click, so they have their own button).
+  const [dest, setDest] = useState<{ kind: 'folder'; handle: FileSystemFileHandle } | { kind: 'drive'; token: string; folderId: string; folderName: string } | null>(null)
+  useEffect(() => setDest(null), [where])
+  const [transfer, setTransfer] = useState<number | null>(null)
+  const [measured, setMeasured] = useState<string>('')
   const [pendingDrive, setPendingDrive] = useState<{ temp: string; name: string; mime: string; folderId: string; folderName: string } | null>(null)
   const [driveBusy, setDriveBusy] = useState(false)
   // Container the file will have, known BEFORE the render so the «save as» dialog can propose the right extension (it needs a click, so it cannot wait).
@@ -92,7 +100,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     })()
     return () => { off = true }
   }, [mode])
-  const advice = spaceAdvice({ where, estimatedBytes: plan.estimatedBytes, browserFreeBytes: free.browser, libraryFreeBytes: free.library, libraryMaxFileBytes: free.maxFile, folderSupported: folderSaveSupported(), tempSupported: tempStorageSupported() })
+  const directDrive = where === 'drive' && driveMode === 'direct' && ext === 'mp4' && (exp.mode ?? 'fast') === 'fast'
+  const advice = spaceAdvice({ where, driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes, browserFreeBytes: free.browser, libraryFreeBytes: free.library, libraryMaxFileBytes: free.maxFile, folderSupported: folderSaveSupported(), tempSupported: tempStorageSupported() })
+  const footprint = exportFootprint({ where, driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes })
   const convertConfig = transcodeConfigFromEnv()
   // Free, GPL-free conversion with the browser's own encoders (WebCodecs). ffmpeg.wasm is only a fallback when its core URL is configured.
   const [native, setNative] = useState<NativeSupport | null>(null)
@@ -122,21 +132,43 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart])
 
+  /** Opens the system dialog (folder/disk) or Google's folder picker, and keeps the answer so it is shown BEFORE rendering. */
+  async function chooseDestination() {
+    setError('')
+    try {
+      if (where === 'folder') { const handle = await pickSaveFile(fileNameFor(composition.title, composition.format, plan.height, ext), ext); setDest({ kind: 'folder', handle }); setStatus('') }
+      else if (where === 'drive' && driveCfg) {
+        const t = await pickDriveFolder(driveCfg)
+        if (!t) { setStatus('No elegiste una carpeta de Drive.'); return }
+        setDest({ kind: 'drive', token: t.token, folderId: t.folderId, folderName: t.folderName }); setStatus('')
+      }
+    } catch (e) { if ((e as Error).name !== 'AbortError') setError(e instanceof Error ? e.message : 'No se pudo abrir el selector.') }
+  }
+
   async function run(record: boolean) {
     // Synchronous guard: state updates are async, so repeated clicks during the save would pass a mode check.
     if (busyRef.current) return
     busyRef.current = true
     setMode('loading'); setError(''); setStatus(record ? 'Guardando el montaje…' : '')
-    // Destination chosen BEFORE rendering (the dialogs need the click that started this).
+    // The destination was chosen BEFORE (its own button); nothing is rendered without one.
     let fileHandle: FileSystemFileHandle | null = null
     let driveTarget: { token: string; folderId: string; folderName: string } | null = null
     const exportName = fileNameFor(composition.title, composition.format, plan.height, ext)
     const stopEarly = (msg: string) => { busyRef.current = false; setMode('idle'); setStatus(msg) }
-    if (record && where === 'folder') {
-      try { fileHandle = await pickSaveFile(exportName, ext) } catch (e) { return stopEarly((e as Error).name === 'AbortError' ? 'No elegiste dónde guardar: no se ha renderizado nada.' : (e instanceof Error ? e.message : 'No se pudo abrir el selector de archivos.')) }
-    } else if (record && where === 'drive' && driveCfg) {
-      try { driveTarget = await pickDriveFolder(driveCfg) } catch (e) { return stopEarly(e instanceof Error ? e.message : 'No se pudo conectar con Google Drive.') }
-      if (!driveTarget) return stopEarly('No elegiste una carpeta de Drive: no se ha renderizado nada.')
+    if (record && where === 'folder') { if (dest?.kind !== 'folder') return stopEarly('Elige primero dónde guardar el vídeo.'); fileHandle = dest.handle }
+    else if (record && where === 'drive') { if (dest?.kind !== 'drive') return stopEarly('Elige primero la carpeta de Drive.'); driveTarget = dest }
+    setTransfer(null); setMeasured('')
+    let driveSink: Awaited<ReturnType<typeof openDriveSink>> | null = null
+    let driveFailure: unknown = null // a Drive error (permission, quota, network) is final: re-rendering in real time would only fail again
+    const probe = record ? startStorageProbe() : null
+    let probeDone = false
+    let up0Bytes = 0
+    /** What this export really used, from the browser's own counters (it cannot read the physical disk). */
+    const reportMeasured = async (bytes: number) => {
+      if (!probe || probeDone) return
+      probeDone = true
+      const m = await probe.stop(); const st = driveSink?.stats(); const mbf = (n: number) => Math.round(n / 104857.6) / 10
+      setMeasured(`Medido en esta exportación: vídeo ${mbf(bytes)} MB · almacenamiento temporal del navegador (pico) ${mbf(m.peakAboveStartBytes)} MB · quedaron ${mbf(Math.max(0, m.endAboveStartBytes))} MB al terminar${st ? ` · memoria de envío (pico) ${mbf(st.peakBufferedBytes)} MB en ${st.blocks + 1} bloques${st.retries ? `, ${st.retries} reintento(s)` : ''}` : ''}. Un navegador no puede leer el disco físico: esto es lo que él mismo almacena.`)
     }
     let tmp: Awaited<ReturnType<typeof createExportTemp>> | null = null
     let streamTo: FileSystemWritableFileStream | null = null
@@ -178,18 +210,25 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         try {
           setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real). Mantén esta pestaña a la vista: en segundo plano el navegador la frena.')
           if (fileHandle) streamTo = await fileHandle.createWritable()
-          else if (driveTarget) { tmp = await createExportTemp(crypto.randomUUID().slice(0, 8), ext); streamTo = tmp.writable }
-          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, signal: controller.signal, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
+          else if (driveTarget && directDrive) {
+            // The upload session is opened first, so a bad folder or an expired permission fails now, not after hours of rendering.
+            driveSink = await openDriveSink({ name: exportName, mimeType: 'video/mp4', token: driveTarget.token, folderId: driveTarget.folderId, signal: controller.signal, onProgress: sent => { guard?.progress(); setTransfer(sent) } })
+            streamTo = driveSink.writable as never
+            driveSink.result.catch(e => { driveFailure = e })
+          } else if (driveTarget) { tmp = await createExportTemp(crypto.randomUUID().slice(0, 8), ext); streamTo = tmp.writable }
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink, signal: controller.signal, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
           renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
         } catch (e) {
           if (controller.signal.aborted || (e as Error)?.name === 'AbortError') throw e
+          if (driveFailure) throw new Error(`${driveFailure instanceof Error ? driveFailure.message : 'Drive no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni a medias en Drive. Vuelve a exportar, o elige «con temporal local» para poder reintentar solo la subida.`)
           // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
           setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
           setProgress({ elapsed: 0, total: 0 })
           try { if (streamTo && !streamTo.locked) await streamTo.abort() } catch { /* already aborted by the exporter */ }
           streamTo = null
+          driveSink = null; setTransfer(null)
           if (tmp) { await removeExportTemp(tmp.name); tmp = null }
           result = await realtime()
         }
@@ -204,18 +243,27 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         if (result.blob) { const w = await fileHandle.createWritable(); await w.write(result.blob); await w.close() }
         const size = (await fileHandle.getFile()).size
         await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
+        await reportMeasured(size)
         setStatus(`Vídeo guardado en «${fileHandle.name}» (${Math.round(size / 1048576 * 10) / 10} MB), en la ubicación que elegiste. ${streamed(result) ? 'Se escribió mientras se renderizaba: no se montó entero en memoria.' : 'Esta vez se montó en memoria antes de escribirlo (modo en tiempo real).'}`)
         onRendered?.()
       } else if (record && jobId && driveTarget) {
         await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
         const mime = ext === 'mp4' ? 'video/mp4' : 'video/webm'
-        let tempName = tmp?.name ?? ''
-        let file: Blob
-        if (tmp) file = await tmp.handle.getFile()
-        else if (result.blob) { file = result.blob } else throw new Error('No hay vídeo que subir.')
-        const target = { temp: tempName, name: exportName, mime, folderId: driveTarget.folderId, folderName: driveTarget.folderName }
-        await sendToDrive(file, target, driveTarget.token, controller.signal, () => guard?.progress())
+        if (driveSink) {
+          setMode('saving'); setStatus('Cerrando el archivo en Drive…')
+          const up = await driveSink.result
+          setStatus(`Guardado en Google Drive: «${up.name}» en la carpeta «${driveTarget.folderName}» (${Math.round(up.size / 1048576 * 10) / 10} MB). Se envió mientras se renderizaba: no se creó ningún archivo en este equipo.`)
+          setTransfer(up.size); up0Bytes = up.size
+        } else {
+          const tempName = tmp?.name ?? ''
+          let file: Blob
+          if (tmp) file = await tmp.handle.getFile()
+          else if (result.blob) { file = result.blob } else throw new Error('No hay vídeo que subir.')
+          const target = { temp: tempName, name: exportName, mime, folderId: driveTarget.folderId, folderName: driveTarget.folderName }
+          await sendToDrive(file, target, driveTarget.token, controller.signal, () => guard?.progress()); up0Bytes = file.size
+        }
         onRendered?.()
+        await reportMeasured(up0Bytes)
       } else if (record && result.blob && jobId && plan.destination === 'download') {
         // Download only: the file stays on this computer (no 50 MB limit); the render job records it without uploading anything.
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}-${plan.height}p.${containerOf(result.mimeType)}`
@@ -243,6 +291,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       setError(message)
       if (jobId) await supabase.from('render_jobs').update({ status: 'failed', error: message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', jobId)
     } finally {
+      void probe?.stop().catch(() => undefined)
       guard?.stop()
       setNotice('')
       abortRef.current = null
@@ -335,6 +384,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       <label>Calidad<select aria-label="Calidad" value={exp.videoKbps ? 'custom' : exp.quality} onChange={e => e.target.value === 'custom' ? setExport({ videoKbps: Math.round(plan.wantedBps / 1000) }) : setExport({ quality: e.target.value === 'high' ? 'high' : 'normal', videoKbps: null })}><option value="normal">Normal</option><option value="high">Alta</option><option value="custom">Personalizada</option></select></label>
       {exp.videoKbps ? <label>Vídeo (kbit/s)<input aria-label="Bitrate de vídeo" type="number" min={200} max={40000} step={100} value={exp.videoKbps} onChange={e => setExport({ videoKbps: Math.min(40000, Math.max(200, Number(e.target.value) || 200)) })} style={{ width: 100 }} /></label> : null}
       <label>Modo<select aria-label="Modo de exportación" value={exp.mode ?? 'fast'} onChange={e => setExport({ mode: e.target.value === 'realtime' ? 'realtime' : undefined })}><option value="fast">Rápida (fotograma a fotograma)</option><option value="realtime">En tiempo real (grabación)</option></select></label>
+      <label>Imágenes por segundo<select aria-label="Imágenes por segundo" value={exp.fps ?? 30} onChange={e => setExport({ fps: Number(e.target.value) === 30 ? undefined : Number(e.target.value) as ExportFps })}>{EXPORT_FPS.map(f => <option key={f} value={f}>{f} fps</option>)}</select></label>
+      <label>Audio<select aria-label="Calidad de audio" value={exp.audioKbps ?? 128} onChange={e => setExport({ audioKbps: Number(e.target.value) === 128 ? undefined : Number(e.target.value) as ExportAudioKbps })}>{EXPORT_AUDIO_KBPS.map(k => <option key={k} value={k}>{k} kbit/s</option>)}</select></label>
       <label>Destino<select aria-label="Destino" value={where} onChange={e => { const w = e.target.value as ExportWhere; setWhere(w); setExport({ destination: w === 'library' ? 'library' : 'download' }) }}>
         <option value="download">Descargar a mi equipo (carpeta Descargas)</option>
         <option value="folder" disabled={!folderSaveSupported()}>Guardar en una carpeta o disco externo…{folderSaveSupported() ? '' : ' (no disponible en este navegador)'}</option>
@@ -343,16 +394,28 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         <option value="onedrive" disabled>OneDrive (aún no disponible)</option>
         <option value="dropbox" disabled>Dropbox (aún no disponible)</option>
       </select></label>
-      <span className="small muted" aria-label="Estimación">{width}×{height} · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
+      {where === 'drive' && <label>Envío a Drive<select aria-label="Modo de envío a Drive" value={driveMode} onChange={e => setDriveMode(e.target.value === 'temp' ? 'temp' : 'direct')}>
+        <option value="direct" disabled={ext !== 'mp4' || (exp.mode ?? 'fast') !== 'fast'}>Directo mientras se renderiza (sin copia en este equipo)</option>
+        <option value="temp">Con temporal local (se puede reintentar la subida)</option>
+      </select></label>}
+      <span className="small muted" aria-label="Estimación">{width}×{height} · {plan.fps} fps · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
     </div>}
+    {!previewOnly && (exp.mode ?? 'fast') === 'realtime' && plan.fps !== 30 && <p className="warnBox small">En tiempo real las imágenes por segundo las marca la pantalla (normalmente 60), no este ajuste: usa el modo rápido para fijarlas.</p>}
     {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
+    {!previewOnly && (where === 'folder' || where === 'drive') && <div className="field-row" style={{ alignItems: 'center' }} aria-label="Destino elegido">
+      <button type="button" className="ghost small" disabled={mode !== 'idle'} onClick={() => void chooseDestination()}>{dest ? 'Cambiar destino…' : where === 'folder' ? 'Elegir carpeta o disco…' : 'Elegir carpeta de Drive…'}</button>
+      <span className="small" role="status">{dest?.kind === 'folder' ? `Destino: archivo «${dest.handle.name}» en la ubicación que elegiste (el navegador no revela la ruta ni la letra de la unidad).` : dest?.kind === 'drive' ? `Destino: carpeta de Drive «${dest.folderName}» (${dest.folderName ? 'elegida en el selector oficial de Google' : ''}).` : 'Todavía no has elegido destino: no se renderizará nada hasta entonces.'}</span>
+    </div>}
+    {!previewOnly && <p className="muted small" aria-label="Previsión de recursos">Previsión (estimada, no medida): vídeo ~{Math.max(0.1, Math.round(footprint.finalBytes / 104857.6) / 10)} MB · espacio temporal en el disco interno de este equipo {footprint.diskTempBytes ? `~${Math.round(footprint.diskTempBytes / 104857.6) / 10} MB` : '0 MB'} · memoria extra {footprint.ramBytes >= 1024 ** 3 ? `~${Math.round(footprint.ramBytes / 1024 ** 3 * 10) / 10} GB` : `~${Math.round(footprint.ramBytes / 1048576)} MB`}. {footprint.note}</p>}
     {!previewOnly && <p className={advice.level === 'ok' ? 'muted small' : 'warnBox small'} role={advice.level === 'block' ? 'alert' : 'status'} aria-label="Aviso de espacio">{advice.message}</p>}
     {!previewOnly && false && browserExportAdvice(plan.estimatedBytes).level === 'heavy' && <p className="warnBox small" role="status" aria-label="Aviso de memoria">{browserExportAdvice(plan.estimatedBytes).message}</p>}
     {!previewOnly && plan.destination === 'library' && !plan.fitsLibrary && <p className="warnBox small" role="alert">Este montaje no cabe en la Biblioteca ({Math.round(LIBRARY_MAX_BYTES / 1048576)} MB) ni con la calidad mínima. Elige «Descargar a mi equipo».</p>}
     {!previewOnly && plan.reduced && plan.fitsLibrary && <p className="warnBox small">Para caber en {Math.round(LIBRARY_MAX_BYTES / 1048576)} MB la calidad baja a {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 })} Mbit/s (pedías {(plan.wantedBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })}). Elige «Descargar a mi equipo» para conservarla.</p>}
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
-    {mode !== 'idle' && progress.total > 0 && <progress value={progress.elapsed} max={progress.total} style={{ width: '100%' }} aria-label="Progreso" />}
+    {mode !== 'idle' && progress.total > 0 && <label className="small muted" style={{ display: 'block' }}>Renderizado {Math.round(progress.elapsed / Math.max(1, progress.total) * 100)} %<progress value={progress.elapsed} max={progress.total} style={{ width: '100%' }} aria-label="Progreso" /></label>}
+    {transfer !== null && <label className="small muted" style={{ display: 'block' }}>Enviado a Drive: {Math.round(transfer / 104857.6) / 10} MB {mode === 'idle' ? '(completo)' : `(~${Math.min(99, Math.round(transfer / Math.max(1, plan.estimatedBytes) * 100))} % del total estimado)`}<progress value={mode === 'idle' ? 1 : Math.min(0.99, transfer / Math.max(1, plan.estimatedBytes))} max={1} style={{ width: '100%' }} aria-label="Progreso de transferencia" /></label>}
     {status && <p className="muted small" role="status">{status}</p>}
+    {measured && <p className="small" role="status" aria-label="Medición de esta exportación">{measured}</p>}
     {notice && <p className="small" role="status" aria-label="Aviso de la exportación" style={{ color: '#ffd23f' }}>{notice}</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {issues.length > 0 && <ul className="warnList">{issues.map((i, k) => <li key={k}>{i.message}</li>)}</ul>}
@@ -361,7 +424,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       {mode === 'idle' ? <>
         {!exportOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>}
         {!previewOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} title="Para vídeos largos: se renderiza en tu PC con FFmpeg, sin navegador abierto y sin coste" onClick={() => void preparePackage()}><Icon name="video" size={16} />Paquete para renderizar en mi PC</button>}
-        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary)} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Elegir dónde guardar y renderizar' : where === 'drive' ? 'Elegir carpeta de Drive y renderizar' : 'Renderizar y guardar'}</button>}
+        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary) || ((where === 'folder' || where === 'drive') && !dest)} title={(where === 'folder' || where === 'drive') && !dest ? 'Elige primero el destino' : undefined} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Renderizar y guardar en el destino' : where === 'drive' ? (directDrive ? 'Renderizar y enviar a Drive' : 'Renderizar y subir a Drive') : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {pendingDrive && mode === 'idle' && <><button type="button" onClick={() => void retryDrive()} disabled={driveBusy}>Reintentar subida a Drive</button><button type="button" className="ghost" onClick={() => void (async () => { await removeExportTemp(pendingDrive.temp); setPendingDrive(null); setStatus('Temporal borrado. El vídeo no se subió.') })()}>Descartar el temporal</button></>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}

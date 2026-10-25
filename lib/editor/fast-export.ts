@@ -60,13 +60,22 @@ export async function fastExport(opts: {
    * Cancelling or failing aborts the stream, so a half-written file is never committed.
    */
   sink?: WritableStream<{ type: 'write'; data: Uint8Array; position: number }>
-}): Promise<{ blob: Blob | null; bytes: number; mimeType: string; durationMs: number }> {
+  /**
+   * Produce a fragmented MP4 (fMP4): the file only ever grows at its end (no seek back to patch an index), so it can be sent to a
+   * destination that accepts sequential bytes only (Google Drive's resumable upload) while it is being rendered. Needs `sink` and MP4
+   * (a WebM fallback is not append-only here and is refused). The cost: some editing programs and old players handle fMP4 less well
+   * than a classic MP4; browsers, VLC, Drive, YouTube and phones play it.
+   */
+  fragmented?: boolean
+  /** TESTS ONLY: use VP9 inside the MP4 container (a test browser without an H.264 encoder can then still exercise the MP4 / fragmented / AAC path). */
+  testMp4Vp9?: boolean
+}): Promise<{ blob: Blob | null; bytes: number; mimeType: string; durationMs: number; encoded: { width: number; height: number; fps: number; videoBps: number; audioBps: number; videoCodec: string; audioCodec: string; container: 'mp4' | 'webm'; fragmented: boolean } }> {
   const c = opts.composition
-  const fps = opts.fps ?? 30
   const plan = exportPlan(c)
+  const fps = opts.fps ?? plan.fps
   const total = projectDurationMs(c)
   const mb = await loadMb()
-  const sup = await fastExportSupported(plan.width, plan.height)
+  const sup = opts.testMp4Vp9 ? ((await mb.canEncodeVideo('vp9', { width: plan.width, height: plan.height })) ? { ok: true, container: 'mp4' as const } : { ok: false, reason: 'Sin VP9.' }) : await fastExportSupported(plan.width, plan.height)
   if (!sup.ok) throw new FastExportUnsupported(sup.reason)
   const starts = clipStarts(c)
   const factors = audioTrackFactors(c)
@@ -135,12 +144,14 @@ export async function fastExport(opts: {
 
   // ---- Output.
   const mp4 = sup.container === 'mp4'
+  if (opts.fragmented && !(mp4 && opts.sink)) throw new FastExportUnsupported('El envío directo necesita MP4 y un destino de escritura; este navegador exporta WebM.')
   if (mp4) await ensureAac(mb)
   const canvas = opts.canvas ?? document.createElement('canvas')
   canvas.width = plan.width; canvas.height = plan.height
   const g = canvas.getContext('2d')
   if (!g) throw new Error('El navegador no permite dibujar en canvas.')
-  // Streaming to a file cannot hold the index (moov) in memory: it is written at the end, by seeking back (fastStart false).
+  // Streaming to a file cannot hold the index (moov) in memory: it is written at the end, by seeking back (fastStart false), unless
+  // the output is fragmented (then it is append-only and the index travels with every fragment).
   let streamed = 0
   let sinkWriter: WritableStreamDefaultWriter<{ type: 'write'; data: Uint8Array; position: number }> | null = null
   if (opts.sink) sinkWriter = opts.sink.getWriter()
@@ -150,8 +161,8 @@ export async function fastExport(opts: {
     abort: reason => sinkWriter!.abort(reason),
   }) : null
   const target = counting ? new mb.StreamTarget(counting, { chunked: true, chunkSize: 8 * 1024 * 1024 }) : new mb.BufferTarget()
-  const output = new mb.Output({ format: mp4 ? new mb.Mp4OutputFormat({ fastStart: counting ? false : 'in-memory' }) : new mb.WebMOutputFormat(), target })
-  const videoSource = new mb.CanvasSource(canvas, { codec: mp4 ? 'avc' : 'vp9', bitrate: plan.videoBps, keyFrameInterval: 2 })
+  const output = new mb.Output({ format: mp4 ? new mb.Mp4OutputFormat(opts.fragmented ? { fastStart: 'fragmented', minimumFragmentDuration: 2 } : { fastStart: counting ? false : 'in-memory' }) : new mb.WebMOutputFormat(), target })
+  const videoSource = new mb.CanvasSource(canvas, { codec: mp4 && !opts.testMp4Vp9 ? 'avc' : 'vp9', bitrate: plan.videoBps, keyFrameInterval: 2 })
   const audioSource = new mb.AudioBufferSource({ codec: mp4 ? 'aac' : 'opus', bitrate: plan.audioBps })
   output.addVideoTrack(videoSource, { frameRate: fps })
   output.addAudioTrack(audioSource)
@@ -195,13 +206,14 @@ export async function fastExport(opts: {
   }
   opts.onProgress?.(total, total)
   const mime = mp4 ? 'video/mp4;codecs=avc1,mp4a.40.2' : 'video/webm;codecs=vp9,opus'
+  const encoded = { width: plan.width, height: plan.height, fps, videoBps: plan.videoBps, audioBps: plan.audioBps, videoCodec: mp4 && !opts.testMp4Vp9 ? 'avc' : 'vp9', audioCodec: mp4 ? 'aac' : 'opus', container: (mp4 ? 'mp4' : 'webm') as 'mp4' | 'webm', fragmented: !!opts.fragmented }
   if (counting) {
     if (!streamed) throw new Error('La exportación rápida no produjo ningún archivo.')
-    return { blob: null, bytes: streamed, mimeType: mime, durationMs: total }
+    return { blob: null, bytes: streamed, mimeType: mime, durationMs: total, encoded }
   }
   const data = (target as InstanceType<MB['BufferTarget']>).buffer ? new Uint8Array((target as InstanceType<MB['BufferTarget']>).buffer!) : new Uint8Array()
   if (!data.length) throw new Error('La exportación rápida no produjo ningún archivo.')
-  return { blob: new Blob([data as BlobPart], { type: mp4 ? 'video/mp4' : 'video/webm' }), bytes: data.length, mimeType: mime, durationMs: total }
+  return { blob: new Blob([data as BlobPart], { type: mp4 ? 'video/mp4' : 'video/webm' }), bytes: data.length, mimeType: mime, durationMs: total, encoded }
 
   /** The mix of [a, b) ms, rendered offline with the same levels the player applies. */
   async function mixChunk(a: number, b: number): Promise<AudioBuffer> {

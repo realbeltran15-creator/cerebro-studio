@@ -4,6 +4,8 @@ import { fastExport } from '@/lib/editor/fast-export'
 import { parseComposition } from '@/lib/editor/composition'
 import { saveLocalDraft, saveLocalHistory } from '@/lib/editor/local-draft'
 import type { KindOf } from '@/lib/editor/scene'
+import { openDriveSink } from '@/lib/ingest/drive-stream'
+import { uploadToDrive } from '@/lib/ingest/drive-upload'
 
 type Manifest = Record<string, { kind: 'image' | 'video' | 'audio'; url: string }>
 declare global { interface Window { M: Record<string, (...a: never[]) => unknown> } }
@@ -13,6 +15,24 @@ const kindOf: KindOf = id => manifest[id]?.kind ?? null
 const resolveUrl = async (id: string) => manifest[id].url
 const heap = () => { const m = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory; return m ? m.usedJSHeapSize : -1 }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+
+const toLocalDrive = ((url: string, init?: RequestInit) => fetch(String(url).replace('https://www.googleapis.com', ''), init)) as typeof fetch
+/** Browser storage in use by this site (what navigator.storage.estimate() reports) sampled while `fn` runs: the peak above the starting point. */
+async function withStorageProbe<T>(fn: () => Promise<T>) {
+  const base = (await navigator.storage.estimate()).usage ?? 0
+  let peak = 0, peakHeap = 0, stop = false
+  const loop = (async () => { while (!stop) { const u = (await navigator.storage.estimate()).usage ?? 0; peak = Math.max(peak, u - base); peakHeap = Math.max(peakHeap, heap()); await sleep(150) } })()
+  const value = await fn()
+  stop = true; await loop
+  const end = (await navigator.storage.estimate()).usage ?? 0
+  return { value, peakStorageAboveBase: peak, peakHeap, storageAfterAboveBase: end - base }
+}
+async function opfsTempBytes() {
+  const root = await navigator.storage.getDirectory(); let n = 0
+  for await (const [, h] of (root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) if (h.kind === 'file') n += (await (h as FileSystemFileHandle).getFile()).size
+  return n
+}
 
 window.M = {
   open: (async (m: Manifest, raw: unknown) => {
@@ -77,6 +97,50 @@ window.M = {
     try { await fastExport({ composition: parseComposition(raw)!, resolveUrl, kindOf, canvas: document.createElement('canvas'), sink: w as never, signal: ac.signal }) } catch (e) { error = (e as Error).name }
     const f = await handle.getFile()
     return { error, sizeAfterAbort: f.size }
+  }) as never,
+  /** Fragmented MP4 sent to the (simulated) Drive WHILE it is rendered: no temporary file anywhere. */
+  exportToDriveDirect: (async (m: Manifest, raw: unknown, fps?: number) => {
+    manifest = m
+    const t0 = performance.now()
+    const probe = await withStorageProbe(async () => {
+      const sink = await openDriveSink({ name: 'direct.mp4', mimeType: 'video/mp4', token: 'test', folderId: 'F', fetchImpl: toLocalDrive })
+      const res = await fastExport({ composition: parseComposition(raw)!, resolveUrl, kindOf, canvas: document.createElement('canvas'), sink: sink.writable as never, fragmented: true, fps, testMp4Vp9: true })
+      const up = await sink.result
+      return { res, up, stats: sink.stats() }
+    })
+    const { res, up, stats } = probe.value
+    return { seconds: (performance.now() - t0) / 1000, bytes: res.bytes, uploaded: up.size, peakStorageAboveBase: probe.peakStorageAboveBase, storageAfterAboveBase: probe.storageAfterAboveBase, opfsLeft: await opfsTempBytes(), peakHeap: probe.peakHeap, peakBuffered: stats.peakBufferedBytes, blocks: stats.blocks, retries: stats.retries, encoded: res.encoded }
+  }) as never,
+  /** The previous way: whole file to a temporary file of this browser (origin-private storage), then uploaded from it, then deleted. */
+  exportToDriveViaTemp: (async (m: Manifest, raw: unknown) => {
+    manifest = m
+    const t0 = performance.now()
+    const root = await navigator.storage.getDirectory()
+    const handle = await root.getFileHandle('cerebro-export-measure.mp4', { create: true })
+    let tempPeak = 0
+    const probe = await withStorageProbe(async () => {
+      const w = await handle.createWritable()
+      const res = await fastExport({ composition: parseComposition(raw)!, resolveUrl, kindOf, canvas: document.createElement('canvas'), sink: w as never, testMp4Vp9: true })
+      tempPeak = (await handle.getFile()).size
+      const up = await uploadToDrive(await handle.getFile(), { name: 'viatemp.mp4', mimeType: 'video/mp4', token: 'test', folderId: 'F', fetchImpl: toLocalDrive })
+      await root.removeEntry('cerebro-export-measure.mp4')
+      return { res, up }
+    })
+    return { seconds: (performance.now() - t0) / 1000, bytes: probe.value.res.bytes, uploaded: probe.value.up.size, tempFilePeakBytes: tempPeak, peakStorageAboveBase: probe.peakStorageAboveBase, storageAfterAboveBase: probe.storageAfterAboveBase, opfsLeft: await opfsTempBytes(), peakHeap: probe.peakHeap }
+  }) as never,
+  /** One export per setting, to a throw-away sink: proves each quality option really changes what is encoded. */
+  exportEncoded: (async (m: Manifest, raw: unknown) => {
+    manifest = m
+    const t0 = performance.now()
+    const root = await navigator.storage.getDirectory()
+    const handle = await root.getFileHandle('quality.mp4', { create: true })
+    const w = await handle.createWritable()
+    const res = await fastExport({ composition: parseComposition(raw)!, resolveUrl, kindOf, canvas: document.createElement('canvas'), sink: w as never })
+    const f = await handle.getFile()
+    const buf = new Uint8Array(await f.arrayBuffer())
+    let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+    await root.removeEntry('quality.mp4')
+    return { seconds: (performance.now() - t0) / 1000, bytes: res.bytes, encoded: res.encoded, b64: btoa(bin) }
   }) as never,
   export: (async (m: Manifest, raw: unknown) => {
     manifest = m

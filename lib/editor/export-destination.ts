@@ -5,12 +5,15 @@
  *  folder    the person picks the FILE (any folder, external drive or USB stick the system shows) BEFORE rendering; the video is written
  *            there as it is produced (File System Access API). Chrome keeps its swap file next to the target, so the internal disk
  *            is not used for the video; nothing is committed if the export is cancelled or fails.
- *  drive     rendered to a temporary file of this browser (origin-private storage = the internal disk) and then uploaded to the chosen
- *            Drive folder in chunks. It is NOT a transfer from a server: the video never exists on any server of ours.
+ *  drive     two ways, chosen by `DriveMode`. 'direct': a fragmented MP4 is sent to the chosen Drive folder in 8 MiB blocks WHILE it is
+ *            rendered (no file anywhere on this computer; only a few MB of buffers). 'temp': rendered to a temporary file of this browser
+ *            (origin-private storage = the internal disk) and then uploaded in chunks (retryable without rendering again; classic MP4).
+ *            Either way it is NOT a transfer from a server: the video never exists on any server of ours.
  *  library   private cloud storage of the account, limited by its quota and per-file size.
  *  onedrive / dropbox  not implemented (need app registrations): shown as unavailable.
  */
 export type ExportWhere = 'download' | 'folder' | 'drive' | 'library' | 'onedrive' | 'dropbox'
+export type DriveMode = 'direct' | 'temp'
 export const EXPORT_TEMP_PREFIX = 'cerebro-export-'
 
 type SavePickerWindow = { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> }
@@ -35,13 +38,14 @@ const mbs = (b: number) => Math.max(0.1, Math.round(b / 1048576 * 10) / 10)
  * What to tell before rendering. `browserFreeBytes` is navigator.storage.estimate() quota−usage: it is what the browser may still store for
  * this site (a temporary file for Drive), NOT the free space of an external drive, which a web page cannot read.
  */
-export function spaceAdvice(i: { where: ExportWhere; estimatedBytes: number; browserFreeBytes?: number | null; libraryFreeBytes?: number | null; libraryMaxFileBytes?: number | null; folderSupported: boolean; tempSupported: boolean }): SpaceAdvice {
+export function spaceAdvice(i: { where: ExportWhere; driveMode?: DriveMode; estimatedBytes: number; browserFreeBytes?: number | null; libraryFreeBytes?: number | null; libraryMaxFileBytes?: number | null; folderSupported: boolean; tempSupported: boolean }): SpaceAdvice {
   const est = i.estimatedBytes
   switch (i.where) {
     case 'folder':
       if (!i.folderSupported) return { level: 'block', message: 'Este navegador no permite elegir una carpeta o disco. Usa Chrome o Edge, o «Descargar a mi equipo».' }
       return { level: 'ok', message: `Se escribe directamente en el archivo que elijas (~${mbs(est)} MB), sin armarlo antes en memoria. El navegador no puede ver el espacio libre de ese disco: si se llena, la exportación se detiene y no queda un archivo a medias.` }
     case 'drive':
+      if (i.driveMode === 'direct') return { level: 'ok', message: `Se envía a tu Drive mientras se renderiza (~${mbs(est)} MB en total): no se crea ningún archivo en este equipo, solo unos pocos MB de memoria. El archivo es un MP4 fragmentado (lo reproducen los navegadores, VLC, Drive y YouTube; algunos programas de edición antiguos no). Si se corta la conexión, continúa donde iba; si se cierra la pestaña hay que volver a exportar.` }
       if (!i.tempSupported) return { level: 'block', message: 'Este navegador no puede guardar el archivo temporal necesario para subirlo a Drive. Usa Chrome o Edge.' }
       if (i.browserFreeBytes != null && i.browserFreeBytes < est * 1.1) return { level: 'block', message: `Hace falta un temporal de ~${mbs(est)} MB en este equipo antes de subirlo a Drive y el navegador solo permite ~${mbs(Math.max(0, i.browserFreeBytes))} MB. Libera espacio o exporta a una carpeta.` }
       return { level: 'warn', message: `Se renderiza a un archivo temporal de este equipo (~${mbs(est)} MB, en el disco interno) y después se sube a tu Drive; el temporal se borra al terminar. No es una transferencia directa desde un servidor.` }
@@ -80,4 +84,33 @@ export async function createExportTemp(id: string, ext: string) {
   const name = `${EXPORT_TEMP_PREFIX}${id}.${ext}`
   const handle = await root.getFileHandle(name, { create: true })
   return { name, handle, writable: await handle.createWritable() }
+}
+
+/**
+ * What an export will cost, BEFORE it runs. Every number here is an ESTIMATE (bitrate × duration for the file; rules measured in
+ * Chromium for the rest: see docs/almacenamiento-y-exportacion.md). The panel shows what was really measured after the export.
+ *   finalBytes     size of the finished video.
+ *   diskTempBytes  temporary space written on THIS computer's internal disk (browser storage) during the export; 0 when it goes straight to its destination.
+ *   ramBytes       memory the export needs on top of the page (buffers); download builds the whole file in memory.
+ */
+export function exportFootprint(i: { where: ExportWhere; driveMode?: DriveMode; estimatedBytes: number }) {
+  const est = i.estimatedBytes
+  const MIB = 1048576
+  switch (i.where) {
+    case 'folder': return { finalBytes: est, diskTempBytes: 0, ramBytes: 24 * MIB, note: 'Se escribe en el disco que elijas. Chrome guarda un archivo auxiliar junto al destino (en ese mismo disco), nunca en el interno.' }
+    case 'drive': return i.driveMode === 'direct'
+      ? { finalBytes: est, diskTempBytes: 0, ramBytes: 24 * MIB, note: 'Sin copia local: cada bloque de 8 MB se envía a Drive según se genera.' }
+      : { finalBytes: est, diskTempBytes: est, ramBytes: 24 * MIB, note: 'El vídeo entero queda como temporal en este equipo hasta que termine la subida.' }
+    case 'download': return { finalBytes: est, diskTempBytes: 0, ramBytes: Math.round(est * 2.7), note: 'El navegador monta el vídeo entero en memoria y lo guarda en Descargas (disco interno).' }
+    default: return { finalBytes: est, diskTempBytes: 0, ramBytes: 24 * MIB, note: '' }
+  }
+}
+
+/** Samples the browser's storage use for this site while an export runs, to report the real peak (storage.estimate; ~2 s resolution). */
+export function startStorageProbe() {
+  let base = 0, peak = 0, stopped = false
+  const read = async () => { try { return (await navigator.storage.estimate()).usage ?? 0 } catch { return 0 } }
+  const ready = read().then(v => { base = v })
+  const loop = (async () => { await ready; while (!stopped) { peak = Math.max(peak, (await read()) - base); await new Promise(r => setTimeout(r, 2000)) } })()
+  return { async stop() { stopped = true; await loop; const end = (await read()) - base; peak = Math.max(peak, end); return { peakAboveStartBytes: Math.max(0, peak), endAboveStartBytes: end } } }
 }
