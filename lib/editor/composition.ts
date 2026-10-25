@@ -290,8 +290,8 @@ export const formatSize: Record<OutputFormat, { width: number; height: number }>
 
 export const MIN_CLIP_MS = 1000
 export const MAX_CLIP_MS = 120000
-/** Longest position on the timeline the editor stores (4 h): long-form edits of 90 min or more fit with room to spare. */
-export const MAX_TIMELINE_MS = 4 * 3600_000
+/** Longest position on the timeline the editor stores (6 h): long-form edits of 90 min or more fit with room to spare. */
+export const MAX_TIMELINE_MS = 6 * 3600_000
 
 const clampMs = (ms: number) => Math.min(Math.max(Math.round(ms), MIN_CLIP_MS), MAX_CLIP_MS)
 
@@ -653,7 +653,7 @@ export function compositionIssues(c: Composition): CompositionIssue[] {
     if (!c.editedManually && !clip.voiceAssetId && !voicedClips.has(clip.id) && clip.narration?.trim()) issues.push({ sceneId: clip.sceneId, message: `${label} ${i + 1}: tiene narración pero no voz asignada.`, blocking: false })
   })
   const total = totalDurationMs(c)
-  if (total > MAX_TIMELINE_MS) issues.push({ message: 'El montaje supera 4 horas: divídelo en partes.', blocking: true })
+  if (total > MAX_TIMELINE_MS) issues.push({ message: `El montaje supera ${MAX_TIMELINE_MS / 3600_000} horas: divídelo en partes.`, blocking: true })
   else if (total > 20 * 60 * 1000) issues.push({ message: `Montaje largo (${Math.round(total / 60000)} min): la exportación en el navegador va en tiempo real (tarda lo mismo que dura) y necesita la pestaña abierta y visible; usa «Descargar a mi equipo», porque la Biblioteca solo admite archivos de hasta 50 MB.`, blocking: false })
   return issues
 }

@@ -17,6 +17,8 @@ export type RoomResult = {
   /** The transition length after the operation (it is shortened only when the clips are too short to give that much). */
   ms: number
   limited: boolean
+  /** The clips are too short to give any material: nothing was changed. */
+  failed: boolean
   /** A's file length is not known yet, so its side could not be checked. */
   unknown: boolean
   message: string
@@ -26,7 +28,7 @@ const secs = (ms: number) => `${(ms / 1000).toLocaleString('es-ES', { maximumFra
 
 export function makeRoomForTransition(c: Composition, i: number, kindOf: MediaKindOf): RoomResult {
   const A = c.clips[i], B = c.clips[i + 1]
-  const none = (extra: Partial<RoomResult> = {}): RoomResult => ({ composition: c, trimmedAMs: 0, trimmedBMs: 0, ms: A ? Math.round(A.transitionMs ?? c.fadeMs) : 0, limited: false, unknown: false, message: '', ...extra })
+  const none = (extra: Partial<RoomResult> = {}): RoomResult => ({ composition: c, trimmedAMs: 0, trimmedBMs: 0, ms: A ? Math.round(A.transitionMs ?? c.fadeMs) : 0, limited: false, failed: false, unknown: false, message: '', ...extra })
   if (!A || !B || !BLENDS.has(A.transition ?? 'fade')) return none()
   const asked = Math.max(0, Math.round(A.transitionMs ?? c.fadeMs))
   for (let ms = asked; ms >= 100; ms -= 50) {
@@ -52,7 +54,7 @@ export function makeRoomForTransition(c: Composition, i: number, kindOf: MediaKi
       ? `Para que los dos vídeos se muevan durante la transición se recortaron ${parts.join(' y ')}: ese material se reproduce en el solape. El proyecto dura ${secs(tA + tB)} menos${ms < asked ? `; la transición se limitó a ${secs(ms)} porque los clips no daban más` : ''}. Ctrl+Z lo deshace.`
       : ''
     if (!tA && !tB && ms === asked) return none()
-    return { composition: cur, trimmedAMs: tA, trimmedBMs: tB, ms, limited: ms < asked, unknown, message }
+    return { composition: cur, trimmedAMs: tA, trimmedBMs: tB, ms, limited: ms < asked, failed: false, unknown, message }
   }
-  return none({ message: 'Los clips son demasiado cortos para crear material de transición: alarga alguno o usa una transición más corta.' })
+  return none({ failed: true, message: 'Los clips son demasiado cortos para crear material de transición: alarga alguno o usa una transición más corta.' })
 }
