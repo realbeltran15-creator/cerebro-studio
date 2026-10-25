@@ -9,8 +9,12 @@ import { saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/cli
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
-import { recordingSupported, renderComposition } from '@/lib/editor/renderer'
-import { fastExport, FastExportUnsupported } from '@/lib/editor/fast-export'
+import { pickMimeType, recordingSupported, renderComposition } from '@/lib/editor/renderer'
+import { fastExport, fastExportSupported, FastExportUnsupported } from '@/lib/editor/fast-export'
+import { browserFreeBytes, createExportTemp, fileNameFor, folderSaveSupported, pickSaveFile, removeExportTemp, spaceAdvice, tempStorageSupported, type ExportWhere } from '@/lib/editor/export-destination'
+import { pickDriveFolder, requestDriveToken } from '@/lib/ingest/drive'
+import { uploadToDrive } from '@/lib/ingest/drive-upload'
+import { pickerConfigFromEnv } from '@/lib/flow-import'
 import { startExportGuard, type ExportGuard } from '@/lib/editor/export-guard'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
 import { browserExportAdvice } from '@/lib/editor/export-limits'
@@ -63,6 +67,32 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   // The last saved render, kept so it can be converted to an Instagram-ready MP4 without rendering again.
   const [saved, setSaved] = useState<{ blob: Blob; assetId: string; mimeType: string } | null>(null)
   const [converting, setConverting] = useState<number | null>(null)
+  // Where the finished video goes. «folder» and «drive» are exports to a computer folder/drive or to Google Drive; both plan like a download (no Library size cap).
+  const [where, setWhere] = useState<ExportWhere>(plan.destination === 'library' ? 'library' : 'download')
+  const driveCfg = pickerConfigFromEnv()
+  const [free, setFree] = useState<{ browser: number | null; library: number | null; maxFile: number | null }>({ browser: null, library: null, maxFile: null })
+  const [pendingDrive, setPendingDrive] = useState<{ temp: string; name: string; mime: string; folderId: string; folderName: string } | null>(null)
+  const [driveBusy, setDriveBusy] = useState(false)
+  // Container the file will have, known BEFORE the render so the «save as» dialog can propose the right extension (it needs a click, so it cannot wait).
+  const [ext, setExt] = useState<'mp4' | 'webm'>('mp4')
+  useEffect(() => {
+    let off = false
+    void (async () => {
+      const e: 'mp4' | 'webm' = (exp.mode ?? 'fast') === 'fast' ? ((await fastExportSupported(plan.width, plan.height).catch(() => null))?.container ?? 'webm') : (/mp4/.test(pickMimeType() ?? '') ? 'mp4' : 'webm')
+      if (!off) setExt(e)
+    })()
+    return () => { off = true }
+  }, [exp.mode, plan.width, plan.height]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let off = false
+    void (async () => {
+      const browser = await browserFreeBytes()
+      const u = await fetch('/api/storage/usage').then(r => r.json()).catch(() => null) as { usedBytes?: number; quotaBytes?: number; maxFileBytes?: number | null } | null
+      if (!off) setFree({ browser, library: u?.quotaBytes != null && u.usedBytes != null ? u.quotaBytes - u.usedBytes : null, maxFile: u?.maxFileBytes ?? null })
+    })()
+    return () => { off = true }
+  }, [mode])
+  const advice = spaceAdvice({ where, estimatedBytes: plan.estimatedBytes, browserFreeBytes: free.browser, libraryFreeBytes: free.library, libraryMaxFileBytes: free.maxFile, folderSupported: folderSaveSupported(), tempSupported: tempStorageSupported() })
   const convertConfig = transcodeConfigFromEnv()
   // Free, GPL-free conversion with the browser's own encoders (WebCodecs). ffmpeg.wasm is only a fallback when its core URL is configured.
   const [native, setNative] = useState<NativeSupport | null>(null)
@@ -97,6 +127,19 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     if (busyRef.current) return
     busyRef.current = true
     setMode('loading'); setError(''); setStatus(record ? 'Guardando el montaje…' : '')
+    // Destination chosen BEFORE rendering (the dialogs need the click that started this).
+    let fileHandle: FileSystemFileHandle | null = null
+    let driveTarget: { token: string; folderId: string; folderName: string } | null = null
+    const exportName = fileNameFor(composition.title, composition.format, plan.height, ext)
+    const stopEarly = (msg: string) => { busyRef.current = false; setMode('idle'); setStatus(msg) }
+    if (record && where === 'folder') {
+      try { fileHandle = await pickSaveFile(exportName, ext) } catch (e) { return stopEarly((e as Error).name === 'AbortError' ? 'No elegiste dónde guardar: no se ha renderizado nada.' : (e instanceof Error ? e.message : 'No se pudo abrir el selector de archivos.')) }
+    } else if (record && where === 'drive' && driveCfg) {
+      try { driveTarget = await pickDriveFolder(driveCfg) } catch (e) { return stopEarly(e instanceof Error ? e.message : 'No se pudo conectar con Google Drive.') }
+      if (!driveTarget) return stopEarly('No elegiste una carpeta de Drive: no se ha renderizado nada.')
+    }
+    let tmp: Awaited<ReturnType<typeof createExportTemp>> | null = null
+    let streamTo: FileSystemWritableFileStream | null = null
     const controller = new AbortController()
     abortRef.current = controller
     abortReason.current = 'user'
@@ -134,7 +177,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       if (record && (exp.mode ?? 'fast') === 'fast') {
         try {
           setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real). Mantén esta pestaña a la vista: en segundo plano el navegador la frena.')
-          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), signal: controller.signal, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
+          if (fileHandle) streamTo = await fileHandle.createWritable()
+          else if (driveTarget) { tmp = await createExportTemp(crypto.randomUUID().slice(0, 8), ext); streamTo = tmp.writable }
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, signal: controller.signal, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
           renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
@@ -143,6 +188,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
           // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
           setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
           setProgress({ elapsed: 0, total: 0 })
+          try { if (streamTo && !streamTo.locked) await streamTo.abort() } catch { /* already aborted by the exporter */ }
+          streamTo = null
+          if (tmp) { await removeExportTemp(tmp.name); tmp = null }
           result = await realtime()
         }
       } else result = await realtime()
@@ -152,7 +200,23 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         setStatus(`${reason} No se ha guardado ningún vídeo.`)
         return
       }
-      if (record && result.blob && jobId && plan.destination === 'download') {
+      if (record && jobId && fileHandle) {
+        if (result.blob) { const w = await fileHandle.createWritable(); await w.write(result.blob); await w.close() }
+        const size = (await fileHandle.getFile()).size
+        await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
+        setStatus(`Vídeo guardado en «${fileHandle.name}» (${Math.round(size / 1048576 * 10) / 10} MB), en la ubicación que elegiste. ${streamed(result) ? 'Se escribió mientras se renderizaba: no se montó entero en memoria.' : 'Esta vez se montó en memoria antes de escribirlo (modo en tiempo real).'}`)
+        onRendered?.()
+      } else if (record && jobId && driveTarget) {
+        await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
+        const mime = ext === 'mp4' ? 'video/mp4' : 'video/webm'
+        let tempName = tmp?.name ?? ''
+        let file: Blob
+        if (tmp) file = await tmp.handle.getFile()
+        else if (result.blob) { file = result.blob } else throw new Error('No hay vídeo que subir.')
+        const target = { temp: tempName, name: exportName, mime, folderId: driveTarget.folderId, folderName: driveTarget.folderName }
+        await sendToDrive(file, target, driveTarget.token, controller.signal, () => guard?.progress())
+        onRendered?.()
+      } else if (record && result.blob && jobId && plan.destination === 'download') {
         // Download only: the file stays on this computer (no 50 MB limit); the render job records it without uploading anything.
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}-${plan.height}p.${containerOf(result.mimeType)}`
         const url = URL.createObjectURL(result.blob)
@@ -172,6 +236,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         onRendered?.()
       } else if (!record) setStatus('Vista previa terminada.')
     } catch (e) {
+      // Discard what was being written: a cancelled or failed export leaves no half-written video and no temporary.
+      try { if (streamTo && !streamTo.locked) await streamTo.abort() } catch { /* already aborted */ }
+      if (tmp && !pendingDriveRef.current) await removeExportTemp(tmp.name).catch(() => undefined)
       const message = e instanceof Error ? e.message : 'El render falló.'
       setError(message)
       if (jobId) await supabase.from('render_jobs').update({ status: 'failed', error: message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', jobId)
@@ -182,6 +249,34 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       busyRef.current = false
       setMode('idle')
     }
+  }
+
+  const pendingDriveRef = useRef(false)
+  useEffect(() => { pendingDriveRef.current = !!pendingDrive }, [pendingDrive])
+  const streamed = (r: { blob: Blob | null }) => r.blob === null
+
+  /** Uploads the rendered file to the chosen Drive folder. On failure the temporary file is kept so the upload can be retried without rendering again. */
+  async function sendToDrive(file: Blob, t: { temp: string; name: string; mime: string; folderId: string; folderName: string }, token: string, signal?: AbortSignal, tick?: () => void) {
+    setMode('saving'); setDriveBusy(true); setPendingDrive(null); pendingDriveRef.current = false
+    try {
+      const r = await uploadToDrive(file, { name: t.name, mimeType: t.mime, token, folderId: t.folderId, signal, onProgress: (sent, total) => { tick?.(); setStatus(`Subiendo a Google Drive… ${Math.round(sent / total * 100)} % (${Math.round(sent / 1048576)} de ${Math.round(total / 1048576)} MB)`) } })
+      if (t.temp) await removeExportTemp(t.temp)
+      setStatus(`Subido a Google Drive: «${r.name}» en la carpeta «${t.folderName}» (${Math.round(r.size / 1048576 * 10) / 10} MB). ${t.temp ? 'El archivo temporal de este equipo se ha borrado.' : ''}`)
+    } catch (e) {
+      if (t.temp) { pendingDriveRef.current = true; setPendingDrive(t) }
+      throw new Error(`${e instanceof Error ? e.message : 'No se pudo subir a Drive.'} ${t.temp ? 'El vídeo ya está renderizado y guardado como temporal: pulsa «Reintentar subida a Drive».' : ''}`)
+    } finally { setDriveBusy(false) }
+  }
+
+  async function retryDrive() {
+    if (!pendingDrive || !driveCfg || driveBusy) return
+    setError('')
+    try {
+      const token = await requestDriveToken(driveCfg)
+      const root = await navigator.storage.getDirectory()
+      const file = await (await root.getFileHandle(pendingDrive.temp)).getFile()
+      await sendToDrive(file, pendingDrive, token)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo subir a Drive.') } finally { setMode('idle') }
   }
 
   async function convert() {
@@ -240,11 +335,19 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       <label>Calidad<select aria-label="Calidad" value={exp.videoKbps ? 'custom' : exp.quality} onChange={e => e.target.value === 'custom' ? setExport({ videoKbps: Math.round(plan.wantedBps / 1000) }) : setExport({ quality: e.target.value === 'high' ? 'high' : 'normal', videoKbps: null })}><option value="normal">Normal</option><option value="high">Alta</option><option value="custom">Personalizada</option></select></label>
       {exp.videoKbps ? <label>Vídeo (kbit/s)<input aria-label="Bitrate de vídeo" type="number" min={200} max={40000} step={100} value={exp.videoKbps} onChange={e => setExport({ videoKbps: Math.min(40000, Math.max(200, Number(e.target.value) || 200)) })} style={{ width: 100 }} /></label> : null}
       <label>Modo<select aria-label="Modo de exportación" value={exp.mode ?? 'fast'} onChange={e => setExport({ mode: e.target.value === 'realtime' ? 'realtime' : undefined })}><option value="fast">Rápida (fotograma a fotograma)</option><option value="realtime">En tiempo real (grabación)</option></select></label>
-      <label>Destino<select aria-label="Destino" value={plan.destination} onChange={e => setExport({ destination: e.target.value === 'download' ? 'download' : 'library' })}><option value="library">Biblioteca (máx. 50 MB)</option><option value="download">Descargar a mi equipo</option></select></label>
+      <label>Destino<select aria-label="Destino" value={where} onChange={e => { const w = e.target.value as ExportWhere; setWhere(w); setExport({ destination: w === 'library' ? 'library' : 'download' }) }}>
+        <option value="download">Descargar a mi equipo (carpeta Descargas)</option>
+        <option value="folder" disabled={!folderSaveSupported()}>Guardar en una carpeta o disco externo…{folderSaveSupported() ? '' : ' (no disponible en este navegador)'}</option>
+        <option value="drive" disabled={!driveCfg}>Google Drive{driveCfg ? '' : ' (requiere configuración)'}</option>
+        <option value="library">Biblioteca de Cerebro Studio{free.maxFile ? ` (máx. ${Math.round(free.maxFile / 1048576)} MB)` : ''}</option>
+        <option value="onedrive" disabled>OneDrive (aún no disponible)</option>
+        <option value="dropbox" disabled>Dropbox (aún no disponible)</option>
+      </select></label>
       <span className="small muted" aria-label="Estimación">{width}×{height} · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
     </div>}
     {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
-    {!previewOnly && plan.destination === 'download' && browserExportAdvice(plan.estimatedBytes).level === 'heavy' && <p className="warnBox small" role="status" aria-label="Aviso de memoria">{browserExportAdvice(plan.estimatedBytes).message}</p>}
+    {!previewOnly && <p className={advice.level === 'ok' ? 'muted small' : 'warnBox small'} role={advice.level === 'block' ? 'alert' : 'status'} aria-label="Aviso de espacio">{advice.message}</p>}
+    {!previewOnly && false && browserExportAdvice(plan.estimatedBytes).level === 'heavy' && <p className="warnBox small" role="status" aria-label="Aviso de memoria">{browserExportAdvice(plan.estimatedBytes).message}</p>}
     {!previewOnly && plan.destination === 'library' && !plan.fitsLibrary && <p className="warnBox small" role="alert">Este montaje no cabe en la Biblioteca ({Math.round(LIBRARY_MAX_BYTES / 1048576)} MB) ni con la calidad mínima. Elige «Descargar a mi equipo».</p>}
     {!previewOnly && plan.reduced && plan.fitsLibrary && <p className="warnBox small">Para caber en {Math.round(LIBRARY_MAX_BYTES / 1048576)} MB la calidad baja a {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 })} Mbit/s (pedías {(plan.wantedBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })}). Elige «Descargar a mi equipo» para conservarla.</p>}
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
@@ -258,8 +361,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       {mode === 'idle' ? <>
         {!exportOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>}
         {!previewOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} title="Para vídeos largos: se renderiza en tu PC con FFmpeg, sin navegador abierto y sin coste" onClick={() => void preparePackage()}><Icon name="video" size={16} />Paquete para renderizar en mi PC</button>}
-        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || (plan.destination === 'library' && !plan.fitsLibrary)} onClick={() => void run(true)}><Icon name="video" size={16} />{plan.destination === 'download' ? 'Renderizar y descargar' : 'Renderizar y guardar'}</button>}
+        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary)} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Elegir dónde guardar y renderizar' : where === 'drive' ? 'Elegir carpeta de Drive y renderizar' : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
+      {pendingDrive && mode === 'idle' && <><button type="button" onClick={() => void retryDrive()} disabled={driveBusy}>Reintentar subida a Drive</button><button type="button" className="ghost" onClick={() => void (async () => { await removeExportTemp(pendingDrive.temp); setPendingDrive(null); setStatus('Temporal borrado. El vídeo no se subió.') })()}>Descartar el temporal</button></>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}
       {compositionCues(composition).length > 0 && <>
         <button type="button" className="ghost small" onClick={() => downloadText('subtitulos.srt', cuesToSrt(compositionCues(composition)), 'application/x-subrip')}>Subtítulos .srt</button>
