@@ -317,7 +317,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       const j = await r.json().catch(() => ({})) as { error?: string }
       if (!r.ok) throw new Error(j.error ?? 'No se pudo preparar el paquete.')
       downloadText('paquete-render.json', JSON.stringify(j), 'application/json')
-      setStatus('Paquete descargado (válido 4 h). En tu PC: node scripts/render.mjs ticket paquete-render.json --out video.mp4 — luego súbelo a la Biblioteca.')
+      setStatus('Paquete descargado (válido 4 h). En tu PC: node scripts/render.mjs ticket paquete-render.json --out video.mp4 — luego súbelo a la Biblioteca. Para no usar el disco interno, apunta a un disco externo: --out E:\\video.mp4 --work E:\\temporal (el motor guarda ahí los materiales descargados, los segmentos y el vídeo final).')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo preparar el paquete.'); setStatus('')
     } finally {

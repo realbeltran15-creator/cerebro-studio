@@ -89,14 +89,17 @@ if (ONLY === 'photos') {
 /* playback phases skipped: this script measures only the export's memory and disk */
 // ---- Export to memory (Blob) vs progressive write to a file, same montage, 1080p 5 Mbit/s.
 const sampleRun = async (fn) => { let peak = 0, stop = false; const sampler = (async () => { while (!stop) { peak = Math.max(peak, rssMB()); await new Promise(r => setTimeout(r, 200)) } })(); const r = await fn(); stop = true; await sampler; return { r, peak } }
-for (const minutes of [1, 3, 6]) {
+for (const minutes of ONLY === 'quota' ? [] : [1, 3, 6]) {
   const c = { ...montage(minutes).composition, exportSettings: { quality: 'normal', resolution: '1080', destination: 'download', mode: 'fast' } }
   const mem = await sampleRun(() => page.evaluate(([m, c]) => window.M.export(m, c), [manifest, c]))
   const fil = await sampleRun(() => page.evaluate(([m, c, n]) => window.M.exportToFile(m, c, n), [manifest, c, `out-${minutes}.mp4`]))
   report.export.push({ minutes, toMemory: { seconds: Math.round(mem.r.seconds), outputMB: mb(mem.r.bytes), rssPeakMB: mem.peak, jsHeapPeakMB: mb(mem.r.peakHeap) }, toFile: { seconds: Math.round(fil.r.seconds), outputMB: mb(fil.r.bytes), fileMB: mb(fil.r.fileSize), rssPeakMB: fil.peak, jsHeapPeakMB: mb(fil.r.peakHeap), blobNull: fil.r.blobNull, mime: fil.r.mime } })
   console.log(JSON.stringify(report.export.at(-1)))
 }
-const ab = await page.evaluate(([m, c]) => window.M.exportAbort(m, c, 'abort.mp4'), [manifest, { ...montage(6).composition, exportSettings: { quality: 'normal', resolution: '1080', destination: 'download', mode: 'fast' } }])
+const quotaRun = await page.evaluate(([m, c]) => window.M.exportQuota(m, c, 'full-disk.mp4', 5 * 1048576), [manifest, { ...montage(1).composition, exportSettings: { quality: 'normal', resolution: '1080', destination: 'download', mode: 'fast' } }])
+report.fullDisk = quotaRun
+console.log('fullDisk', JSON.stringify(quotaRun))
+const ab = ONLY === 'quota' ? { skipped: true } : await page.evaluate(([m, c]) => window.M.exportAbort(m, c, 'abort.mp4'), [manifest, { ...montage(6).composition, exportSettings: { quality: 'normal', resolution: '1080', destination: 'download', mode: 'fast' } }])
 report.abort = ab
 console.log('abort', JSON.stringify(ab))
 report.afterExport = { browserProfile: diskParts() }

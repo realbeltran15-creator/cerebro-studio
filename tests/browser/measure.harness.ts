@@ -49,6 +49,22 @@ window.M = {
     const f = await handle.getFile()
     return { seconds: (performance.now() - t0) / 1000, bytes: res.bytes, fileSize: f.size, mime: res.mimeType, peakHeap: peak.heap, blobNull: res.blob === null }
   }) as never,
+  /** Full disk: the destination refuses writes after `limit` bytes (QuotaExceededError). The export must fail cleanly and commit nothing. */
+  exportQuota: (async (m: Manifest, raw: unknown, name: string, limit: number) => {
+    manifest = m
+    const root = await navigator.storage.getDirectory()
+    const handle = await root.getFileHandle(name, { create: true })
+    const real = await handle.createWritable()
+    let written = 0
+    const sink = new WritableStream({
+      write: async (chunk: { data: Uint8Array; position: number }) => { written += chunk.data.byteLength; if (written > limit) throw new DOMException('No space left', 'QuotaExceededError'); await real.write(chunk as never) },
+      close: () => real.close(), abort: r => real.abort(r),
+    })
+    let error = ''
+    try { await fastExport({ composition: parseComposition(raw)!, resolveUrl, kindOf, canvas: document.createElement('canvas'), sink: sink as never }) } catch (e) { error = (e as Error).name }
+    const f = await handle.getFile()
+    return { error, committedBytes: f.size, writtenBeforeFailure: written }
+  }) as never,
   /** Aborted export: the writable is discarded; reports whether a file was left behind. */
   exportAbort: (async (m: Manifest, raw: unknown, name: string) => {
     manifest = m

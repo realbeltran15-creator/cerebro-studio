@@ -40,7 +40,7 @@ export function spaceAdvice(i: { where: ExportWhere; estimatedBytes: number; bro
   switch (i.where) {
     case 'folder':
       if (!i.folderSupported) return { level: 'block', message: 'Este navegador no permite elegir una carpeta o disco. Usa Chrome o Edge, o «Descargar a mi equipo».' }
-      return { level: 'ok', message: `Se escribe directamente en el archivo que elijas (~${mbs(est)} MB), sin armarlo antes en memoria ni en el disco interno. El navegador no puede ver el espacio libre de ese disco: si se llena, la exportación se detiene y no queda un archivo a medias.` }
+      return { level: 'ok', message: `Se escribe directamente en el archivo que elijas (~${mbs(est)} MB), sin armarlo antes en memoria. El navegador no puede ver el espacio libre de ese disco: si se llena, la exportación se detiene y no queda un archivo a medias.` }
     case 'drive':
       if (!i.tempSupported) return { level: 'block', message: 'Este navegador no puede guardar el archivo temporal necesario para subirlo a Drive. Usa Chrome o Edge.' }
       if (i.browserFreeBytes != null && i.browserFreeBytes < est * 1.1) return { level: 'block', message: `Hace falta un temporal de ~${mbs(est)} MB en este equipo antes de subirlo a Drive y el navegador solo permite ~${mbs(Math.max(0, i.browserFreeBytes))} MB. Libera espacio o exporta a una carpeta.` }
