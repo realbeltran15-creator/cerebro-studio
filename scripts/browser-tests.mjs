@@ -2717,6 +2717,78 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   server.close()
 }
 
+// 36. Zoom de la línea de tiempo con Alt + rueda: mismo estado que el deslizador «Zoom», anclado al cursor, sin tocar la página ni la altura.
+//     Con tres vídeos seguidos y dos transiciones.
+{
+  const server = serve(8837, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+  const errors = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('http://127.0.0.1:8837/editor/manual?job=job4')
+  await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 20000 })
+  await page.waitForTimeout(800)
+  const slider = page.getByLabel('Zoom horizontal'), height = page.getByLabel('Altura de las pistas')
+  const tl = page.locator('section[aria-label="Línea de tiempo"]')
+  const clips = () => page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]')
+  const widths = () => clips().evaluateAll(els => els.map(e => e.getBoundingClientRect().width))
+  const sc = () => tl.evaluate(e => e.scrollLeft)
+  const pageState = () => page.evaluate(() => ({ dpr: window.devicePixelRatio, vv: window.visualViewport?.scale, iw: innerWidth, sy: scrollY }))
+  const vol = page.locator('input[aria-label*="olumen"]').first()
+  await tl.scrollIntoViewIfNeeded()
+  const zoom0 = Number(await slider.inputValue()), h0 = await height.inputValue(), ps0 = await pageState()
+  const vol0 = await vol.count() ? await vol.inputValue() : null
+  const box = await tl.boundingBox()
+  const cursorX = box.x + 300, cursorY = box.y + 40
+  await page.mouse.move(cursorX, cursorY)
+  const w0 = await widths()
+  // The instant under the cursor, measured by a clip edge: second clip's left edge in seconds (relative to the scroller) before / after.
+  const edgeSec = async () => { const b = await clips().nth(1).boundingBox(); const z = Number(await slider.inputValue()); const left = await sc(); return (b.x - box.x + left) / z }
+  const anchorT = (300 + await sc()) / zoom0
+  await page.keyboard.down('Alt')
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -100)
+  await page.keyboard.up('Alt')
+  await page.waitForTimeout(250)
+  const zoom1 = Number(await slider.inputValue()), w1 = await widths()
+  check('Alt+wheel up zooms in: the slider «Zoom» moves up', zoom1 > zoom0, [zoom0, zoom1])
+  check('Alt+wheel up zooms in: the three videos get wider in proportion to the slider', w1.length === 3 && w1.every((w, i) => Math.abs(w / w0[i] - zoom1 / zoom0) < 0.03), { w0, w1, zoom0, zoom1 })
+  check('Alt+wheel: the instant under the cursor stays under the cursor', Math.abs((300 + await sc()) / zoom1 - anchorT) < 0.15, [(300 + await sc()) / zoom1, anchorT])
+  const ps1 = await pageState()
+  check('Alt+wheel: does not change the browser/page zoom, the page scroll, the track height or the volume', JSON.stringify(ps1) === JSON.stringify(ps0) && await height.inputValue() === h0 && (vol0 === null || await vol.inputValue() === vol0), { ps0, ps1 })
+  check('Alt+wheel: the ruler and the transition chips follow the new scale', await page.locator('[data-transition-band]').count() === 2 && (await page.locator('[data-transition-band]').first().boundingBox()).width > 4)
+  const ph = await page.locator('.playhead').boundingBox()
+  check('Alt+wheel: playhead stays at its instant (0 s) with the new scale', ph.x - box.x + await sc() < 6, ph)
+  await page.keyboard.down('Alt')
+  for (let i = 0; i < 12; i++) await page.mouse.wheel(0, 100)
+  await page.keyboard.up('Alt')
+  await page.waitForTimeout(250)
+  const zoom2 = Number(await slider.inputValue())
+  check('Alt+wheel down zooms out, never below the slider minimum', zoom2 < zoom1 && zoom2 >= 1, zoom2)
+  await page.keyboard.down('Alt')
+  for (let i = 0; i < 60; i++) await page.mouse.wheel(0, -240)
+  await page.keyboard.up('Alt')
+  await page.waitForTimeout(250)
+  check('Alt+wheel up stops at the slider maximum (200)', Number(await slider.inputValue()) === 200, await slider.inputValue())
+  // Same state as the slider: set it by the slider and keep going with the wheel.
+  await slider.fill('60'); await page.waitForTimeout(150)
+  const z60 = Number(await slider.inputValue())
+  await page.mouse.move(cursorX, cursorY)
+  await page.keyboard.down('Alt'); await page.mouse.wheel(0, -100); await page.keyboard.up('Alt'); await page.waitForTimeout(200)
+  check('the wheel continues from the value set with the slider (one single state)', z60 === 60 && Number(await slider.inputValue()) > 60)
+  // Without Alt the wheel must not change the zoom; outside the timeline Alt+wheel must not be cancelled.
+  const zb = await slider.inputValue()
+  await page.mouse.wheel(0, -100); await page.waitForTimeout(150)
+  check('plain wheel over the timeline does not change the zoom', await slider.inputValue() === zb)
+  const prevented = await page.evaluate(() => new Promise(res => { const t = document.querySelector('header, h1, body'); const f = e => { res(e.defaultPrevented) }; window.addEventListener('wheel', f, { once: true }); t.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, altKey: true, bubbles: true, cancelable: true })) }))
+  check('Alt+wheel outside the timeline is not cancelled (the browser keeps its behaviour)', prevented === false)
+  await page.mouse.move(box.x + 5, box.y - 120)
+  const zc = await slider.inputValue()
+  await page.keyboard.down('Alt'); await page.mouse.wheel(0, -100); await page.keyboard.up('Alt'); await page.waitForTimeout(150)
+  check('Alt+wheel outside the timeline does not change the timeline zoom', await slider.inputValue() === zc)
+  check('no page errors', errors.length === 0, errors)
+  await page.close()
+  server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

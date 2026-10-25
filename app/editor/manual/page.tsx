@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { readSidebarMode, StudioShell, writeSidebarMode, type SidebarMode } from '../../components/studio-shell'
 import { ContextMenu, DEFAULT_LAYOUT, MODES, Section, type MenuItem, Splitter, ToolSearch, ToolTabs, useWorkspaceState, WorkspaceProvider, type ToolEntry, type WorkspaceMode } from '../../components/editor-workspace'
 import { RenderPanel } from '../../components/render-panel'
@@ -32,6 +32,7 @@ import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
 import { makeRoomForTransition } from '@/lib/editor/transition-room'
+import { zoomAfterWheel, wheelDelta, scrollForAnchor } from '@/lib/editor/timeline-zoom'
 import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
@@ -187,6 +188,34 @@ export default function ManualEditorPage() {
   const kindOfAsset = useMemo(() => kindFromAssets(assets), [assets])
   const pxRef = useRef(40)
   useEffect(() => { pxRef.current = pxPerSec }, [pxPerSec])
+  // Alt + wheel over the timeline = the same state as the "Zoom" slider, anchored on the instant under the cursor.
+  const zoomAnchor = useRef<{ t: number; x: number } | null>(null)
+  useEffect(() => {
+    // One listener on the document: the timeline panel can be mounted/moved by the workspace at any time.
+    const onWheel = (e: WheelEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return
+      const el = scroller.current
+      if (!el || !(e.target instanceof Node) || !el.contains(e.target)) return
+      e.preventDefault()
+      const old = pxRef.current
+      const next = zoomAfterWheel(old, wheelDelta(e))
+      if (next === old) return
+      const x = e.clientX - el.getBoundingClientRect().left
+      const pending = zoomAnchor.current
+      const t = pending && Math.abs(pending.x - x) < 3 ? pending.t : (el.scrollLeft + x) / old
+      zoomAnchor.current = { t, x }
+      pxRef.current = next
+      setPxPerSec(next)
+    }
+    document.addEventListener('wheel', onWheel, { passive: false })
+    return () => document.removeEventListener('wheel', onWheel)
+  }, [])
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current, el = scroller.current
+    if (!a || !el) return
+    zoomAnchor.current = null
+    el.scrollLeft = scrollForAnchor(a.t, pxPerSec, a.x)
+  }, [pxPerSec])
   const onPlayerTime = useCallback((ms: number, playing: boolean) => {
     const el = playheadEl.current
     if (el) el.style.left = `${ms / 1000 * pxRef.current}px`
@@ -1150,7 +1179,7 @@ export default function ManualEditorPage() {
           </select>
         </label>
         <label className="pill small" title="Los bordes se pegan a otros clips, al cabezal, a los marcadores y a los pulsos"><input type="checkbox" checked={magnet} onChange={e => setMagnet(e.target.checked)} /> Imán</label>
-        <label className="small">Zoom <input type="range" min={1} max={200} value={pxPerSec} aria-label="Zoom horizontal" onChange={e => setPxPerSec(Number(e.target.value))} /></label>
+        <label className="small" title="También: Alt + rueda sobre la línea de tiempo">Zoom <input type="range" min={1} max={200} value={pxPerSec} aria-label="Zoom horizontal" onChange={e => setPxPerSec(Number(e.target.value))} /></label>
         <label className="small">Altura <input type="range" min={0.6} max={2} step={0.1} value={trackScale} aria-label="Altura de las pistas" onChange={e => setTrackScale(Number(e.target.value))} /></label>
         <button type="button" className="ghost small" title="Ajusta el zoom para ver todo el proyecto" onClick={() => { const w = scroller.current?.clientWidth ?? 1000; setPxPerSec(Math.max(1, Math.min(200, Math.floor((w - 60) / Math.max(1, total / 1000))))) }}>Ver todo</button>
         {sel.length > 0 && <span className="pill info small">{sel.length} seleccionado(s)</span>}
