@@ -20,9 +20,9 @@ describe('opening files in the manual editor', () => {
     ] })
     expect(c).toMatchObject({ format: '9:16', title: 'T', editedManually: true })
     expect(c.clips.slice(0, 2).map(k => [k.visualAssetId, k.durationMs])).toEqual([['v', 6200], ['i', 5000]])
-    // A long video is kept whole as consecutive pieces (an absurd duration is capped at the 4 h the timeline stores).
+    // A long video is kept whole as consecutive pieces (an absurd duration is capped at the 6 h the timeline stores).
     const long = c.clips.filter(k => k.visualAssetId === 'long')
-    expect(long.length).toBe(120); expect(long.every(k => k.durationMs === 120000)).toBe(true); expect(long.at(-1)!.trimInMs).toBe(119 * 120000)
+    expect(long.length).toBe(180); expect(long.every(k => k.durationMs === 120000)).toBe(true); expect(long.at(-1)!.trimInMs).toBe(179 * 120000)
     expect(c.audioClips!.map(a => [a.assetId, a.kind, a.startMs, a.durationMs])).toEqual([['m', 'music', 0, 8000], ['fx', 'sfx', 0, 1200], ['vo', 'voice', 0, 10000]])
     expect(c.audioClips![0].volume).toBeLessThan(1)
     vi.unstubAllGlobals()
