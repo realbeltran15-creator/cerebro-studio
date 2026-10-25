@@ -2892,6 +2892,48 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   server.close()
 }
 
+// 38. Rendimiento con montajes de 5 horas: 620 clips de 29 s y 3000 clips de 5 s, todos con disolvencia. Se abre, se hace zoom, se recorre, se selecciona
+//     un clip del final, se cambia una transición suelta y se guarda; sin bloqueos largos ni memoria desmesurada.
+{
+  const server = serve(8839, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
+  for (const [job, label, maxOpenMs] of [['job6', '620 clips (5 h)', 15000], ['job7', '3000 clips (5 h)', 30000]]) {
+    const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
+    const errors = []
+    page.on('pageerror', e => errors.push(e.message))
+    const t0 = Date.now()
+    await page.goto(`http://127.0.0.1:8839/editor/manual?job=${job}`)
+    await page.getByRole('region', { name: 'Barra del editor' }).waitFor({ timeout: 60000 })
+    await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').first().waitFor({ timeout: 60000 })
+    const open = Date.now() - t0
+    check(`${label}: opens in ${maxOpenMs / 1000} s or less`, open < maxOpenMs, open)
+    const drawn = await page.locator('[aria-label="Pista de vídeo"] > [data-ref^="clip:"]').count()
+    check(`${label}: only the clips on screen are in the page (${drawn})`, drawn > 0 && drawn < 120, drawn)
+    // Long tasks (> 200 ms) while zooming and scrolling through the whole project.
+    await page.evaluate(() => { window.__long = []; new PerformanceObserver(l => l.getEntries().forEach(e => window.__long.push(Math.round(e.duration)))).observe({ entryTypes: ['longtask'] }) })
+    const tl = page.locator('section[aria-label="Línea de tiempo"]'); await tl.scrollIntoViewIfNeeded(); const box = await tl.boundingBox()
+    await page.mouse.move(box.x + 300, box.y + 40)
+    const tz = Date.now()
+    await page.keyboard.down('Alt'); for (let i = 0; i < 8; i++) await page.mouse.wheel(0, 100); for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -100); await page.keyboard.up('Alt')
+    const width = await tl.evaluate(e => e.scrollWidth)
+    for (let k = 0; k <= 30; k++) { await tl.evaluate((e, x) => { e.scrollLeft = x }, Math.round(width * k / 30)); await page.waitForTimeout(40) }
+    const spent = Date.now() - tz
+    const long = await page.evaluate(() => window.__long)
+    check(`${label}: zoom and a full scroll through the timeline take ${(spent / 1000).toFixed(1)} s with no task over 700 ms (worst ${Math.max(0, ...long)} ms)`, spent < 20000 && Math.max(0, ...long) < 700, { spent, long: long.slice(0, 10) })
+    const heap = await page.evaluate(() => (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1))
+    check(`${label}: JS memory ${heap} MB (< 500 MB)`, heap < 500, heap)
+    // Pick a clip near the end and a transition, edit that one transition alone.
+    const chip = page.getByRole('button', { name: /^Transición .* entre el clip \d+ y el/ }).first()
+    await chip.click(); await page.getByLabel('Tipo de transición').selectOption('wipe'); await page.waitForTimeout(400)
+    const tsv = Date.now()
+    await page.getByRole('button', { name: 'Guardar ahora' }).click(); await page.getByText('Montaje guardado en la nube.').waitFor({ timeout: 30000 })
+    const saved = await page.evaluate(id => { const j = window.__DB.render_jobs.find(x => x.id === id); return { n: j.composition.clips.length, kb: Math.round(JSON.stringify(j.composition).length / 1024), wipes: j.composition.clips.filter(k => k.transition === 'wipe').length } }, job)
+    check(`${label}: saved in ${((Date.now() - tsv) / 1000).toFixed(1)} s, ${saved.kb} KB, all ${saved.n} clips, exactly 1 edited transition`, saved.wipes === 1 && saved.kb < 3000, saved)
+    check(`${label}: no page errors`, errors.length === 0, errors)
+    await page.close()
+  }
+  server.close()
+}
+
 await browser.close()
 if (failures.length) { console.error(`${failures.length} browser check(s) failed`); process.exit(1) }
 console.log('All browser checks passed.')

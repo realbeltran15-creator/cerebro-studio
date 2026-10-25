@@ -17,6 +17,7 @@
     "render": "node scripts/render.mjs",
     "test:parity": "node scripts/parity-test.mjs",
     "test:transitions": "node scripts/transition-video-test.mjs",
+    "test:repeat": "node scripts/repeat-video-test.mjs",
     "test:looks": "node scripts/looks-test.mjs",
     "test:upload": "node scripts/upload-test.mjs",
     "test:ticket": "node scripts/ticket-test.mjs"
