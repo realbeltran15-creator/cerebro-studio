@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { readSidebarMode, StudioShell, writeSidebarMode, type SidebarMode } from '../../components/studio-shell'
 import { ContextMenu, DEFAULT_LAYOUT, MODES, Section, type MenuItem, Splitter, ToolSearch, ToolTabs, useWorkspaceState, WorkspaceProvider, type ToolEntry, type WorkspaceMode } from '../../components/editor-workspace'
 import { RenderPanel } from '../../components/render-panel'
+import { ImportCenter, type ImportedItem } from '../../components/import-center'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
 import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
@@ -619,6 +620,26 @@ export default function ManualEditorPage() {
     setBusy('')
   }
 
+  /** Files that the import center finished (device or Google Drive): refresh the Library and put them on the timeline. */
+  const [importMax, setImportMax] = useState(50 * 1024 * 1024)
+  useEffect(() => {
+    void fetch('/api/storage/upload-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'library', folder: 'uploads', ext: 'mp4', contentType: 'video/mp4', size: 0 }) })
+      .then(r => r.json()).then((j: { maxBytes?: number; driver?: string }) => { if (j.maxBytes) setImportMax(j.maxBytes); else if (j.driver === 'r2') setImportMax(Number.MAX_SAFE_INTEGER) }).catch(() => undefined)
+  }, [])
+  const centerImported = useCallback(async (items: ImportedItem[]) => {
+    if (!job || items.length === 0) return
+    const { data: a } = await supabase.from('assets').select('id,project_id,asset_type,storage_path,license_status,source_provider,provenance,created_at').or(`project_id.eq.${job.project_id},project_id.is.null`).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(300)
+    setAssets((a ?? []) as EditorAsset[])
+    apply(c => items.reduce((acc, f) => {
+      if (f.kind === 'video') return addVideo(acc, f.assetId, f.durationMs ?? 5000)
+      if (f.kind === 'image') return addClip(acc, f.assetId, 5000)
+      const ms = f.durationMs ?? 10_000
+      const room = totalDurationMs(acc)
+      return addAudioClip(acc, { assetId: f.assetId, kind: f.kind === 'voice' ? 'voice' : f.kind === 'sfx' ? 'sfx' : 'music', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: f.kind === 'music' && room >= 1000 ? Math.min(ms, room) : ms, volume: f.kind === 'music' ? 0.5 : 1, muted: false })
+    }, c))
+    setNotice(`${items.length} archivo(s) importados (${items.filter(i => i.duplicate).length} ya estaban en tu Biblioteca) y añadidos a la línea de tiempo. Guarda el montaje para conservar los cambios.`)
+  }, [job, supabase, apply]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const visuals = useMemo(() => assets.filter(a => visualTypes.includes(a.asset_type)), [assets])
   const audios = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type) || musicTypes.includes(a.asset_type)), [assets])
   const typeOf = (id: string | null) => (id ? assets.find(a => a.id === id)?.asset_type ?? 'image' : 'none')
@@ -979,9 +1000,7 @@ export default function ManualEditorPage() {
         <p className="muted small">Arrastra un material a cualquier pista; se coloca donde lo sueltas. Los materiales de la Biblioteca general y de otros proyectos se usan sin copiar el archivo.</p>
         <details open={assets.length === 0}><summary className="small"><b>Importar o añadir</b></summary>
           <section style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-            <label htmlFor="mi-files"><b>Importar desde tu equipo</b>
-              <input id="mi-files" type="file" multiple accept="video/*,image/*,audio/*" disabled={busy === 'import'} onChange={e => { const f = Array.from(e.target.files ?? []); e.target.value = ''; void importFiles(f) }} />
-            </label>
+            {job && <ImportCenter supabase={supabase} projectId={job.project_id} section={matTab} audioKind={importAudioKind} maxBytes={importMax} onImported={items => void centerImported(items)} onError={setError} />}
             <span className="muted small">Se guardan en la Biblioteca del proyecto y se añaden al montaje. También puedes soltarlos sobre la línea de tiempo.</span>
             <div className="field-row">
               <label htmlFor="mi-akind">Si es audio, usar como<select id="mi-akind" value={importAudioKind} onChange={e => setImportAudioKind(e.target.value as 'music' | 'sfx' | 'voice')}><option value="music">Música</option><option value="sfx">Efecto</option><option value="voice">Voz</option></select></label>
