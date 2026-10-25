@@ -59,7 +59,7 @@ export function RepeatDialog({ comp, clipId, kindOf, onApply, onClose }: { comp:
   const plan = useMemo(() => (clip ? planRepeat(comp, clipId, req, tr, kindOf) : null), [comp, clipId, req, tr, kindOf, clip])
   if (!clip || !plan) return null
   const pending = !!clip.visualAssetId && kindOf(clip.visualAssetId) === 'video' && !clip.sourceDurationMs
-  const lines = plan.plan ? describePlan(plan.plan, { action: 'apply', settings }) : []
+  const lines = plan.plan ? describePlan(plan.plan, { action: 'apply', settings }).filter(l => !/duración del proyecto/i.test(l)) : []
   return <section className="panel" role="dialog" aria-label="Repetir el clip" style={shell} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
     <div className="cardHead" style={{ marginBottom: 6 }}><h3>Repetir el clip</h3><button type="button" className="ghost small" onClick={onClose} aria-label="Cerrar repetir">✕</button></div>
     <p className="small muted">Las repeticiones son clips independientes que usan el mismo archivo (no se copia ningún vídeo), así que cada una se puede editar sola. Ctrl+Z deshace todo de una vez.</p>
