@@ -10,7 +10,8 @@ import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { pickMimeType, recordingSupported, renderComposition } from '@/lib/editor/renderer'
-import { fastExport, fastExportSupported, FastExportUnsupported } from '@/lib/editor/fast-export'
+import { exportStageOf, fastExport, fastExportSupported, FastExportUnsupported, type ExportStage } from '@/lib/editor/fast-export'
+import { checkingSink, headOfComposition } from '@/lib/editor/export-selftest'
 import { browserFreeBytes, createExportTemp, exportFootprint, fileNameFor, folderSaveSupported, pickSaveFile, removeExportTemp, spaceAdvice, startStorageProbe, tempStorageSupported, type DriveMode, type ExportWhere } from '@/lib/editor/export-destination'
 import { pickDriveFolder, requestDriveToken } from '@/lib/ingest/drive'
 import { uploadToDrive } from '@/lib/ingest/drive-upload'
@@ -79,6 +80,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   useEffect(() => setDest(null), [where])
   const [transfer, setTransfer] = useState<number | null>(null)
   const [measured, setMeasured] = useState<string>('')
+  const [selfTest, setSelfTest] = useState<{ busy: boolean; text: string }>({ busy: false, text: '' })
   const [pendingDrive, setPendingDrive] = useState<{ temp: string; name: string; mime: string; folderId: string; folderName: string } | null>(null)
   const [driveBusy, setDriveBusy] = useState(false)
   // Container the file will have, known BEFORE the render so the «save as» dialog can propose the right extension (it needs a click, so it cannot wait).
@@ -145,6 +147,32 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     } catch (e) { if ((e as Error).name !== 'AbortError') setError(e instanceof Error ? e.message : 'No se pudo abrir el selector.') }
   }
 
+  /** A few seconds of THIS montage with THIS format and writing mode, written to nowhere: finds in seconds what would fail an hour in. Nothing is saved or sent. */
+  async function runSelfTest() {
+    if (selfTest.busy || busyRef.current) return
+    const id = Math.random().toString(36).slice(2, 8)
+    setSelfTest({ busy: true, text: 'Probando 20 s del montaje (no se guarda nada)…' })
+    const t0 = performance.now()
+    let stageNow: ExportStage = 'preparar'
+    try {
+      const head = headOfComposition(composition, 20_000)
+      const sinkProbe = checkingSink()
+      const fragmented = where === 'drive' && driveMode === 'direct' && ext === 'mp4'
+      const r = await fastExport({ composition: head, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: sinkProbe.stream as never, fragmented, fps: plan.fps, onStage: st => { stageNow = st } })
+      const st = sinkProbe.stats()
+      const secs = Math.round((performance.now() - t0) / 100) / 10
+      const ok = st.bytes > 0 && (!fragmented || st.sequential)
+      console.info(`[export ${id}] prueba de 20 s`, { ok, ...r.encoded, bytes: st.bytes, writes: st.writes, sequential: st.sequential, secs })
+      setSelfTest({ busy: false, text: ok
+        ? `Prueba superada en ${secs} s: ${r.encoded.width}×${r.encoded.height} · ${r.encoded.fps} fps · ${r.encoded.videoCodec === 'avc' ? 'H.264' : r.encoded.videoCodec.toUpperCase()} + ${r.encoded.audioCodec.toUpperCase()} · ${r.encoded.container.toUpperCase()}${r.encoded.fragmented ? ' fragmentado' : ''} · ${Math.round(st.bytes / 1048576 * 10) / 10} MB escritos en ${st.writes} bloque(s)${fragmented ? ', todos en orden (se puede enviar a Drive mientras se renderiza)' : ''}. (id ${id})`
+        : `La prueba terminó pero el archivo no es válido para este destino: ${st.bytes === 0 ? 'no se escribió ningún byte' : 'se escribió fuera de orden (posición ' + st.firstBadAt + '), no se puede enviar a Drive mientras se renderiza'}. (id ${id})` })
+    } catch (e) {
+      const stage = exportStageOf(e) ?? stageNow
+      console.error(`[export ${id}] la prueba de 20 s falló en la fase «${stage}»`, e)
+      setSelfTest({ busy: false, text: `La prueba de 20 s falló en la fase «${stage}»: ${e instanceof Error ? e.message : String(e)} (id ${id}). Esto es lo que habría fallado en la exportación completa.` })
+    }
+  }
+
   async function run(record: boolean) {
     // Synchronous guard: state updates are async, so repeated clicks during the save would pass a mode check.
     if (busyRef.current) return
@@ -177,6 +205,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     abortReason.current = 'user'
     let jobId: string | null = null
     let guard: ExportGuard | null = null
+    const exportId = Math.random().toString(36).slice(2, 8)
+    let lastStage: ExportStage = 'preparar'
     setNotice('')
     try {
       if (record) await beforeRender?.()
@@ -216,13 +246,14 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
             streamTo = driveSink.writable as never
             driveSink.result.catch(e => { driveFailure = e })
           } else if (driveTarget) { tmp = await createExportTemp(crypto.randomUUID().slice(0, 8), ext); streamTo = tmp.writable }
-          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink, signal: controller.signal, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink, signal: controller.signal, onStage: (st, d) => { lastStage = st; if (st !== 'vídeo' && st !== 'audio') console.info(`[export ${exportId}] ${st}${d ? ' ' + d : ''}`) }, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
           renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
         } catch (e) {
           if (controller.signal.aborted || (e as Error)?.name === 'AbortError') throw e
-          if (driveFailure) throw new Error(`${driveFailure instanceof Error ? driveFailure.message : 'Drive no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni a medias en Drive. Vuelve a exportar, o elige «con temporal local» para poder reintentar solo la subida.`)
+          // The error that stopped the exporter is the cause; a Drive-side error is reported when it is the one that stopped it.
+          if (driveFailure) throw new Error(`${e instanceof Error && e.message ? e.message : driveFailure instanceof Error ? driveFailure.message : 'Drive no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni a medias en Drive. Vuelve a exportar, o elige «con temporal local» para poder reintentar solo la subida.`)
           // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
           setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
           setProgress({ elapsed: 0, total: 0 })
@@ -287,7 +318,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       // Discard what was being written: a cancelled or failed export leaves no half-written video and no temporary.
       try { if (streamTo && !streamTo.locked) await streamTo.abort() } catch { /* already aborted */ }
       if (tmp && !pendingDriveRef.current) await removeExportTemp(tmp.name).catch(() => undefined)
-      const message = e instanceof Error ? e.message : 'El render falló.'
+      const stage = exportStageOf(e) ?? lastStage
+      console.error(`[export ${exportId}] falló en la fase «${stage}»`, e)
+      const message = `${e instanceof Error ? e.message : 'El render falló.'} [fase: ${stage} · id ${exportId}]`
       setError(message)
       if (jobId) await supabase.from('render_jobs').update({ status: 'failed', error: message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', jobId)
     } finally {
@@ -424,8 +457,10 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       {mode === 'idle' ? <>
         {!exportOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>}
         {!previewOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} title="Para vídeos largos: se renderiza en tu PC con FFmpeg, sin navegador abierto y sin coste" onClick={() => void preparePackage()}><Icon name="video" size={16} />Paquete para renderizar en mi PC</button>}
+        {!previewOnly && <button type="button" className="ghost" disabled={selfTest.busy || composition.clips.length === 0 || !recordingSupported()} title="Renderiza solo los primeros 20 s con este formato y modo de escritura, sin guardar ni enviar nada, para descubrir problemas en segundos" onClick={() => void runSelfTest()}>Probar 20 s (no guarda nada)</button>}
         {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary) || ((where === 'folder' || where === 'drive') && !dest)} title={(where === 'folder' || where === 'drive') && !dest ? 'Elige primero el destino' : undefined} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Renderizar y guardar en el destino' : where === 'drive' ? (directDrive ? 'Renderizar y enviar a Drive' : 'Renderizar y subir a Drive') : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
+      {selfTest.text && <p className={`small ${/falló|no es válido/.test(selfTest.text) ? 'warnBox' : 'notice'}`} role="status" aria-label="Resultado de la prueba de 20 segundos">{selfTest.text}</p>}
       {pendingDrive && mode === 'idle' && <><button type="button" onClick={() => void retryDrive()} disabled={driveBusy}>Reintentar subida a Drive</button><button type="button" className="ghost" onClick={() => void (async () => { await removeExportTemp(pendingDrive.temp); setPendingDrive(null); setStatus('Temporal borrado. El vídeo no se subió.') })()}>Descartar el temporal</button></>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}
       {compositionCues(composition).length > 0 && <>

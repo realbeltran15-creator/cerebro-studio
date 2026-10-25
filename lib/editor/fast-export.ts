@@ -15,6 +15,9 @@ import { drawOps, type DrawSource } from './draw'
 import { audioTrackFactors, audioVoices, busLevels, frameAt, videoVoices as videoVoicesOf, voiceGainAt, voiceWindows, type Bus, type KindOf, type VisualOp, type Voice } from './scene'
 
 export class FastExportUnsupported extends Error {}
+export type ExportStage = 'preparar' | 'abrir-codificador' | 'audio' | 'vídeo' | 'cerrar-archivo'
+/** The stage an export error happened in (set by fastExport), or undefined. */
+export const exportStageOf = (e: unknown): ExportStage | undefined => (e as { stage?: ExportStage } | null)?.stage
 
 type MB = typeof import('mediabunny')
 let mbPromise: Promise<MB> | null = null
@@ -69,7 +72,11 @@ export async function fastExport(opts: {
   fragmented?: boolean
   /** TESTS ONLY: use VP9 inside the MP4 container (a test browser without an H.264 encoder can then still exercise the MP4 / fragmented / AAC path). */
   testMp4Vp9?: boolean
+  /** Where the export is (for logs and error messages): 'abrir-codificador', 'audio', 'vídeo', 'cerrar-archivo'. */
+  onStage?: (stage: ExportStage, detail?: string) => void
 }): Promise<{ blob: Blob | null; bytes: number; mimeType: string; durationMs: number; encoded: { width: number; height: number; fps: number; videoBps: number; audioBps: number; videoCodec: string; audioCodec: string; container: 'mp4' | 'webm'; fragmented: boolean } }> {
+  let stage: ExportStage = 'preparar'
+  const at = (st: ExportStage, detail?: string) => { stage = st; opts.onStage?.(st, detail) }
   const c = opts.composition
   const plan = exportPlan(c)
   const fps = opts.fps ?? plan.fps
@@ -153,11 +160,15 @@ export async function fastExport(opts: {
   // Streaming to a file cannot hold the index (moov) in memory: it is written at the end, by seeking back (fastStart false), unless
   // the output is fragmented (then it is append-only and the index travels with every fragment).
   let streamed = 0
+  // The destination is only CLOSED (= declared a complete file) after a successful finalize(). mediabunny's output.cancel() closes its
+  // target too: forwarding that close would tell Drive / the disk "the file is complete" for a failed export (an empty one, or worse a
+  // truncated one) and the closing error would hide the real cause. After a failure the sink is aborted instead, with the real error.
+  let finalized = false
   let sinkWriter: WritableStreamDefaultWriter<{ type: 'write'; data: Uint8Array; position: number }> | null = null
   if (opts.sink) sinkWriter = opts.sink.getWriter()
   const counting = sinkWriter ? new WritableStream<{ type: 'write'; data: Uint8Array<ArrayBuffer>; position: number }>({
     write: async chunk => { await sinkWriter!.write(chunk); streamed = Math.max(streamed, chunk.position + chunk.data.byteLength) },
-    close: () => sinkWriter!.close(),
+    close: () => finalized ? sinkWriter!.close() : undefined,
     abort: reason => sinkWriter!.abort(reason),
   }) : null
   const target = counting ? new mb.StreamTarget(counting, { chunked: true, chunkSize: 8 * 1024 * 1024 }) : new mb.BufferTarget()
@@ -166,6 +177,7 @@ export async function fastExport(opts: {
   const audioSource = new mb.AudioBufferSource({ codec: mp4 ? 'aac' : 'opus', bitrate: plan.audioBps })
   output.addVideoTrack(videoSource, { frameRate: fps })
   output.addAudioTrack(audioSource)
+  at('abrir-codificador')
   await output.start()
 
   const frameMs = 1000 / fps
@@ -175,7 +187,9 @@ export async function fastExport(opts: {
     for (let a = 0; a < total; a += CHUNK_MS) {
       if (opts.signal?.aborted) throw new DOMException('Cancelado', 'AbortError')
       const b = Math.min(total, a + CHUNK_MS)
+      at('audio', `${Math.round(a / 1000)} s`)
       await audioSource.add(await mixChunk(a, b))
+      at('vídeo', `${Math.round(a / 1000)} s`)
       // Video frames whose time falls inside this chunk.
       for (; frameNo < totalFrames && frameNo * frameMs < b; frameNo++) {
         if (opts.signal?.aborted) throw new DOMException('Cancelado', 'AbortError')
@@ -193,8 +207,11 @@ export async function fastExport(opts: {
         if (frameNo % 5 === 0) opts.onProgress?.(t, total)
       }
     }
+    finalized = true
+    at('cerrar-archivo')
     await output.finalize()
   } catch (e) {
+    if (e && typeof e === 'object' && !('stage' in e)) try { (e as { stage?: ExportStage }).stage = stage } catch { /* frozen error */ }
     await output.cancel().catch(() => undefined)
     // A half-written file must never be committed: aborting the writable discards its swap file and leaves any earlier file untouched.
     if (sinkWriter) await sinkWriter.abort(e).catch(() => undefined)

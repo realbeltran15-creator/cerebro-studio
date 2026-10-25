@@ -46,6 +46,7 @@ export function spaceAdvice(i: { where: ExportWhere; driveMode?: DriveMode; esti
       return { level: 'ok', message: `Se escribe directamente en el archivo que elijas (~${mbs(est)} MB), sin armarlo antes en memoria. El navegador no puede ver el espacio libre de ese disco: si se llena, la exportación se detiene y no queda un archivo a medias.` }
     case 'drive':
       if (i.driveMode === 'direct') return { level: 'ok', message: `Se envía a tu Drive mientras se renderiza (~${mbs(est)} MB en total): no se crea ningún archivo en este equipo, solo unos pocos MB de memoria. El archivo es un MP4 fragmentado (lo reproducen los navegadores, VLC, Drive y YouTube; algunos programas de edición antiguos no). Si se corta la conexión, continúa donde iba; si se cierra la pestaña hay que volver a exportar.` }
+      if (est >= 1024 ** 3) return { level: 'block', message: `~${gb(est)} GB: «con temporal local» crearía un archivo de ese tamaño en este equipo antes de subirlo. Con este tamaño está desactivado para proteger tu disco: usa «Directo mientras se renderiza».` }
       if (!i.tempSupported) return { level: 'block', message: 'Este navegador no puede guardar el archivo temporal necesario para subirlo a Drive. Usa Chrome o Edge.' }
       if (i.browserFreeBytes != null && i.browserFreeBytes < est * 1.1) return { level: 'block', message: `Hace falta un temporal de ~${mbs(est)} MB en este equipo antes de subirlo a Drive y el navegador solo permite ~${mbs(Math.max(0, i.browserFreeBytes))} MB. Libera espacio o exporta a una carpeta.` }
       return { level: 'warn', message: `Se renderiza a un archivo temporal de este equipo (~${mbs(est)} MB, en el disco interno) y después se sube a tu Drive; el temporal se borra al terminar. No es una transferencia directa desde un servidor.` }
@@ -54,7 +55,7 @@ export function spaceAdvice(i: { where: ExportWhere; driveMode?: DriveMode; esti
       if (i.libraryFreeBytes != null && est > i.libraryFreeBytes) return { level: 'block', message: `No cabe: ~${mbs(est)} MB y quedan ${mbs(Math.max(0, i.libraryFreeBytes))} MB en tu cuota.` }
       return { level: 'ok', message: `Se guarda en tu almacenamiento privado (~${mbs(est)} MB)${i.libraryFreeBytes != null ? `; te quedarán ~${mbs(i.libraryFreeBytes - est)} MB` : ''}.` }
     case 'download':
-      return est >= 1024 ** 3 ? { level: 'warn', message: `~${gb(est)} GB: el navegador lo monta entero en memoria (necesita ~${gb(est * 2.7)} GB libres) y lo descarga a la carpeta Descargas. Para vídeos largos elige «Guardar en carpeta o disco».` } : { level: 'ok', message: `~${mbs(est)} MB. Se descarga a la carpeta de descargas de tu navegador.` }
+      return est >= 1024 ** 3 ? { level: 'block', message: `~${gb(est)} GB: la descarga monta el vídeo entero en memoria (necesitaría ~${gb(est * 2.7)} GB libres) y lo guarda en Descargas (disco interno). Con este tamaño está desactivada para proteger tu disco: elige «Guardar en una carpeta o disco externo» o «Google Drive» (directo).` } : { level: 'ok', message: `~${mbs(est)} MB. Se descarga a la carpeta de descargas de tu navegador.` }
     default:
       return { level: 'block', message: 'Todavía no está disponible: requiere registrar la aplicación en ese servicio.' }
   }

@@ -9,7 +9,7 @@
 import { build } from 'esbuild'
 import { chromium } from 'playwright-core'
 import { execFileSync, execSync } from 'node:child_process'
-import { appendFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -61,6 +61,7 @@ const server = http.createServer((q, s) => {
     q.on('data', c => chunks.push(c))
     q.on('end', () => {
       const body = Buffer.concat(chunks)
+      if (q.method === 'DELETE') { f.cancelled = true; drive.cancelled = (drive.cancelled ?? 0) + 1; s.writeHead(499); return s.end() }
       if (cr.startsWith('bytes */')) { const t = cr.split('/')[1]; if (t !== '*' && Number(t) === f.held) { s.writeHead(200); return s.end(JSON.stringify({ id: 'D1', name: f.name, size: String(f.held) })) } s.writeHead(308, f.held ? { Range: `bytes=0-${f.held - 1}` } : {}); return s.end() }
       const m = /bytes (\d+)-(\d+)\/(\d+|\*)/.exec(cr)
       const [a, b] = [Number(m[1]), Number(m[2])]
@@ -115,6 +116,32 @@ const decodeErrors = file => { try { return execFileSync('ffmpeg', ['-v', 'error
 const SERIES = process.argv.includes('--series'), DIRECT_ONLY = process.argv.includes('--direct-only')
 const series = []
 const sampleRun = async (fn) => { let peak = 0, stop = false; const t0 = Date.now(); let nextS = 0; const sampler = (async () => { while (!stop) { const v = rssMB(); peak = Math.max(peak, v); if (SERIES && Date.now() - t0 >= nextS) { nextS += 30000; series.push({ t: Math.round((Date.now() - t0) / 1000), rssMB: v, heapMB: mb(await page.evaluate(() => window.M.heap())), driveReceivedMB: mb(Object.values(drive.files).at(-1)?.held ?? 0) }) } await new Promise(r => setTimeout(r, 200)) } })(); const r = await fn(); stop = true; await sampler; return { r, peak } }
+// ---- --repro: a montage shaped like the user's real one (hundreds of copies of ONE 8 s video with a dissolve each, many songs one after
+// another on the music track), exported to the simulated Drive. Add --fail to make the exporter fail in its first seconds (an unreadable
+// video) and check that the REAL error reaches the caller instead of "no video was generated".
+if (process.argv.includes('--repro')) {
+  ff('-i', path.join(media, 'v1.webm'), '-t', '8', '-c', 'copy', path.join(media, 'v8.webm')); files.v8 = 'v8.webm'; kinds.v8 = 'video'; manifest.v8 = { kind: 'video', url: '/m/v8' }
+  const SONG = 180000, songs = Math.ceil(MIN * 60000 / SONG), N = Math.ceil((MIN * 60000 - 7025 - 4115) / 4115) + 2
+  for (let i = 0; i < songs; i++) manifest[`song${i}`] = { kind: 'audio', url: '/m/m' }
+  const FAIL = process.argv.includes('--fail')
+  // --corrupt: a video whose bytes are damaged a little after the start (opens fine, fails to decode in the first seconds).
+  if (process.argv.includes('--corrupt')) { const b = readFileSync(path.join(media, 'v8.webm')); const at = Math.floor(b.length * 0.25); for (let i = 0; i < 60000; i++) b[at + i] = (i * 131) & 255; writeFileSync(path.join(media, 'v8.webm'), b) }
+  const mk = i => ({ id: `clip-${i}`, sceneId: 'manual', position: i + 1, narration: null, visualAssetId: FAIL && i === 0 ? 'missing' : 'v8', voiceAssetId: null, durationMs: i === 0 ? 7025 : 4115, sourceDurationMs: 8000, motion: 'none', focusX: 0.5, focusY: 0.5, zoom: 1, trimInMs: i === 0 ? 0 : 500, volume: 1, muted: false, transition: i === N - 1 ? 'fade' : 'dissolve', transitionMs: i === N - 1 ? undefined : 1000, transitionOpts: { align: 'center', easing: 'linear' }, text: null, speed: 1, camera: null })
+  const clips = Array.from({ length: N }, (_, i) => mk(i))
+  const total = clips.reduce((n, k) => n + k.durationMs, 0)
+  const audioClips = Array.from({ length: songs }, (_, i) => ({ id: `music-${i}`, kind: 'music', assetId: `song${i}`, startMs: i * SONG, offsetMs: 0, trimInMs: 0, durationMs: Math.min(SONG, total - i * SONG), volume: 0.5, muted: false, linkedClipId: null }))
+  const res = arg('res', '1080')
+  const raw = { version: 1, title: 'Repro', format: '16:9', storyboardId: 'manual-repro', clips, audioClips, tracks: [{ id: 'main', name: 'Vídeo principal', type: 'main', muted: true, solo: true }, { id: 'music', name: 'Música', type: 'music', solo: true }], editedManually: true, musicVolume: 0.4, duckMusic: true, subtitles: true, captionStyle: 'box', exportSettings: { quality: arg('quality', 'normal'), resolution: res, destination: 'download', mode: 'fast' } }
+  if (FAIL) manifest.missing = { kind: 'video', url: '/m/does-not-exist' }
+  const before = drive.sessions
+  const t0 = Date.now()
+  const out = await sampleRun(() => page.evaluate(([m, c]) => window.M.exportToDriveDirect(m, c).then(r => ({ ok: true, ...r })).catch(e => ({ ok: false, error: String(e?.message || e) })), [manifest, raw]))
+  const f = drive.files[before + 1]
+  const row = { minutes: MIN, clips: N, sessionsCancelled: drive.cancelled ?? 0, songs, resolution: res, wallSeconds: Math.round((Date.now() - t0) / 1000), result: out.r, driveSessions: drive.sessions - before, driveBytes: f?.held ?? 0, rssPeakMB: out.peak }
+  if (out.r.ok && f) { row.probe = probe(f.path); row.decodeErrors = decodeErrors(f.path) }
+  console.log(JSON.stringify(row, null, 1)); writeFileSync(arg('out', path.join(work, 'repro.json')), JSON.stringify(row, null, 1))
+  await ctx.close(); server.close(); process.exit(0)
+}
 report.drive = []
 for (const minutes of DIRECT_ONLY ? [MIN] : MIN > 0 ? [1, MIN] : [1]) {
   const c = { ...montage(minutes).composition, exportSettings: { quality: 'normal', resolution: '1080', destination: 'download', mode: 'fast' } }

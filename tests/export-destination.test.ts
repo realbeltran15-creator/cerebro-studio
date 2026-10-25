@@ -13,9 +13,13 @@ describe('export destinations', () => {
     expect(spaceAdvice({ ...base, where: 'folder', folderSupported: false }).level).toBe('block')
   })
   it('drive: states that a local temporary is used and blocks when the browser has no room', () => {
-    const ok = spaceAdvice({ ...base, where: 'drive', browserFreeBytes: 50 * 1024 ** 3 })
+    const small = { ...base, estimatedBytes: 300 * 1024 ** 2 }
+    const ok = spaceAdvice({ ...small, where: 'drive', browserFreeBytes: 50 * 1024 ** 3 })
     expect(ok.message).toMatch(/temporal/); expect(ok.message).toMatch(/No es una transferencia directa/)
-    expect(spaceAdvice({ ...base, where: 'drive', browserFreeBytes: 1024 ** 3 }).level).toBe('block')
+    expect(spaceAdvice({ ...small, where: 'drive', browserFreeBytes: 100 * 1024 ** 2 }).level).toBe('block')
+    // a big video never gets a local temporary file (it would fill the internal disk)
+    const big = spaceAdvice({ ...base, where: 'drive', driveMode: 'temp', browserFreeBytes: 50 * 1024 ** 3 })
+    expect(big.level).toBe('block'); expect(big.message).toMatch(/Directo mientras se renderiza/)
   })
   it('drive direct: no local file, says what the fragmented MP4 means and what happens if the tab closes', () => {
     const a = spaceAdvice({ ...base, where: 'drive', driveMode: 'direct', browserFreeBytes: 1 })
@@ -34,9 +38,10 @@ describe('export destinations', () => {
     expect(spaceAdvice({ ...base, estimatedBytes: 10e6, where: 'library', libraryFreeBytes: 5e6 }).level).toBe('block')
     expect(spaceAdvice({ ...base, estimatedBytes: 10e6, where: 'library', libraryFreeBytes: 500e6, libraryMaxFileBytes: 50 * 1048576 }).level).toBe('ok')
   })
-  it('unavailable services are blocked, download of >1 GB warns', () => {
+  it('unavailable services are blocked, download of >=1 GB is blocked', () => {
     expect(spaceAdvice({ ...base, where: 'onedrive' }).level).toBe('block')
-    expect(spaceAdvice({ ...base, where: 'download' }).level).toBe('warn')
+    expect(spaceAdvice({ ...base, where: 'download' }).level).toBe('block')
+    expect(spaceAdvice({ ...base, estimatedBytes: 200 * 1024 ** 2, where: 'download' }).level).toBe('ok')
   })
   it('names files safely', () => { expect(fileNameFor('Mi vídeo: ¡hola!', '16:9', 1080, 'mp4')).toBe('Mi-vídeo-hola-16x9-1080p.mp4') })
 })

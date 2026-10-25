@@ -664,7 +664,7 @@ export function compositionIssues(c: Composition): CompositionIssue[] {
   })
   const total = totalDurationMs(c)
   if (total > MAX_TIMELINE_MS) issues.push({ message: `El montaje supera ${MAX_TIMELINE_MS / 3600_000} horas: divídelo en partes.`, blocking: true })
-  else if (total > 20 * 60 * 1000) issues.push({ message: `Montaje largo (${Math.round(total / 60000)} min): la exportación en el navegador va en tiempo real (tarda lo mismo que dura) y necesita la pestaña abierta y visible; usa «Descargar a mi equipo», porque la Biblioteca solo admite archivos de hasta 50 MB.`, blocking: false })
+  else if (total > 20 * 60 * 1000) issues.push({ message: `Montaje largo (${Math.round(total / 60000)} min): la exportación rápida va fotograma a fotograma, necesita la pestaña abierta y visible y puede tardar horas. Guárdala en «una carpeta o disco externo» o en «Google Drive» (directo): la Biblioteca solo admite archivos de hasta 50 MB y «Descargar» está desactivado para vídeos de 1 GB o más.`, blocking: false })
   return issues
 }
 
