@@ -73,6 +73,7 @@ export default function StoragePage() {
       </tbody></table>
       <h4>Por proyecto</h4>
       <ul className="small">{s.byProject.map(p => <li key={p.name}>{p.name}: {p.files} archivos · {formatBytes(p.bytes)}</li>)}</ul>
+      {s.unknownSize > 0 && <p className="warnBox small">{s.unknownSize} archivo(s) (normalmente imágenes y voces generadas con IA) no registraron su tamaño al guardarse, así que aquí cuentan como 0: el espacio real de la nube es algo mayor que la suma.</p>}
       <p className="muted small">Las exportaciones guardadas en la Biblioteca se cuentan aparte (tipo «exportación»). Repetir un clip muchas veces no copia el archivo: todas las repeticiones apuntan al mismo original.</p>
     </section>
 
