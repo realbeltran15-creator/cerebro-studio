@@ -26,14 +26,25 @@ const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
   document.head.appendChild(s)
 })
 
-/** Opens the Picker; resolves with the access token and the files ticked (empty when closed without choosing). */
-export async function pickFromDrive(config: PickerConfig, filter: DriveFilter = 'all'): Promise<{ token: string; files: DrivePick[] }> {
+async function loadGoogle() {
   await Promise.all([loadScript('https://accounts.google.com/gsi/client'), loadScript('https://apis.google.com/js/api.js')])
   await new Promise<void>(resolve => window.gapi!.load('picker', () => resolve()))
+}
+
+/** A short-lived access token for `drive.file` (needs a click: Google may show its consent window). It is kept in memory only. */
+export async function requestDriveToken(config: PickerConfig): Promise<string> {
+  await loadGoogle()
   const g = window.google!
-  const token = await new Promise<string>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     g.accounts.oauth2.initTokenClient({ client_id: config.clientId, scope: DRIVE_FILE_SCOPE, callback: r => (r.access_token ? resolve(r.access_token) : reject(new Error(r.error ?? 'Google no concedió el acceso.'))) }).requestAccessToken({ prompt: '' })
   })
+}
+
+/** Opens the Picker; resolves with the access token and the files ticked (empty when closed without choosing). */
+export async function pickFromDrive(config: PickerConfig, filter: DriveFilter = 'all'): Promise<{ token: string; files: DrivePick[] }> {
+  await loadGoogle()
+  const g = window.google!
+  const token = await requestDriveToken(config)
   return new Promise(resolve => {
     const picker = new g.picker.PickerBuilder()
     for (const v of viewsFor(filter)) {
@@ -60,4 +71,23 @@ export async function downloadPicked(f: DrivePick, token: string, maxBytes: numb
   const blob = await r.blob()
   if (blob.size > maxBytes) throw new Error(`Pesa más de ${Math.round(maxBytes / 1048576)} MB.`)
   return new File([blob], f.name, { type: f.mimeType })
+}
+
+/** Lets the person choose the Drive folder where an export will be saved (the Picker's folder view). */
+export async function pickDriveFolder(config: PickerConfig): Promise<{ token: string; folderId: string; folderName: string } | null> {
+  await loadGoogle()
+  const g = window.google!
+  const token = await requestDriveToken(config)
+  return new Promise(resolve => {
+    const view = new g.picker.DocsView((g.picker.ViewId as unknown as { FOLDERS: string }).FOLDERS)
+    view.setIncludeFolders(true); view.setSelectFolderEnabled(true); view.setMimeTypes('application/vnd.google-apps.folder')
+    ;(view as unknown as { setLabel?: (l: string) => void }).setLabel?.('Carpetas')
+    const picker = new g.picker.PickerBuilder()
+    picker.addView(view); picker.setOAuthToken(token); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId)
+    picker.setCallback(r => {
+      if (r.action === g.picker.Action.PICKED && r.docs?.[0]) resolve({ token, folderId: r.docs[0].id, folderName: r.docs[0].name })
+      else if (r.action === 'cancel') resolve(null)
+    })
+    ;(picker.build() as { setVisible(v: boolean): void }).setVisible(true)
+  })
 }
