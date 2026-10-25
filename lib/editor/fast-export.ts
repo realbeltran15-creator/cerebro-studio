@@ -56,6 +56,7 @@ export async function fastExport(opts: {
   onProgress?: (doneMs: number, totalMs: number) => void
   signal?: AbortSignal
   fps?: number
+  /** Only a SCREEN for a small live preview. The frames are always drawn on a private canvas, so the page can never resize, hide or redraw the one being encoded. */
   canvas?: HTMLCanvasElement
   /**
    * Write the finished file here AS IT IS PRODUCED (a FileSystemWritableFileStream from the File System Access API, or any seekable
@@ -153,8 +154,10 @@ export async function fastExport(opts: {
   const mp4 = sup.container === 'mp4'
   if (opts.fragmented && !(mp4 && opts.sink)) throw new FastExportUnsupported('El envío directo necesita MP4 y un destino de escritura; este navegador exporta WebM.')
   if (mp4) await ensureAac(mb)
-  const canvas = opts.canvas ?? document.createElement('canvas')
+  const canvas = document.createElement('canvas')
   canvas.width = plan.width; canvas.height = plan.height
+  const screen = opts.canvas ?? null
+  const screenCtx = screen?.getContext('2d') ?? null
   const g = canvas.getContext('2d')
   if (!g) throw new Error('El navegador no permite dibujar en canvas.')
   // Streaming to a file cannot hold the index (moov) in memory: it is written at the end, by seeking back (fastStart false), unless
@@ -205,6 +208,7 @@ export async function fastExport(opts: {
         // Readers not used for a few seconds are closed (their decoder and frames released).
         if (frameNo % fps === 0) for (const [slot, r] of readers) if (frameNo - r.usedAt > fps * 3) closeReader(slot)
         if (frameNo % 5 === 0) opts.onProgress?.(t, total)
+        if (screenCtx && screen && frameNo % (fps * 2) === 0) { try { screenCtx.drawImage(canvas, 0, 0, screen.width, screen.height) } catch { /* the preview is optional */ } }
       }
     }
     finalized = true
