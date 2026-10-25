@@ -30,7 +30,7 @@ window.runParity = async (manifest, raw) => {
   const res = await fastExport({ composition: comp, resolveUrl: urls.resolve, kindOf, canvas: document.createElement('canvas') })
   const seconds = (performance.now() - t0) / 1000
   urls.revoke()
-  const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(res.blob)
+  const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(res.blob!)
   await new Promise<void>((ok, bad) => { v.onloadeddata = () => ok(); v.onerror = () => bad(new Error('cannot decode the export')) })
   const c2 = document.createElement('canvas'); c2.width = W; c2.height = H; const g2 = c2.getContext('2d')!
   const exported: number[][] = []
@@ -41,7 +41,7 @@ window.runParity = async (manifest, raw) => {
     exported.push([d[0], d[1], d[2]])
   }
   const ac = new AudioContext()
-  const buf = await ac.decodeAudioData(await res.blob.arrayBuffer()); await ac.close()
+  const buf = await ac.decodeAudioData(await res.blob!.arrayBuffer()); await ac.close()
   const ch = buf.getChannelData(0)
   const tones: Record<string, number> = {}
   for (const [name, f, a, b] of TONES) tones[name] = tone(ch, buf.sampleRate, f, a, b)

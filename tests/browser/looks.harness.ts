@@ -38,7 +38,7 @@ window.runExportGrid = async (manifest, raw, times) => {
   const res = await fastExport({ composition: comp, resolveUrl: urls.resolve, kindOf, canvas: document.createElement('canvas') })
   urls.revoke()
   const W = 1280, H = 720
-  const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(res.blob)
+  const v = document.createElement('video'); v.muted = true; v.src = URL.createObjectURL(res.blob!)
   await new Promise<void>((ok, bad) => { v.onloadeddata = () => ok(); v.onerror = () => bad(new Error('cannot decode the export')) })
   const c2 = document.createElement('canvas'); c2.width = W; c2.height = H; const g2 = c2.getContext('2d')!
   const out: number[][][] = []

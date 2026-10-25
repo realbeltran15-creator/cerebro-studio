@@ -54,7 +54,13 @@ export async function fastExport(opts: {
   signal?: AbortSignal
   fps?: number
   canvas?: HTMLCanvasElement
-}): Promise<{ blob: Blob; mimeType: string; durationMs: number }> {
+  /**
+   * Write the finished file here AS IT IS PRODUCED (a FileSystemWritableFileStream from the File System Access API, or any seekable
+   * WritableStream) instead of building it in memory. Nothing is kept in memory but the encoder's working set; `blob` is then null.
+   * Cancelling or failing aborts the stream, so a half-written file is never committed.
+   */
+  sink?: WritableStream<{ type: 'write'; data: Uint8Array; position: number }>
+}): Promise<{ blob: Blob | null; bytes: number; mimeType: string; durationMs: number }> {
   const c = opts.composition
   const fps = opts.fps ?? 30
   const plan = exportPlan(c)
@@ -134,8 +140,17 @@ export async function fastExport(opts: {
   canvas.width = plan.width; canvas.height = plan.height
   const g = canvas.getContext('2d')
   if (!g) throw new Error('El navegador no permite dibujar en canvas.')
-  const target = new mb.BufferTarget()
-  const output = new mb.Output({ format: mp4 ? new mb.Mp4OutputFormat({ fastStart: 'in-memory' }) : new mb.WebMOutputFormat(), target })
+  // Streaming to a file cannot hold the index (moov) in memory: it is written at the end, by seeking back (fastStart false).
+  let streamed = 0
+  let sinkWriter: WritableStreamDefaultWriter<{ type: 'write'; data: Uint8Array; position: number }> | null = null
+  if (opts.sink) sinkWriter = opts.sink.getWriter()
+  const counting = sinkWriter ? new WritableStream<{ type: 'write'; data: Uint8Array<ArrayBuffer>; position: number }>({
+    write: async chunk => { await sinkWriter!.write(chunk); streamed = Math.max(streamed, chunk.position + chunk.data.byteLength) },
+    close: () => sinkWriter!.close(),
+    abort: reason => sinkWriter!.abort(reason),
+  }) : null
+  const target = counting ? new mb.StreamTarget(counting, { chunked: true, chunkSize: 8 * 1024 * 1024 }) : new mb.BufferTarget()
+  const output = new mb.Output({ format: mp4 ? new mb.Mp4OutputFormat({ fastStart: counting ? false : 'in-memory' }) : new mb.WebMOutputFormat(), target })
   const videoSource = new mb.CanvasSource(canvas, { codec: mp4 ? 'avc' : 'vp9', bitrate: plan.videoBps, keyFrameInterval: 2 })
   const audioSource = new mb.AudioBufferSource({ codec: mp4 ? 'aac' : 'opus', bitrate: plan.audioBps })
   output.addVideoTrack(videoSource, { frameRate: fps })
@@ -170,6 +185,8 @@ export async function fastExport(opts: {
     await output.finalize()
   } catch (e) {
     await output.cancel().catch(() => undefined)
+    // A half-written file must never be committed: aborting the writable discards its swap file and leaves any earlier file untouched.
+    if (sinkWriter) await sinkWriter.abort(e).catch(() => undefined)
     throw e
   } finally {
     for (const slot of [...readers.keys()]) closeReader(slot)
@@ -177,11 +194,14 @@ export async function fastExport(opts: {
     for (const p of images.values()) void p.then(bm => bm.close(), () => undefined)
   }
   opts.onProgress?.(total, total)
-  const data = target.buffer ? new Uint8Array(target.buffer) : new Uint8Array()
+  const mime = mp4 ? 'video/mp4;codecs=avc1,mp4a.40.2' : 'video/webm;codecs=vp9,opus'
+  if (counting) {
+    if (!streamed) throw new Error('La exportación rápida no produjo ningún archivo.')
+    return { blob: null, bytes: streamed, mimeType: mime, durationMs: total }
+  }
+  const data = (target as InstanceType<MB['BufferTarget']>).buffer ? new Uint8Array((target as InstanceType<MB['BufferTarget']>).buffer!) : new Uint8Array()
   if (!data.length) throw new Error('La exportación rápida no produjo ningún archivo.')
-  return mp4
-    ? { blob: new Blob([data as BlobPart], { type: 'video/mp4' }), mimeType: 'video/mp4;codecs=avc1,mp4a.40.2', durationMs: total }
-    : { blob: new Blob([data as BlobPart], { type: 'video/webm' }), mimeType: 'video/webm;codecs=vp9,opus', durationMs: total }
+  return { blob: new Blob([data as BlobPart], { type: mp4 ? 'video/mp4' : 'video/webm' }), bytes: data.length, mimeType: mime, durationMs: total }
 
   /** The mix of [a, b) ms, rendered offline with the same levels the player applies. */
   async function mixChunk(a: number, b: number): Promise<AudioBuffer> {
