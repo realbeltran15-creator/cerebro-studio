@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import { CostBadge, CostLegend, CostSummary, GrowthControl, QuotaExplainer, QuotaNote } from '@/app/market-intelligence/insight-panels'
@@ -7,6 +7,9 @@ import { statusLabel } from '@/lib/research/labels'
 
 // Pure rendering of the new-user explanations. No browser, no YouTube.
 const NOW = Date.parse('2026-10-16T12:00:00Z')
+// GrowthControl reads Date.now(); freeze it so the fixtures don't expire with the real clock.
+beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW) })
+afterAll(() => { vi.useRealTimers() })
 const growth = (over: Partial<TopicAnalysis['growth']>): TopicAnalysis['growth'] => ({ state: 'no_calculable', reason: 'Falta la ventana anterior.', windowDays: 30, recent: { n: 12, medianVpd: 100 }, ...over })
 const an = (g: TopicAnalysis['growth'], fetchedAt = new Date(NOW).toISOString()) => ({ topic: 'tema', region: null, language: 'es', recentDays: 30, fetchedAt, growth: g }) as unknown as TopicAnalysis
 const html = (a: TopicAnalysis, busy = false) => renderToStaticMarkup(createElement(GrowthControl, { a, busy, onMeasure: () => undefined }))
