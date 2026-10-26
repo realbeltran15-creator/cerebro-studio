@@ -67,7 +67,7 @@ export function EditorSyncPanel({ comp, assets, beats, showBeats, setShowBeats, 
     {sfxAssets.length === 0 ? <p className="muted small">No hay efectos en la Biblioteca. Importa un audio como «Efecto» (arriba, en «Añadir») y aparecerá aquí.</p> : <>
       <div className="field-row" style={{ alignItems: 'end' }}>
         <label>Efecto<select value={sfxId} onChange={e => setSfxId(e.target.value)}><option value="">— Elegir</option>{sfxAssets.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select></label>
-        <label>Volumen ({Math.round(volume * 100)}%)<input type="range" min={0.1} max={1.5} step={0.05} value={volume} onChange={e => setVolume(Number(e.target.value))} /></label>
+        <label>Volumen de los efectos en cortes ({Math.round(volume * 100)}%)<input type="range" min={0.1} max={1.5} step={0.05} value={volume} onChange={e => setVolume(Number(e.target.value))} /></label>
         <label>Cuándo<select value={timing} onChange={e => setTiming(e.target.value as typeof timing)}><option value="at">Justo en el corte</option><option value="before">Antes del corte (entra con el plano)</option><option value="after">Después del corte</option></select></label>
         {timing !== 'at' && <label>Distancia (ms)<input type="number" min={20} max={2000} step={10} value={offset} onChange={e => setOffset(Math.min(2000, Math.max(20, Number(e.target.value) || 0)))} /></label>}
         <label>En<select value={every} onChange={e => setEvery(Number(e.target.value))}><option value={1}>cada corte</option><option value={2}>uno de cada dos</option><option value={3}>uno de cada tres</option></select></label>
