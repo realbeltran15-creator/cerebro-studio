@@ -27,3 +27,14 @@ export function anchoredScrollLeft(oldPx: number, newPx: number, scrollLeft: num
 
 /** Scroll that puts instant `t` (seconds) at screen x for the new scale. */
 export const scrollForAnchor = (t: number, newPx: number, cursorX: number) => Math.max(0, t * newPx - cursorX)
+
+/**
+ * Reference point for a zoom made with the slider (no mouse position): the playhead when it is on screen, otherwise the instant under
+ * the centre of the window. `t` is in seconds, `x` the screen x (inside the scroller) that must stay put.
+ */
+export function sliderAnchor(playheadSec: number, pxPerSec: number, scrollLeft: number, viewWidth: number): { t: number; x: number } {
+  const px = playheadSec * pxPerSec - scrollLeft
+  if (px >= 0 && px <= viewWidth) return { t: playheadSec, x: px }
+  const x = viewWidth / 2
+  return { t: (scrollLeft + x) / pxPerSec, x }
+}

@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { marqueeSelection, normBox, type MarqueeBox, type RowBox } from '@/lib/editor/marquee'
 import { frameAt, nearestFrame, onFrames, requestFrames, tileTimes } from '@/lib/editor/video-frames'
 import { ALIGNS, alignOf, transitionHandles } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
@@ -83,6 +84,12 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   const rangeDrag = useRef<{ startMs: number; left: number } | null>(null)
   const scrubbing = useRef<number | null>(null)
   const dragMain = useRef<string | null>(null)
+  // Marquee (rectangle) selection: started on empty timeline space; coordinates are inside the scrolled content.
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const [marquee, setMarquee] = useState<{ box: MarqueeBox; count: number } | null>(null)
+  const marqueeRun = useRef<{ stop: (cancel: boolean) => void } | null>(null)
+  const latest = useRef({ comp, pxPerSec, selection: p.selection, onSelect: p.onSelect })
+  useEffect(() => { latest.current = { comp, pxPerSec, selection: p.selection, onSelect: p.onSelect } })
   const tracks = tracksOf(comp)
   const total = projectDurationMs(comp)
   const width = Math.max(total / 1000 * pxPerSec + 200, 600)
@@ -112,6 +119,64 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   const lastTick = Math.min(total / 1000 + step, toMs(p.view.left + p.view.width + 100) / 1000)
   const ticks: number[] = []
   for (let s = firstTick; s <= lastTick && ticks.length < 400; s += step) ticks.push(Math.round(s * 10) / 10)
+
+  /** Left button on empty space: drag a rectangle to select every item it touches; a plain click clears the selection. */
+  function startMarquee(e: React.PointerEvent) {
+    if (e.button !== 0 || marqueeRun.current) return
+    const content = contentRef.current, scroller = scrollerRef.current
+    if (!content || !scroller) return
+    const additive = e.ctrlKey || e.metaKey || e.shiftKey
+    const baseSel = latest.current.selection
+    const origin = content.getBoundingClientRect()
+    const x0 = e.clientX - origin.left, y0 = e.clientY - origin.top
+    const pointer = { x: e.clientX, y: e.clientY }
+    let moved = false, raf = 0, lastKey = ''
+    let box: MarqueeBox = { x0, y0, x1: x0, y1: y0 }
+    const rowsNow = (): RowBox[] => {
+      const o = content.getBoundingClientRect()
+      return Array.from(content.querySelectorAll<HTMLElement>('[data-track-id]')).map(el => {
+        const r = el.getBoundingClientRect(), t = tracks.find(k => k.id === el.dataset.trackId)
+        return { id: el.dataset.trackId ?? '', type: t?.type ?? '', top: r.top - o.top, bottom: r.bottom - o.top }
+      })
+    }
+    const update = () => {
+      const o = content.getBoundingClientRect()
+      box = { x0, y0, x1: Math.max(0, pointer.x - o.left), y1: pointer.y - o.top }
+      const L = latest.current
+      const sel = marqueeSelection(L.comp, rowsNow(), box, L.pxPerSec, baseSel, additive)
+      const key = sel.map(r => r.kind + r.id).join('|')
+      if (key !== lastKey) { lastKey = key; L.onSelect(sel) }
+      setMarquee({ box, count: sel.length })
+    }
+    // Near the left/right edge of the visible timeline the view scrolls by itself so off-screen clips can be reached.
+    const tick = () => {
+      raf = 0
+      const r = scroller.getBoundingClientRect(), edge = 48
+      const dx = pointer.x > r.right - edge ? Math.min(40, (pointer.x - (r.right - edge)) / 2 + 4) : pointer.x < r.left + edge ? -Math.min(40, (r.left + edge - pointer.x) / 2 + 4) : 0
+      if (dx) { const before = scroller.scrollLeft; scroller.scrollLeft += dx; if (scroller.scrollLeft !== before) update(); raf = requestAnimationFrame(tick) }
+    }
+    const move = (ev: PointerEvent) => {
+      pointer.x = ev.clientX; pointer.y = ev.clientY
+      if (!moved && Math.hypot(ev.clientX - (x0 + origin.left), ev.clientY - (y0 + origin.top)) < 4) return
+      moved = true
+      update()
+      if (!raf) raf = requestAnimationFrame(tick)
+    }
+    const stop = (cancel: boolean) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancelUp); window.removeEventListener('keydown', key)
+      if (raf) cancelAnimationFrame(raf)
+      marqueeRun.current = null
+      setMarquee(null)
+      if (cancel) latest.current.onSelect(baseSel)
+      else if (!moved && !additive) latest.current.onSelect([])
+    }
+    const up = () => stop(false)
+    const cancelUp = () => stop(true)
+    const key = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { ev.preventDefault(); stop(true) } }
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cancelUp); window.addEventListener('keydown', key)
+    marqueeRun.current = { stop }
+  }
+  useEffect(() => () => marqueeRun.current?.stop(true), [])
 
   function select(e: React.PointerEvent | React.MouseEvent, ref: ItemRef) {
     const add = e.shiftKey || e.ctrlKey || e.metaKey
@@ -213,11 +278,11 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
       'data-track-id': t.id, role: 'group', className: `tlRow${t.hidden ? ' isHidden' : ''}${t.locked ? ' isLocked' : ''}`,
       onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(ASSET_MIME) || e.dataTransfer.types.includes(TRANSITION_MIME)) e.preventDefault() },
       onDrop: (e: React.DragEvent) => { const id = e.dataTransfer.getData(ASSET_MIME); if (!id) return; e.preventDefault(); e.stopPropagation(); p.onDropAsset(id, t, Math.max(0, toMs(e.clientX - e.currentTarget.getBoundingClientRect().left))) },
-      onPointerDown: (e: React.PointerEvent) => { if (e.target === e.currentTarget && !e.shiftKey) p.onSelect([]) },
+      onPointerDown: (e: React.PointerEvent) => { if (e.target === e.currentTarget) startMarquee(e) },
     }
     if (t.type === 'main') {
       return <div key={t.id} {...common} aria-label="Pista de vídeo" style={{ display: 'flex', height: h, marginTop: 6, position: 'relative' }}>
-        {windowed.before > 0 && <div aria-hidden style={{ width: windowed.before, flex: 'none' }} />}
+        {windowed.before > 0 && <div aria-hidden style={{ width: windowed.before, flex: 'none', pointerEvents: 'none' }} />}
         {comp.clips.map((clip, i) => {
           if (i < windowed.from || i >= windowed.to) return null
           const ref = { kind: 'clip' as const, id: clip.id }
@@ -253,7 +318,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
             selected={p.selectedTransition === clip.id} onSelect={() => p.onSelectTransition?.(clip.id)} begin={p.begin} live={p.live} end={p.end} />}
           </Fragment>
         })}
-        {windowed.after > 0 && <div aria-hidden style={{ width: windowed.after, flex: 'none' }} />}
+        {windowed.after > 0 && <div aria-hidden style={{ width: windowed.after, flex: 'none', pointerEvents: 'none' }} />}
       </div>
     }
     if (t.type === 'overlay') {
@@ -333,12 +398,13 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           </details>}
         </div>
       </div>)}
+      {p.selection.length > 1 && <div className="muted small" role="status" aria-label="Elementos seleccionados" style={{ marginTop: 6 }}>{p.selection.length} elementos seleccionados</div>}
       {cues.length > 0 && <div className="tlHead type-text" style={{ height: 24, marginTop: 6, overflow: 'hidden', boxSizing: 'border-box', fontSize: 12, justifyContent: 'center' }} role="group" aria-label="Controles de Subtítulos"><b>Subtítulos</b> <span className="muted">(se editan abajo)</span></div>}
     </div>
     <section ref={scrollerRef} onScroll={p.onScroll} className="tlScroll" style={{ overflowX: 'auto', overflowY: 'hidden', position: 'relative', minWidth: 0 }} aria-label="Línea de tiempo"
       onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
       onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); p.onDropFiles(Array.from(e.dataTransfer.files)) } }}>
-      <div style={{ width, position: 'relative', paddingBottom: 6 }}>
+      <div ref={contentRef} style={{ width, position: 'relative', paddingBottom: 6 }} onPointerDown={e => { if (e.target === e.currentTarget) startMarquee(e) }}>
         {ruler}
         <div className="playhead" ref={playheadRef} style={{ left: p.playheadMs / 1000 * pxPerSec }} aria-hidden="true" />
         {p.range && <div className="rangeOverlay" style={{ position: 'absolute', top: 0, bottom: 0, left: p.range.startMs / 1000 * pxPerSec, width: (p.range.endMs - p.range.startMs) / 1000 * pxPerSec }} aria-label={`Fragmento marcado ${secs(p.range.startMs)}–${secs(p.range.endMs)} s`} />}
@@ -346,6 +412,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
         {(comp.markers ?? []).filter(m => m.atMs >= loMs && m.atMs <= hiMs).map(m => <div key={m.id} className="tlMarkerLine" style={{ left: m.atMs / 1000 * pxPerSec, borderColor: m.color ?? '#ffb000' }} aria-hidden />)}
         {tracks.map(row)}
         {subtitleRow}
+        {marquee && (() => { const b = normBox(marquee.box); return <div data-marquee aria-hidden style={{ position: 'absolute', left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top, background: 'rgba(120,160,255,.18)', border: '1px solid rgba(160,190,255,.9)', zIndex: 30, pointerEvents: 'none' }}><span style={{ position: 'absolute', right: 2, top: 2, fontSize: 11, background: 'rgba(0,0,0,.7)', color: '#fff', padding: '1px 6px', borderRadius: 4 }}>{marquee.count}</span></div> })()}
         {p.children}
       </div>
     </section>

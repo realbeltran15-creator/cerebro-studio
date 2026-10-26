@@ -34,7 +34,7 @@ import { ViewerHandles } from '../../components/viewer-handles'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
 import { makeRoomForTransition } from '@/lib/editor/transition-room'
 import { RepeatDialog, BatchTransitionsDialog } from '../../components/editor-batch'
-import { zoomAfterWheel, wheelDelta, scrollForAnchor } from '@/lib/editor/timeline-zoom'
+import { zoomAfterWheel, wheelDelta, scrollForAnchor, sliderAnchor, clampZoom } from '@/lib/editor/timeline-zoom'
 import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
@@ -213,6 +213,20 @@ export default function ManualEditorPage() {
     document.addEventListener('wheel', onWheel, { passive: false })
     return () => document.removeEventListener('wheel', onWheel)
   }, [])
+  /** Zoom from the slider / buttons: keeps the playhead (or the centre of the window) where it is on screen. */
+  const zoomKeepingView = useCallback((value: number) => {
+    const next = clampZoom(value), old = pxRef.current, el = scroller.current
+    if (next === old) return
+    if (el) {
+      const live = playerRef.current?.state.timeMs
+      const a = sliderAnchor((live ?? playheadMs) / 1000, old, el.scrollLeft, el.clientWidth)
+      const pending = zoomAnchor.current
+      // Several slider events before React renders: keep the first reference so the view does not drift.
+      zoomAnchor.current = pending ?? a
+    }
+    pxRef.current = next
+    setPxPerSec(next)
+  }, [playheadMs])
   useLayoutEffect(() => {
     const a = zoomAnchor.current, el = scroller.current
     if (!a || !el) return
@@ -1209,7 +1223,7 @@ export default function ManualEditorPage() {
           </select>
         </label>
         <label className="pill small" title="Los bordes se pegan a otros clips, al cabezal, a los marcadores y a los pulsos"><input type="checkbox" checked={magnet} onChange={e => setMagnet(e.target.checked)} /> Imán</label>
-        <label className="small" title="También: Alt + rueda sobre la línea de tiempo">Zoom <input type="range" min={1} max={200} value={pxPerSec} aria-label="Zoom horizontal" onChange={e => setPxPerSec(Number(e.target.value))} /></label>
+        <label className="small" title="También: Alt + rueda sobre la línea de tiempo">Zoom <input type="range" min={1} max={200} value={pxPerSec} aria-label="Zoom horizontal" onChange={e => zoomKeepingView(Number(e.target.value))} /></label>
         <label className="small">Altura <input type="range" min={0.6} max={2} step={0.1} value={trackScale} aria-label="Altura de las pistas" onChange={e => setTrackScale(Number(e.target.value))} /></label>
         <button type="button" className="ghost small" title="Ajusta el zoom para ver todo el proyecto" onClick={() => { const w = scroller.current?.clientWidth ?? 1000; setPxPerSec(Math.max(1, Math.min(200, Math.floor((w - 60) / Math.max(1, total / 1000))))) }}>Ver todo</button>
         {sel.length > 0 && <span className="pill info small">{sel.length} seleccionado(s)</span>}
