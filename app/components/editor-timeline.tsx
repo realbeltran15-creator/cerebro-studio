@@ -125,6 +125,10 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
     if (e.button !== 0 || marqueeRun.current) return
     const content = contentRef.current, scroller = scrollerRef.current
     if (!content || !scroller) return
+    e.preventDefault()
+    const prevSelect = document.body.style.userSelect
+    document.body.style.userSelect = 'none'
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
     const additive = e.ctrlKey || e.metaKey || e.shiftKey
     const baseSel = latest.current.selection
     const origin = content.getBoundingClientRect()
@@ -166,6 +170,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancelUp); window.removeEventListener('keydown', key)
       if (raf) cancelAnimationFrame(raf)
       marqueeRun.current = null
+      document.body.style.userSelect = prevSelect
       setMarquee(null)
       if (cancel) latest.current.onSelect(baseSel)
       else if (!moved && !additive) latest.current.onSelect([])
