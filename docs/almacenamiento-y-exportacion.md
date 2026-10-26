@@ -68,3 +68,10 @@ Cada ajuste produce resultado real, no solo etiqueta: resolución, fps, bitrate 
 | 720p 12000 kbit/s | 1280×720 | 30 | 12000 → 10682 | 15,3 |
 
 Limitaciones: medido con VP9/Opus (el Chromium de pruebas no tiene H.264); en contenido ruidoso VP9 superó hasta ~+50 % el bitrate pedido en las pruebas de Drive (57,8 MB/min a 5 Mbit/s pedidos), por lo que el tamaño previsto es una estimación. H.264/AAC (el formato que usa Chrome real) no está medido aquí. **No se ha hecho ninguna exportación real de 90 min–5 h**: las cifras de esas duraciones son extrapolaciones, no mediciones.
+
+## 6. iPhone y Dropbox
+
+- **Guardar en el iPhone (hoja de compartir):** el vídeo se renderiza en memoria (Safari no puede escribir archivos por trozos) y al terminar aparece el botón «Guardar en el iPhone», que abre la hoja de compartir (Guardar vídeo / Guardar en Archivos). iOS solo permite abrirla con un toque, por eso es un botón y no automático. Bloqueado a partir de ~0,8 GB estimados; para vídeos largos, Drive o Dropbox y bajarlo con su app.
+- **Dropbox:** subida por sesiones (`upload_session/start → append_v2 → finish`) en bloques de 8 MiB mientras se renderiza, sin copia local, con reintentos y comprobación de tamaño final (`lib/ingest/dropbox-stream.ts`). Login OAuth con PKCE en ventana emergente (`lib/ingest/dropbox-auth.ts`, página `/dropbox-callback`); el token solo vive en memoria.
+- **Para activarlo:** crear una app gratuita en dropbox.com/developers (Scoped access, «App folder», permiso `files.content.write`), añadir `https://<dominio>/dropbox-callback` como Redirect URI y poner la App key en `NEXT_PUBLIC_DROPBOX_APP_KEY` (Vercel, entorno Preview). Sin la clave, la opción aparece desactivada.
+- Probado con un Dropbox simulado (4 tests); sin App key no se ha podido probar contra Dropbox real.

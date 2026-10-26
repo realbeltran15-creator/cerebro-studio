@@ -12,7 +12,7 @@
  *  library   private cloud storage of the account, limited by its quota and per-file size.
  *  onedrive / dropbox  not implemented (need app registrations): shown as unavailable.
  */
-export type ExportWhere = 'download' | 'folder' | 'drive' | 'library' | 'onedrive' | 'dropbox'
+export type ExportWhere = 'download' | 'folder' | 'drive' | 'library' | 'onedrive' | 'dropbox' | 'phone'
 export type DriveMode = 'direct' | 'temp'
 export const EXPORT_TEMP_PREFIX = 'cerebro-export-'
 
@@ -38,7 +38,7 @@ const mbs = (b: number) => Math.max(0.1, Math.round(b / 1048576 * 10) / 10)
  * What to tell before rendering. `browserFreeBytes` is navigator.storage.estimate() quota−usage: it is what the browser may still store for
  * this site (a temporary file for Drive), NOT the free space of an external drive, which a web page cannot read.
  */
-export function spaceAdvice(i: { where: ExportWhere; driveMode?: DriveMode; estimatedBytes: number; browserFreeBytes?: number | null; libraryFreeBytes?: number | null; libraryMaxFileBytes?: number | null; folderSupported: boolean; tempSupported: boolean }): SpaceAdvice {
+export function spaceAdvice(i: { where: ExportWhere; driveMode?: DriveMode; directOk?: boolean; dropboxReady?: boolean; estimatedBytes: number; browserFreeBytes?: number | null; libraryFreeBytes?: number | null; libraryMaxFileBytes?: number | null; folderSupported: boolean; tempSupported: boolean }): SpaceAdvice {
   const est = i.estimatedBytes
   switch (i.where) {
     case 'folder':
@@ -56,6 +56,12 @@ export function spaceAdvice(i: { where: ExportWhere; driveMode?: DriveMode; esti
       return { level: 'ok', message: `Se guarda en tu almacenamiento privado (~${mbs(est)} MB)${i.libraryFreeBytes != null ? `; te quedarán ~${mbs(i.libraryFreeBytes - est)} MB` : ''}.` }
     case 'download':
       return est >= 1024 ** 3 ? { level: 'block', message: `~${gb(est)} GB: la descarga monta el vídeo entero en memoria (necesitaría ~${gb(est * 2.7)} GB libres) y lo guarda en Descargas (disco interno). Con este tamaño está desactivada para proteger tu disco: elige «Guardar en una carpeta o disco externo» o «Google Drive» (directo).` } : { level: 'ok', message: `~${mbs(est)} MB. Se descarga a la carpeta de descargas de tu navegador.` }
+    case 'dropbox':
+      if (!i.dropboxReady) return { level: 'block', message: 'Dropbox todavía no está configurado: falta registrar la aplicación gratuita en dropbox.com/developers y poner su App key.' }
+      if (!i.directOk) return { level: 'block', message: 'Dropbox se envía mientras se renderiza y necesita MP4 con la exportación rápida: elige formato MP4 y modo «Rápida».' }
+      return { level: 'ok', message: `Se envía a tu Dropbox mientras se renderiza (~${mbs(est)} MB en total), en bloques de 8 MB: no se crea ningún archivo en este equipo. Queda en la carpeta de la aplicación (Aplicaciones/…). Si se corta la conexión, continúa donde iba; si se cierra la pestaña hay que volver a exportar.` }
+    case 'phone':
+      return est >= 800 * 1024 ** 2 ? { level: 'block', message: `~${gb(est)} GB: el iPhone no permite guardar archivos tan grandes desde una web (el vídeo se monta entero en memoria). Exporta a Google Drive o Dropbox y descárgalo con su app, o baja la resolución/calidad para quedar por debajo de ~0,8 GB.` } : { level: 'warn', message: `Se renderiza en la memoria del teléfono (~${mbs(est)} MB; necesita ~${mbs(est * 2.7)} MB libres). Al terminar aparece el botón «Guardar en el iPhone» que abre la hoja de compartir de Safari (Guardar vídeo o Guardar en Archivos). Para vídeos largos usa Google Drive o Dropbox.` }
     default:
       return { level: 'block', message: 'Todavía no está disponible: requiere registrar la aplicación en ese servicio.' }
   }
@@ -102,7 +108,8 @@ export function exportFootprint(i: { where: ExportWhere; driveMode?: DriveMode; 
     case 'drive': return i.driveMode === 'direct'
       ? { finalBytes: est, diskTempBytes: 0, ramBytes: 24 * MIB, note: 'Sin copia local: cada bloque de 8 MB se envía a Drive según se genera.' }
       : { finalBytes: est, diskTempBytes: est, ramBytes: 24 * MIB, note: 'El vídeo entero queda como temporal en este equipo hasta que termine la subida.' }
-    case 'download': return { finalBytes: est, diskTempBytes: 0, ramBytes: Math.round(est * 2.7), note: 'El navegador monta el vídeo entero en memoria y lo guarda en Descargas (disco interno).' }
+    case 'phone':
+    case 'download': return { finalBytes: est, diskTempBytes: 0, ramBytes: Math.round(est * 2.7), note: i.where === 'phone' ? 'El teléfono monta el vídeo entero en memoria y lo guarda con la hoja de compartir.' : 'El navegador monta el vídeo entero en memoria y lo guarda en Descargas (disco interno).' }
     default: return { finalBytes: est, diskTempBytes: 0, ramBytes: 24 * MIB, note: '' }
   }
 }

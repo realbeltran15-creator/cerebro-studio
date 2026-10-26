@@ -16,6 +16,8 @@ import { browserFreeBytes, createExportTemp, exportFootprint, fileNameFor, folde
 import { pickDriveFolder, requestDriveToken } from '@/lib/ingest/drive'
 import { uploadToDrive } from '@/lib/ingest/drive-upload'
 import { openDriveSink } from '@/lib/ingest/drive-stream'
+import { openDropboxSink } from '@/lib/ingest/dropbox-stream'
+import { connectDropbox, dropboxAppKey } from '@/lib/ingest/dropbox-auth'
 import { pickerConfigFromEnv } from '@/lib/flow-import'
 import { startExportGuard, type ExportGuard } from '@/lib/editor/export-guard'
 import { containerOf, instagramReadiness } from '@/lib/editor/container'
@@ -76,7 +78,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   // Drive: «direct» sends the video while it renders (no local file); «temp» renders to a temporary file first (retryable).
   const [driveMode, setDriveMode] = useState<DriveMode>('direct')
   // Destination chosen BEFORE rendering (the system dialogs need a click, so they have their own button).
-  const [dest, setDest] = useState<{ kind: 'folder'; handle: FileSystemFileHandle } | { kind: 'drive'; token: string; folderId: string; folderName: string } | null>(null)
+  const [dest, setDest] = useState<{ kind: 'folder'; handle: FileSystemFileHandle } | { kind: 'drive'; token: string; folderId: string; folderName: string } | { kind: 'dropbox'; token: string } | null>(null)
+  const [phoneFile, setPhoneFile] = useState<File | null>(null)
   useEffect(() => setDest(null), [where])
   const [transfer, setTransfer] = useState<number | null>(null)
   const [measured, setMeasured] = useState<string>('')
@@ -103,7 +106,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     return () => { off = true }
   }, [mode])
   const directDrive = where === 'drive' && driveMode === 'direct' && ext === 'mp4' && (exp.mode ?? 'fast') === 'fast'
-  const advice = spaceAdvice({ where, driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes, browserFreeBytes: free.browser, libraryFreeBytes: free.library, libraryMaxFileBytes: free.maxFile, folderSupported: folderSaveSupported(), tempSupported: tempStorageSupported() })
+  const directDropbox = where === 'dropbox' && ext === 'mp4' && (exp.mode ?? 'fast') === 'fast'
+  const advice = spaceAdvice({ where, directOk: directDropbox, dropboxReady: !!dropboxAppKey(), driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes, browserFreeBytes: free.browser, libraryFreeBytes: free.library, libraryMaxFileBytes: free.maxFile, folderSupported: folderSaveSupported(), tempSupported: tempStorageSupported() })
   const footprint = exportFootprint({ where, driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes })
   const convertConfig = transcodeConfigFromEnv()
   // Free, GPL-free conversion with the browser's own encoders (WebCodecs). ffmpeg.wasm is only a fallback when its core URL is configured.
@@ -134,11 +138,21 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart])
 
+  /** iPhone: the share sheet (Save Video / Save to Files). Falls back to a plain download when the browser cannot share files. */
+  async function shareToPhone() {
+    if (!phoneFile) return
+    try {
+      if (navigator.canShare?.({ files: [phoneFile] })) await navigator.share({ files: [phoneFile], title: phoneFile.name })
+      else { const url = URL.createObjectURL(phoneFile); const a = document.createElement('a'); a.href = url; a.download = phoneFile.name; a.click() }
+    } catch (e) { if ((e as Error).name !== 'AbortError') setError(e instanceof Error ? e.message : 'No se pudo abrir la hoja de compartir.') }
+  }
+
   /** Opens the system dialog (folder/disk) or Google's folder picker, and keeps the answer so it is shown BEFORE rendering. */
   async function chooseDestination() {
     setError('')
     try {
       if (where === 'folder') { const handle = await pickSaveFile(fileNameFor(composition.title, composition.format, plan.height, ext), ext); setDest({ kind: 'folder', handle }); setStatus('') }
+      else if (where === 'dropbox') { const token = await connectDropbox(); setDest({ kind: 'dropbox', token }); setStatus('') }
       else if (where === 'drive' && driveCfg) {
         const t = await pickDriveFolder(driveCfg)
         if (!t) { setStatus('No elegiste una carpeta de Drive.'); return }
@@ -157,7 +171,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     try {
       const head = headOfComposition(composition, 20_000)
       const sinkProbe = checkingSink()
-      const fragmented = where === 'drive' && driveMode === 'direct' && ext === 'mp4'
+      const fragmented = (where === 'drive' && driveMode === 'direct' && ext === 'mp4') || (where === 'dropbox' && ext === 'mp4')
       const r = await fastExport({ composition: head, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: sinkProbe.stream as never, fragmented, fps: plan.fps, onStage: st => { stageNow = st } })
       const st = sinkProbe.stats()
       const secs = Math.round((performance.now() - t0) / 100) / 10
@@ -185,7 +199,10 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     const stopEarly = (msg: string) => { busyRef.current = false; setMode('idle'); setStatus(msg) }
     if (record && where === 'folder') { if (dest?.kind !== 'folder') return stopEarly('Elige primero dónde guardar el vídeo.'); fileHandle = dest.handle }
     else if (record && where === 'drive') { if (dest?.kind !== 'drive') return stopEarly('Elige primero la carpeta de Drive.'); driveTarget = dest }
+    let dropboxToken: string | null = null
+    if (record && where === 'dropbox') { if (dest?.kind !== 'dropbox') return stopEarly('Conecta primero tu Dropbox.'); dropboxToken = dest.token }
     setTransfer(null); setMeasured('')
+    let dbxSink: Awaited<ReturnType<typeof openDropboxSink>> | null = null
     let driveSink: Awaited<ReturnType<typeof openDriveSink>> | null = null
     let driveFailure: unknown = null // a Drive error (permission, quota, network) is final: re-rendering in real time would only fail again
     const probe = record ? startStorageProbe() : null
@@ -195,7 +212,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     const reportMeasured = async (bytes: number) => {
       if (!probe || probeDone) return
       probeDone = true
-      const m = await probe.stop(); const st = driveSink?.stats(); const mbf = (n: number) => Math.round(n / 104857.6) / 10
+      const m = await probe.stop(); const st = (driveSink ?? dbxSink)?.stats(); const mbf = (n: number) => Math.round(n / 104857.6) / 10
       setMeasured(`Medido en esta exportación: vídeo ${mbf(bytes)} MB · almacenamiento temporal del navegador (pico) ${mbf(m.peakAboveStartBytes)} MB · quedaron ${mbf(Math.max(0, m.endAboveStartBytes))} MB al terminar${st ? ` · memoria de envío (pico) ${mbf(st.peakBufferedBytes)} MB en ${st.blocks + 1} bloques${st.retries ? `, ${st.retries} reintento(s)` : ''}` : ''}. Un navegador no puede leer el disco físico: esto es lo que él mismo almacena.`)
     }
     let tmp: Awaited<ReturnType<typeof createExportTemp>> | null = null
@@ -245,21 +262,26 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
             driveSink = await openDriveSink({ name: exportName, mimeType: 'video/mp4', token: driveTarget.token, folderId: driveTarget.folderId, signal: controller.signal, onProgress: sent => { guard?.progress(); setTransfer(sent) } })
             streamTo = driveSink.writable as never
             driveSink.result.catch(e => { driveFailure = e })
+          } else if (dropboxToken && directDropbox) {
+            dbxSink = await openDropboxSink({ path: `/${exportName}`, token: dropboxToken, signal: controller.signal, onProgress: sent => { guard?.progress(); setTransfer(sent) } })
+            streamTo = dbxSink.writable as never
+            dbxSink.result.catch(e => { driveFailure = e })
           } else if (driveTarget) { tmp = await createExportTemp(crypto.randomUUID().slice(0, 8), ext); streamTo = tmp.writable }
-          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink, signal: controller.signal, onStage: (st, d) => { lastStage = st; if (st !== 'vídeo' && st !== 'audio') console.info(`[export ${exportId}] ${st}${d ? ' ' + d : ''}`) }, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink || !!dbxSink, signal: controller.signal, onStage: (st, d) => { lastStage = st; if (st !== 'vídeo' && st !== 'audio') console.info(`[export ${exportId}] ${st}${d ? ' ' + d : ''}`) }, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
           renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
         } catch (e) {
           if (controller.signal.aborted || (e as Error)?.name === 'AbortError') throw e
           // The error that stopped the exporter is the cause; a Drive-side error is reported when it is the one that stopped it.
+          if (driveFailure && dbxSink) throw new Error(`${e instanceof Error && e.message ? e.message : driveFailure instanceof Error ? driveFailure.message : 'Dropbox no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni en Dropbox. Vuelve a exportar.`)
           if (driveFailure) throw new Error(`${e instanceof Error && e.message ? e.message : driveFailure instanceof Error ? driveFailure.message : 'Drive no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni a medias en Drive. Vuelve a exportar, o elige «con temporal local» para poder reintentar solo la subida.`)
           // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
           setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
           setProgress({ elapsed: 0, total: 0 })
           try { if (streamTo && !streamTo.locked) await streamTo.abort() } catch { /* already aborted by the exporter */ }
           streamTo = null
-          driveSink = null; setTransfer(null)
+          driveSink = null; dbxSink = null; setTransfer(null)
           if (tmp) { await removeExportTemp(tmp.name); tmp = null }
           result = await realtime()
         }
@@ -277,6 +299,16 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         await reportMeasured(size)
         setStatus(`Vídeo guardado en «${fileHandle.name}» (${Math.round(size / 1048576 * 10) / 10} MB), en la ubicación que elegiste. ${streamed(result) ? 'Se escribió mientras se renderizaba: no se montó entero en memoria.' : 'Esta vez se montó en memoria antes de escribirlo (modo en tiempo real).'}`)
         onRendered?.()
+      } else if (record && jobId && dbxSink) {
+        setMode('saving'); setStatus('Cerrando el archivo en Dropbox…')
+        const up = await dbxSink.result
+        await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
+        setTransfer(up.size); up0Bytes = up.size
+        setStatus(`Guardado en Dropbox: «${up.name}» (${Math.round(up.size / 1048576 * 10) / 10} MB, verificado: Dropbox confirma el mismo tamaño que se envió). Está en ${up.path} dentro de la carpeta de la aplicación. No se creó ningún archivo en este equipo.`)
+        onRendered?.()
+        await reportMeasured(up.size)
+      } else if (record && jobId && dropboxToken) {
+        throw new Error('Dropbox necesita la exportación rápida en MP4 para enviarse mientras se renderiza; no se guardó nada, ni en tu equipo ni en Dropbox. Vuelve a exportar.')
       } else if (record && jobId && driveTarget) {
         await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
         const mime = ext === 'mp4' ? 'video/mp4' : 'video/webm'
@@ -301,8 +333,14 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         const url = URL.createObjectURL(result.blob)
         setDownload({ url, name })
         await supabase.from('render_jobs').update({ status: 'completed', error: null, updated_at: new Date().toISOString() }).eq('id', jobId)
-        const a = document.createElement('a'); a.href = url; a.download = name; a.click()
-        setStatus(`Vídeo listo (${Math.round(result.blob.size / 1048576 * 10) / 10} MB): se ha descargado a tu equipo y no se ha subido a la Biblioteca.`)
+        if (where === 'phone') {
+          // iOS only opens the share sheet from a tap, and the render took longer than the tap stays valid: the button does it.
+          setPhoneFile(new File([result.blob], name, { type: result.blob.type || (name.endsWith('.mp4') ? 'video/mp4' : 'video/webm') }))
+          setStatus(`Vídeo listo (${Math.round(result.blob.size / 1048576 * 10) / 10} MB). Pulsa «Guardar en el iPhone» para abrir la hoja de compartir.`)
+        } else {
+          const a = document.createElement('a'); a.href = url; a.download = name; a.click()
+          setStatus(`Vídeo listo (${Math.round(result.blob.size / 1048576 * 10) / 10} MB): se ha descargado a tu equipo y no se ha subido a la Biblioteca.`)
+        }
         onRendered?.()
       } else if (record && result.blob && jobId) {
         const name = `${(composition.title || 'montaje').replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 60)}-${composition.format.replace(':', 'x')}.${containerOf(result.mimeType)}`
@@ -425,7 +463,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         <option value="drive" disabled={!driveCfg}>Google Drive{driveCfg ? '' : ' (requiere configuración)'}</option>
         <option value="library">Biblioteca de Cerebro Studio{free.maxFile ? ` (máx. ${Math.round(free.maxFile / 1048576)} MB)` : ''}</option>
         <option value="onedrive" disabled>OneDrive (aún no disponible)</option>
-        <option value="dropbox" disabled>Dropbox (aún no disponible)</option>
+        <option value="dropbox" disabled={!dropboxAppKey()}>Dropbox{dropboxAppKey() ? '' : ' (requiere configuración)'}</option>
+        <option value="phone">Guardar en el iPhone (hoja de compartir)</option>
       </select></label>
       {where === 'drive' && <label>Envío a Drive<select aria-label="Modo de envío a Drive" value={driveMode} onChange={e => setDriveMode(e.target.value === 'temp' ? 'temp' : 'direct')}>
         <option value="direct" disabled={ext !== 'mp4' || (exp.mode ?? 'fast') !== 'fast'}>Directo mientras se renderiza (sin copia en este equipo)</option>
@@ -435,9 +474,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     </div>}
     {!previewOnly && (exp.mode ?? 'fast') === 'realtime' && plan.fps !== 30 && <p className="warnBox small">En tiempo real las imágenes por segundo las marca la pantalla (normalmente 60), no este ajuste: usa el modo rápido para fijarlas.</p>}
     {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
-    {!previewOnly && (where === 'folder' || where === 'drive') && <div className="field-row" style={{ alignItems: 'center' }} aria-label="Destino elegido">
-      <button type="button" className="ghost small" disabled={mode !== 'idle'} onClick={() => void chooseDestination()}>{dest ? 'Cambiar destino…' : where === 'folder' ? 'Elegir carpeta o disco…' : 'Elegir carpeta de Drive…'}</button>
-      <span className="small" role="status">{dest?.kind === 'folder' ? `Destino: archivo «${dest.handle.name}» en la ubicación que elegiste (el navegador no revela la ruta ni la letra de la unidad).` : dest?.kind === 'drive' ? `Destino: carpeta de Drive «${dest.folderName}» (${dest.folderName ? 'elegida en el selector oficial de Google' : ''}).` : 'Todavía no has elegido destino: no se renderizará nada hasta entonces.'}</span>
+    {!previewOnly && (where === 'folder' || where === 'drive' || where === 'dropbox') && <div className="field-row" style={{ alignItems: 'center' }} aria-label="Destino elegido">
+      <button type="button" className="ghost small" disabled={mode !== 'idle'} onClick={() => void chooseDestination()}>{dest ? 'Cambiar destino…' : where === 'folder' ? 'Elegir carpeta o disco…' : where === 'dropbox' ? 'Conectar Dropbox…' : 'Elegir carpeta de Drive…'}</button>
+      <span className="small" role="status">{dest?.kind === 'folder' ? `Destino: archivo «${dest.handle.name}» en la ubicación que elegiste (el navegador no revela la ruta ni la letra de la unidad).` : dest?.kind === 'dropbox' ? 'Dropbox conectado: el vídeo se guardará en la carpeta de la aplicación.' : dest?.kind === 'drive' ? `Destino: carpeta de Drive «${dest.folderName}» (${dest.folderName ? 'elegida en el selector oficial de Google' : ''}).` : 'Todavía no has elegido destino: no se renderizará nada hasta entonces.'}</span>
     </div>}
     {!previewOnly && <p className="muted small" aria-label="Previsión de recursos">Previsión (estimada, no medida): vídeo ~{Math.max(0.1, Math.round(footprint.finalBytes / 104857.6) / 10)} MB · espacio temporal en el disco interno de este equipo {footprint.diskTempBytes ? `~${Math.round(footprint.diskTempBytes / 104857.6) / 10} MB` : '0 MB'} · memoria extra {footprint.ramBytes >= 1024 ** 3 ? `~${Math.round(footprint.ramBytes / 1024 ** 3 * 10) / 10} GB` : `~${Math.round(footprint.ramBytes / 1048576)} MB`}. {footprint.note}</p>}
     {!previewOnly && <p className={advice.level === 'ok' ? 'muted small' : 'warnBox small'} role={advice.level === 'block' ? 'alert' : 'status'} aria-label="Aviso de espacio">{advice.message}</p>}
@@ -462,6 +501,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {selfTest.text && <p className={`small ${/falló|no es válido/.test(selfTest.text) ? 'warnBox' : 'notice'}`} role="status" aria-label="Resultado de la prueba de 20 segundos">{selfTest.text}</p>}
       {pendingDrive && mode === 'idle' && <><button type="button" onClick={() => void retryDrive()} disabled={driveBusy}>Reintentar subida a Drive</button><button type="button" className="ghost" onClick={() => void (async () => { await removeExportTemp(pendingDrive.temp); setPendingDrive(null); setStatus('Temporal borrado. El vídeo no se subió.') })()}>Descartar el temporal</button></>}
+      {phoneFile && mode === 'idle' && <button type="button" className="primary" onClick={() => void shareToPhone()}>Guardar en el iPhone</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}
       {compositionCues(composition).length > 0 && <>
         <button type="button" className="ghost small" onClick={() => downloadText('subtitulos.srt', cuesToSrt(compositionCues(composition)), 'application/x-subrip')}>Subtítulos .srt</button>

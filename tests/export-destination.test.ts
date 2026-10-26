@@ -45,3 +45,16 @@ describe('export destinations', () => {
   })
   it('names files safely', () => { expect(fileNameFor('Mi vídeo: ¡hola!', '16:9', 1080, 'mp4')).toBe('Mi-vídeo-hola-16x9-1080p.mp4') })
 })
+
+describe('dropbox and phone destinations', () => {
+  const base = { estimatedBytes: 500 * 1048576, folderSupported: true, tempSupported: true }
+  it('dropbox is blocked without an app key and without direct MP4', () => {
+    expect(spaceAdvice({ ...base, where: 'dropbox', dropboxReady: false, directOk: true }).level).toBe('block')
+    expect(spaceAdvice({ ...base, where: 'dropbox', dropboxReady: true, directOk: false }).level).toBe('block')
+    expect(spaceAdvice({ ...base, where: 'dropbox', dropboxReady: true, directOk: true }).level).toBe('ok')
+  })
+  it('the phone warns for small videos and refuses big ones', () => {
+    expect(spaceAdvice({ ...base, where: 'phone' }).level).toBe('warn')
+    expect(spaceAdvice({ ...base, where: 'phone', estimatedBytes: 2 * 1024 ** 3 }).level).toBe('block')
+  })
+})
