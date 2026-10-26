@@ -24,7 +24,7 @@ type Google = {
     Action: { PICKED: string }
     DocsView: new (id: string) => { setMimeTypes(m: string): unknown; setIncludeFolders(v: boolean): unknown; setSelectFolderEnabled(v: boolean): unknown }
     PickerBuilder: new () => {
-      addView(v: unknown): unknown; setOAuthToken(t: string): unknown; setDeveloperKey(k: string): unknown; setAppId(a: string): unknown
+      addView(v: unknown): unknown; setOAuthToken(t: string): unknown; setDeveloperKey(k: string): unknown; setAppId(a: string): unknown; setOrigin(o: string): unknown
       enableFeature(f: string): unknown; setCallback(cb: (r: PickerResponse) => void): unknown; build(): { setVisible(v: boolean): void }
     }
   }
@@ -80,7 +80,7 @@ export function FlowImport({ projectId, sceneId, onImported }: { projectId: stri
       const view = new g.picker.DocsView(g.picker.ViewId.DOCS_VIDEOS)
       view.setMimeTypes('video/mp4,video/webm,video/quicktime'); view.setIncludeFolders(true); view.setSelectFolderEnabled(false)
       const picker = new g.picker.PickerBuilder()
-      picker.addView(view); picker.setOAuthToken(token.current); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId)
+      picker.addView(view); picker.setOAuthToken(token.current); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId); picker.setOrigin(window.location.protocol + '//' + window.location.host)
       picker.enableFeature(g.picker.Feature.MULTISELECT_ENABLED)
       picker.setCallback(r => {
         if (r.action !== g.picker.Action.PICKED) return

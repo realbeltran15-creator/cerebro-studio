@@ -13,7 +13,7 @@ import { pickMimeType, recordingSupported, renderComposition } from '@/lib/edito
 import { exportStageOf, fastExport, fastExportSupported, FastExportUnsupported, type ExportStage } from '@/lib/editor/fast-export'
 import { checkingSink, headOfComposition } from '@/lib/editor/export-selftest'
 import { browserFreeBytes, createExportTemp, exportFootprint, fileNameFor, folderSaveSupported, pickSaveFile, removeExportTemp, spaceAdvice, startStorageProbe, tempStorageSupported, type DriveMode, type ExportWhere } from '@/lib/editor/export-destination'
-import { pickDriveFolder, requestDriveToken } from '@/lib/ingest/drive'
+import { ensureAppFolder, pickDriveFolder, requestDriveToken } from '@/lib/ingest/drive'
 import { uploadToDrive } from '@/lib/ingest/drive-upload'
 import { openDriveSink } from '@/lib/ingest/drive-stream'
 import { openDropboxSink } from '@/lib/ingest/dropbox-stream'
@@ -137,6 +137,17 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     void run(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart])
+
+  /** Drive without the Picker: the app's own folder «Cerebro Studio». Works when the browser blocks the Picker's third-party cookies. */
+  async function useAppDriveFolder() {
+    if (!driveCfg) return
+    setError('')
+    try {
+      const token = await requestDriveToken(driveCfg)
+      const f = await ensureAppFolder(token)
+      setDest({ kind: 'drive', token, folderId: f.folderId, folderName: f.folderName }); setStatus('')
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo preparar la carpeta de Drive.') }
+  }
 
   /** iPhone: the share sheet (Save Video / Save to Files). Falls back to a plain download when the browser cannot share files. */
   async function shareToPhone() {
@@ -476,8 +487,10 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
     {!previewOnly && (where === 'folder' || where === 'drive' || where === 'dropbox') && <div className="field-row" style={{ alignItems: 'center' }} aria-label="Destino elegido">
       <button type="button" className="ghost small" disabled={mode !== 'idle'} onClick={() => void chooseDestination()}>{dest ? 'Cambiar destino…' : where === 'folder' ? 'Elegir carpeta o disco…' : where === 'dropbox' ? 'Conectar Dropbox…' : 'Elegir carpeta de Drive…'}</button>
+      {where === 'drive' && <button type="button" className="ghost small" disabled={mode !== 'idle'} title="No usa el selector de Google: sirve si el navegador bloquea sus cookies" onClick={() => void useAppDriveFolder()}>Usar carpeta «Cerebro Studio»</button>}
       <span className="small" role="status">{dest?.kind === 'folder' ? `Destino: archivo «${dest.handle.name}» en la ubicación que elegiste (el navegador no revela la ruta ni la letra de la unidad).` : dest?.kind === 'dropbox' ? 'Dropbox conectado: el vídeo se guardará en la carpeta de la aplicación.' : dest?.kind === 'drive' ? `Destino: carpeta de Drive «${dest.folderName}» (${dest.folderName ? 'elegida en el selector oficial de Google' : ''}).` : 'Todavía no has elegido destino: no se renderizará nada hasta entonces.'}</span>
     </div>}
+    {!previewOnly && where === 'drive' && <p className="muted small">Si el selector de Google muestra «Can't access your Google Account», tu navegador bloquea las cookies de terceros: permite las de accounts.google.com y docs.google.com, o usa «Usar carpeta «Cerebro Studio»», que no necesita el selector. Cerrar ese panel no afecta al editor.</p>}
     {!previewOnly && <p className="muted small" aria-label="Previsión de recursos">Previsión (estimada, no medida): vídeo ~{Math.max(0.1, Math.round(footprint.finalBytes / 104857.6) / 10)} MB · espacio temporal en el disco interno de este equipo {footprint.diskTempBytes ? `~${Math.round(footprint.diskTempBytes / 104857.6) / 10} MB` : '0 MB'} · memoria extra {footprint.ramBytes >= 1024 ** 3 ? `~${Math.round(footprint.ramBytes / 1024 ** 3 * 10) / 10} GB` : `~${Math.round(footprint.ramBytes / 1048576)} MB`}. {footprint.note}</p>}
     {!previewOnly && <p className={advice.level === 'ok' ? 'muted small' : 'warnBox small'} role={advice.level === 'block' ? 'alert' : 'status'} aria-label="Aviso de espacio">{advice.message}</p>}
     {!previewOnly && false && browserExportAdvice(plan.estimatedBytes).level === 'heavy' && <p className="warnBox small" role="status" aria-label="Aviso de memoria">{browserExportAdvice(plan.estimatedBytes).message}</p>}

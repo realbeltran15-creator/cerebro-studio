@@ -53,7 +53,7 @@ export async function pickFromDrive(config: PickerConfig, filter: DriveFilter = 
       ;(view as unknown as { setLabel?: (l: string) => void }).setLabel?.(v.label)
       picker.addView(view)
     }
-    picker.setOAuthToken(token); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId)
+    picker.setOAuthToken(token); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId); picker.setOrigin(window.location.protocol + '//' + window.location.host)
     picker.enableFeature(g.picker.Feature.MULTISELECT_ENABLED)
     picker.setCallback(r => {
       if (r.action === g.picker.Action.PICKED) resolve({ token, files: (r.docs ?? []).map(d => ({ id: d.id, name: d.name, mimeType: d.mimeType, sizeBytes: d.sizeBytes })) })
@@ -83,11 +83,31 @@ export async function pickDriveFolder(config: PickerConfig): Promise<{ token: st
     view.setIncludeFolders(true); view.setSelectFolderEnabled(true); view.setMimeTypes('application/vnd.google-apps.folder')
     ;(view as unknown as { setLabel?: (l: string) => void }).setLabel?.('Carpetas')
     const picker = new g.picker.PickerBuilder()
-    picker.addView(view); picker.setOAuthToken(token); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId)
+    picker.addView(view); picker.setOAuthToken(token); picker.setDeveloperKey(config.apiKey); picker.setAppId(config.appId); picker.setOrigin(window.location.protocol + '//' + window.location.host)
     picker.setCallback(r => {
       if (r.action === g.picker.Action.PICKED && r.docs?.[0]) resolve({ token, folderId: r.docs[0].id, folderName: r.docs[0].name })
       else if (r.action === 'cancel') resolve(null)
     })
     ;(picker.build() as { setVisible(v: boolean): void }).setVisible(true)
   })
+}
+
+export const APP_FOLDER_NAME = 'Cerebro Studio'
+
+/**
+ * A folder the app owns in the person's Drive, found or created with the `drive.file` scope (it only ever sees what it created).
+ * It needs no Picker: the Picker is an embedded Google page that stops working when the browser blocks third-party cookies
+ * («Can't access your Google Account»); this path only uses Google's own consent window.
+ */
+export async function ensureAppFolder(token: string, fetchImpl: typeof fetch = fetch): Promise<{ folderId: string; folderName: string }> {
+  const auth = { Authorization: `Bearer ${token}` }
+  const q = encodeURIComponent(`name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)
+  const found = await fetchImpl(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1&spaces=drive`, { headers: auth })
+  if (!found.ok) throw new Error(`Drive no permitió buscar la carpeta (error ${found.status}).`)
+  const hit = ((await found.json()) as { files?: Array<{ id: string; name: string }> }).files?.[0]
+  if (hit) return { folderId: hit.id, folderName: hit.name }
+  const made = await fetchImpl('https://www.googleapis.com/drive/v3/files?fields=id,name', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: APP_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' }) })
+  if (!made.ok) throw new Error(`Drive no permitió crear la carpeta (error ${made.status}).`)
+  const j = await made.json() as { id: string; name: string }
+  return { folderId: j.id, folderName: j.name }
 }
