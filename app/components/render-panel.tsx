@@ -84,6 +84,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const [transfer, setTransfer] = useState<number | null>(null)
   // Real state of the running export (frames, encoded data, data confirmed by the destination, memory, open files, link renewals).
   const [live, setLive] = useState('')
+  // The file just finished in Drive: from an iPhone it is saved to Files / iCloud Drive with Drive's own «send a copy» (see the block below).
+  const [driveFile, setDriveFile] = useState<{ name: string; link: string; sizeMb: number } | null>(null)
   const [measured, setMeasured] = useState<string>('')
   const [selfTest, setSelfTest] = useState<{ busy: boolean; text: string }>({ busy: false, text: '' })
   const [pendingDrive, setPendingDrive] = useState<{ temp: string; name: string; mime: string; folderId: string; folderName: string } | null>(null)
@@ -214,7 +216,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     else if (record && where === 'drive') { if (dest?.kind !== 'drive') return stopEarly('Elige primero la carpeta de Drive.'); driveTarget = dest }
     let dropboxToken: string | null = null
     if (record && where === 'dropbox') { if (dest?.kind !== 'dropbox') return stopEarly('Conecta primero tu Dropbox.'); dropboxToken = dest.token }
-    setTransfer(null); setMeasured(''); setLive('')
+    setTransfer(null); setMeasured(''); setLive(''); setDriveFile(null)
     let dbxSink: Awaited<ReturnType<typeof openDropboxSink>> | null = null
     let driveSink: Awaited<ReturnType<typeof openDriveSink>> | null = null
     let driveFailure: unknown = null // a Drive error (permission, quota, network) is final: re-rendering in real time would only fail again
@@ -341,6 +343,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
           const up = await driveSink.result
           setStatus(`Guardado en Google Drive: «${up.name}» en la carpeta «${driveTarget.folderName}» (${Math.round(up.size / 1048576 * 10) / 10} MB). Se envió mientras se renderizaba: no se creó ningún archivo en este equipo.`)
           setTransfer(up.size); up0Bytes = up.size
+          setDriveFile({ name: up.name, sizeMb: Math.round(up.size / 1048576), link: up.webViewLink ?? `https://drive.google.com/file/d/${up.id}/view` })
         } else {
           const tempName = tmp?.name ?? ''
           let file: Blob
@@ -512,6 +515,11 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
     {mode !== 'idle' && progress.total > 0 && <label className="small muted" style={{ display: 'block' }}>Renderizado {Math.round(progress.elapsed / Math.max(1, progress.total) * 100)} %<progress value={progress.elapsed} max={progress.total} style={{ width: '100%' }} aria-label="Progreso" /></label>}
     {live && mode === 'render' && <p className="small muted" style={{ margin: '4px 0' }} aria-live="off">Estado real: {live}</p>}
+    {driveFile && mode === 'idle' && <div className="small" style={{ margin: '8px 0' }}>
+      <a className="buttonLink" href={driveFile.link} target="_blank" rel="noreferrer">Abrir «{driveFile.name}» en Drive</a>{' '}
+      <button type="button" className="ghost small" onClick={() => void navigator.clipboard?.writeText(driveFile.link)}>Copiar enlace</button>
+      <p className="muted" style={{ margin: '4px 0' }}>Para guardarlo en tu iPhone (Archivos / iCloud Drive): abre este enlace en el iPhone, pulsa ⋯ → «Enviar una copia» → «Guardar en Archivos» y elige iCloud Drive. Son unos {driveFile.sizeMb} MB: usa Wi-Fi y deja la app abierta hasta que termine. El archivo también está siempre en la carpeta «Cerebro Studio» de la app de Drive.</p>
+    </div>}
     {transfer !== null && <label className="small muted" style={{ display: 'block' }}>Enviado a Drive: {Math.round(transfer / 104857.6) / 10} MB {mode === 'idle' ? '(completo)' : `(~${Math.min(99, Math.round(transfer / Math.max(1, plan.estimatedBytes) * 100))} % del total estimado)`}<progress value={mode === 'idle' ? 1 : Math.min(0.99, transfer / Math.max(1, plan.estimatedBytes))} max={1} style={{ width: '100%' }} aria-label="Progreso de transferencia" /></label>}
     {status && <p className="muted small" role="status">{status}</p>}
     {measured && <p className="small" role="status" aria-label="Medición de esta exportación">{measured}</p>}
