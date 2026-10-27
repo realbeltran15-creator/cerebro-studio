@@ -75,3 +75,15 @@ Limitaciones: medido con VP9/Opus (el Chromium de pruebas no tiene H.264); en co
 - **Dropbox:** subida por sesiones (`upload_session/start → append_v2 → finish`) en bloques de 8 MiB mientras se renderiza, sin copia local, con reintentos y comprobación de tamaño final (`lib/ingest/dropbox-stream.ts`). Login OAuth con PKCE en ventana emergente (`lib/ingest/dropbox-auth.ts`, página `/dropbox-callback`); el token solo vive en memoria.
 - **Para activarlo:** crear una app gratuita en dropbox.com/developers (Scoped access, «App folder», permiso `files.content.write`), añadir `https://<dominio>/dropbox-callback` como Redirect URI y poner la App key en `NEXT_PUBLIC_DROPBOX_APP_KEY` (Vercel, entorno Preview). Sin la clave, la opción aparece desactivada.
 - Probado con un Dropbox simulado (4 tests); sin App key no se ha podido probar contra Dropbox real.
+
+## 7. Exportaciones largas (90 min a 1440p): causas halladas y correcciones
+
+Estado: **corregido en el código y verificado con tests; la exportación real de 90 min a Drive aún no se ha hecho.** Todo lo de esta sección que no dice «verificado» es una hipótesis razonada.
+
+- **Caída a grabación en tiempo real (causa probable de «This page crashed»):** si la exportación rápida fallaba por cualquier motivo, el panel pasaba a la grabación en tiempo real, que guarda el vídeo entero en la memoria de la pestaña. En 90 min eso agota la memoria y oculta el error real. Ahora, en montajes de más de 15 min, no hay caída: se muestra el error real y el último estado conocido.
+- **Enlaces firmados caducados:** los archivos se leen con enlaces temporales y el exportador reutilizaba el primero durante toda la exportación (`lib/editor/refreshing-source.ts`). Ahora la lectura pide un enlace nuevo si el servidor rechaza el actual (400/401/403/404) y reintenta con espera si cae la red. Verificado con 3 tests; no reproducido en un caso real.
+- **Archivos abiertos sin límite:** cada archivo abierto conservaba su caché de lectura hasta el final. Ahora se cierran los que llevan unos 20 s sin leerse y no tienen lector activo; la caché por archivo baja a 8 MiB. Efecto sobre la memoria real: **no medido** (la medición a 1440p en el entorno de pruebas no terminó).
+- **Token de Drive:** la subida a Drive no envía el token en los bloques (la dirección de la sesión de subida es la credencial), así que su caducidad (~1 h) no corta una subida ya abierta. Esto se deduce del código y de la exportación real de 1 min; no se ha probado pasada la hora.
+- **Telemetría:** cada ~2 s el panel muestra fotograma, tiempo dibujado, datos codificados, datos confirmados por el destino, memoria JS, archivos abiertos, lectores y enlaces renovados; el progreso de dibujo y el de envío están separados.
+- **Disco externo:** D: es un disco USB (WD My Passport). Los MP4 de 0 bytes no pudieron examinarse (la carpeta estaba vacía al comprobarla). Hipótesis: el navegador crea el archivo vacío al elegirlo y lo rellena al escribir; una exportación interrumpida lo deja en 0 bytes.
+- **Limitación de las pruebas:** el permiso de Drive se pierde al recargar la página y Google exige un clic de persona; cada prueba real necesita ese clic.
