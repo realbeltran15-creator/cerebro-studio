@@ -141,7 +141,7 @@ export async function fastExport(opts: {
   const readers = new Map<string, Reader>()
   const newReader = async (slot: string, assetId: string, ts: number) => {
     const o = await open(assetId)
-    if (!o.video) throw new FastExportUnsupported('Un vídeo del montaje no tiene imagen legible.')
+    if (!o.video) throw new FastExportUnsupported(`Un vídeo del montaje no tiene imagen legible.${urlStats.lastError ? ` (${urlStats.lastError})` : ''}`)
     const sink = new mb.CanvasSink(o.video)
     const it = sink.canvases(Math.max(0, ts - 0.25)) as AsyncGenerator<Frame, void, unknown>
     const first = await it.next(), second = first.done ? first : await it.next()

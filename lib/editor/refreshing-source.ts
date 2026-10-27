@@ -17,12 +17,12 @@ export function refreshingSourceOptions(assetId: string, resolveUrl: UrlResolver
   const fresh = () => (url = resolveUrl(assetId, true))
   const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-  async function request(range: string): Promise<Response> {
+  async function request(range: string | null): Promise<Response> {
     let lastErr: unknown = null
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const u = await current()
-        const res = await fetchFn(u, { headers: { Range: range }, cache: 'no-store' })
+        const res = await fetchFn(u, { headers: range ? { Range: range } : {}, cache: 'no-store' })
         if (res.ok || res.status === 206) return res
         // Expired or revoked signed link: get a new one and try again at once.
         if ([400, 401, 403, 404].includes(res.status)) {
@@ -48,8 +48,16 @@ export function refreshingSourceOptions(assetId: string, resolveUrl: UrlResolver
       const cr = res.headers.get('content-range')
       const m = cr && /\/(\d+)\s*$/.exec(cr)
       if (m) size = Number(m[1])
-      else if (res.status === 200) size = Number(res.headers.get('content-length') ?? 0)
-      else throw new Error('El servidor no indica el tamaño del archivo.')
+      else {
+        // Cross-origin responses hide Content-Range unless the server exposes it; Content-Length is always readable, so ask for the
+        // whole file and read its length from the headers only (the body is cancelled right away).
+        void res.body?.cancel().catch(() => {})
+        const whole = await request(null)
+        size = Number(whole.headers.get('content-length') ?? 0)
+        void whole.body?.cancel().catch(() => {})
+        if (!size) throw new Error('El servidor no indica el tamaño del archivo.')
+        return size
+      }
       void res.body?.cancel().catch(() => {})
       return size
     },

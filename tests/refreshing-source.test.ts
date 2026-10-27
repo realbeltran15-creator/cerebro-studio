@@ -36,4 +36,12 @@ describe('refreshingSourceOptions', () => {
     await expect(o.read(0, 4)).rejects.toThrow(/tras 2 intentos/)
     expect(n).toBe(2)
   })
+  it('gets the size from Content-Length when Content-Range is hidden by CORS', async () => {
+    const f = (async (_u: string, i?: RequestInit) => {
+      const r = (i?.headers as Record<string, string> | undefined)?.Range
+      return r ? new Response(data.slice(0, 1), { status: 206 }) : new Response(data, { status: 200, headers: { 'content-length': String(data.length) } })
+    }) as unknown as typeof fetch
+    const o = refreshingSourceOptions('a', async () => 'https://x/v1', undefined, f)
+    expect(await o.getSize()).toBe(1000)
+  })
 })
