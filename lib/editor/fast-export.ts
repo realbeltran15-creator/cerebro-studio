@@ -10,6 +10,7 @@
  * - Not used (the real-time exporter takes over) when the browser lacks WebCodecs H.264, when a file cannot be decoded here, or when a
  *   video with sound plays at another speed (the real-time path keeps its pitch; this one could not).
  */
+import { refreshingSourceOptions, type RefreshStats } from './refreshing-source'
 import { clipStarts, exportPlan, projectDurationMs, type Composition } from './composition'
 import { drawOps, type DrawSource } from './draw'
 import { audioTrackFactors, audioVoices, busLevels, frameAt, videoVoices as videoVoicesOf, voiceGainAt, voiceWindows, type Bus, type KindOf, type VisualOp, type Voice } from './scene'
@@ -49,11 +50,25 @@ async function ensureAac(mb: MB) {
 
 type Opened = { input: InstanceType<MB['Input']>; video: Awaited<ReturnType<InstanceType<MB['Input']>['getPrimaryVideoTrack']>>; audio: Awaited<ReturnType<InstanceType<MB['Input']>['getPrimaryAudioTrack']>>; duration: number }
 
+/** A snapshot of the real state of an export, every ~2 s: separates what was RENDERED from what was ENCODED and handed to the destination. */
+export type ExportTelemetry = {
+  stage: ExportStage; frame: number; totalFrames: number; renderedMs: number; totalMs: number
+  /** Bytes the muxer has handed to the destination so far (encoded data). */
+  encodedBytes: number
+  /** JS heap in MB (Chromium only; null elsewhere). */
+  heapMb: number | null
+  openInputs: number; readers: number
+  urlRefreshes: number; urlRetries: number; lastUrlError: string | null
+  wallMs: number
+}
+
 export async function fastExport(opts: {
   composition: Composition
-  resolveUrl: (assetId: string) => Promise<string>
+  resolveUrl: (assetId: string, refresh?: boolean) => Promise<string>
   kindOf: KindOf
   onProgress?: (doneMs: number, totalMs: number) => void
+  /** Real-state snapshots (frames, encoded bytes, memory, open files, URL renewals) every ~2 s. */
+  onTelemetry?: (t: ExportTelemetry) => void
   signal?: AbortSignal
   fps?: number
   /** Only a SCREEN for a small live preview. The frames are always drawn on a private canvas, so the page can never resize, hide or redraw the one being encoded. */
@@ -96,11 +111,15 @@ export async function fastExport(opts: {
   const windows = voiceWindows(voices)
 
   // ---- Open every file once.
+  const urlStats: RefreshStats = { refreshes: 0, retries: 0, lastError: null }
+  let frameNo = 0
   const opened = new Map<string, Promise<Opened>>()
+  const touched = new Map<string, number>()
   const open = (assetId: string) => {
+    touched.set(assetId, frameNo)
     if (!opened.has(assetId)) opened.set(assetId, (async () => {
       const url = await opts.resolveUrl(assetId)
-      const source = url.startsWith('blob:') || url.startsWith('data:') ? new mb.BlobSource(await (await fetch(url)).blob()) : new mb.UrlSource(url)
+      const source = url.startsWith('blob:') || url.startsWith('data:') ? new mb.BlobSource(await (await fetch(url)).blob()) : new mb.CustomSource(refreshingSourceOptions(assetId, opts.resolveUrl, urlStats))
       const input = new mb.Input({ source, formats: mb.ALL_FORMATS })
       const [video, audio] = await Promise.all([input.getPrimaryVideoTrack().catch(() => null), input.getPrimaryAudioTrack().catch(() => null)])
       if (video && !(await video.canDecode())) throw new FastExportUnsupported('Un vídeo del montaje no se puede decodificar aquí (códec no compatible con WebCodecs).')
@@ -184,8 +203,13 @@ export async function fastExport(opts: {
   await output.start()
 
   const frameMs = 1000 / fps
+  const wall0 = performance.now()
+  let lastTele = 0
+  const emitTele = (renderedMs: number) => {
+    const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
+    opts.onTelemetry?.({ stage, frame: frameNo, totalFrames, renderedMs, totalMs: total, encodedBytes: streamed, heapMb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null, openInputs: opened.size, readers: readers.size, urlRefreshes: urlStats.refreshes, urlRetries: urlStats.retries, lastUrlError: urlStats.lastError, wallMs: Math.round(performance.now() - wall0) })
+  }
   const totalFrames = Math.max(1, Math.ceil(total / frameMs))
-  let frameNo = 0
   try {
     for (let a = 0; a < total; a += CHUNK_MS) {
       if (opts.signal?.aborted) throw new DOMException('Cancelado', 'AbortError')
@@ -206,7 +230,14 @@ export async function fastExport(opts: {
         drawOps(g, ops, plan.width, plan.height, op => srcs.get(op) ?? null)
         await videoSource.add(t / 1000, frameMs / 1000)
         // Readers not used for a few seconds are closed (their decoder and frames released).
-        if (frameNo % fps === 0) for (const [slot, r] of readers) if (frameNo - r.usedAt > fps * 3) closeReader(slot)
+        if (frameNo % fps === 0) {
+          for (const [slot, r] of readers) if (frameNo - r.usedAt > fps * 3) closeReader(slot)
+          // A file nobody has read for ~20 s (and with no live reader) is closed: its read cache and decoder state are released. A long
+          // montage touches hundreds of files; keeping every one open grew memory without bound. Reopening later only re-reads the header.
+          const busy = new Set([...readers.values()].map(r => r.assetId))
+          for (const [id, at] of touched) if (frameNo - at > fps * 20 && !busy.has(id)) { touched.delete(id); const p = opened.get(id); opened.delete(id); void p?.then(o => o.input.dispose?.(), () => undefined) }
+        }
+        if (opts.onTelemetry && performance.now() - lastTele >= 2000) { lastTele = performance.now(); emitTele(t) }
         if (frameNo % 5 === 0) opts.onProgress?.(t, total)
         if (screenCtx && screen && frameNo % (fps * 2) === 0) { try { screenCtx.drawImage(canvas, 0, 0, screen.width, screen.height) } catch { /* the preview is optional */ } }
       }

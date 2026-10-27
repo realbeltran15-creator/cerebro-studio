@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, EXPORT_AUDIO_KBPS, EXPORT_FPS, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, type Composition, type ExportAudioKbps, type ExportFps, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
+import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, EXPORT_AUDIO_KBPS, EXPORT_FPS, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, projectDurationMs, type Composition, type ExportAudioKbps, type ExportFps, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
 import { downloadText } from '@/lib/library'
 import { saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
@@ -82,6 +82,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const [phoneFile, setPhoneFile] = useState<File | null>(null)
   useEffect(() => setDest(null), [where])
   const [transfer, setTransfer] = useState<number | null>(null)
+  // Real state of the running export (frames, encoded data, data confirmed by the destination, memory, open files, link renewals).
+  const [live, setLive] = useState('')
   const [measured, setMeasured] = useState<string>('')
   const [selfTest, setSelfTest] = useState<{ busy: boolean; text: string }>({ busy: false, text: '' })
   const [pendingDrive, setPendingDrive] = useState<{ temp: string; name: string; mime: string; folderId: string; folderName: string } | null>(null)
@@ -212,7 +214,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     else if (record && where === 'drive') { if (dest?.kind !== 'drive') return stopEarly('Elige primero la carpeta de Drive.'); driveTarget = dest }
     let dropboxToken: string | null = null
     if (record && where === 'dropbox') { if (dest?.kind !== 'dropbox') return stopEarly('Conecta primero tu Dropbox.'); dropboxToken = dest.token }
-    setTransfer(null); setMeasured('')
+    setTransfer(null); setMeasured(''); setLive('')
     let dbxSink: Awaited<ReturnType<typeof openDropboxSink>> | null = null
     let driveSink: Awaited<ReturnType<typeof openDriveSink>> | null = null
     let driveFailure: unknown = null // a Drive error (permission, quota, network) is final: re-rendering in real time would only fail again
@@ -235,6 +237,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     let guard: ExportGuard | null = null
     const exportId = Math.random().toString(36).slice(2, 8)
     let lastStage: ExportStage = 'preparar'
+    let lastLive = '', lastLog = 0
     setNotice('')
     try {
       if (record) await beforeRender?.()
@@ -278,7 +281,13 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
             streamTo = dbxSink.writable as never
             dbxSink.result.catch(e => { driveFailure = e })
           } else if (driveTarget) { tmp = await createExportTemp(crypto.randomUUID().slice(0, 8), ext); streamTo = tmp.writable }
-          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink || !!dbxSink, signal: controller.signal, onStage: (st, d) => { lastStage = st; if (st !== 'vídeo' && st !== 'audio') console.info(`[export ${exportId}] ${st}${d ? ' ' + d : ''}`) }, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) } })
+          result = await fastExport({ composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: streamTo as never, fragmented: !!driveSink || !!dbxSink, signal: controller.signal, onStage: (st, d) => { lastStage = st; if (st !== 'vídeo' && st !== 'audio') console.info(`[export ${exportId}] ${st}${d ? ' ' + d : ''}`) }, onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) },
+            onTelemetry: tl => {
+              const ds = (driveSink ?? dbxSink)?.stats(); const mb1 = (n: number) => Math.round(n / 104857.6) / 10
+              const line = `fotograma ${tl.frame}/${tl.totalFrames} · dibujado ${Math.floor(tl.renderedMs / 60000)}:${String(Math.floor(tl.renderedMs / 1000) % 60).padStart(2, '0')} de ${Math.floor(tl.totalMs / 60000)} min · codificado ${mb1(tl.encodedBytes)} MB${ds ? ` · confirmado por el destino ${mb1(ds.sentBytes)} MB (pendiente ${mb1(Math.max(0, ds.receivedBytes - ds.sentBytes))} MB, ${ds.retries} reintentos)` : ''} · memoria JS ${tl.heapMb ?? '?'} MB · ${tl.openInputs} archivos abiertos · ${tl.readers} lectores${tl.urlRefreshes ? ` · ${tl.urlRefreshes} enlaces renovados` : ''}`
+              setLive(line); lastLive = line
+              if (performance.now() - lastLog > 10000) { lastLog = performance.now(); console.info(`[export ${exportId}] ${tl.stage} ${line}`) }
+            } })
           renderer = 'browser-fast'
           const secs = clock()
           setStatus(`Exportación rápida terminada en ${Math.round(secs)} s (${Math.max(0.1, Math.round(result.durationMs / 1000 / Math.max(0.1, secs) * 10) / 10)}× el tiempo real).`)
@@ -287,6 +296,10 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
           // The error that stopped the exporter is the cause; a Drive-side error is reported when it is the one that stopped it.
           if (driveFailure && dbxSink) throw new Error(`${e instanceof Error && e.message ? e.message : driveFailure instanceof Error ? driveFailure.message : 'Dropbox no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni en Dropbox. Vuelve a exportar.`)
           if (driveFailure) throw new Error(`${e instanceof Error && e.message ? e.message : driveFailure instanceof Error ? driveFailure.message : 'Drive no aceptó el vídeo.'} No queda ningún archivo en tu equipo ni a medias en Drive. Vuelve a exportar, o elige «con temporal local» para poder reintentar solo la subida.`)
+          // The real-time recording keeps the WHOLE video in this tab's memory: for a long montage it ends in a crashed tab hours later,
+          // hiding the real cause. A long export therefore fails with the real error (and the last known state) instead of falling back.
+          if (projectDurationMs(composition) > 15 * 60_000 && !(e instanceof FastExportUnsupported)) throw new Error(`${e instanceof Error ? e.message : 'La exportación rápida se detuvo.'}${lastLive ? ` Último estado: ${lastLive}.` : ''}`)
+          if (projectDurationMs(composition) > 15 * 60_000) throw e
           // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
           setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
           setProgress({ elapsed: 0, total: 0 })
@@ -498,6 +511,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     {!previewOnly && plan.reduced && plan.fitsLibrary && <p className="warnBox small">Para caber en {Math.round(LIBRARY_MAX_BYTES / 1048576)} MB la calidad baja a {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 2 })} Mbit/s (pedías {(plan.wantedBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })}). Elige «Descargar a mi equipo» para conservarla.</p>}
     <canvas ref={canvasRef} width={width} height={height} style={{ width: '100%', maxHeight: exportOnly && mode === 'idle' ? 0 : 420, objectFit: 'contain', background: '#000', borderRadius: 10 }} aria-label="Lienzo de vista previa" />
     {mode !== 'idle' && progress.total > 0 && <label className="small muted" style={{ display: 'block' }}>Renderizado {Math.round(progress.elapsed / Math.max(1, progress.total) * 100)} %<progress value={progress.elapsed} max={progress.total} style={{ width: '100%' }} aria-label="Progreso" /></label>}
+    {live && mode === 'render' && <p className="small muted" style={{ margin: '4px 0' }} aria-live="off">Estado real: {live}</p>}
     {transfer !== null && <label className="small muted" style={{ display: 'block' }}>Enviado a Drive: {Math.round(transfer / 104857.6) / 10} MB {mode === 'idle' ? '(completo)' : `(~${Math.min(99, Math.round(transfer / Math.max(1, plan.estimatedBytes) * 100))} % del total estimado)`}<progress value={mode === 'idle' ? 1 : Math.min(0.99, transfer / Math.max(1, plan.estimatedBytes))} max={1} style={{ width: '100%' }} aria-label="Progreso de transferencia" /></label>}
     {status && <p className="muted small" role="status">{status}</p>}
     {measured && <p className="small" role="status" aria-label="Medición de esta exportación">{measured}</p>}
