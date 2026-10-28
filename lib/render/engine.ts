@@ -186,7 +186,7 @@ export async function renderProject(o: RenderOptions) {
           else {
             let r = readers.get(op.slot)
             if (!r) { r = new VideoReader({ ffmpeg, file: o.assets[op.assetId].path, probe: await probe(op.assetId), fps, outW: W, cv }); readers.set(op.slot, r) }
-            srcs.set(op, await r.frame(op.sourceMs, op.rate))
+            srcs.set(op, op.reverse ? await r.frameBack(op.sourceMs, op.rate) : await r.frame(op.sourceMs, op.rate))
           }
         }
         drawOps(g, ops, W, H, op => srcs.get(op) ?? null)
@@ -225,8 +225,8 @@ export async function renderProject(o: RenderOptions) {
 
 /** The parts of a montage that decide its sound (a change in the picture alone does not redo the mix). */
 function audioKey(c: Composition) {
-  return JSON.stringify({ a: c.audioClips, m: c.musicAssetId, mv: c.musicVolume, d: c.duckMusic, mix: c.mix, tr: c.tracks, ov: (c.overlays ?? []).map(o => [o.assetId, o.startMs, o.durationMs, o.trimInMs, o.speed, o.volume, o.muted, o.trackId]),
-    cl: c.clips.map(k => [k.visualAssetId, k.voiceAssetId, k.durationMs, k.trimInMs, k.speed, k.volume, k.muted, k.transition, k.transitionMs]), f: c.fadeMs, e: c.exportSettings?.resolution })
+  return JSON.stringify({ a: c.audioClips, m: c.musicAssetId, mv: c.musicVolume, d: c.duckMusic, mix: c.mix, tr: c.tracks, ov: (c.overlays ?? []).map(o => [o.assetId, o.startMs, o.durationMs, o.trimInMs, o.speed, o.volume, o.muted, o.trackId, o.reverse]),
+    cl: c.clips.map(k => [k.visualAssetId, k.voiceAssetId, k.durationMs, k.trimInMs, k.speed, k.volume, k.muted, k.transition, k.transitionMs, k.reverse]), f: c.fadeMs, e: c.exportSettings?.resolution })
 }
 
 // ---------------------------------------------------------------- picture from video files
@@ -252,12 +252,46 @@ class VideoReader {
   }
   close() { this.proc?.kill('SIGKILL'); this.proc = null }
   private start(sourceMs: number, rate: number) {
-    this.close(); this.chunks = []; this.buffered = 0; this.ended = false; this.eof = false
+    this.close(); this.chunks = []; this.buffered = 0; this.ended = false; this.eof = false; this.rev = false
     const vf = `${rate !== 1 ? `setpts=PTS/${rate},` : ''}fps=${this.o.fps},scale=${this.w}:${this.h}`
     const p = spawn(this.o.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-ss', (sourceMs / 1000).toFixed(3), '-i', this.o.file, '-an', '-vf', vf, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { stdio: ['ignore', 'pipe', 'ignore'] })
     p.stdout!.on('data', (d: Buffer) => { this.chunks.push(d); this.buffered += d.length; if (this.buffered > this.frameBytes * 6) p.stdout!.pause(); this.wake?.() })
     p.on('close', () => { this.ended = true; this.wake?.() })
     this.proc = p; this.step = rate * 1000 / this.o.fps; this.lastMs = sourceMs - this.step
+  }
+  // ---- Reversed clips: the file is read backwards in short windows. FFmpeg's `reverse` filter holds the whole window in memory, so the
+  // window is kept to ~2 s of output (never the whole clip) and the previous window is started when this one runs out.
+  private revFrom = 0
+  /** The picture at `sourceMs` when playing backwards: the next (earlier) frame of the window, or the same one when held. */
+  async frameBack(sourceMs: number, rate: number): Promise<DrawSource | null> {
+    const step = rate * 1000 / this.o.fps
+    if (this.proc && (Math.abs(step - this.step) > 1e-6 || !this.rev)) this.close()
+    if (!this.proc) this.startBack(sourceMs, rate)
+    let d = this.lastMs - sourceMs
+    if (this.has && Math.abs(d) < step * 0.5) return this.out()
+    if (d < 0 || d > step * 1.5) { this.startBack(sourceMs, rate); d = step }
+    let raw = await this.nextRaw()
+    if (!raw && this.revFrom > 0) { this.startBack(this.lastMs - step, rate); raw = await this.nextRaw() }
+    if (raw) {
+      this.lastMs -= this.step
+      ;(this.canvas.getContext('2d') as unknown as CanvasRenderingContext2D).putImageData(new this.o.cv.ImageData(new Uint8ClampedArray(raw.buffer, raw.byteOffset, raw.length), this.w, this.h) as unknown as ImageData, 0, 0)
+      this.has = true
+    } else this.eof = true
+    return this.has ? this.out() : null
+  }
+  private rev = false
+  private startBack(sourceMs: number, rate: number) {
+    this.close(); this.chunks = []; this.buffered = 0; this.ended = false; this.eof = false; this.rev = true
+    const spanSrc = 2000 * rate
+    const from = Math.max(0, sourceMs - spanSrc)
+    this.revFrom = from
+    // The window ends just after the wanted instant so the wanted frame is the first one that comes out.
+    const len = Math.max(0.05, (sourceMs - from) / 1000 + 0.5 / this.o.fps * rate)
+    const vf = `${rate !== 1 ? `setpts=PTS/${rate},` : ''}fps=${this.o.fps},scale=${this.w}:${this.h},reverse`
+    const p = spawn(this.o.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-ss', (from / 1000).toFixed(3), '-t', len.toFixed(3), '-i', this.o.file, '-an', '-vf', vf, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    p.stdout!.on('data', (d: Buffer) => { this.chunks.push(d); this.buffered += d.length; if (this.buffered > this.frameBytes * 6) p.stdout!.pause(); this.wake?.() })
+    p.on('close', () => { this.ended = true; this.wake?.() })
+    this.proc = p; this.step = rate * 1000 / this.o.fps; this.lastMs = sourceMs + this.step
   }
   private async nextRaw(): Promise<Buffer | null> {
     while (this.buffered < this.frameBytes) {

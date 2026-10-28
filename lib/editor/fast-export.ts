@@ -13,6 +13,7 @@
 import { refreshingSourceOptions, type RefreshStats } from './refreshing-source'
 import { clipStarts, exportPlan, projectDurationMs, type Composition } from './composition'
 import { drawOps, type DrawSource } from './draw'
+import { framesForBudget, ReverseFrameReader } from './reverse-frames'
 import { audioTrackFactors, audioVoices, busLevels, frameAt, videoVoices as videoVoicesOf, voiceGainAt, voiceWindows, type Bus, type KindOf, type VisualOp, type Voice } from './scene'
 
 export class FastExportUnsupported extends Error {}
@@ -149,9 +150,31 @@ export async function fastExport(opts: {
     readers.set(slot, r)
     return r
   }
+  // Reversed clips: one reader per layer that decodes short windows forwards and serves them backwards (bounded memory, see reverse-frames.ts).
+  const rreaders = new Map<string, { assetId: string; r: ReverseFrameReader; usedAt: number }>()
+  const closeRev = (slot: string) => { const x = rreaders.get(slot); if (x) { x.r.close(); rreaders.delete(slot) } }
+  async function reverseFrame(op: VisualOp, frameNo: number): Promise<DrawSource | null> {
+    const o = await open(op.assetId)
+    if (!o.video) throw new FastExportUnsupported(`Un vídeo del montaje no tiene imagen legible.${urlStats.lastError ? ` (${urlStats.lastError})` : ''}`)
+    let x = rreaders.get(op.slot)
+    if (x && x.assetId !== op.assetId) { closeRev(op.slot); x = undefined }
+    if (!x) {
+      const stats = await o.video.computePacketStats(120).catch(() => null)
+      const fpsSrc = stats && Number.isFinite(stats.averagePacketRate) && stats.averagePacketRate > 1 ? stats.averagePacketRate : 30
+      const w = o.video.displayWidth || plan.width, h = o.video.displayHeight || plan.height
+      x = { assetId: op.assetId, usedAt: frameNo, r: new ReverseFrameReader(new mb.CanvasSink(o.video) as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fpsSrc, framesForBudget(w, h, 160 * 1048576), false) }
+      rreaders.set(op.slot, x)
+    }
+    x.usedAt = frameNo
+    // The file's last frame is the latest it can show (a clip longer than its file holds it).
+    const last = Number.isFinite(o.duration) && o.duration > 0 ? o.duration - 0.001 : Infinity
+    const f = await x.r.get(Math.min(op.sourceMs / 1000, last))
+    return f ? { src: f.canvas as CanvasImageSource, width: f.canvas.width, height: f.canvas.height } : null
+  }
   const closeReader = (slot: string) => { const r = readers.get(slot); if (r) { void r.it.return(undefined); readers.delete(slot) } }
   const trimOf = (op: VisualOp) => (op.slot.startsWith('ov:') ? (c.overlays ?? []).find(o => `ov:${o.id}` === op.slot)?.trimInMs ?? 0 : c.clips.find(k => k.id === op.slot)?.trimInMs ?? 0) / 1000
   async function videoFrame(op: VisualOp, frameNo: number): Promise<DrawSource | null> {
+    if (op.reverse) return reverseFrame(op, frameNo)
     const o = await open(op.assetId)
     let ts = op.sourceMs / 1000
     if (Number.isFinite(o.duration) && o.duration > 0 && ts >= o.duration - 0.001) { const trim = trimOf(op); const span = Math.max(0.1, o.duration - trim); ts = trim + ((ts - trim) % span) }
@@ -207,7 +230,7 @@ export async function fastExport(opts: {
   let lastTele = 0
   const emitTele = (renderedMs: number) => {
     const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
-    opts.onTelemetry?.({ stage, frame: frameNo, totalFrames, renderedMs, totalMs: total, encodedBytes: streamed, heapMb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null, openInputs: opened.size, readers: readers.size, urlRefreshes: urlStats.refreshes, urlRetries: urlStats.retries, lastUrlError: urlStats.lastError, wallMs: Math.round(performance.now() - wall0) })
+    opts.onTelemetry?.({ stage, frame: frameNo, totalFrames, renderedMs, totalMs: total, encodedBytes: streamed, heapMb: mem ? Math.round(mem.usedJSHeapSize / 1048576) : null, openInputs: opened.size, readers: readers.size + rreaders.size, urlRefreshes: urlStats.refreshes, urlRetries: urlStats.retries, lastUrlError: urlStats.lastError, wallMs: Math.round(performance.now() - wall0) })
   }
   const totalFrames = Math.max(1, Math.ceil(total / frameMs))
   try {
@@ -232,9 +255,10 @@ export async function fastExport(opts: {
         // Readers not used for a few seconds are closed (their decoder and frames released).
         if (frameNo % fps === 0) {
           for (const [slot, r] of readers) if (frameNo - r.usedAt > fps * 3) closeReader(slot)
+          for (const [slot, x] of rreaders) if (frameNo - x.usedAt > fps * 3) closeRev(slot)
           // A file nobody has read for ~20 s (and with no live reader) is closed: its read cache and decoder state are released. A long
           // montage touches hundreds of files; keeping every one open grew memory without bound. Reopening later only re-reads the header.
-          const busy = new Set([...readers.values()].map(r => r.assetId))
+          const busy = new Set([...readers.values(), ...rreaders.values()].map(r => r.assetId))
           for (const [id, at] of touched) if (frameNo - at > fps * 20 && !busy.has(id)) { touched.delete(id); const p = opened.get(id); opened.delete(id); void p?.then(o => o.input.dispose?.(), () => undefined) }
         }
         if (opts.onTelemetry && performance.now() - lastTele >= 2000) { lastTele = performance.now(); emitTele(t) }
@@ -253,6 +277,7 @@ export async function fastExport(opts: {
     throw e
   } finally {
     for (const slot of [...readers.keys()]) closeReader(slot)
+    for (const slot of [...rreaders.keys()]) closeRev(slot)
     for (const p of opened.values()) void p.then(o => o.input.dispose?.(), () => undefined)
     for (const p of images.values()) void p.then(bm => bm.close(), () => undefined)
   }

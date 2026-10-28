@@ -107,6 +107,7 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
     </div>
     </Section>
     {isVideo && <Section id="layer-sound" title="Velocidad y sonido" defaultOpen>
+      <label className="pill" style={{ alignSelf: 'flex-start' }} title="Reproduce esta capa de atrás hacia delante (no modifica el archivo). Su sonido propio no se emite."><input type="checkbox" checked={o.reverse === true} onChange={e => onChange({ reverse: e.target.checked || undefined })} /> ↺ Invertir vídeo</label>
     <div className="field-row">
       <label>Velocidad<select value={String(o.speed ?? 1)} onChange={e => { const v = Number(e.target.value); onChange({ speed: v, durationMs: o.durationMs * (o.speed ?? 1) / v }) }}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>
       <label>Volumen ({pct(o.volume ?? 1)} %)<input type="range" min={0} max={2} step={0.05} value={o.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>

@@ -10,6 +10,8 @@ import { projectDurationMs, type Composition } from './composition'
 import { drawOps, type DrawSource } from './draw'
 import { audioTrackFactors, audioVoices, busLevels, frameAt, voiceGainAt, voiceWindows, type Bus, type KindOf, type Op, type VisualOp, type Voice } from './scene'
 import { clipStarts } from './composition'
+import { framesForBudget, ReverseFrameReader } from './reverse-frames'
+import { refreshingSourceOptions } from './refreshing-source'
 
 export type LoopRange = { startMs: number; endMs: number }
 export type PlayerState = { playing: boolean; timeMs: number; durationMs: number; waiting: boolean; rate: number; volume: number; muted: boolean; loop: LoopRange | null }
@@ -65,6 +67,8 @@ export class EditorPlayer {
   private destroyed = false
   private exporting: { onFrame?: (t: number) => void; onStall?: (stalled: boolean) => void; done: () => void } | null = null
   private videos = new Map<string, Slot>()
+  /** Reversed clips: no <video> can play backwards, so their pictures come from windows decoded with WebCodecs (reverse-frames.ts). */
+  private revs = new Map<string, { assetId: string; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number }>()
   private audios = new Map<string, Slot>()
   private images = new Map<string, { bitmap: ImageBitmap | null; promise: Promise<void>; failed: boolean; lastUsed: number }>()
   private urls = new Map<string, Promise<string>>()
@@ -191,6 +195,8 @@ export class EditorPlayer {
     cancelAnimationFrame(this.raf)
     for (const s of [...this.videos.values(), ...this.audios.values()]) this.release(s)
     this.videos.clear(); this.audios.clear()
+    for (const r of this.revs.values()) r.rr?.close()
+    this.revs.clear()
     for (const im of this.images.values()) im.bitmap?.close()
     this.images.clear()
     void this.ctx.close().catch(() => undefined)
@@ -287,6 +293,11 @@ export class EditorPlayer {
       const im = this.images.get(op.assetId)
       return im?.bitmap ? { src: im.bitmap, width: im.bitmap.width, height: im.bitmap.height } : null
     }
+    if (op.reverse) {
+      const r = this.revs.get(op.slot)
+      const f = r?.rr?.peek(this.revTime(op, r.durationSec))
+      return f ? { src: f.canvas as CanvasImageSource, width: f.canvas.width, height: f.canvas.height } : null
+    }
     const s = this.videos.get(op.slot)
     const v = s?.el as HTMLVideoElement | undefined
     if (!v || v.readyState < 2 || !v.videoWidth) return null
@@ -308,6 +319,7 @@ export class EditorPlayer {
       if (op.type !== 'visual') continue
       if (op.media === 'image') { if (!this.image(op.assetId)) missing = true; continue }
       active.add(op.slot)
+      if (op.reverse) { if (this.prepareReverse(op, now)) missing = true; continue }
       const s = this.videoSlot(op)
       s.lastUsed = now
       if (s.failed) continue
@@ -341,6 +353,7 @@ export class EditorPlayer {
         if (op.type !== 'visual') continue
         if (op.media === 'image') { this.image(op.assetId); continue }
         if (active.has(op.slot)) continue
+        if (op.reverse) { this.prepareReverse(op, now); continue }
         const s = this.videoSlot(op)
         s.lastUsed = now
         const v = s.el as HTMLVideoElement
@@ -354,6 +367,46 @@ export class EditorPlayer {
       if (voice.startMs > t && voice.startMs - t < LOOKAHEAD_MS * 1.5 * this.rate) this.audioSlot(voice).lastUsed = now
     }
     return missing || this.audioMissing(t)
+  }
+
+  private revTime(op: VisualOp, durationSec: number) {
+    const t = op.sourceMs / 1000
+    return Number.isFinite(durationSec) && durationSec > 0 ? Math.min(t, durationSec - 0.001) : t
+  }
+
+  /** Opens (once) the reverse reader of a layer and asks for the window holding the frame now on screen. True while that frame is not ready. */
+  private prepareReverse(op: VisualOp, now: number): boolean {
+    let r = this.revs.get(op.slot)
+    if (r && r.assetId !== op.assetId) { r.rr?.close(); this.revs.delete(op.slot); r = undefined }
+    if (!r) {
+      const entry: { assetId: string; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number } = { assetId: op.assetId, rr: null, durationSec: Infinity, failed: false, lastUsed: now }
+      this.revs.set(op.slot, entry)
+      void (async () => {
+        try {
+          const mb = await import('mediabunny')
+          const source = new mb.CustomSource(refreshingSourceOptions(op.assetId, (id, refresh) => this.url(id, refresh)))
+          const input = new mb.Input({ source, formats: mb.ALL_FORMATS })
+          const video = await input.getPrimaryVideoTrack()
+          if (!video || !(await video.canDecode())) throw new Error('no-decode')
+          const stats = await video.computePacketStats(120).catch(() => null)
+          const fps = stats && Number.isFinite(stats.averagePacketRate) && stats.averagePacketRate > 1 ? stats.averagePacketRate : 30
+          // The preview shows at most 960 px wide: windows of smaller frames hold more of them for the same memory.
+          const w = Math.min(video.displayWidth || 960, 960), h = Math.round(w * (video.displayHeight || 540) / (video.displayWidth || 960))
+          const sink = new mb.CanvasSink(video, { width: w })
+          entry.durationSec = await input.computeDuration().catch(() => Infinity)
+          entry.rr = new ReverseFrameReader(sink as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fps, framesForBudget(w, h, 96 * 1048576))
+          if (!this.destroyed) this.requestDraw()
+        } catch { entry.failed = true; this.init.onError?.('No se pudo preparar la lectura inversa de un vídeo del montaje.') }
+      })()
+      r = entry
+    }
+    r.lastUsed = now
+    if (r.failed) return false
+    if (!r.rr) return true
+    const ts = this.revTime(op, r.durationSec)
+    if (r.rr.peek(ts)) return false
+    void r.rr.get(ts).then(() => { if (!this.destroyed && !this.playing) this.requestDraw() }, () => undefined)
+    return true
   }
 
   private trimOf(op: VisualOp) {
@@ -504,6 +557,7 @@ export class EditorPlayer {
       for (const [k, s] of [...old, ...extra]) { if (map.has(k)) { this.release(s); map.delete(k) } }
     }
     drop(this.videos, MAX_VIDEO_SLOTS); drop(this.audios, MAX_AUDIO_SLOTS)
+    for (const [k, r] of this.revs) if (now - r.lastUsed > EVICT_AFTER_MS) { r.rr?.close(); this.revs.delete(k) }
     for (const [k, im] of this.images) if (now - im.lastUsed > 60_000 && this.images.size > 40) { im.bitmap?.close(); this.images.delete(k) }
   }
 

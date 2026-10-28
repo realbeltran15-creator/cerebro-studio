@@ -1,3 +1,4 @@
+import { backCopyOf, withEndDuration } from './reverse'
 import { splitKeyframes } from './motion'
 import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MAX_TIMELINE_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
 
@@ -41,7 +42,13 @@ export function moveClip(c: Composition, clipId: string, toIndex: number): Compo
 }
 
 export function updateClip(c: Composition, clipId: string, patch: Partial<Omit<Clip, 'id'>>): Composition {
-  return { ...c, clips: c.clips.map(k => (k.id === clipId ? { ...k, ...patch, ...(patch.durationMs !== undefined ? { durationMs: clampDur(patch.durationMs) } : {}) } : k)) }
+  return { ...c, clips: c.clips.map(k => {
+    if (k.id !== clipId) return k
+    // A reversed clip changes length at the END of its block = the START of its source window: the in-point moves, not the out-point.
+    // (Callers that set the window themselves — speed changes, start trims — pass trimInMs / speed and are left alone.)
+    const adj = k.reverse && patch.durationMs !== undefined && patch.trimInMs === undefined && patch.speed === undefined ? withEndDuration(k, clampDur(patch.durationMs)) : null
+    return { ...k, ...patch, ...(adj ? adj : patch.durationMs !== undefined ? { durationMs: clampDur(patch.durationMs) } : {}) }
+  }) }
 }
 
 export function setDuration(c: Composition, clipId: string, durationMs: number) {
@@ -61,6 +68,11 @@ export function sliceCues(cues: Clip['cues'], fromMs: number, toMs: number): Cli
 export function trimStart(c: Composition, clipId: string, deltaMs: number): Composition {
   const clip = c.clips.find(k => k.id === clipId)
   if (!clip) return c
+  if (clip.reverse) {
+    // Reversed: the start of the block is the END of the source window; the in-point stays and the window just gets shorter (or longer).
+    const duration = clampDur(clip.durationMs - deltaMs)
+    return updateClip(c, clipId, { trimInMs: clip.trimInMs ?? 0, durationMs: duration, ...(clip.cues ? { cues: sliceCues(clip.cues, clip.durationMs - duration, clip.durationMs) } : {}) })
+  }
   const trimIn = Math.max((clip.trimInMs ?? 0) + deltaMs, 0)
   const applied = trimIn - (clip.trimInMs ?? 0)
   const duration = clampDur(clip.durationMs - applied)
@@ -76,11 +88,50 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   if (atMs < MIN_CLIP_MS || clip.durationMs - atMs < MIN_CLIP_MS) return c
   const [k1, k2] = splitKeyframes(clip.keyframes, { zoom: clip.zoom ?? 1, focusX: clip.focusX ?? 0.5, focusY: clip.focusY ?? 0.5, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 }, Math.round(atMs))
   const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut', transitionMs: undefined, transitionOpts: undefined, ...(k1 ? { keyframes: k1 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
-  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
+  // Reversed clips read the file backwards: the part that comes FIRST in time is the part of the source window nearest its end.
+  const s = clip.speed ?? 1, cut = Math.round(atMs)
+  if (clip.reverse) { first.trimInMs = Math.round((clip.trimInMs ?? 0) + (clip.durationMs - cut) * s) }
+  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: clip.reverse ? (clip.trimInMs ?? 0) : (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)
   // Subtitles: keep the narration on the first half only (it was timed to the whole clip).
   return { ...c, clips: clips.map((k, n) => ({ ...k, position: n + 1 })) }
+}
+
+/** Turns a clip's reversal on or off (or sets it). Only this clip changes; the file and the other clips that use it stay as they are. */
+export function setReverse(c: Composition, clipId: string, reverse?: boolean): Composition {
+  const clip = c.clips.find(k => k.id === clipId)
+  if (!clip) return c
+  const on = reverse ?? !clip.reverse
+  if (!!clip.reverse === on) return c
+  const { reverse: _drop, ...rest } = clip
+  void _drop
+  return { ...c, clips: c.clips.map(k => (k.id === clipId ? ((on ? { ...rest, reverse: true } : rest) as Clip) : k)) }
+}
+
+/**
+ * «Crear bucle ida y vuelta»: puts a reversed copy of the clip right after it (same file, no new media). The copy is one frame shorter at
+ * each end so A → reversed A → A shows no frame twice. The copy has no voice/narration and no text of its own.
+ */
+export function makeBounceLoop(c: Composition, clipId: string, cycles = 1): Composition {
+  const i = c.clips.findIndex(k => k.id === clipId)
+  if (i < 0) return c
+  const clip = c.clips[i]
+  if (!clip.visualAssetId) return c
+  const back = backCopyOf(clip)
+  if (!back) return c
+  const n = Math.min(Math.max(Math.round(cycles), 1), 50)
+  const cut = { transition: 'cut' as const, transitionMs: undefined, transitionOpts: undefined }
+  const out: Clip[] = []
+  for (let r = 0; r < n; r++) {
+    const last = r === n - 1
+    // The first A is the clip itself; further forward copies are plain duplicates (same file, no voice or text of their own).
+    out.push(r === 0 ? { ...clip, ...cut } : { ...clip, id: newId('clip'), voiceAssetId: null, narration: null, cues: undefined, ...cut })
+    out.push({ ...clip, id: newId('clip'), voiceAssetId: null, narration: null, text: null, cues: undefined, keyframes: undefined, reverse: clip.reverse ? undefined : true, trimInMs: back.trimInMs, durationMs: back.durationMs, ...(last ? { transition: clip.transition, transitionMs: clip.transitionMs, transitionOpts: clip.transitionOpts } : cut) })
+  }
+  const clips = [...c.clips]
+  clips.splice(i, 1, ...out)
+  return { ...c, clips: clips.map((k, p) => ({ ...k, position: p + 1 })) }
 }
 
 export function duplicateClip(c: Composition, clipId: string): Composition {

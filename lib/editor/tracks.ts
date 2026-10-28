@@ -8,6 +8,7 @@ import {
   type AudioClip, type Clip, type Composition, type Marker, type OverlayClip, type TextClip, type TrackMeta, type TrackType,
 } from './composition'
 import { splitKeyframes } from './motion'
+import { withEndDuration } from './reverse'
 import { deleteAudioClip, deleteClip, deleteTextClip, splitClip, updateAudioClip, updateTextClip } from './timeline'
 
 export type ItemKind = 'clip' | 'audio' | 'text' | 'overlay'
@@ -319,8 +320,9 @@ export function splitAt(c: Composition, atMs: number, refs?: ItemRef[]): { compo
     if (!(atMs > o.startMs + 100 && atMs < o.startMs + o.durationMs - 100) || !wants({ kind: 'overlay', id: o.id })) continue
     const first = atMs - o.startMs
     const [k1, k2] = splitKeyframes(o.keyframes, { ...o.transform }, first)
-    const second: OverlayClip = { ...o, id: newId('ov'), startMs: atMs, durationMs: o.durationMs - first, trimInMs: o.trimInMs + Math.round(first * (o.speed ?? 1)), keyframes: k2, fadeInMs: undefined }
-    out = { ...out, overlays: (out.overlays ?? []).flatMap(x => (x.id === o.id ? [{ ...x, durationMs: first, keyframes: k1, fadeOutMs: undefined }, second] : [x])) }
+    const second: OverlayClip = { ...o, id: newId('ov'), startMs: atMs, durationMs: o.durationMs - first, trimInMs: o.reverse ? o.trimInMs : o.trimInMs + Math.round(first * (o.speed ?? 1)), keyframes: k2, fadeInMs: undefined }
+    const firstTrim = o.reverse ? Math.round(o.trimInMs + (o.durationMs - first) * (o.speed ?? 1)) : o.trimInMs
+    out = { ...out, overlays: (out.overlays ?? []).flatMap(x => (x.id === o.id ? [{ ...x, durationMs: first, trimInMs: firstTrim, keyframes: k1, fadeOutMs: undefined }, second] : [x])) }
     cut++
   }
   for (const a of [...(out.audioClips ?? [])]) {
@@ -347,8 +349,9 @@ export function trimItemStart(c: Composition, ref: ItemRef, deltaMs: number): Co
   if (ref.kind === 'overlay') {
     const o = (c.overlays ?? []).find(x => x.id === ref.id)
     if (!o) return c
-    const d = Math.min(Math.max(deltaMs, -o.startMs, -o.trimInMs / (o.speed ?? 1)), o.durationMs - 100)
-    return updateOverlay(c, o.id, { startMs: o.startMs + d, durationMs: o.durationMs - d, trimInMs: o.trimInMs + d * (o.speed ?? 1), keyframes: o.keyframes?.map(k => ({ ...k, atMs: k.atMs - d })).filter(k => k.atMs >= 0) })
+    // A reversed layer reads its file backwards: its left edge is the END of the source window, so the in-point stays.
+    const d = Math.min(Math.max(deltaMs, -o.startMs, o.reverse ? -Infinity : -o.trimInMs / (o.speed ?? 1)), o.durationMs - 100)
+    return updateOverlay(c, o.id, { startMs: o.startMs + d, durationMs: o.durationMs - d, trimInMs: o.reverse ? o.trimInMs : o.trimInMs + d * (o.speed ?? 1), keyframes: o.keyframes?.map(k => ({ ...k, atMs: k.atMs - d })).filter(k => k.atMs >= 0) })
   }
   if (ref.kind === 'audio') {
     const a = (c.audioClips ?? []).find(x => x.id === ref.id)
@@ -371,7 +374,7 @@ export function setItemEnd(c: Composition, ref: ItemRef, endMs: number): Composi
   const s = itemSpan(c, ref)
   if (!s) return c
   const dur = Math.max(ref.kind === 'text' ? 300 : 100, Math.round(endMs - s.startMs))
-  if (ref.kind === 'overlay') return updateOverlay(c, ref.id, { durationMs: dur })
+  if (ref.kind === 'overlay') { const o = (c.overlays ?? []).find(x => x.id === ref.id); return updateOverlay(c, ref.id, o?.reverse ? withEndDuration(o, dur) : { durationMs: dur }) }
   if (ref.kind === 'audio') return updateAudioClip(c, ref.id, { durationMs: dur })
   if (ref.kind === 'text') return updateTextClip(c, ref.id, { durationMs: dur })
   return c

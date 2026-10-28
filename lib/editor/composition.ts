@@ -106,6 +106,8 @@ export type OverlayClip = {
   /** Where it starts in the source (video), ms. */
   trimInMs: number
   speed?: number; volume?: number; muted?: boolean
+  /** Plays its stretch of the source backwards (non-destructive; the file is never rewritten). */
+  reverse?: boolean
   transform: Transform
   keyframes?: Keyframe[]
   crop?: Crop | null
@@ -151,6 +153,8 @@ export type Clip = {
   cues?: Array<{ startMs: number; endMs: number; text: string }>
   /** Playback speed of a video clip (0.25–4). The clip consumes durationMs × speed of its source. */
   speed?: number
+  /** Video only: plays its stretch of the source backwards (non-destructive property of this clip; other clips of the same file are not affected). */
+  reverse?: boolean
   /** Camera movement. When absent, the legacy `motion` applies (kenburns = slow zoom in on images). */
   camera?: CameraMove | null
   /** Picture adjustments (brightness/contrast/saturation 1 = unchanged; blur in % of the frame height). */
@@ -421,6 +425,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       transition: typeof c.transition === 'string' && c.transition in TRANSITIONS ? c.transition : 'fade',
       text: parseText(c.text),
       speed: clamp(c.speed, 0.25, 4, 1),
+      ...(c.reverse === true ? { reverse: true } : {}),
       camera: parseCamera(c.camera),
       ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
       ...(parseGrade(c.grade) ? { grade: parseGrade(c.grade) } : {}),
@@ -563,6 +568,7 @@ function parseLayers(v: Partial<Composition>): Pick<Composition, 'overlays' | 't
         ...(o.speed !== undefined ? { speed: clamp(o.speed, 0.25, 4, 1) } : {}),
         ...(o.volume !== undefined ? { volume: clamp(o.volume, 0, 2, 1) } : {}),
         ...(o.muted === true ? { muted: true } : {}),
+        ...(o.reverse === true ? { reverse: true } : {}),
         transform: parseTransform(o.transform),
         ...(kf ? { keyframes: kf } : {}),
         ...(o.crop ? { crop: parseCrop(o.crop) } : {}),

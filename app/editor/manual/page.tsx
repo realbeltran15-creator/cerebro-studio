@@ -8,7 +8,7 @@ import { RenderPanel } from '../../components/render-panel'
 import { ImportCenter, type ImportedItem } from '../../components/import-center'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
-import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
+import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, makeBounceLoop, setReverse, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, videoDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
@@ -842,6 +842,8 @@ export default function ManualEditorPage() {
     { label: 'Copiar', hint: 'Ctrl+C', run: copySel },
     { label: 'Pegar en el cabezal', hint: 'Ctrl+V', disabled: !clipboard.current, run: pasteHere },
     { label: 'Duplicar', hint: 'Ctrl+D', run: duplicateSel },
+    { label: 'Invertir vídeo (activar / desactivar)', disabled: !selClip || typeOf(selClip.visualAssetId) !== 'video', run: () => { if (selClip) apply(c => setReverse(c, selClip.id)) } },
+    { label: 'Crear bucle ida y vuelta', disabled: !selClip || typeOf(selClip.visualAssetId) !== 'video', run: () => { if (selClip) { apply(c => makeBounceLoop(c, selClip.id)); setNotice('Bucle ida y vuelta creado (mismo archivo). Ctrl+Z lo deshace.') } } },
     { label: 'Repetir el clip N veces…', run: () => { if (selClip) setBatchDlg('repeat'); else setNotice('Selecciona primero un clip del vídeo principal.') } },
     { label: 'Transiciones en lote…', run: () => setBatchDlg('trans') },
     'sep',
@@ -866,6 +868,7 @@ export default function ManualEditorPage() {
     { label: 'Mezclador de pistas', words: 'mezcla mezclador pistas solo mute volumen', go: () => ws.reveal({ tab: 'audio', selector: '[aria-label="Mezclador"]' }) },
     { label: 'Recortar / duración', words: 'recortar recorte trim duracion acortar alargar', go: () => (selClip ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="trim"]' }) : selAudio ? ws.reveal({ section: 'audio-basic' }) : selOverlay ? ws.reveal({ section: 'layer-basic' }) : ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' })) },
     { label: 'Recortar la imagen (encuadre)', words: 'recortar recorte crop imagen', go: () => (selOverlay ? ws.reveal({ section: 'layer-color' }) : selClip ? ws.reveal({ section: 'clip-color' }) : ws.reveal({ tab: 'effects' })) },
+    { label: 'Invertir vídeo / bucle ida y vuelta', words: 'invertir revertir reverse reverso atras bucle loop ida vuelta boomerang', go: () => (selClip ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="reverse"]' }) : selOverlay ? ws.reveal({ section: 'layer-sound' }) : ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' })) },
     { label: 'Dividir en el cabezal', words: 'dividir cortar split tijera', go: () => ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' }) },
     { label: 'Subtítulos', words: 'subtitulos subtitulo captions transcripcion', go: () => ws.reveal({ tab: 'texts', selector: '[data-tabpanel="texts"] section' }) },
     { label: 'Estilo de subtítulos del proyecto', words: 'subtitulos estilo captions', go: () => toProject('proj-captions') },
@@ -1150,6 +1153,8 @@ export default function ManualEditorPage() {
           clip={selClip} isVideo={typeOf(selClip.visualAssetId) === 'video'} visuals={visuals} splitAt={splitAt} setSplitAt={setSplitAt} nextBeatMs={nextBeatRel}
           onChange={p => { if ('transition' in p) { const next = updateClip(comp, selClip.id, p); apply(() => roomFor(selClip.id, next)) } else apply(c => updateClip(c, selClip.id, p)) }}
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
+          onReverse={() => apply(c => setReverse(c, selClip.id))}
+          onBounce={n => { apply(c => makeBounceLoop(c, selClip.id, n)); setNotice('Bucle ida y vuelta creado: clip → copia invertida (mismo archivo, sin duplicar el vídeo). Ctrl+Z lo deshace.') }}
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
           onSplit={ms => { apply(c => splitClip(c, selClip.id, ms)); setSplitAt('') }}
           onDuplicate={() => apply(c => duplicateClip(c, selClip.id))} onRepeat={() => setBatchDlg('repeat')}
@@ -1267,12 +1272,12 @@ export default function ManualEditorPage() {
   </StudioShell>
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
   transitionTools?: React.ReactNode
   transitionDuration?: React.ReactNode
   animation?: React.ReactNode
   clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
-  onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onRepeat?: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
+  onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onReverse: () => void; onBounce: (cycles: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onRepeat?: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
 }) {
   const splitMs = Math.round(Number(splitAt) * 1000)
   const cam = effectiveCamera(clip, !isVideo)
@@ -1287,6 +1292,14 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
         {isVideo && <label>Velocidad<select value={String(clip.speed ?? 1)} onChange={e => onSpeed(Number(e.target.value))}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>}
       </div>
+      {isVideo && <div className="field-row" data-tool="reverse" style={{ alignItems: 'end' }}>
+        <button type="button" className={clip.reverse ? 'primary' : 'ghost'} aria-pressed={clip.reverse === true} onClick={onReverse}
+          title="Reproduce este clip de atrás hacia delante. No modifica el archivo ni los demás clips que lo usan. Ctrl+Z lo deshace.">{clip.reverse ? '↺ Invertido (clic para quitar)' : '↺ Invertir vídeo'}</button>
+        <button type="button" className="ghost" onClick={() => onBounce(1)}
+          title="Duplica el clip, invierte la copia y la coloca justo después (clip → copia invertida), sin repetir fotogramas en las uniones. Usa el mismo archivo.">Crear bucle ida y vuelta</button>
+        <button type="button" className="ghost" onClick={() => onBounce(2)} title="Dos vueltas: clip → invertido → clip → invertido">×2</button>
+        {clip.reverse && <span className="muted small">Se reproduce al revés; su sonido propio no se emite.</span>}
+      </div>}
       {isVideo && <div className="field-row" data-tool="volume">
         <label>Volumen del vídeo ({Math.round((clip.volume ?? 1) * 100)}%)<input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
         <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
