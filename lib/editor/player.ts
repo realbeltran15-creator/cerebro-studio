@@ -68,7 +68,7 @@ export class EditorPlayer {
   private exporting: { onFrame?: (t: number) => void; onStall?: (stalled: boolean) => void; done: () => void } | null = null
   private videos = new Map<string, Slot>()
   /** Reversed clips: no <video> can play backwards, so their pictures come from windows decoded with WebCodecs (reverse-frames.ts). */
-  private revs = new Map<string, { assetId: string; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number }>()
+  private revs = new Map<string, { assetId: string; forward: boolean; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number }>()
   private audios = new Map<string, Slot>()
   private images = new Map<string, { bitmap: ImageBitmap | null; promise: Promise<void>; failed: boolean; lastUsed: number }>()
   private urls = new Map<string, Promise<string>>()
@@ -377,9 +377,9 @@ export class EditorPlayer {
   /** Opens (once) the reverse reader of a layer and asks for the window holding the frame now on screen. True while that frame is not ready. */
   private prepareReverse(op: VisualOp, now: number): boolean {
     let r = this.revs.get(op.slot)
-    if (r && r.assetId !== op.assetId) { r.rr?.close(); this.revs.delete(op.slot); r = undefined }
+    if (r && (r.assetId !== op.assetId || r.forward !== (op.forward === true))) { r.rr?.close(); this.revs.delete(op.slot); r = undefined }
     if (!r) {
-      const entry: { assetId: string; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number } = { assetId: op.assetId, rr: null, durationSec: Infinity, failed: false, lastUsed: now }
+      const entry: { assetId: string; forward: boolean; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number } = { assetId: op.assetId, forward: op.forward === true, rr: null, durationSec: Infinity, failed: false, lastUsed: now }
       this.revs.set(op.slot, entry)
       void (async () => {
         try {
@@ -394,7 +394,7 @@ export class EditorPlayer {
           const w = Math.min(video.displayWidth || 960, 960), h = Math.round(w * (video.displayHeight || 540) / (video.displayWidth || 960))
           const sink = new mb.CanvasSink(video, { width: w })
           entry.durationSec = await input.computeDuration().catch(() => Infinity)
-          entry.rr = new ReverseFrameReader(sink as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fps, framesForBudget(w, h, 96 * 1048576))
+          entry.rr = new ReverseFrameReader(sink as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fps, framesForBudget(w, h, 96 * 1048576), true, op.forward === true)
           if (!this.destroyed) this.requestDraw()
         } catch { entry.failed = true; this.init.onError?.('No se pudo preparar la lectura inversa de un vídeo del montaje.') }
       })()

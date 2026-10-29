@@ -82,3 +82,38 @@ describe('freeze frame', () => {
     expect(s.clips.map(k => k.trimInMs)).toEqual([2500, 2500])
   })
 })
+
+import { setSpeedRamp } from '@/lib/editor/timeline'
+import { consumedMs } from '@/lib/editor/reverse'
+describe('speed ramp', () => {
+  const base = comp(clip({ id: 'a', trimInMs: 1000, durationMs: 4000, speed: 1 }))
+  const r = setSpeedRamp(base, 'a', 3)
+  it('source time follows the integral of a linear speed', () => {
+    const k = r.clips[0]
+    expect(sourceAt(k, 0)).toBe(1000)
+    expect(sourceAt(k, 4000)).toBeCloseTo(1000 + 4000 * 2, 5) // average speed 2
+    expect(sourceAt(k, 2000)).toBeCloseTo(1000 + 2000 + (2 * 2000 * 2000) / (2 * 4000), 5)
+    expect(consumedMs(k)).toBe(8000)
+    // monotonic
+    let prev = -1; for (let t = 0; t <= 4000; t += 100) { const v = sourceAt(k, t); expect(v).toBeGreaterThan(prev); prev = v }
+  })
+  it('uses the frame reader forwards and is silent', () => {
+    const kindOf: KindOf = () => 'video'
+    const op = frameAt(r, 1000, kindOf).find((o): o is VisualOp => o.type === 'visual')!
+    expect(op.reverse).toBe(true); expect(op.forward).toBe(true)
+    expect(videoVoices(r, kindOf)).toHaveLength(0)
+  })
+  it('reverse and freeze clips refuse a ramp; null removes it', () => {
+    expect(setSpeedRamp(comp(clip({ id: 'a', reverse: true })), 'a', 2).clips[0].ramp).toBeUndefined()
+    expect(setSpeedRamp(r, 'a', null).clips[0].ramp).toBeUndefined()
+  })
+  it('splitting keeps the curve continuous (same speed and same frame at the cut)', () => {
+    const s = splitClip(r, 'a', 1000)
+    const [x, y] = s.clips
+    expect(x.speed).toBe(1); expect(x.ramp).toBeCloseTo(1.5, 5)
+    expect(y.speed).toBeCloseTo(1.5, 5); expect(y.ramp).toBe(3)
+    expect(y.trimInMs).toBe(Math.round(sourceAt(r.clips[0], 1000)))
+    expect(sourceAt(x, 1000)).toBeCloseTo(sourceAt(y, 0), 0)
+    expect(sourceAt(y, 3000)).toBeCloseTo(sourceAt(r.clips[0], 4000), 0)
+  })
+})

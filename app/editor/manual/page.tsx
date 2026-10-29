@@ -9,7 +9,7 @@ import { ImportCenter, type ImportedItem } from '../../components/import-center'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
 import { rollEdit, slideClip, slipClip, splitEditJL } from '../../../lib/editor/precision'
-import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, makeBounceLoop, setReverse, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History, freezeFrame } from '@/lib/editor/timeline'
+import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, makeBounceLoop, setReverse, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History, freezeFrame, setSpeedRamp } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, videoDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
@@ -881,6 +881,7 @@ export default function ManualEditorPage() {
     { label: 'Recortar la imagen (encuadre)', words: 'recortar recorte crop imagen', go: () => (selOverlay ? ws.reveal({ section: 'layer-color' }) : selClip ? ws.reveal({ section: 'clip-color' }) : ws.reveal({ tab: 'effects' })) },
     { label: 'Invertir vídeo / bucle ida y vuelta', words: 'invertir revertir reverse reverso atras bucle loop ida vuelta boomerang', go: () => (selClip ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="reverse"]' }) : selOverlay ? ws.reveal({ section: 'layer-sound' }) : ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' })) },
     { label: 'Edición de precisión (slip, slide, roll, corte J/L)', words: 'slip slide roll rodante deslizar corte j l precision recorte ripple', go: () => (selClip ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="precision"]' }) : selOverlay ? ws.reveal({ section: 'layer-sound' }) : ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' })) },
+    { label: 'Rampa de velocidad / congelar fotograma', words: 'rampa velocidad curva ramp speed ramping congelar freeze fotograma', go: () => (selClip ? ws.reveal({ section: 'clip-basic', selector: '[data-tool="ramp"]' }) : selOverlay ? ws.reveal({ section: 'layer-sound' }) : ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' })) },
     { label: 'Dividir en el cabezal', words: 'dividir cortar split tijera', go: () => ws.reveal({ selector: '[aria-label="Herramientas de la línea de tiempo"]' }) },
     { label: 'Subtítulos', words: 'subtitulos subtitulo captions transcripcion', go: () => ws.reveal({ tab: 'texts', selector: '[data-tabpanel="texts"] section' }) },
     { label: 'Estilo de subtítulos del proyecto', words: 'subtitulos estilo captions', go: () => toProject('proj-captions') },
@@ -1167,6 +1168,7 @@ export default function ManualEditorPage() {
           onSpeed={v => apply(c => setSpeed(c, selClip.id, v))}
           onReverse={() => apply(c => setReverse(c, selClip.id))}
           onFreeze={freezeHere}
+          onRamp={v => apply(c => setSpeedRamp(c, selClip.id, v))}
           onPrecision={(kind, ms) => apply(c => kind === 'slip' ? slipClip(c, selClip.id, ms) : kind === 'roll' ? rollEdit(c, selClip.id, ms) : kind === 'slide' ? slideClip(c, selClip.id, ms) : splitEditJL(c, selClip.id, kind === 'J' ? 'J' : 'L', Math.abs(ms)))}
           onBounce={n => { apply(c => makeBounceLoop(c, selClip.id, n)); setNotice('Bucle ida y vuelta creado: clip → copia invertida (mismo archivo, sin duplicar el vídeo). Ctrl+Z lo deshace.') }}
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
@@ -1312,12 +1314,12 @@ function PrecisionRow({ onPrecision, onFreeze, isVideo }: { onFreeze: () => void
   )
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onPrecision, onFreeze, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onPrecision, onFreeze, onRamp, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
   transitionTools?: React.ReactNode
   transitionDuration?: React.ReactNode
   animation?: React.ReactNode
   clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
-  onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onReverse: () => void; onPrecision: (kind: 'slip' | 'roll' | 'slide' | 'J' | 'L', ms: number) => void; onFreeze: () => void; onBounce: (cycles: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onRepeat?: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
+  onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onReverse: () => void; onPrecision: (kind: 'slip' | 'roll' | 'slide' | 'J' | 'L', ms: number) => void; onFreeze: () => void; onRamp: (endSpeed: number | null) => void; onBounce: (cycles: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onRepeat?: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
 }) {
   const splitMs = Math.round(Number(splitAt) * 1000)
   const cam = effectiveCamera(clip, !isVideo)
@@ -1332,6 +1334,15 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
         {isVideo && <label>Velocidad<select value={String(clip.speed ?? 1)} onChange={e => onSpeed(Number(e.target.value))}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>}
       </div>
+      {isVideo && !clip.reverse && !clip.freeze && <div className="field-row" data-tool="ramp" style={{ alignItems: 'end' }}>
+        <label>Rampa de velocidad: termina a
+          <select value={clip.ramp === undefined ? '' : String(clip.ramp)} onChange={e => onRamp(e.target.value === '' ? null : Number(e.target.value))} title="La velocidad cambia suavemente desde la velocidad del clip hasta este valor al final del clip. El clip rampa no emite su sonido.">
+            <option value="">Sin rampa</option>
+            {[0.25, 0.5, 1, 2, 4, 8].map(v => <option key={v} value={String(v)}>{v}×</option>)}
+          </select>
+        </label>
+        {clip.ramp !== undefined && <span style={{ fontSize: 12 }}>De {clip.speed ?? 1}× a {clip.ramp}× (sin sonido propio)</span>}
+      </div>}
       <PrecisionRow onPrecision={onPrecision} onFreeze={onFreeze} isVideo={isVideo} />
       {isVideo && <div className="field-row" data-tool="reverse" style={{ alignItems: 'end' }}>
         <button type="button" className={clip.reverse ? 'primary' : 'ghost'} aria-pressed={clip.reverse === true} onClick={onReverse}

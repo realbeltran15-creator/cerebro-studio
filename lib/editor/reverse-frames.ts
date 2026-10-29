@@ -25,7 +25,8 @@ export class ReverseFrameReader {
   /** Windows decoded so far and frames decoded in total (diagnostics: shows the cost of going backwards). */
   stats = { windows: 0, framesDecoded: 0, peakFrames: 0 }
 
-  constructor(private sink: FrameSink, private fps: number, private maxFrames: number, private lookahead = true) {}
+  /** `forward`: the playhead walks forwards through the source (variable speed ramps): windows are loaded ahead instead of behind. */
+  constructor(private sink: FrameSink, private fps: number, private maxFrames: number, private lookahead = true, private forward = false) {}
 
   private span() { return this.maxFrames / Math.max(1, this.fps) }
 
@@ -41,7 +42,10 @@ export class ReverseFrameReader {
   peek(ts: number): RevFrame | null {
     let f = this.find(this.win, ts)
     if (!f) { f = this.find(this.next, ts); if (f) { this.win = this.next; this.next = null } }
-    if (f && this.lookahead && this.win && ts < this.win.from + this.span() * 0.5) this.prefetch(this.win.from)
+    if (f && this.lookahead && this.win) {
+      if (this.forward) { if (ts > this.win.from + this.span() * 0.5) this.prefetchForward(this.win.to) }
+      else if (ts < this.win.from + this.span() * 0.5) this.prefetch(this.win.from)
+    }
     return f
   }
 
@@ -51,8 +55,15 @@ export class ReverseFrameReader {
     void this.load(to + 1 / Math.max(1, this.fps)).then(w => { if (!this.closed) this.next = w }, () => undefined)
   }
 
-  private load(to: number): Promise<Win> {
-    const start = Math.max(0, to - this.span())
+  /** Starts decoding the window that begins at `from` (forward mode). */
+  private prefetchForward(from: number) {
+    if (this.closed || this.next?.from != null && Math.abs(this.next.from - (from - 1 / Math.max(1, this.fps))) < 1e-6 || this.loading) return
+    const start = Math.max(0, from - 1 / Math.max(1, this.fps))
+    void this.load(start + this.span(), start).then(w => { if (!this.closed) this.next = w }, () => undefined)
+  }
+
+  private load(to: number, startAt?: number): Promise<Win> {
+    const start = startAt ?? Math.max(0, to - this.span())
     this.loadingTo = to
     const p = (async () => {
       const frames: RevFrame[] = []
@@ -75,6 +86,16 @@ export class ReverseFrameReader {
     const hit = this.peek(ts)
     if (hit) return hit
     // If a window ending at/after ts is on its way, wait for it; otherwise start one that covers ts.
+    if (this.forward) {
+      const start = Math.max(0, ts - 1 / Math.max(1, this.fps))
+      const covering = this.loading && this.loadingTo - this.span() <= ts + 1e-6 && this.loadingTo > ts + 1e-6
+      const w = covering ? await this.loading! : await this.load(start + this.span(), start)
+      if (this.closed) return null
+      this.win = w
+      const f = this.find(w, ts)
+      if (f && this.lookahead && ts > w.from + this.span() * 0.5) this.prefetchForward(w.to)
+      return f
+    }
     const end = ts + 2 / Math.max(1, this.fps)
     const w = this.loading && this.loadingTo >= end - 1e-6 && this.loadingTo - this.span() <= ts ? await this.loading : await this.load(end)
     if (this.closed) return null

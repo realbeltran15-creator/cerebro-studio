@@ -155,6 +155,8 @@ export type Clip = {
   speed?: number
   /** Video only: plays its stretch of the source backwards (non-destructive property of this clip; other clips of the same file are not affected). */
   reverse?: boolean
+  /** Video only: speed ramp — the speed goes linearly from `speed` (start) to `ramp` (end of the clip). Mutually exclusive with `reverse`. */
+  ramp?: number
   /** Video only: «congelar fotograma» — shows the single source frame at `trimInMs` for the whole clip (silent). */
   freeze?: boolean
   /** Camera movement. When absent, the legacy `motion` applies (kenburns = slow zoom in on images). */
@@ -429,6 +431,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       speed: clamp(c.speed, 0.25, 4, 1),
       ...(c.reverse === true ? { reverse: true } : {}),
       ...(c.freeze === true ? { freeze: true } : {}),
+      ...(c.ramp !== undefined && Number.isFinite(Number(c.ramp)) && c.reverse !== true ? { ramp: Math.min(Math.max(Number(c.ramp), 0.1), 8) } : {}),
       camera: parseCamera(c.camera),
       ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
       ...(parseGrade(c.grade) ? { grade: parseGrade(c.grade) } : {}),

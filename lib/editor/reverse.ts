@@ -20,6 +20,8 @@ type Reversible = Pick<Clip, 'trimInMs' | 'speed' | 'durationMs' | 'reverse'> | 
 export function sourceAt(clip: Reversible, local: number): number {
   const trim = clip.trimInMs ?? 0, s = clip.speed ?? 1
   if ((clip as { freeze?: boolean }).freeze) return trim
+  const ramp = (clip as { ramp?: number }).ramp
+  if (ramp !== undefined && !clip.reverse) return trim + rampConsumed(s, ramp, clip.durationMs, local)
   if (!clip.reverse) return trim + local * s
   const window = clip.durationMs * s
   return Math.max(trim, trim + window - local * s - HALF_FRAME_MS * s)
@@ -43,8 +45,12 @@ export function withEndDuration<T extends Reversible>(clip: T, durationMs: numbe
 }
 
 /** Clips that read their source backwards (their own sound is not played: reversed speech/music would be noise). */
-/** Clips whose picture comes from the frame reader, not from a playing <video>: reversed ones and frozen frames. */
-export const readsFrames = (c: { reverse?: boolean; freeze?: boolean } | undefined | null) => !!(c?.reverse || c?.freeze)
+/** Source time (ms) consumed after `local` ms of a clip whose speed goes linearly from s0 to s1 over `durationMs`. */
+export const rampConsumed = (s0: number, s1: number, durationMs: number, local: number) => s0 * local + ((s1 - s0) * local * local) / (2 * Math.max(1, durationMs))
+/** Source time (ms) a whole clip consumes (constant speed, or a linear ramp). */
+export const consumedMs = (c: { speed?: number; ramp?: number; durationMs: number }) => (c.ramp !== undefined ? rampConsumed(c.speed ?? 1, c.ramp, c.durationMs, c.durationMs) : c.durationMs * (c.speed ?? 1))
+/** Clips whose picture comes from the frame reader, not from a playing <video>: reversed ones, frozen frames and speed ramps. */
+export const readsFrames = (c: { reverse?: boolean; freeze?: boolean; ramp?: number } | undefined | null) => !!(c?.reverse || c?.freeze || c?.ramp !== undefined)
 export const isReversed = (c: Pick<Clip, 'reverse'> | undefined | null) => !!c?.reverse
 
 /** Does the montage contain any reversed video? (cheap check before opening reverse decoders) */

@@ -91,7 +91,14 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   // Reversed clips read the file backwards: the part that comes FIRST in time is the part of the source window nearest its end.
   const s = clip.speed ?? 1, cut = Math.round(atMs)
   if (clip.reverse) { first.trimInMs = Math.round((clip.trimInMs ?? 0) + (clip.durationMs - cut) * s) }
+  // A speed ramp is cut into two ramps that meet at the same speed and the same source frame.
+  if (clip.ramp !== undefined && !clip.reverse) {
+    const mid = s + (clip.ramp - s) * (cut / clip.durationMs)
+    first.ramp = mid
+    ;(first as Clip).speed = s
+  }
   const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: clip.reverse || clip.freeze ? (clip.trimInMs ?? 0) : (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
+  if (clip.ramp !== undefined && !clip.reverse) { second.speed = s + (clip.ramp - s) * (cut / clip.durationMs); second.trimInMs = Math.round(sourceAt(clip, cut)) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)
   // Subtitles: keep the narration on the first half only (it was timed to the whole clip).
@@ -337,4 +344,13 @@ export function freezeFrame(c: Composition, clipId: string, atMs: number, holdMs
     list.splice(i + 1, 0, still)
   }
   return { ...c, clips: list.map((k, n) => ({ ...k, position: n + 1 })) }
+}
+
+/** «Rampa de velocidad»: la velocidad cambia de forma lineal desde la del clip (`speed`) hasta `endSpeed` al final del clip. `null` la quita. */
+export function setSpeedRamp(c: Composition, clipId: string, endSpeed: number | null): Composition {
+  return { ...c, clips: c.clips.map(k => {
+    if (k.id !== clipId || k.reverse || k.freeze) return k
+    if (endSpeed === null || !Number.isFinite(endSpeed)) { const { ramp: _ramp, ...rest } = k; return rest as Clip }
+    return { ...k, ramp: Math.min(Math.max(endSpeed, 0.1), 8) }
+  }) }
 }

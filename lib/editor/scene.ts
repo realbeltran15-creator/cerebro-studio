@@ -25,6 +25,8 @@ export type VisualOp = {
   sourceMs: number
   /** Reads the source backwards (the clip's `reverse`): the picture comes from the reverse reader, never from a playing <video>. */
   reverse?: boolean
+  /** The reader walks forwards through the source (speed ramp) instead of backwards. */
+  forward?: boolean
   rate: number
   live: boolean
   /** Level of the video's own sound (0 = silent). */
@@ -200,7 +202,7 @@ function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, mu
   const f = transformAt({ zoom: clip.zoom ?? 1, focusX: clip.focusX ?? 0.5, focusY: clip.focusY ?? 0.5, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 }, clip.keyframes, local)
   return {
     ...baseVisual(), type: 'visual', slot: clip.id, assetId: clip.visualAssetId, media, fit: 'cover', trackId: 'main',
-    sourceMs: sourceAt(clip, local), ...(readsFrames(clip) ? { reverse: true } : {}), rate: clip.speed ?? 1, live: true,
+    sourceMs: sourceAt(clip, local), ...(readsFrames(clip) ? { reverse: true } : {}), ...(clip.ramp !== undefined && !clip.reverse && !clip.freeze ? { forward: true } : {}), rate: clip.speed ?? 1, live: true,
     volume: muted || clip.muted ? 0 : clip.volume ?? 1,
     zoom: f.zoom * cam.zoom, focusX: cam.focusX ?? f.focusX, focusY: cam.focusY ?? f.focusY,
     rotation: f.rotation, alpha: f.opacity, crop: clip.crop ?? null, filters: clip.filters ?? null, ...(effectiveGrade(clip.grade) ? { grade: effectiveGrade(clip.grade) } : {}),

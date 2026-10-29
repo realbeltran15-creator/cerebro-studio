@@ -151,18 +151,18 @@ export async function fastExport(opts: {
     return r
   }
   // Reversed clips: one reader per layer that decodes short windows forwards and serves them backwards (bounded memory, see reverse-frames.ts).
-  const rreaders = new Map<string, { assetId: string; r: ReverseFrameReader; usedAt: number }>()
+  const rreaders = new Map<string, { assetId: string; forward: boolean; r: ReverseFrameReader; usedAt: number }>()
   const closeRev = (slot: string) => { const x = rreaders.get(slot); if (x) { x.r.close(); rreaders.delete(slot) } }
   async function reverseFrame(op: VisualOp, frameNo: number): Promise<DrawSource | null> {
     const o = await open(op.assetId)
     if (!o.video) throw new FastExportUnsupported(`Un vídeo del montaje no tiene imagen legible.${urlStats.lastError ? ` (${urlStats.lastError})` : ''}`)
     let x = rreaders.get(op.slot)
-    if (x && x.assetId !== op.assetId) { closeRev(op.slot); x = undefined }
+    if (x && (x.assetId !== op.assetId || x.forward !== (op.forward === true))) { closeRev(op.slot); x = undefined }
     if (!x) {
       const stats = await o.video.computePacketStats(120).catch(() => null)
       const fpsSrc = stats && Number.isFinite(stats.averagePacketRate) && stats.averagePacketRate > 1 ? stats.averagePacketRate : 30
       const w = o.video.displayWidth || plan.width, h = o.video.displayHeight || plan.height
-      x = { assetId: op.assetId, usedAt: frameNo, r: new ReverseFrameReader(new mb.CanvasSink(o.video) as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fpsSrc, framesForBudget(w, h, 160 * 1048576), false) }
+      x = { assetId: op.assetId, usedAt: frameNo, r: new ReverseFrameReader(new mb.CanvasSink(o.video) as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fpsSrc, framesForBudget(w, h, 160 * 1048576), false, op.forward === true), forward: op.forward === true }
       rreaders.set(op.slot, x)
     }
     x.usedAt = frameNo

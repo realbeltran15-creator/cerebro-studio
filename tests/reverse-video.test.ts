@@ -214,6 +214,18 @@ describe('reverse frame reader (bounded memory)', () => {
   }
   const idx = (f: RevFrame | null) => (f as unknown as { k: number } | null)?.k
 
+  it('forward mode (speed ramps): walks 600 frames forwards through windows, in order, bounded, with look-ahead', async () => {
+    const { sink } = mk()
+    for (const look of [false, true]) {
+      const r = new ReverseFrameReader(sink, FPS, 30, look, true)
+      const got: number[] = []
+      for (let j = 0; j < 600; j++) got.push(idx(await r.get((300 + j + 0.5) / FPS))!)
+      expect(got).toEqual(Array.from({ length: 600 }, (_, j) => 300 + j))
+      expect(r.stats.peakFrames).toBeLessThanOrEqual(34)
+      expect(r.stats.framesDecoded).toBeLessThan(600 * 2.2)
+    }
+  })
+
   it('serves 600 frames of a 100 s file backwards, in order, with no frame lost, and never holds more than a window', async () => {
     const { sink } = mk()
     const r = new ReverseFrameReader(sink, FPS, 30, false)

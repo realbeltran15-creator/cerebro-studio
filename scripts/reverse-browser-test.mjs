@@ -87,6 +87,15 @@ if (on('freeze')) {
   const held = r.nums.slice(30, 60)
   check('freeze frame: 0…29, then one frame (15) held for 30 frames, then 15… forward again', r.nums.length === 90 && same(r.nums.slice(0, 30), seq(0, 29)) && held.every(v => v === held[0]) && Math.abs(held[0] - 15) <= 1 && Math.abs(r.nums[60] - 15) <= 1 && r.nums[61] > r.nums[60], show(r.nums))
 }
+// 2c ── speed ramp 1× → 3× over one second: source frame j follows the integral of the speed
+if (on('ramp')) {
+  gen('ramp.mp4', 120, '640x360', 12)
+  const man = { v: { kind: 'video', url: '/m/ramp.mp4' } }
+  const r = await exportTo('ramp.mp4', man, montage(mk('a', { speed: 1, ramp: 3, sourceDurationMs: ms(120) })))
+  const D = ms(N), want = Array.from({ length: N }, (_, j) => { const t = j * 1000 / FPS; return (t + (2 * t * t) / (2 * D)) * FPS / 1000 })
+  const ok = r.nums.length === N && r.nums.every((v, j) => Math.abs(v - want[j]) <= 1.5 && (j === 0 || v > r.nums[j - 1]))
+  check('speed ramp 1×→3×: frames accelerate along the integral of the speed (strictly increasing, ends near frame 58)', ok && r.nums[N - 1] >= 50, show(r.nums) + ' / want ' + want.map(Math.round).join(','))
+}
 // 3 ── export: speed 2 reversed
 if (on('speed')) {
   const r = await exportTo('speed.mp4', manifest, montage(mk('a', { reverse: true, speed: 2, durationMs: ms(N), trimInMs: 0 })))
