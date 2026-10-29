@@ -8,6 +8,7 @@ import { RenderPanel } from '../../components/render-panel'
 import { ImportCenter, type ImportedItem } from '../../components/import-center'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
+import { normalizedVolume } from '../../../lib/editor/audio-level'
 import { rollEdit, slideClip, slipClip, splitEditJL } from '../../../lib/editor/precision'
 import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, makeBounceLoop, setReverse, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History, freezeFrame, setSpeedRamp } from '@/lib/editor/timeline'
 import { assetLabel, audioDurationMs, videoDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
@@ -1187,6 +1188,12 @@ export default function ManualEditorPage() {
           </div>
           <label>Volumen ({Math.round(selAudio.volume * 100)}%)<input type="range" min={0} max={2} step={0.05} value={selAudio.volume} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { volume: Number(e.target.value) }))} /></label>
           <label>Panorámica ({!selAudio.pan ? 'centro' : `${selAudio.pan < 0 ? 'izquierda' : 'derecha'} ${Math.round(Math.abs(selAudio.pan) * 100)} %`})<input type="range" aria-label="Panorámica" min={-1} max={1} step={0.05} value={selAudio.pan ?? 0} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { pan: Number(e.target.value) || undefined }))} /></label>
+          <div className="field-row">
+            <button type="button" className="ghost" title="Sube o baja el volumen de este clip para que su pico más alto quede cerca del máximo (sin recortar). Es el control de volumen: Ctrl+Z lo deshace."
+              onClick={() => { const an = analyses[selAudio.assetId]; const w = typeof an === 'object' ? an.waveform : null; const v = w ? normalizedVolume(w, selAudio.trimInMs, selAudio.trimInMs + selAudio.durationMs) : null
+                if (v === null) { setError('Aún no hay forma de onda de este audio (o es casi silencio). Espera a que termine de analizarse.'); return }
+                apply(c => updateAudioClip(c, selAudio.id, { volume: v })); setNotice(`Volumen normalizado a ${Math.round(v * 100)} %.`) }}>Normalizar volumen</button>
+          </div>
           <label className="pill" style={{ alignSelf: 'flex-start' }}><input type="checkbox" checked={selAudio.muted} onChange={e => apply(c => updateAudioClip(c, selAudio.id, { muted: e.target.checked }))} /> Silenciar</label>
           <div className="pageActions">
             {selAudio.linkedClipId === null && <span className="muted small">Para enlazarlo a un clip, bórralo y añádelo con ese clip seleccionado.</span>}
