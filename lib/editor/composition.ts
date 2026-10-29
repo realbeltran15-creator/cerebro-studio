@@ -155,6 +155,8 @@ export type Clip = {
   speed?: number
   /** Video only: plays its stretch of the source backwards (non-destructive property of this clip; other clips of the same file are not affected). */
   reverse?: boolean
+  /** Video only: «congelar fotograma» — shows the single source frame at `trimInMs` for the whole clip (silent). */
+  freeze?: boolean
   /** Camera movement. When absent, the legacy `motion` applies (kenburns = slow zoom in on images). */
   camera?: CameraMove | null
   /** Picture adjustments (brightness/contrast/saturation 1 = unchanged; blur in % of the frame height). */
@@ -426,6 +428,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       text: parseText(c.text),
       speed: clamp(c.speed, 0.25, 4, 1),
       ...(c.reverse === true ? { reverse: true } : {}),
+      ...(c.freeze === true ? { freeze: true } : {}),
       camera: parseCamera(c.camera),
       ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
       ...(parseGrade(c.grade) ? { grade: parseGrade(c.grade) } : {}),

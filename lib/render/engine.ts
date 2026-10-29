@@ -226,7 +226,7 @@ export async function renderProject(o: RenderOptions) {
 /** The parts of a montage that decide its sound (a change in the picture alone does not redo the mix). */
 function audioKey(c: Composition) {
   return JSON.stringify({ a: c.audioClips, m: c.musicAssetId, mv: c.musicVolume, d: c.duckMusic, mix: c.mix, tr: c.tracks, ov: (c.overlays ?? []).map(o => [o.assetId, o.startMs, o.durationMs, o.trimInMs, o.speed, o.volume, o.muted, o.trackId, o.reverse]),
-    cl: c.clips.map(k => [k.visualAssetId, k.voiceAssetId, k.durationMs, k.trimInMs, k.speed, k.volume, k.muted, k.transition, k.transitionMs, k.reverse]), f: c.fadeMs, e: c.exportSettings?.resolution })
+    cl: c.clips.map(k => [k.visualAssetId, k.voiceAssetId, k.durationMs, k.trimInMs, k.speed, k.volume, k.muted, k.transition, k.transitionMs, k.reverse, k.freeze]), f: c.fadeMs, e: c.exportSettings?.resolution })
 }
 
 // ---------------------------------------------------------------- picture from video files

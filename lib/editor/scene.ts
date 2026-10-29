@@ -9,7 +9,7 @@ import {
 import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
 import { transitionWindow } from './transition-window'
-import { sourceAt } from './reverse'
+import { readsFrames, sourceAt } from './reverse'
 export { transitionWindow } from './transition-window'
 
 export type MediaKind = 'video' | 'image' | 'audio' | null
@@ -118,8 +118,8 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
         const reach = outMs + Math.max(0, over) * rate
         const past = over > 0 && a.media === 'video'
         // A reversed clip has no material «after its end» (that is before its start in the file): it holds its last frame.
-        const have = !past || (!A.reverse && A.sourceDurationMs !== undefined && reach <= A.sourceDurationMs)
-        ops.push({ ...a, live: have, sourceMs: past && !A.reverse ? (have ? reach : Math.max(0, outMs - 40 * rate)) : a.sourceMs,
+        const have = !past || (!readsFrames(A) && A.sourceDurationMs !== undefined && reach <= A.sourceDurationMs)
+        ops.push({ ...a, live: have, sourceMs: past && !readsFrames(A) ? (have ? reach : Math.max(0, outMs - 40 * rate)) : a.sourceMs,
           scale: tf.aScale, blur: tf.aBlur, alpha: a.alpha * tf.aAlpha, volume: have ? a.volume * (1 - p) : 0 })
       }
       const b = mainVisual(c, k + 1, Math.max(0, t - starts[k + 1]), kindOf, muted)
@@ -127,7 +127,7 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
         // B plays from before its start when its file has material there (a «handle»: it was trimmed); otherwise it holds its first frame.
         const toB = (B.trimInMs ?? 0) + (t - starts[k + 1]) * (B.speed ?? 1)
         // A reversed B has nothing «before its start» either: it holds its first (= last source) frame until the cut.
-        const live = b.media === 'video' && !B.reverse && (t >= starts[k + 1] || toB >= 0)
+        const live = b.media === 'video' && !readsFrames(B) && (t >= starts[k + 1] || toB >= 0)
         ops.push({
           ...b, live: b.media === 'video' && live, sourceMs: live ? toB : b.sourceMs, volume: live ? b.volume * p : 0, alpha: b.alpha * tf.bAlpha,
           offsetX: tf.bOffsetX, offsetY: tf.bOffsetY, revealX: tf.bReveal, revealY: tf.bRevealY, revealFrom: tf.bRevealFrom, scale: tf.bScale, blur: tf.bBlur,
@@ -200,7 +200,7 @@ function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, mu
   const f = transformAt({ zoom: clip.zoom ?? 1, focusX: clip.focusX ?? 0.5, focusY: clip.focusY ?? 0.5, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 }, clip.keyframes, local)
   return {
     ...baseVisual(), type: 'visual', slot: clip.id, assetId: clip.visualAssetId, media, fit: 'cover', trackId: 'main',
-    sourceMs: sourceAt(clip, local), ...(clip.reverse ? { reverse: true } : {}), rate: clip.speed ?? 1, live: true,
+    sourceMs: sourceAt(clip, local), ...(readsFrames(clip) ? { reverse: true } : {}), rate: clip.speed ?? 1, live: true,
     volume: muted || clip.muted ? 0 : clip.volume ?? 1,
     zoom: f.zoom * cam.zoom, focusX: cam.focusX ?? f.focusX, focusY: cam.focusY ?? f.focusY,
     rotation: f.rotation, alpha: f.opacity, crop: clip.crop ?? null, filters: clip.filters ?? null, ...(effectiveGrade(clip.grade) ? { grade: effectiveGrade(clip.grade) } : {}),
@@ -301,7 +301,7 @@ export function videoVoices(c: Composition, kindOf: KindOf): Array<Voice & { rat
   const last = c.clips.length - 1
   const win = (k: number) => (k >= 0 && k < last && BLENDS.has(c.clips[k].transition ?? 'fade') ? transitionWindow(c, k) : { ms: 0, pre: 0, post: 0 })
   c.clips.forEach((k, i) => {
-    if (!k.visualAssetId || kindOf(k.visualAssetId) !== 'video' || k.muted || k.reverse || mainMuted || (k.volume ?? 1) <= 0) return
+    if (!k.visualAssetId || kindOf(k.visualAssetId) !== 'video' || k.muted || readsFrames(k) || mainMuted || (k.volume ?? 1) <= 0) return
     const rate = k.speed ?? 1, trim = k.trimInMs ?? 0
     const wOut = win(i), wIn = win(i - 1)
     // Into the clip: it sounds from before its start when its file has material there (see frameAt), and fades in over its share of the window.

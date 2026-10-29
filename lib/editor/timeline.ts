@@ -1,4 +1,4 @@
-import { backCopyOf, withEndDuration } from './reverse'
+import { backCopyOf, sourceAt, withEndDuration } from './reverse'
 import { splitKeyframes } from './motion'
 import { audioStartMs, clipStarts, envelopeAt, MAX_CLIP_MS, MAX_TIMELINE_MS, MIN_CLIP_MS, totalDurationMs, type AudioClip, type Clip, type Composition, type TextClip } from './composition'
 
@@ -91,7 +91,7 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   // Reversed clips read the file backwards: the part that comes FIRST in time is the part of the source window nearest its end.
   const s = clip.speed ?? 1, cut = Math.round(atMs)
   if (clip.reverse) { first.trimInMs = Math.round((clip.trimInMs ?? 0) + (clip.durationMs - cut) * s) }
-  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: clip.reverse ? (clip.trimInMs ?? 0) : (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
+  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: clip.reverse || clip.freeze ? (clip.trimInMs ?? 0) : (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)
   // Subtitles: keep the narration on the first half only (it was timed to the whole clip).
@@ -311,4 +311,30 @@ export function moveEnvelopePoint(a: AudioClip, i: number, p: { atMs: number; ga
 export function addEnvelopePoint(a: AudioClip, p: { atMs: number; gain: number }): AudioClip {
   const pts = [...(a.envelope ?? []).filter(x => Math.abs(x.atMs - p.atMs) > 5), { atMs: Math.round(p.atMs), gain: Math.min(Math.max(p.gain, 0), 2) }].sort((x, y) => x.atMs - y.atMs)
   return { ...a, envelope: pts.slice(0, 64) }
+}
+
+/**
+ * «Congelar fotograma»: detiene el vídeo en el fotograma de `atMs` (tiempo local del clip) durante `holdMs`. Divide el clip en ese punto
+ * (o, si queda a menos de un clip mínimo de un borde, lo inserta justo antes o después) y coloca un clip congelado entre las dos mitades.
+ * No toca el archivo; el clip congelado usa el mismo archivo y va sin sonido.
+ */
+export function freezeFrame(c: Composition, clipId: string, atMs: number, holdMs = 2000): Composition {
+  const i = c.clips.findIndex(k => k.id === clipId)
+  const clip = c.clips[i]
+  if (!clip || !clip.visualAssetId || clip.freeze) return c
+  const at = Math.min(Math.max(Math.round(atMs), 0), clip.durationMs)
+  const src = Math.max(0, Math.round(sourceAt(clip, Math.min(at, clip.durationMs - 1))))
+  const still: Clip = {
+    ...clip, id: newId('clip'), freeze: true, reverse: undefined, speed: 1, trimInMs: src, durationMs: clampDur(holdMs), voiceAssetId: null, narration: null, text: null,
+    cues: undefined, keyframes: undefined, transition: 'cut', transitionMs: undefined, transitionOpts: undefined,
+  }
+  let list = [...c.clips]
+  if (at < MIN_CLIP_MS) list.splice(i, 0, still)
+  else if (clip.durationMs - at < MIN_CLIP_MS) list.splice(i + 1, 0, still)
+  else {
+    const s = splitClip(c, clipId, at)
+    list = [...s.clips]
+    list.splice(i + 1, 0, still)
+  }
+  return { ...c, clips: list.map((k, n) => ({ ...k, position: n + 1 })) }
 }

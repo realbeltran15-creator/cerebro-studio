@@ -81,6 +81,12 @@ if (on('trim')) {
   const r = await exportTo('trim.mp4', manifest, montage(mk('a', { trimInMs: ms(40), reverse: true }), mk('b', { trimInMs: ms(40) })))
   check('export: trimmed clip (source frames 40–69) reversed = 69 → 40 exactly (its forward twin, whose in-point falls between two frames, may start ±1)', same(r.nums.slice(0, 30), seq(69, 40)) && r.nums.slice(30).every((v, i) => Math.abs(v - (40 + i)) <= 1), show(r.nums))
 }
+// 2b ── freeze frame: forward 0…29, then source frame 15 held for 30 frames, then 15…44 (as «Congelar fotograma» builds it)
+if (on('freeze')) {
+  const r = await exportTo('freeze.mp4', manifest, montage(mk('a'), mk('f', { freeze: true, trimInMs: ms(15) + 5 }), mk('b', { trimInMs: ms(15) + 5 })))
+  const held = r.nums.slice(30, 60)
+  check('freeze frame: 0…29, then one frame (15) held for 30 frames, then 15… forward again', r.nums.length === 90 && same(r.nums.slice(0, 30), seq(0, 29)) && held.every(v => v === held[0]) && Math.abs(held[0] - 15) <= 1 && Math.abs(r.nums[60] - 15) <= 1 && r.nums[61] > r.nums[60], show(r.nums))
+}
 // 3 ── export: speed 2 reversed
 if (on('speed')) {
   const r = await exportTo('speed.mp4', manifest, montage(mk('a', { reverse: true, speed: 2, durationMs: ms(N), trimInMs: 0 })))

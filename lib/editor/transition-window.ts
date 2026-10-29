@@ -62,7 +62,7 @@ function handleOf(clip: Clip | undefined, media: 'video' | 'image' | 'audio' | n
   // Only a video can run out of frames: a photo (or a clip with no picture at all) has nothing to hold.
   if (!clip || media !== 'video') return { have: Infinity, unknown: false }
   // A reversed clip reads its file backwards: no material beyond either edge is used by a transition (it holds the nearest frame).
-  if (clip.reverse) return { have: 0, unknown: false }
+  if (clip.reverse || clip.freeze) return { have: 0, unknown: false }
   const rate = clip.speed ?? 1, trim = clip.trimInMs ?? 0
   if (side === 'before-start') return { have: trim / rate, unknown: false }
   if (!clip.sourceDurationMs) return { have: 0, unknown: true }

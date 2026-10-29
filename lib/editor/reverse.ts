@@ -19,6 +19,7 @@ type Reversible = Pick<Clip, 'trimInMs' | 'speed' | 'durationMs' | 'reverse'> | 
 /** Position in the source file (ms) of a clip at `local` ms from its start. */
 export function sourceAt(clip: Reversible, local: number): number {
   const trim = clip.trimInMs ?? 0, s = clip.speed ?? 1
+  if ((clip as { freeze?: boolean }).freeze) return trim
   if (!clip.reverse) return trim + local * s
   const window = clip.durationMs * s
   return Math.max(trim, trim + window - local * s - HALF_FRAME_MS * s)
@@ -42,10 +43,12 @@ export function withEndDuration<T extends Reversible>(clip: T, durationMs: numbe
 }
 
 /** Clips that read their source backwards (their own sound is not played: reversed speech/music would be noise). */
+/** Clips whose picture comes from the frame reader, not from a playing <video>: reversed ones and frozen frames. */
+export const readsFrames = (c: { reverse?: boolean; freeze?: boolean } | undefined | null) => !!(c?.reverse || c?.freeze)
 export const isReversed = (c: Pick<Clip, 'reverse'> | undefined | null) => !!c?.reverse
 
 /** Does the montage contain any reversed video? (cheap check before opening reverse decoders) */
-export const hasReverse = (c: Composition) => c.clips.some(k => k.reverse) || (c.overlays ?? []).some(o => o.reverse)
+export const hasReverse = (c: Composition) => c.clips.some(k => readsFrames(k)) || (c.overlays ?? []).some(o => o.reverse)
 
 /**
  * «Crear bucle ida y vuelta»: the copy that follows `clip` plays the same stretch backwards, one frame shorter at each end so the joins
