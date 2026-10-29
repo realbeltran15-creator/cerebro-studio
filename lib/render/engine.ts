@@ -20,7 +20,7 @@ import { promises as fs, createWriteStream, existsSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { clipStarts, exportPlan, projectDurationMs, TEXT_FONTS, type Composition } from '../editor/composition'
-import { drawOps, type DrawSource } from '../editor/draw'
+import { drawOps, setLayerFactory, type DrawSource } from '../editor/draw'
 import { audioTrackFactors, audioVoices, busLevels, frameAt, videoVoices as videoVoicesOf, voiceGainAt, voiceWindows, type Bus, type KindOf, type Op, type VisualOp, type Voice } from '../editor/scene'
 
 const execFileP = promisify(execFile)
@@ -144,6 +144,7 @@ export async function renderProject(o: RenderOptions) {
       if (!names.some(n => have.has(n))) o.onEvent?.({ phase: 'warning', message: `Fuente «${spec.label}» (${names.join(', ')}) no instalada en este equipo: el texto usará una sustituta y puede verse distinto al editor. Se puede pasar un archivo de fuente con --font.` })
     }
   }
+  setLayerFactory((w, h) => cv.createCanvas(w, h) as unknown as HTMLCanvasElement)
   const canvas = cv.createCanvas(W, H)
   const g = canvas.getContext('2d') as unknown as CanvasRenderingContext2D
   const images = new Map<string, Awaited<ReturnType<typeof cv.loadImage>>>()

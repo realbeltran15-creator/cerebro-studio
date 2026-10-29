@@ -55,11 +55,52 @@ export function drawWarmth(ctx: CanvasRenderingContext2D, warmth: number, x: num
 }
 export { filterString as visualFilterString }
 
-/** One picture layer: crop, fit (cover or a box), rotation, opacity, filters and the transition transforms. */
+/** An off-screen canvas for effects that need pixels (chroma key). Null where the platform has none (the Node renderer): the effect is skipped. */
+let layerCache: { canvas: OffscreenCanvas | HTMLCanvasElement; ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D } | null = null
+let layerFactory: ((w: number, h: number) => OffscreenCanvas | HTMLCanvasElement) | null = null
+/** For platforms without OffscreenCanvas or a document (the Node renderer passes its own canvas constructor). */
+export function setLayerFactory(f: ((w: number, h: number) => OffscreenCanvas | HTMLCanvasElement) | null) { layerFactory = f; layerCache = null }
+function layerFor(w: number, h: number) {
+  try {
+    if (!layerCache || layerCache.canvas.width !== w || layerCache.canvas.height !== h) {
+      const canvas = layerFactory ? layerFactory(w, h) : typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : typeof document !== 'undefined' ? Object.assign(document.createElement('canvas'), { width: w, height: h }) : null
+      const ctx = canvas?.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
+      layerCache = canvas && ctx ? { canvas, ctx } : null
+    }
+  } catch { layerCache = null }
+  return layerCache
+}
+
+/** Makes the pixels close to the key colour transparent (soft edge). */
+export function applyChroma(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, key: { color: string; tolerance: number; softness: number }, w: number, h: number) {
+  const img = ctx.getImageData(0, 0, w, h), d = img.data
+  const kr = parseInt(key.color.slice(1, 3), 16), kg = parseInt(key.color.slice(3, 5), 16), kb = parseInt(key.color.slice(5, 7), 16)
+  const tol = key.tolerance * 441.67, soft = Math.max(1, key.softness * 441.67)   // 441.67 = longest RGB distance
+  for (let p = 0; p < d.length; p += 4) {
+    const dist = Math.hypot(d[p] - kr, d[p + 1] - kg, d[p + 2] - kb)
+    if (dist <= tol) d[p + 3] = 0
+    else if (dist < tol + soft) d[p + 3] = Math.round(d[p + 3] * (dist - tol) / soft)
+  }
+  ctx.putImageData(img, 0, 0)
+}
+
+/** Clips the following drawing to a shape inside the rectangle (x, y, w, h); `invert` keeps what is OUTSIDE the shape. */
+export function maskPath(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, m: { shape: 'ellipse' | 'rounded' | 'rect'; inset: number; invert?: boolean }, x: number, y: number, w: number, h: number) {
+  const ix = w * m.inset, iy = h * m.inset, rx = x + ix, ry = y + iy, rw = w - 2 * ix, rh = h - 2 * iy
+  ctx.beginPath()
+  if (m.invert) ctx.rect(x - w, y - h, w * 3, h * 3)
+  if (m.shape === 'ellipse') ctx.ellipse(rx + rw / 2, ry + rh / 2, rw / 2, rh / 2, 0, 0, Math.PI * 2)
+  else if (m.shape === 'rounded') { const r = Math.min(rw, rh) * 0.18; ctx.moveTo(rx + r, ry); ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, r); ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, r); ctx.arcTo(rx, ry + rh, rx, ry, r); ctx.arcTo(rx, ry, rx + rw, ry, r); ctx.closePath() }
+  else ctx.rect(rx, ry, rw, rh)
+  ctx.clip(m.invert ? 'evenodd' : 'nonzero')
+}
+
+/** One picture layer: crop, fit (cover or a box), rotation, opacity, filters, blend mode, mask, chroma key and the transition transforms. */
 export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: number, s: DrawSource | null) {
   if (op.alpha <= 0) return
   ctx.save()
   ctx.globalAlpha = Math.min(1, op.alpha)
+  if (op.fx?.blend) ctx.globalCompositeOperation = op.fx.blend
   if (op.revealX < 1 || op.revealY < 1) {
     const rw = w * op.revealX, rh = h * op.revealY
     const x = op.revealFrom === 'right' ? w - rw : 0, y = op.revealFrom === 'bottom' ? h - rh : 0
@@ -69,6 +110,22 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
   if (op.scale !== 1) { ctx.translate(w / 2, h / 2); ctx.scale(op.scale, op.scale); ctx.translate(-w / 2, -h / 2) }
   if (op.backdrop) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h) }
   if (!s || !s.width || !s.height) { ctx.restore(); return }
+  // Chroma key needs the pixels: the picture goes to a private layer, the key colour is made transparent there, and the layer is drawn here.
+  const layer = op.fx?.chroma ? layerFor(w, h) : null
+  if (layer) {
+    layer.ctx.save()
+    layer.ctx.clearRect(0, 0, w, h)
+    drawPicture(layer.ctx as CanvasRenderingContext2D, op, w, h, s)
+    layer.ctx.restore()
+    applyChroma(layer.ctx, op.fx!.chroma!, w, h)
+    ctx.filter = 'none'
+    ctx.drawImage(layer.canvas as CanvasImageSource, 0, 0, w, h)
+  } else drawPicture(ctx, op, w, h, s)
+  ctx.restore()
+}
+
+/** The picture itself (crop, fit, rotation, filters, mask) on a context already positioned for the layer. */
+function drawPicture(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: number, s: DrawSource) {
   const filter = filterString(op, h)
   if (filter !== 'none' && 'filter' in ctx) ctx.filter = filter
   const c = op.crop
@@ -78,6 +135,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
     if (op.rotation) { ctx.translate(w / 2, h / 2); ctx.rotate(op.rotation * Math.PI / 180); ctx.translate(-w / 2, -h / 2) }
     const scale = Math.max(w / sw, h / sh) * op.zoom
     const dw = sw * scale, dh = sh * scale
+    if (op.fx?.mask) maskPath(ctx, op.fx.mask, 0, 0, w, h)
     // focusX/focusY pick which part of a larger (or zoomed) source stays in frame (0 = left/top edge, 1 = right/bottom).
     ctx.drawImage(s.src, sx, sy, sw, sh, (w - dw) * op.focusX, (h - dh) * op.focusY, dw, dh)
     if (op.grade?.warmth) drawWarmth(ctx, op.grade.warmth, Math.max(0, (w - dw) * op.focusX), Math.max(0, (h - dh) * op.focusY), Math.min(w, dw), Math.min(h, dh))
@@ -85,6 +143,7 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
     const bw = Math.max(1, op.box.scale * w), bh = bw * sh / sw
     ctx.translate(op.box.x * w, op.box.y * h)
     if (op.box.rotation) ctx.rotate(op.box.rotation * Math.PI / 180)
+    if (op.fx?.mask) maskPath(ctx, op.fx.mask, -bw / 2, -bh / 2, bw, bh)
     if (op.zoom !== 1) {
       // Ken Burns inside the box: the box stays put and the picture moves inside it.
       ctx.beginPath(); ctx.rect(-bw / 2, -bh / 2, bw, bh); ctx.clip()
@@ -93,7 +152,6 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
     } else ctx.drawImage(s.src, sx, sy, sw, sh, -bw / 2, -bh / 2, bw, bh)
     if (op.grade?.warmth) drawWarmth(ctx, op.grade.warmth, -bw / 2, -bh / 2, bw, bh)
   }
-  ctx.restore()
 }
 
 /** Where a box layer lands on the frame (for the viewer's handles): centre, size and rotation in pixels. */

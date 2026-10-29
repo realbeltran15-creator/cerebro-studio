@@ -39,7 +39,7 @@ import { zoomAfterWheel, wheelDelta, scrollForAnchor, sliderAnchor, clampZoom } 
 import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
 import { ASSET_MIME, EditorTimeline, kindColor, TRANSITION_ICONS, TRANSITION_MIME } from '../../components/editor-timeline'
-import { CLIP_PROPS, KeyframeEditor, LAYER_PROPS, OverlayInspector, SliderField, TransitionTools, VisualFields } from '../../components/editor-inspectors'
+import { CLIP_PROPS, FxEditor, KeyframeEditor, LAYER_PROPS, OverlayInspector, SliderField, TransitionTools, VisualFields } from '../../components/editor-inspectors'
 import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, loadPresets, presetKeys, savePresets, type AnimKey, type Presets } from '@/lib/editor/presets'
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
@@ -1334,6 +1334,7 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
         {isVideo && <label>Velocidad<select value={String(clip.speed ?? 1)} onChange={e => onSpeed(Number(e.target.value))}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>}
       </div>
+      <details data-tool="fx"><summary>Fusión, máscara y clave de color</summary><FxEditor fx={clip.fx} onChange={fx => onChange({ fx })} /></details>
       {isVideo && !clip.reverse && !clip.freeze && <div className="field-row" data-tool="ramp" style={{ alignItems: 'end' }}>
         <label>Rampa de velocidad: termina a
           <select value={clip.ramp === undefined ? '' : String(clip.ramp)} onChange={e => onRamp(e.target.value === '' ? null : Number(e.target.value))} title="La velocidad cambia suavemente desde la velocidad del clip hasta este valor al final del clip. El clip rampa no emite su sonido.">

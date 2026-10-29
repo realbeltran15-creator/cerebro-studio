@@ -4,7 +4,7 @@
  */
 import {
   activeTextClips, audioStartMs, audioTrackId, clipCaptions, clipStarts, envelopeAt, projectDurationMs, textTrackId, totalDurationMs, tracksOf, trackGains,
-  effectiveGrade, type AudioClip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type TextOverlay, type TrackKind,
+  effectiveGrade, type AudioClip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type LayerFx, type TextOverlay, type TrackKind,
 } from './composition'
 import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
@@ -42,6 +42,8 @@ export type VisualOp = {
   alpha: number
   crop: Crop | null
   filters: Filters | null
+  /** Fusión, clave de color y máscara de la capa. */
+  fx?: LayerFx
   /** «Igualar imagen» correction already scaled by its strength. */
   grade?: { brightness: number; contrast: number; saturation: number; warmth: number } | null
   /** Transition transforms applied to the whole layer. */
@@ -179,7 +181,7 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
         ...baseVisual(), type: 'visual', slot: `ov:${o.id}`, assetId: o.assetId, media, fit: 'box', trackId: tr.id,
         sourceMs: sourceAt(o, local), ...(o.reverse ? { reverse: true } : {}), rate: o.speed ?? 1, live: true, volume: o.muted || mutedTrack.has(tr.id) ? 0 : o.volume ?? 1,
         box: { x: tr2.x, y: tr2.y, scale: tr2.scale, rotation: tr2.rotation }, alpha: tr2.opacity * fadeA,
-        zoom: cam.zoom, focusX: cam.focusX ?? 0.5, focusY: cam.focusY ?? 0.5, crop: o.crop ?? null, filters: o.filters ?? null, ...(effectiveGrade(o.grade) ? { grade: effectiveGrade(o.grade) } : {}),
+        zoom: cam.zoom, focusX: cam.focusX ?? 0.5, focusY: cam.focusY ?? 0.5, crop: o.crop ?? null, filters: o.filters ?? null, ...(o.fx ? { fx: o.fx } : {}), ...(effectiveGrade(o.grade) ? { grade: effectiveGrade(o.grade) } : {}),
       })
     }
   }
@@ -205,7 +207,7 @@ function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, mu
     sourceMs: sourceAt(clip, local), ...(readsFrames(clip) ? { reverse: true } : {}), ...(clip.ramp !== undefined && !clip.reverse && !clip.freeze ? { forward: true } : {}), rate: clip.speed ?? 1, live: true,
     volume: muted || clip.muted ? 0 : clip.volume ?? 1,
     zoom: f.zoom * cam.zoom, focusX: cam.focusX ?? f.focusX, focusY: cam.focusY ?? f.focusY,
-    rotation: f.rotation, alpha: f.opacity, crop: clip.crop ?? null, filters: clip.filters ?? null, ...(effectiveGrade(clip.grade) ? { grade: effectiveGrade(clip.grade) } : {}),
+    rotation: f.rotation, alpha: f.opacity, crop: clip.crop ?? null, filters: clip.filters ?? null, ...(clip.fx ? { fx: clip.fx } : {}), ...(effectiveGrade(clip.grade) ? { grade: effectiveGrade(clip.grade) } : {}),
   }
 }
 

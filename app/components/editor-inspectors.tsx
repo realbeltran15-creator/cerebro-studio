@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { CAMERA_MOVES, FILTER_PRESETS, NO_FILTERS, TRANSITIONS, type CameraKind, type Clip, type Composition, type Crop, type Filters, type KeyEasing, type OverlayClip, type TransitionOptions } from '@/lib/editor/composition'
+import { BLEND_MODES, CAMERA_MOVES, FILTER_PRESETS, NO_FILTERS, TRANSITIONS, type BlendMode, type CameraKind, type Clip, type LayerFx, type Composition, type Crop, type Filters, type KeyEasing, type OverlayClip, type TransitionOptions } from '@/lib/editor/composition'
 import { ALIGNS, alignOf } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
 import { DIRECTIONS, EASINGS, HAS_DIRECTION, HAS_INTENSITY, type TransitionDirection, type TransitionEasing } from '@/lib/editor/motion'
@@ -54,6 +54,43 @@ export function VisualFields({ filters, crop, rotation, opacity, onChange, label
 }
 
 /** A layer above the main track: picture, timing, position/size/rotation/opacity, keyframes, Ken Burns, fades, sound, filters and crop. */
+
+const BLEND_LABEL: Record<BlendMode, string> = { multiply: 'Multiplicar', screen: 'Trama', overlay: 'Superponer', darken: 'Oscurecer', lighten: 'Aclarar', 'soft-light': 'Luz suave', 'hard-light': 'Luz fuerte', difference: 'Diferencia' }
+/** Fusión, máscara y clave de color (chroma key) de una capa. Todo no destructivo y visible igual en la vista previa y en la exportación. */
+export function FxEditor({ fx, onChange }: { fx: LayerFx | null | undefined; onChange: (fx: LayerFx | null) => void }) {
+  const set = (patch: Partial<LayerFx>) => { const n = { ...(fx ?? {}), ...patch } as LayerFx; for (const k of Object.keys(n) as (keyof LayerFx)[]) if (n[k] === undefined) delete n[k]; onChange(n.blend || n.chroma || n.mask ? n : null) }
+  return (
+    <div data-tool="fx" style={{ display: 'grid', gap: 8 }}>
+      <div className="field-row">
+        <label>Modo de fusión
+          <select value={fx?.blend ?? ''} onChange={e => set({ blend: (e.target.value || undefined) as BlendMode | undefined })}>
+            <option value="">Normal</option>
+            {BLEND_MODES.map(m => <option key={m} value={m}>{BLEND_LABEL[m]}</option>)}
+          </select>
+        </label>
+        <label>Máscara
+          <select value={fx?.mask?.shape ?? ''} onChange={e => set({ mask: e.target.value ? { shape: e.target.value as 'ellipse' | 'rounded' | 'rect', inset: fx?.mask?.inset ?? 0.1, ...(fx?.mask?.invert ? { invert: true } : {}) } : undefined })}>
+            <option value="">Sin máscara</option><option value="ellipse">Elipse</option><option value="rounded">Rectángulo redondeado</option><option value="rect">Rectángulo</option>
+          </select>
+        </label>
+      </div>
+      {fx?.mask && <div className="field-row">
+        <label>Margen de la máscara ({Math.round(fx.mask.inset * 100)} %)<input type="range" min={0} max={45} value={Math.round(fx.mask.inset * 100)} onChange={e => set({ mask: { ...fx.mask!, inset: Number(e.target.value) / 100 } })} /></label>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={fx.mask.invert === true} onChange={e => set({ mask: { ...fx.mask!, invert: e.target.checked || undefined } })} />Invertir máscara</label>
+      </div>}
+      <div className="field-row">
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!fx?.chroma} onChange={e => set({ chroma: e.target.checked ? { color: '#00ff00', tolerance: 0.3, softness: 0.1 } : undefined })} />Clave de color (chroma key)</label>
+        {fx?.chroma && <label>Color<input type="color" value={fx.chroma.color} onChange={e => set({ chroma: { ...fx.chroma!, color: e.target.value } })} /></label>}
+      </div>
+      {fx?.chroma && <div className="field-row">
+        <label>Tolerancia ({Math.round(fx.chroma.tolerance * 100)} %)<input type="range" min={2} max={100} value={Math.round(fx.chroma.tolerance * 100)} onChange={e => set({ chroma: { ...fx.chroma!, tolerance: Number(e.target.value) / 100 } })} /></label>
+        <label>Suavizado ({Math.round(fx.chroma.softness * 100)} %)<input type="range" min={0} max={100} value={Math.round(fx.chroma.softness * 100)} onChange={e => set({ chroma: { ...fx.chroma!, softness: Number(e.target.value) / 100 } })} /></label>
+      </div>}
+      <p style={{ fontSize: 12, margin: 0, opacity: 0.8 }}>La clave de color hace transparente el color elegido (fondo verde). Se aplica en la vista previa y en la exportación del navegador.</p>
+    </div>
+  )
+}
+
 export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, apply, onDelete, onDuplicate, animation }: {
   o: OverlayClip; visuals: EditorAsset[]; isVideo: boolean; playheadMs: number
   /** The keyframe editor for this layer. */
@@ -106,6 +143,7 @@ export function OverlayInspector({ o, visuals, isVideo, playheadMs, onChange, ap
       <label>Salida gradual (s)<input type="number" min={0} max={10} step={0.1} value={secs(o.fadeOutMs ?? 0)} onChange={e => onChange({ fadeOutMs: Math.max(0, Number(e.target.value) * 1000) || undefined })} /></label>
     </div>
     </Section>
+    <Section id="layer-fx" title="Fusión, máscara y clave de color"><FxEditor fx={o.fx} onChange={fx => onChange({ fx })} /></Section>
     {isVideo && <Section id="layer-sound" title="Velocidad y sonido" defaultOpen>
       <label className="pill" style={{ alignSelf: 'flex-start' }} title="Reproduce esta capa de atrás hacia delante (no modifica el archivo). Su sonido propio no se emite."><input type="checkbox" checked={o.reverse === true} onChange={e => onChange({ reverse: e.target.checked || undefined })} /> ↺ Invertir vídeo</label>
     <div className="field-row">

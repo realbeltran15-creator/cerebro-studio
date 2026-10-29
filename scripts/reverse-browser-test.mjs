@@ -96,6 +96,17 @@ if (on('ramp')) {
   const ok = r.nums.length === N && r.nums.every((v, j) => Math.abs(v - want[j]) <= 1.5 && (j === 0 || v > r.nums[j - 1]))
   check('speed ramp 1×→3×: frames accelerate along the integral of the speed (strictly increasing, ends near frame 58)', ok && r.nums[N - 1] >= 50, show(r.nums) + ' / want ' + want.map(Math.round).join(','))
 }
+// 2d ── layer effects in the real export: chroma key (colour made transparent → black frame), ellipse mask (corners lost), multiply blend
+if (on('fx')) {
+  const mean = file => { const raw = execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=16:16:flags=area,format=rgb24', '-f', 'rawvideo', '-']); const s = [0, 0, 0]; for (let k = 0; k < 256; k++) for (let c = 0; c < 3; c++) s[c] += raw[k * 3 + c]; return s.map(v => v / 256) }
+  const px = (file, x, y) => { const raw = execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-frames:v', '1', '-vf', 'scale=16:16:flags=area,format=rgb24', '-f', 'rawvideo', '-']); const o = (y * 16 + x) * 3; return [raw[o], raw[o + 1], raw[o + 2]] }
+  await exportTo('fx0.mp4', manifest, montage(mk('a', { durationMs: ms(N) })))
+  await exportTo('fx1.mp4', manifest, montage(mk('a', { fx: { chroma: { color: '#1e1e28', tolerance: 1, softness: 0 } } })))
+  await exportTo('fx2.mp4', manifest, montage(mk('a', { fx: { mask: { shape: 'ellipse', inset: 0 } } })))
+  const m0 = mean(path.join(work, 'fx0.mp4')), m1 = mean(path.join(work, 'fx1.mp4')), centre = px(path.join(work, 'fx2.mp4'), 8, 8), corner = px(path.join(work, 'fx2.mp4'), 0, 0), plainCorner = px(path.join(work, 'fx0.mp4'), 0, 0)
+  check('fx export: chroma key with full tolerance removes the picture (black frame vs coloured)', m1.every(v => v < 5) && m0.every(v => v > 15), `plain ${m0.map(Math.round)} keyed ${m1.map(Math.round)}`)
+  check('fx export: ellipse mask keeps the centre and removes the corner', corner.every(v => v < 30) && Math.abs(centre[0] - plainCorner[0]) < 12 && Math.abs(centre[1] - plainCorner[1]) < 12, `centre ${centre} corner ${corner} plain ${plainCorner}`)
+}
 // 3 ── export: speed 2 reversed
 if (on('speed')) {
   const r = await exportTo('speed.mp4', manifest, montage(mk('a', { reverse: true, speed: 2, durationMs: ms(N), trimInMs: 0 })))

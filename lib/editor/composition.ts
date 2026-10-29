@@ -88,6 +88,22 @@ export const FILTER_PRESETS: Record<string, { label: string; f: Filters }> = {
  * filters (non-destructive) and applied at `strength` (0–1). `warmth` > 0 warms, < 0 cools. `enabled: false` keeps it but shows the original.
  */
 export type Grade = { brightness: number; contrast: number; saturation: number; warmth: number; strength: number; enabled?: boolean; ref?: string | null }
+/** Efectos de composición de una capa: modo de fusión, clave de color (chroma key) y máscara de forma. */
+export const BLEND_MODES = ['multiply', 'screen', 'overlay', 'darken', 'lighten', 'soft-light', 'hard-light', 'difference'] as const
+export type BlendMode = (typeof BLEND_MODES)[number]
+export type ChromaKey = { color: string; tolerance: number; softness: number }
+export type MaskShape = { shape: 'ellipse' | 'rounded' | 'rect'; /** Fraction of each side left out (0–0.45). */ inset: number; invert?: boolean }
+export type LayerFx = { blend?: BlendMode; chroma?: ChromaKey; mask?: MaskShape }
+export function parseFx(v: unknown): LayerFx | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>, out: LayerFx = {}
+  if (typeof o.blend === 'string' && (BLEND_MODES as readonly string[]).includes(o.blend)) out.blend = o.blend as BlendMode
+  const ch = o.chroma as Record<string, unknown> | undefined
+  if (ch && typeof ch.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(ch.color)) out.chroma = { color: ch.color.toLowerCase(), tolerance: Math.min(Math.max(Number(ch.tolerance) || 0.3, 0.02), 1), softness: Math.min(Math.max(Number(ch.softness) || 0.1, 0), 1) }
+  const mk = o.mask as Record<string, unknown> | undefined
+  if (mk && (mk.shape === 'ellipse' || mk.shape === 'rounded' || mk.shape === 'rect')) out.mask = { shape: mk.shape, inset: Math.min(Math.max(Number(mk.inset) || 0, 0), 0.45), ...(mk.invert === true ? { invert: true } : {}) }
+  return out.blend || out.chroma || out.mask ? out : null
+}
 export type Crop = { left: number; top: number; right: number; bottom: number }
 /** Position of an overlay: centre (fractions of the frame), width as a fraction of the frame width, rotation in degrees, opacity 0..1. */
 export type Transform = { x: number; y: number; scale: number; rotation: number; opacity: number }
@@ -114,6 +130,8 @@ export type OverlayClip = {
   filters?: Filters | null
   /** «Igualar imagen» correction. */
   grade?: Grade | null
+  /** Fusión, clave de color y máscara. */
+  fx?: LayerFx | null
   /** Ken Burns style movement inside its box. */
   camera?: CameraMove | null
   fadeInMs?: number; fadeOutMs?: number
@@ -165,6 +183,8 @@ export type Clip = {
   filters?: Filters | null
   /** «Igualar imagen» correction. */
   grade?: Grade | null
+  /** Fusión, clave de color y máscara. */
+  fx?: LayerFx | null
   /** Part of the source removed at each edge (fractions). */
   crop?: Crop | null
   /** Rotation in degrees and opacity 0..1 of the picture. */
@@ -435,6 +455,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       camera: parseCamera(c.camera),
       ...(c.filters ? { filters: parseFilters(c.filters) } : {}),
       ...(parseGrade(c.grade) ? { grade: parseGrade(c.grade) } : {}),
+      ...(parseFx(c.fx) ? { fx: parseFx(c.fx) } : {}),
       ...(Array.isArray(c.keyframes) && c.keyframes.length ? { keyframes: parseClipKeyframes(c.keyframes, clampMs(Number(c.durationMs) || 5000)) } : {}),
       ...(c.crop ? { crop: parseCrop(c.crop) } : {}),
       ...(Number(c.rotation) ? { rotation: clamp(c.rotation, -360, 360, 0) } : {}),
@@ -580,6 +601,7 @@ function parseLayers(v: Partial<Composition>): Pick<Composition, 'overlays' | 't
         ...(o.crop ? { crop: parseCrop(o.crop) } : {}),
         ...(o.filters ? { filters: parseFilters(o.filters) } : {}),
         ...(parseGrade(o.grade) ? { grade: parseGrade(o.grade) } : {}),
+        ...(parseFx(o.fx) ? { fx: parseFx(o.fx) } : {}),
         ...(o.camera ? { camera: parseCamera(o.camera) } : {}),
         ...(Number(o.fadeInMs) > 0 ? { fadeInMs: clamp(o.fadeInMs, 0, 10_000, 0) } : {}),
         ...(Number(o.fadeOutMs) > 0 ? { fadeOutMs: clamp(o.fadeOutMs, 0, 10_000, 0) } : {}),
