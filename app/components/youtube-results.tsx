@@ -74,7 +74,7 @@ export function YouTubeResults({ results, context, onSaved, extra }: { results: 
       {extra?.(v)}
       <p className="muted small">{v.channelTitle} · {v.publishedAt ? new Date(v.publishedAt).toLocaleDateString() : 'sin fecha'} · {fmtDuration(v.observed.durationSeconds)}</p>
       <p className="small"><b>Observado:</b> {fmt(v.observed.views)} vistas · {fmt(v.observed.likes)} likes · {fmt(v.observed.comments)} comentarios · {fmt(v.observed.channelSubscribers)} suscriptores</p>
-      <p className="small muted"><b>Calculado:</b> {fmt(v.calculated.viewsPerDay)} vistas/día · ratio vistas/suscriptores {v.calculated.viewsToSubscribers ?? '—'} · interacción {v.calculated.engagementRate ?? '—'}%</p>
+      <p className="small muted"><b>Calculado:</b> {fmt(v.calculated.viewsPerDay)} vistas/día · ratio vistas/suscriptores {v.calculated.viewsToSubscribers ?? '—'}{v.calculated.viewsToSubscribers != null && v.calculated.viewsToSubscribers > 500 ? ' (no fiable: el dato de suscriptores no describe la audiencia, p. ej. canales de discográfica)' : ''} · interacción {v.calculated.engagementRate ?? '—'}%</p>
       <EstimateLine v={v} />
       <button type="button" className={saved.has(v.url) ? 'ghost' : undefined} disabled={saved.has(v.url) || Boolean(savingId)} onClick={() => void save(v)} style={{ marginTop: 8 }}>
         {saved.has(v.url) ? 'Ya en Oportunidades' : savingId === v.videoId ? 'Guardando…' : 'Guardar como oportunidad'}
@@ -89,6 +89,6 @@ const FORMAT_NAME = { short: 'Short probable', brief: 'Corto', medium: 'Medio', 
 function EstimateLine({ v }: { v: YouTubeVideoResult }) {
   const f = inferFormat(v), e = estimateRevenue(v)
   return <p className="small muted" style={{ marginTop: 4 }}>
-    <span className="tag inferido">inferido</span> {FORMAT_NAME[f.format]} ({f.reason}) · {e.status === 'estimado' ? <><span className="tag estimado">ESTIMADO</span> ingreso del vídeo ${fmtNumber(e.low)}–${fmtNumber(e.high)} (no es lo que ganó el canal)</> : <><span className="tag desconocido">DESCONOCIDO</span> sin RPM de referencia</>}
+    <span className="tag inferido">inferido</span> {FORMAT_NAME[f.format]} ({f.reason}) · {e.status === 'estimado' ? <><span className="tag estimado">ESTIMADO</span> ingreso del vídeo {e.low === e.high ? `$${fmtNumber(e.low)}` : `$${fmtNumber(e.low)}–$${fmtNumber(e.high)}`} (no es lo que ganó el canal)</> : <><span className="tag desconocido">DESCONOCIDO</span> sin RPM de referencia</>}
   </p>
 }
