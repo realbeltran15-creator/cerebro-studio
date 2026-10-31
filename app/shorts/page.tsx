@@ -40,6 +40,7 @@ export default function ShortsPage() {
   const [notice, setNotice] = useState('')
   const [renderKey, setRenderKey] = useState(0)
   // In-page confirmation (native confirm() dialogs can be blocked by the browser, which made the buttons look dead).
+  const [channel, setChannel] = useState<{ external_account_id: string; external_account_name: string | null } | null>(null)
   const [ask, setAsk] = useState<{ kind: 'approve' | 'upload' | 'discard'; text: string } | null>(null)
   const [demoState, setDemoState] = useState<{ kind: RunKind; text: string } | null>(null)
 
@@ -68,6 +69,10 @@ export default function ShortsPage() {
     setAssets((a.data ?? []) as EditorAsset[])
     setPubStatus((pub.data as { status?: string } | null)?.status ?? '')
   }, [supabase])
+
+  useEffect(() => {
+    void supabase.from('channel_connections').select('external_account_id,external_account_name').eq('provider', 'youtube').eq('status', 'connected').limit(1).then(({ data }: { data: Array<{ external_account_id: string; external_account_name: string | null }> | null }) => setChannel((data ?? [])[0] ?? null))
+  }, [supabase]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { void loadDetail(selected) }, [selected?.id, selected?.publication_job_id, loadDetail]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -114,11 +119,12 @@ export default function ShortsPage() {
 
   async function upload(confirmed = false) {
     if (!selected?.publication_job_id) return
-    if (!confirmed) { setError(''); setNotice(''); setAsk({ kind: 'upload', text: `Se subirá «${selected.plan.title ?? selected.topic}» a tu canal como PRIVADO con el contenido sintético declarado.` }); return }
+    if (!channel) { setError('Conecta y confirma tu canal de YouTube en Conectores.'); return }
+    if (!confirmed) { setError(''); setNotice(''); setAsk({ kind: 'upload', text: `Se subirá «${selected.plan.title ?? selected.topic}» como PRIVADO con el contenido sintético declarado al canal: ${channel.external_account_name ?? 'sin nombre'} (ID ${channel.external_account_id}). ¿Es el canal correcto?` }); return }
     setAsk(null)
     setBusy(true); setError(''); setNotice('')
     try {
-      const r = await fetch(`/api/publish/youtube/${selected.publication_job_id}/publish`, { method: 'POST' })
+      const r = await fetch(`/api/publish/youtube/${selected.publication_job_id}/publish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channelId: channel.external_account_id }) })
       const json = await r.json() as { videoId?: string; url?: string; error?: string }
       if (!r.ok || !json.videoId) throw new Error(json.error ?? 'La subida falló.')
       await supabase.from('shorts_factory_items').update({ status: 'published', video_id: json.videoId, published_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', selected.id)
