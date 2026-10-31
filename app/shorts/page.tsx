@@ -120,13 +120,13 @@ export default function ShortsPage() {
     setDemoState({ kind: 'running', text: 'Generando el Short de prueba con recursos gratuitos: guion, voz, imágenes y montaje. Puede tardar unos minutos; no cierres esta pestaña.' })
     try {
       const r = await fetch('/api/shorts/demo', { method: 'POST' })
-      const json = await r.json() as { ok?: boolean; outcome?: { status: string; reason?: string; message?: string; itemId?: string; topic?: string }; error?: string }
+      const json = await r.json() as { ok?: boolean; log?: string[]; outcome?: { status: string; reason?: string; message?: string; itemId?: string; topic?: string }; error?: string }
       if (json.outcome?.status === 'prepared') {
         setDemoState({ kind: 'generated', text: `Short generado: «${json.outcome.topic}». Abajo se monta el vídeo en tu navegador; cuando termine podrás verlo y descargar el MP4.` })
         setSelectedId(json.outcome.itemId ?? ''); await load()
       } else if (json.outcome?.status === 'skipped') {
         const bad = ['generation_failed', 'storage_failed', 'voice_quality'].includes(json.outcome.reason ?? '')
-        setDemoState({ kind: bad ? 'error' : 'skipped', text: json.outcome.message ?? 'No se creó el Short.' })
+        setDemoState({ kind: bad ? 'error' : 'skipped', text: [json.outcome.message ?? 'No se creó el Short.', ...(json.log ?? []).filter(l => /fallido/.test(l))].join(' ') })
       } else setDemoState({ kind: 'error', text: json.error ?? 'La generación falló.' })
     } catch (e) { setDemoState({ kind: 'error', text: e instanceof Error ? e.message : 'La generación falló.' }) }
   }

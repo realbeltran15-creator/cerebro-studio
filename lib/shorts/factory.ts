@@ -246,7 +246,7 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
     } catch (e) {
       if (e instanceof BudgetError) return done(skip('text_budget_exhausted', 'Se alcanzó el tope diario de llamadas de texto antes de tener un Short verificado.'))
       say(`Intento ${attempt + 1} fallido: ${msg(e)}`)
-      if (attempt === attempts - 1) return done(skip('all_candidates_discarded', `Todos los temas probados se descartaron o fallaron (último error: ${msg(e)}).`))
+      if (attempt === attempts - 1) return done(skip('generation_failed', `La generación falló en todos los intentos (último error: ${msg(e)}).`))
     }
   }
   return done(skip('all_candidates_discarded', 'Todos los temas probados se descartaron (repetidos, sin fuentes fiables o con un guion que no pasa los controles).'))
@@ -260,7 +260,13 @@ function interestEvidence(r: RankedCandidate, nicheMedian: number | null, poolSi
   }
 }
 
-const msg = (e: unknown) => (e instanceof Error ? e.message : 'error').slice(0, 200)
+const msg = (e: unknown) => {
+  const base = e instanceof Error ? e.message : 'error'
+  // The text router keeps one line per model it tried; without them «ningún proveedor pudo» says nothing about why.
+  const tried = (e as { attempts?: Array<{ model: string; error: string }> } | null)?.attempts
+  const detail = Array.isArray(tried) && tried.length ? ` [${tried.slice(0, 3).map(a => `${a.model}: ${a.error}`).join(' | ')}]` : ''
+  return `${base}${detail}`.slice(0, 400)
+}
 const estimated = (s: ShortScript) => Math.round(s.scenes.map(x => x.narration).join(' ').split(/\s+/).filter(Boolean).length / 2.5)
 function dataBytes(uri: string) {
   const m = uri.match(/^data:[^;]+;base64,(.+)$/)
