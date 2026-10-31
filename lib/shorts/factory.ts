@@ -8,6 +8,7 @@ import { buildShortComposition, sceneDurations, voiceLooksRight, wavDurationMs }
 import { historyBoost, type ObservedRetention } from './retention'
 import type { ShortsConfig, Theme } from './config'
 import type { Composition } from '@/lib/editor/composition'
+import { DEMO_FACTS } from './demo-facts'
 import type { TextTask } from '@/lib/providers/text'
 
 /**
@@ -111,7 +112,7 @@ const demoEvidence = (theme: string) => ({
   labels: 'sin datos de tendencia (modo de prueba)',
 })
 
-export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, opts: { demo?: boolean } = {}): Promise<{ outcome: Outcome; log: string[]; textCalls: number }> {
+export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, opts: { demo?: boolean; aiText?: boolean } = {}): Promise<{ outcome: Outcome; log: string[]; textCalls: number }> {
   const log: string[] = []
   let textCalls = 0
   const say = (m: string) => { log.push(m) }
@@ -154,7 +155,7 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
   }
 
   const discardedTopics: string[] = []
-  const attempts = demo ? Math.min(cfg.maxCandidatesPerDay, DEMO_THEMES.length) : Math.min(cfg.maxCandidatesPerDay, proven.length)
+  const attempts = demo ? Math.min(cfg.maxCandidatesPerDay, opts.aiText ? DEMO_THEMES.length : DEMO_FACTS.length) : Math.min(cfg.maxCandidatesPerDay, proven.length)
   for (let attempt = 0; attempt < attempts; attempt++) {
     const lead = demo ? null : proven[attempt]
     const demoTheme = DEMO_THEMES[(demoStart + attempt) % DEMO_THEMES.length]
@@ -163,8 +164,10 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
     const titles = demo ? [] : proven.slice(attempt, attempt + 4).map(r => r.candidate.title)
     try {
       // 3. Proposal, repeat check, source assessment, verification.
-      const p = demo ? demoProposalPrompt(cfg, demoTheme, [...previousTopics, ...discardedTopics]) : proposalPrompt(cfg, titles, [...previousTopics, ...discardedTopics])
-      const proposal = (await call('analysis', { ...p, schema: proposalSchema, schemaName: 'short_proposal', validate: parseProposal })).data
+      const curated = demo && !opts.aiText ? DEMO_FACTS[(demoStart + attempt) % DEMO_FACTS.length] : null
+    const p = demo ? demoProposalPrompt(cfg, demoTheme, [...previousTopics, ...discardedTopics]) : proposalPrompt(cfg, titles, [...previousTopics, ...discardedTopics])
+      const proposal = curated ?? (await call('analysis', { ...p, schema: proposalSchema, schemaName: 'short_proposal', validate: parseProposal })).data
+      if (curated) say('Tema de demostración escrito a mano (sin llamadas de texto): las fuentes se abren y se comprueban igualmente.')
       const topicKey = topicKeyOf(proposal.topic)
       const theme = classifyTheme(`${proposal.topic} ${proposal.statement}`)
       if (isRepeatTopic(proposal.topic, [...previousTopics, ...discardedTopics])) { say(`«${proposal.topic}»: tema repetido, descartado.`); discardedTopics.push(proposal.topic); continue }
@@ -175,7 +178,7 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
         await deps.store.saveDiscarded({ topic: proposal.topic, topicKey, theme, reason, opportunityId, sources: assessed.verdicts, interest: evidence() })
       }
       if (!assessed.ok) { await discard('Menos de 2 fuentes fiables que contengan el dato.'); continue }
-      const verification = (await call('analysis', { ...verificationPrompt(proposal.statement, assessed.accepted.map(s => ({ domain: s.domain, excerpt: s.excerpt ?? '' }))), schema: verificationSchema, schemaName: 'short_verification', validate: parseVerification })).data
+      const verification = curated ? { supported: true, contradictions: [] as string[], note: 'Modo de prueba: verificación determinista (dos fuentes de dominios distintos abiertas por el servidor contienen los términos clave); sin IA.' } : (await call('analysis', { ...verificationPrompt(proposal.statement, assessed.accepted.map(s => ({ domain: s.domain, excerpt: s.excerpt ?? '' }))), schema: verificationSchema, schemaName: 'short_verification', validate: parseVerification })).data
       if (!verification.supported) { await discard(`Las fuentes no respaldan el dato: ${verification.contradictions.join('; ') || verification.note || 'sin detalle'}`); continue }
 
       // 4. Script and the hard controls.
@@ -185,6 +188,12 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
       let checks: Check[] = []
       let feedback: string[] = []
       for (let tryNo = 0; tryNo < 2 && !script; tryNo++) {
+        if (curated) {
+          const result = scriptChecks(curated.script, { keyTerms: proposal.keyTerms }, verifiedText, cfg)
+          checks = result.checks
+          if (result.ok) script = curated.script; else feedback = result.checks.filter(c => !c.ok).map(c => c.message)
+          break
+        }
         const sp = scriptPrompt(cfg, { statement: proposal.statement, keyTerms: proposal.keyTerms }, excerpts, feedback)
         const candidate = (await call('script_hooks', { ...sp, schema: scriptSchema, schemaName: 'short_script', validate: parseScript })).data
         const result = scriptChecks(candidate, { keyTerms: proposal.keyTerms }, verifiedText, cfg)

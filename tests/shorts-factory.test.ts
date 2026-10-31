@@ -365,6 +365,17 @@ function deps(over: Partial<FactoryDeps> & { store?: ReturnType<typeof fakeStore
   return { d, store, counts }
 }
 
+describe('demo facts', () => {
+  it('every hand-written script passes the same controls as a generated one', async () => {
+    const { DEMO_FACTS } = await import('@/lib/shorts/demo-facts')
+    for (const f of DEMO_FACTS) {
+      const r = scriptChecks(f.script, { keyTerms: f.keyTerms }, f.statement, cfg)
+      expect(r.checks.filter(c => !c.ok), f.topic).toEqual([])
+      expect(f.sources.length).toBeGreaterThanOrEqual(2)
+    }
+  })
+})
+
 describe('prepareDailyShort', () => {
   it('prepares one Short end to end with zero spend and full evidence', async () => {
     const { d, store, counts } = deps()
@@ -384,8 +395,8 @@ describe('prepareDailyShort', () => {
     expect(store.assets.filter(a => a.kind === 'image').every(a => a.provenance.allowancePool === 'cloudflare-neurons')).toBe(true)
     expect(store.assets.find(a => a.kind === 'music')!.license).toBe('public_domain')
   })
-  it('test mode: makes a Short without any Radar data, labelled as a demo, with no trend statistics', async () => {
-    const { d, store, counts } = deps({ opportunities: [] })
+  it('test mode (curated, no text calls): makes a Short without Radar data, labelled as a demo, with no trend statistics', async () => {
+    const { d, store, counts } = deps({ opportunities: [], async fetchPage() { return { ok: true, status: 200, text: 'Venus gira muy despacio: su día dura 243 días terrestres y su año 225. Venus es el segundo planeta.' } } })
     const { outcome } = await prepareDailyShort(cfg, d, { demo: true })
     expect(outcome).toMatchObject({ status: 'prepared' })
     const item = store.items[0] as Record<string, any>
@@ -397,7 +408,15 @@ describe('prepareDailyShort', () => {
     expect(item.spend).toMatchObject({ usd: 0, tier: 'free' })
     expect(item.checks.every((c: { ok: boolean }) => c.ok)).toBe(true)
     expect(item.sources.filter((s: { status: string }) => s.status === 'accepted')).toHaveLength(2)
+    expect(counts.text).toBe(0)
+    expect(item.verification.note).toMatch(/sin IA/)
+  })
+  it('test mode with the AI text model proposes its own fact from a general theme', async () => {
+    const { d, store, counts } = deps({ opportunities: [] })
+    const { outcome } = await prepareDailyShort(cfg, d, { demo: true, aiText: true })
+    expect(outcome).toMatchObject({ status: 'prepared' })
     expect(counts.text).toBe(3)
+    expect((store.items[0] as Record<string, any>).interest.demo).toBe(true)
   })
   it('test mode keeps the quality floor and the source check', async () => {
     const a = deps({ opportunities: [], freeModels: () => ({ ok: false, reasons: ['Voz: no disponible'] }) })
