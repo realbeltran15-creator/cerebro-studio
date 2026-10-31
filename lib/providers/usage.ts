@@ -23,7 +23,7 @@ export function entryOf(a: UsageAsset): UsageEntry {
   const provider = String(p.providerName ?? p.provider ?? a.source_provider ?? 'desconocido')
   const model = String(p.catalogModel ?? p.model ?? '')
   const imported = typeof p.importedAt === 'string'
-  const tier = String(p.costTier ?? (imported ? 'free' : 'paid')).replace('free_allowance', 'free')
+  const tier = String(p.costTier ?? ((typeof a.source_provider === 'string' && a.source_provider.startsWith('browser-')) ? 'local' : imported ? 'free' : 'paid')).replace('free_allowance', 'free')
   const credits = p.credits && typeof p.credits === 'object' ? num((p.credits as Record<string, unknown>).credits) : null
   return {
     id: a.id, date: a.created_at, projectId: a.project_id, kind: a.asset_type, provider, model,
