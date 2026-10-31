@@ -5,7 +5,7 @@ import { StudioShell } from '../components/studio-shell'
 import { RenderPanel } from '../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { parseComposition, type Composition } from '@/lib/editor/composition'
-import type { EditorAsset } from '@/lib/editor/client'
+import { signedUrl, type EditorAsset } from '@/lib/editor/client'
 import { idempotencyKeyFor, approvalSummary, shortPayload } from '@/lib/shorts/publish'
 import { isRetentionDue, retentionWindow, themeRetention, type ObservedRetention } from '@/lib/shorts/retention'
 import type { Check } from '@/lib/shorts/script'
@@ -71,6 +71,14 @@ export default function ShortsPage() {
 
   // The newest finished render of this Short (a browser render, or its H.264 conversion).
   const renderAsset = useMemo(() => assets.find(a => a.asset_type === 'video' && (a.source_provider === 'browser-render' || a.source_provider === 'browser-transcode')) ?? null, [assets])
+  const [videoUrl, setVideoUrl] = useState('')
+  useEffect(() => {
+    setVideoUrl('')
+    if (!renderAsset) return
+    let alive = true
+    void signedUrl(renderAsset.id).then(u => { if (alive) setVideoUrl(u) }).catch(() => undefined)
+    return () => { alive = false }
+  }, [renderAsset?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const accepted = (selected?.sources ?? []).filter(s => s.status === 'accepted')
   const learning = useMemo(() => themeRetention(items.map(i => ({ theme: i.theme as never, retention: i.retention }))), [items])
   const failedChecks = (selected?.checks ?? []).filter(c => !c.ok)
@@ -197,7 +205,14 @@ export default function ShortsPage() {
 
         {selected.status === 'prepared' && composition && selected.project_id && <>
           <ShortsModesPanel projectId={selected.project_id} composition={composition} assets={assets} onApply={c => { setComposition(c); setRenderKey(k => k + 1) }} onReload={() => void loadDetail(selected)} />
-          <RenderPanel key={renderKey} projectId={selected.project_id} composition={composition} assets={assets} autoStart onRendered={() => { setRenderKey(k => k); void loadDetail(selected) }} />
+          {renderAsset && <section className="panel" aria-labelledby="sh-video">
+            <h3 id="sh-video">Vídeo terminado</h3>
+            {videoUrl ? <>
+              <video src={videoUrl} controls playsInline preload="metadata" style={{ maxHeight: 520, aspectRatio: '9 / 16', background: '#000', borderRadius: 8 }} aria-label="Vista previa del Short" />
+              <p style={{ marginTop: 8 }}><a href={videoUrl} download={`${(selected.plan.title ?? selected.topic).replace(/[^\w\-]+/g, '_').slice(0, 60)}.mp4`}>Descargar MP4</a></p>
+            </> : <p className="muted small">Preparando la vista previa…</p>}
+          </section>}
+          <RenderPanel key={renderKey} projectId={selected.project_id} composition={composition} assets={assets} autoStart={!renderAsset} onRendered={() => { setRenderKey(k => k); void loadDetail(selected) }} />
           <p className="muted small">El vídeo se renderiza al abrir esta pantalla, en tu navegador, en tiempo real: mantén la pestaña visible hasta que termine.</p>
         </>}
 
