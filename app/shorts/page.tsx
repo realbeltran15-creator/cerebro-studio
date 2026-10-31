@@ -11,6 +11,7 @@ import { isRetentionDue, retentionWindow, themeRetention, type ObservedRetention
 import type { Check } from '@/lib/shorts/script'
 import type { SourceVerdict } from '@/lib/shorts/sources'
 import { AdminHint } from '../components/admin-hint'
+import { ShortsModesPanel } from '../components/shorts-modes-panel'
 
 type Item = {
   id: string; status: string; topic: string; theme: string; project_id: string | null; render_job_id: string | null; publication_job_id: string | null
@@ -169,6 +170,7 @@ export default function ShortsPage() {
         </section>
 
         {selected.status === 'prepared' && composition && selected.project_id && <>
+          <ShortsModesPanel projectId={selected.project_id} composition={composition} assets={assets} onApply={c => { setComposition(c); setRenderKey(k => k + 1) }} onReload={() => void loadDetail(selected)} />
           <RenderPanel key={renderKey} projectId={selected.project_id} composition={composition} assets={assets} autoStart onRendered={() => { setRenderKey(k => k); void loadDetail(selected) }} />
           <p className="muted small">El vídeo se renderiza al abrir esta pantalla, en tu navegador, en tiempo real: mantén la pestaña visible hasta que termine.</p>
         </>}
