@@ -39,6 +39,8 @@ export default function ShortsPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [renderKey, setRenderKey] = useState(0)
+  // In-page confirmation (native confirm() dialogs can be blocked by the browser, which made the buttons look dead).
+  const [ask, setAsk] = useState<{ kind: 'approve' | 'upload' | 'discard'; text: string } | null>(null)
   const [demoState, setDemoState] = useState<{ kind: RunKind; text: string } | null>(null)
 
   const load = useCallback(async () => {
@@ -84,11 +86,12 @@ export default function ShortsPage() {
   const failedChecks = (selected?.checks ?? []).filter(c => !c.ok)
   const canApprove = Boolean(selected && selected.status === 'prepared' && renderAsset && accepted.length >= 2 && failedChecks.length === 0)
 
-  async function approve() {
+  async function approve(confirmed = false) {
     if (!selected || !renderAsset || !selected.project_id) return
     const payload = shortPayload(selected.plan, selected.sources, renderAsset.id)
     const summary = approvalSummary(selected.topic, payload, accepted.length)
-    if (!window.confirm(`${summary}\n\nAl aprobar autorizas subirlo a tu canal como PRIVADO. Todavía no se sube: tendrás que pulsar «Subir a YouTube».`)) return
+    if (!confirmed) { setError(''); setNotice(''); setAsk({ kind: 'approve', text: `${summary}. Al aprobar autorizas subirlo a tu canal como PRIVADO. Todavía no se sube: después tendrás que pulsar «Subir a YouTube».` }); return }
+    setAsk(null)
     setBusy(true); setError(''); setNotice('')
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -109,9 +112,10 @@ export default function ShortsPage() {
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo aprobar.') } finally { setBusy(false) }
   }
 
-  async function upload() {
+  async function upload(confirmed = false) {
     if (!selected?.publication_job_id) return
-    if (!window.confirm(`Se subirá «${selected.plan.title ?? selected.topic}» a tu canal como PRIVADO con el contenido sintético declarado. ¿Continuar?`)) return
+    if (!confirmed) { setError(''); setNotice(''); setAsk({ kind: 'upload', text: `Se subirá «${selected.plan.title ?? selected.topic}» a tu canal como PRIVADO con el contenido sintético declarado.` }); return }
+    setAsk(null)
     setBusy(true); setError(''); setNotice('')
     try {
       const r = await fetch(`/api/publish/youtube/${selected.publication_job_id}/publish`, { method: 'POST' })
@@ -139,8 +143,10 @@ export default function ShortsPage() {
     } catch (e) { setDemoState({ kind: 'error', text: e instanceof Error ? e.message : 'La generación falló.' }) }
   }
 
-  async function discard() {
-    if (!selected || !window.confirm('¿Descartar este Short? El tema no volverá a proponerse.')) return
+  async function discard(confirmed = false) {
+    if (!selected) return
+    if (!confirmed) { setError(''); setNotice(''); setAsk({ kind: 'discard', text: '¿Descartar este Short? El tema no volverá a proponerse.' }); return }
+    setAsk(null)
     const { error: e } = await supabase.from('shorts_factory_items').update({ status: 'discarded', discarded_reason: 'Descartado por el propietario en la pantalla de aprobación.', updated_at: new Date().toISOString() }).eq('id', selected.id)
     if (e) setError(e.message); else { setNotice('Descartado.'); await load() }
   }
@@ -218,6 +224,13 @@ export default function ShortsPage() {
 
         <section className="panel" aria-labelledby="sh-approval">
           <h3 id="sh-approval">Aprobación</h3>
+          {busy && <p className="muted small" role="status">Trabajando… no cierres esta pestaña.</p>}
+          {error && <p className="error" role="alert">{error}</p>}
+          {notice && <p className="notice" role="status">{notice}</p>}
+          {ask && <div className="warnBox" role="alertdialog" aria-label="Confirmar">
+            <p className="small">{ask.text}</p>
+            <div className="pageActions"><button type="button" onClick={() => void (ask.kind === 'approve' ? approve(true) : ask.kind === 'upload' ? upload(true) : discard(true))}>Confirmar</button><button type="button" className="ghost" onClick={() => setAsk(null)}>Cancelar</button></div>
+          </div>}
           {selected.status === 'prepared' && <>
             <p className="muted small">{renderAsset ? 'Vídeo renderizado y guardado en la Biblioteca.' : 'Espera a que termine el render para poder aprobar.'}{failedChecks.length ? ' Hay controles que fallan: no se puede aprobar.' : ''}{accepted.length < 2 ? ' Faltan fuentes verificadas.' : ''}</p>
             <div className="pageActions"><button type="button" onClick={() => void approve()} disabled={!canApprove || busy}>Aprobar (subida privada)</button><button type="button" className="ghost" onClick={() => void discard()} disabled={busy}>Descartar</button></div>
