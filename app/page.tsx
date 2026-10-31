@@ -44,6 +44,8 @@ export default function Home() {
   const [connections, setConnections] = useState<Channel[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [error, setError] = useState('')
+  // true once the first batch of workspace data arrived: before that the cards say "Cargando", never "sin datos".
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -63,6 +65,7 @@ export default function Home() {
         setProjects(rows)
         setConnections((c.data ?? []) as Channel[])
         setSnapshots((m.data ?? []) as Snapshot[])
+        setLoaded(true)
         if (rows.length) {
           const ids = rows.map(r => r.id)
           const [sc, sb, as, pj, ms, op] = await Promise.all([
@@ -101,6 +104,7 @@ export default function Home() {
           setDurations(dur)
         }
       } catch (e) {
+        setLoaded(true)
         setError(e instanceof Error ? e.message : 'No se pudieron cargar los datos del workspace.')
       }
     })()
@@ -167,7 +171,7 @@ export default function Home() {
             <div className="kpi"><Icon name="chart" /><b>{minutes != null ? `${Math.round(minutes / 60)} h` : '—'}</b><span>Tiempo de visualización</span></div>
           </div>
           <p className="muted small" style={{ marginTop: 10 }}>
-            {snapshots.length ? `Datos observados · ${snapshots.length} registro(s).` : 'Sin datos observados todavía. Aparecerán al conectar YouTube Analytics; no se muestran cifras inventadas.'}
+            {!loaded ? 'Cargando…' : snapshots.length ? `Datos observados · ${snapshots.length} registro(s).` : 'Sin datos observados todavía. Aparecerán al conectar YouTube Analytics; no se muestran cifras inventadas.'}
           </p>
         </section>
       </div>
@@ -178,7 +182,7 @@ export default function Home() {
           {signedIn === false ? (
             <div className="emptyState">Inicia sesión para ver tus proyectos. <Link className="open" href="/login?next=/">Iniciar sesión →</Link></div>
           ) : projects.length === 0 ? (
-            <div className="emptyState">{signedIn === null ? 'Cargando…' : 'Todavía no hay proyectos.'}</div>
+            <div className="emptyState">{!loaded ? 'Cargando…' : 'Todavía no hay proyectos.'}</div>
           ) : (
             <div className="projectCards">
               {projects.map(p => {
@@ -208,8 +212,8 @@ export default function Home() {
               return (
                 <div className="channel" key={ch.id}>
                   <span className="logo" style={{ background: ch.color }}>{ch.letter}</span>
-                  <div><b>{ch.name}</b><span>{connected ? conn?.external_account_name || 'Cuenta conectada' : 'Requiere OAuth'}</span></div>
-                  <span className={connected ? 'pill ok' : 'pill'}>{connected ? 'Conectado' : 'No conectado'}</span>
+                  <div><b>{ch.name}</b><span>{!loaded ? 'Cargando…' : connected ? conn?.external_account_name || 'Cuenta conectada' : conn?.status === 'expired' ? 'La autorización caducó: reconecta' : 'Requiere OAuth'}</span></div>
+                  <span className={connected ? 'pill ok' : 'pill'}>{!loaded ? '…' : connected ? 'Conectado' : conn?.status === 'expired' ? 'Caducada' : 'No conectado'}</span>
                 </div>
               )
             })}
