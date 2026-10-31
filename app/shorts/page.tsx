@@ -18,7 +18,7 @@ type Item = {
   id: string; status: string; topic: string; theme: string; project_id: string | null; render_job_id: string | null; publication_job_id: string | null
   interest: { video?: { title: string; url: string | null; channel: string | null; views: number | null }; nicheMedianViews?: number | null; poolSize?: number; components?: Record<string, { value: number; kind: string; note: string }>; score?: number }
   sources: SourceVerdict[]; verification: { supported?: boolean; statement?: string; note?: string }; checks: Check[]
-  plan: { demo?: boolean; title?: string; description?: string; hashtags?: string[]; seconds?: number; scenes?: number; music?: { author: string; license: string } | null; musicMissing?: boolean }
+  plan: { musicCredit?: string; demo?: boolean; title?: string; description?: string; hashtags?: string[]; seconds?: number; scenes?: number; music?: { title?: string; author: string; license: string; source?: string; attribution?: string } | null; musicMissing?: boolean }
   spend: { usd?: number; textCalls?: number; imageCalls?: number; voiceCalls?: number; models?: { image?: string; voice?: string } }
   discarded_reason: string | null; video_id: string | null; published_at: string | null; retention: ObservedRetention | null; created_at: string
 }
@@ -193,7 +193,7 @@ export default function ShortsPage() {
           <h3 id="sh-checks">Controles antes de aprobar</h3>
           <ul className="list">{(selected.checks ?? []).map(c => <li key={c.id} className="listItem"><span className={c.ok ? 'pill ok' : 'pill warn'}>{c.ok ? 'Cumple' : 'Falla'}</span> <span>{c.message}</span></li>)}</ul>
           {selected.plan.musicMissing && <div><p className="muted small" style={{ margin: 0 }}>Música: no se añadió (la búsqueda de música libre no está activada o no hubo una pista CC0 adecuada). El Short funciona sin música.</p><AdminHint names={['FREESOUND_API_KEY']} /></div>}
-          {selected.plan.music && <p className="muted small">Música CC0 de {selected.plan.music.author} ({selected.plan.music.license}).</p>}
+          {selected.plan.music && <p className="muted small">Música: {selected.plan.music.title ? `«${selected.plan.music.title}» de ` : 'de '}{selected.plan.music.author} ({selected.plan.music.license}{selected.plan.music.source === 'commons' ? ', Wikimedia Commons; el crédito va en la descripción' : ''}).</p>}
         </section>
 
         <section className="panel" aria-labelledby="sh-interest">

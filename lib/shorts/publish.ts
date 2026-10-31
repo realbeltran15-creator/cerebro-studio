@@ -4,7 +4,7 @@ import type { YouTubePayload } from '@/lib/publication/youtube'
  * What the approval screen sends to the existing publication flow. Fixed on purpose: every factory Short is uploaded as PRIVATE,
  * declared as altered/synthetic content (the voice and images are AI-generated) and not made for kids. The owner approves each one.
  */
-export type ShortPlan = { title?: string; description?: string; hashtags?: string[] }
+export type ShortPlan = { title?: string; description?: string; hashtags?: string[]; musicCredit?: string }
 export type SourceForDescription = { url: string; status?: string }
 
 const clean = (s: string) => s.replace(/[<>]/g, '').trim()
@@ -15,6 +15,7 @@ export function shortPayload(plan: ShortPlan, sources: SourceForDescription[], v
   const hashtags = ['Shorts', ...tags].map(t => `#${t}`).join(' ')
   const description = clean([
     plan.description ?? '',
+    plan.musicCredit ? `Música: ${plan.musicCredit}` : '',
     accepted.length ? `Fuentes:\n${accepted.map(u => `- ${u}`).join('\n')}` : '',
     'Contenido creado con ayuda de IA (voz e imágenes sintéticas).',
     hashtags,

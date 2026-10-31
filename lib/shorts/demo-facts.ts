@@ -29,8 +29,8 @@ export const DEMO_FACTS: DemoFact[] = [
       scenes: [
         { narration: 'Un día en Venus dura más que su propio año.', visual: 'El planeta Venus envuelto en nubes amarillentas, visto desde el espacio', onScreenText: 'Venus: 243 días' },
         { narration: 'Venus tarda 243 días terrestres en girar una sola vez sobre sí mismo.', visual: 'Un planeta rocoso girando muy despacio frente a las estrellas', onScreenText: '' },
-        { narration: 'Pero solo necesita 225 días terrestres para dar la vuelta completa al Sol.', visual: 'Una órbita luminosa de un planeta alrededor del Sol, vista desde arriba', onScreenText: '' },
-        { narration: 'Por eso, allí el amanecer llega antes de que termine el año.', visual: 'Un amanecer naranja sobre un paisaje volcánico árido y brumoso', onScreenText: '' },
+        { narration: 'Pero solo necesita 225 días terrestres para dar la vuelta completa al Sol, y esa es la diferencia que lo cambia todo.', visual: 'Una órbita luminosa de un planeta alrededor del Sol, vista desde arriba', onScreenText: '' },
+        { narration: 'Por eso, allí el amanecer llega antes de que termine el año. Un calendario muy distinto al de la Tierra.', visual: 'Un amanecer naranja sobre un paisaje volcánico árido y brumoso', onScreenText: '' },
         { narration: 'Sigue el canal para descubrir más curiosidades del universo.', visual: 'Un cielo estrellado con la Vía Láctea sobre una montaña', onScreenText: '' },
       ],
     },

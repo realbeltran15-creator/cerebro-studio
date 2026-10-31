@@ -5,6 +5,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { defaultShortsConfig, shortsConfig } from '@/lib/shorts/config'
 import { prepareDailyShort } from '@/lib/shorts/factory'
 import { liveDeps } from '@/lib/shorts/live'
+import { findCommonsMusic } from '@/lib/shorts/commons-music'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -17,6 +18,11 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (new URL(request.url).searchParams.get('probe') === 'music') {
+    const t0 = Date.now()
+    try { const t = await findCommonsMusic(); return NextResponse.json({ ok: Boolean(t), ms: Date.now() - t0, track: t ? { title: t.title, author: t.author, license: t.license, status: t.licenseStatus, mime: t.mimeType, seconds: t.durationSeconds, url: t.downloadUrl, page: t.pageUrl } : null }) }
+    catch (e) { return NextResponse.json({ ok: false, ms: Date.now() - t0, error: e instanceof Error ? e.message : 'error' }) }
+  }
   // Diagnostic: one tiny free text call, timed, so a slow or failing text provider can be told apart from the rest of the chain.
   if (new URL(request.url).searchParams.get('probe') === 'text') {
     const t0 = Date.now()

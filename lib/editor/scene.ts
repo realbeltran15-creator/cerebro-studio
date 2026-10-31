@@ -4,7 +4,7 @@
  */
 import {
   activeTextClips, audioStartMs, audioTrackId, clipCaptions, clipStarts, envelopeAt, projectDurationMs, textTrackId, totalDurationMs, tracksOf, trackGains,
-  effectiveGrade, type AudioClip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type LayerFx, type TextOverlay, type TrackKind,
+  captionWordsFor, effectiveGrade, type AudioClip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type LayerFx, type TextOverlay, type TrackKind,
 } from './composition'
 import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
@@ -150,7 +150,7 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
     const local = t - starts[i]
     if (clip.text) ops.push({ type: 'text', text: clip.text, frame: textFrameFor(clip.text, local, clip.durationMs) })
     if (c.subtitles) {
-      const cap = clipCaptions(clip).find(q => local >= q.startMs && local < q.endMs)
+      const cap = clipCaptions(clip, captionWordsFor(c.captionStyle)).find(q => local >= q.startMs && local < q.endMs)
       if (cap) ops.push({ type: 'caption', text: cap.text, style: c.captionStyle ?? 'box', progress: (local - cap.startMs) / Math.max(1, cap.endMs - cap.startMs), ...(c.captionPosition && c.captionPosition !== 'bottom' ? { position: c.captionPosition } : {}) })
     }
     // Dips at clip boundaries: «fundido a negro» (and at the very start and end of the main track) or «fundido a blanco».

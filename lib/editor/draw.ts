@@ -189,6 +189,7 @@ export function wrap(ctx: CanvasRenderingContext2D, text: string, maxWidth: numb
 }
 
 export function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, style: CaptionStyle = 'box', progress = 0, position: CaptionPosition = 'bottom') {
+  if (style === 'viral') return drawViralCaption(ctx, text, w, h, progress, position)
   if (style !== 'box') return drawBoldCaption(ctx, text, w, h, style === 'karaoke' ? progress : null, position)
   const size = Math.round(Math.min(w, h) * 0.045)
   ctx.font = `600 ${size}px system-ui, -apple-system, Segoe UI, sans-serif`
@@ -211,6 +212,68 @@ export function activeWordIndex(words: string[], progress: number) {
   let acc = 0
   for (let i = 0; i < words.length; i++) { acc += weights[i]; if (progress * total < acc) return i }
   return Math.max(0, words.length - 1)
+}
+
+/** Which word is being spoken at `progress` and how far into it (0..1), weighting words by length. */
+export function wordSpan(words: string[], progress: number) {
+  const weights = words.map(w => Math.max(2, w.replace(/[^\p{L}\p{N}]/gu, '').length))
+  const total = weights.reduce((a, b) => a + b, 0) || 1
+  const at = Math.min(Math.max(progress, 0), 0.9999) * total
+  let acc = 0
+  for (let i = 0; i < words.length; i++) {
+    if (at < acc + weights[i]) return { index: i, local: (at - acc) / weights[i] }
+    acc += weights[i]
+  }
+  return { index: Math.max(0, words.length - 1), local: 1 }
+}
+
+/** The colour that marks the spoken word in the viral look. */
+export const VIRAL_ACCENT = '#FFE14D'
+
+/**
+ * Reel/TikTok look: a few huge uppercase words, thick black outline and shadow, the spoken word in a bright colour and
+ * «popping» (it grows and settles) the moment it starts.
+ */
+function drawViralCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number, progress: number, position: CaptionPosition = 'bottom') {
+  const portrait = w < h
+  const size = Math.round(Math.min(w, h) * (portrait ? 0.125 : 0.085))
+  const words = text.toUpperCase().replace(/[.,;:!?¡¿"«»]/g, '').split(/\s+/).filter(Boolean)
+  if (!words.length) return
+  const { index: active, local } = wordSpan(words, progress)
+  ctx.save()
+  ctx.font = `900 ${size}px "Arial Black", Impact, system-ui, -apple-system, "Segoe UI", sans-serif`
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+  const maxW = w * 0.9
+  const lines = wrap(ctx, words.join(' '), maxW)
+  const lineH = size * 1.08
+  const centerY = h * (position === 'top' ? 0.22 : position === 'center' ? 0.5 : portrait ? 0.64 : 0.8)
+  const top = centerY - ((lines.length - 1) * lineH) / 2
+  ctx.lineJoin = 'round'; ctx.miterLimit = 2
+  ctx.lineWidth = Math.max(6, size * 0.2); ctx.strokeStyle = '#000'
+  let index = 0
+  lines.forEach((line, li) => {
+    const parts = line.split(' ')
+    const space = ctx.measureText(' ').width
+    const widths = parts.map(p => ctx.measureText(p).width)
+    let x = (w - (widths.reduce((a, b) => a + b, 0) + space * (parts.length - 1))) / 2
+    const y = top + li * lineH
+    parts.forEach((word, k) => {
+      const isActive = index === active
+      // Pop: starts 22% bigger and eases to normal over the first third of the word.
+      const pop = isActive ? 1 + 0.22 * Math.pow(Math.max(0, 1 - local * 3), 2) : 1
+      ctx.save()
+      ctx.translate(x + widths[k] / 2, y); ctx.scale(pop, pop); ctx.translate(-widths[k] / 2, 0)
+      ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = size * 0.18; ctx.shadowOffsetY = size * 0.07
+      ctx.strokeText(word, 0, 0)
+      ctx.shadowColor = 'transparent'
+      ctx.fillStyle = isActive ? VIRAL_ACCENT : '#fff'
+      ctx.fillText(word, 0, 0)
+      ctx.restore()
+      x += widths[k] + space
+      index++
+    })
+  })
+  ctx.restore()
 }
 
 /** Shorts-style captions: big, uppercase, outlined; with `progress` the spoken word is highlighted. */

@@ -11,6 +11,7 @@ import type { GeneratedAsset } from '@/lib/providers/types'
 import type { ShortsConfig } from './config'
 import { chooseFreeModels, type FactoryDeps, type ItemRow, type MusicPick, type Store, type TextCall } from './factory'
 import { fetchPublicPage } from './sources'
+import { allowedCommonsDownload, findCommonsMusic } from './commons-music'
 import type { OpportunityRow } from './topics'
 
 /**
@@ -18,16 +19,16 @@ import type { OpportunityRow } from './topics'
  * music to Freesound (CC0 only). Every query filters by owner because the scheduled run uses the service role.
  */
 
-const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'audio/wav': 'wav', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg' }
+const EXT: Record<string, string> = { 'application/ogg': 'ogg', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'audio/wav': 'wav', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg' }
 const MAX_BYTES = { image: 25 * 1024 * 1024, voice: 50 * 1024 * 1024, music: 30 * 1024 * 1024 } as const
 
-async function materialize(asset: GeneratedAsset, kind: keyof typeof MAX_BYTES, source: 'freesound' | null) {
+async function materialize(asset: GeneratedAsset, kind: keyof typeof MAX_BYTES, source: 'freesound' | 'commons' | null) {
   if (asset.uri.startsWith('data:')) {
     const m = asset.uri.match(/^data:([^;]+);base64,(.+)$/)
     if (!m) throw new Error('Recurso generado no válido.')
     return { bytes: Buffer.from(m[2], 'base64'), mime: m[1] }
   }
-  if (!source || !allowedDownload(source, asset.uri)) throw new Error('Origen de descarga no permitido.')
+  if (!source || !(source === 'commons' ? allowedCommonsDownload(asset.uri) : allowedDownload(source, asset.uri))) throw new Error('Origen de descarga no permitido.')
   const r = await fetch(asset.uri, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(90000) })
   if (!r.ok) throw new Error(`No se pudo descargar el recurso (${r.status}).`)
   const bytes = Buffer.from(await r.arrayBuffer())
@@ -65,7 +66,7 @@ export function supabaseStore(db: SupabaseClient, ownerId: string, automationId:
       return (data as Array<{ id: string; position: number }>).sort((a, b) => a.position - b.position)
     },
     async putAsset(projectId, kind, asset, extra) {
-      const { bytes, mime } = await materialize(asset, kind, kind === 'music' ? 'freesound' : null)
+      const { bytes, mime } = await materialize(asset, kind, kind === 'music' ? (extra.provider === 'commons' ? 'commons' : 'freesound') : null)
       const path = await putObject(db, ownerId, `${ownerId}/${projectId}/shorts-${kind}-${randomUUID()}.${EXT[mime] ?? 'bin'}`, bytes, mime)
       stored.push(path)
       const { data, error } = await db.from('assets').insert({
@@ -125,7 +126,11 @@ export async function liveDeps(db: SupabaseClient, ownerId: string, cfg: ShortsC
       return r.assets[0]
     },
     async findMusic(query): Promise<MusicPick | null> {
-      if (!stockConfigured('freesound')) return null
+      if (!stockConfigured('freesound')) {
+        // No Freesound key: free tracks from Wikimedia Commons (CC0 / public domain / CC BY with credit).
+        const t = await findCommonsMusic()
+        return t ? { source: 'commons', licenseStatus: t.licenseStatus, id: t.id, title: t.title, author: t.author, pageUrl: t.pageUrl, license: t.license, licenseUrl: t.licenseUrl, downloadUrl: t.downloadUrl, mimeType: t.mimeType, durationSeconds: t.durationSeconds, attribution: t.attribution } : null
+      }
       const found = await searchStock('freesound', 'audio', query, { cc0Only: true, maxSeconds: 180 })
       const pick = found.find(i => i.licenseStatus === 'public_domain' && (i.durationSeconds ?? 0) >= 25 && allowedDownload('freesound', i.downloadUrl))
       return pick ? { id: pick.id, title: pick.title, author: pick.author, pageUrl: pick.pageUrl, license: pick.license, licenseUrl: pick.licenseUrl, downloadUrl: pick.downloadUrl, mimeType: pick.mimeType, durationSeconds: pick.durationSeconds, attribution: pick.attribution } : null

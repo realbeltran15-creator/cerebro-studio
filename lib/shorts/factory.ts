@@ -32,7 +32,7 @@ export type TextCall = <T>(task: TextTask, input: { system: string; user: string
 
 export type FreeModels = { ok: true; image: CatalogModel; voice: CatalogModel } | { ok: false; reasons: string[] }
 
-export type MusicPick = { id: string; title: string; author: string; pageUrl: string; license: string; licenseUrl: string | null; downloadUrl: string; mimeType: string; durationSeconds: number | null; attribution: string }
+export type MusicPick = { source?: 'freesound' | 'commons'; licenseStatus?: 'public_domain' | 'licensed'; id: string; title: string; author: string; pageUrl: string; license: string; licenseUrl: string | null; downloadUrl: string; mimeType: string; durationSeconds: number | null; attribution: string }
 
 export type StoredAsset = { id: string }
 
@@ -236,13 +236,13 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
           imageAssets.push(await deps.store.putAsset(project.id, 'image', img, { provider: img.provider, license: 'generated', provenance: { model: freeNow.image.id, costTier: 'free', sceneId: scenes[i]?.id ?? null, prompt: script.scenes[i].visual, ...(freeNow.image.allowance ? { allowancePool: freeNow.image.allowance.pool, allowanceUnits: units ?? 0 } : {}) } }))
         }
         let musicAsset: StoredAsset | null = null
-        if (music) musicAsset = await deps.store.putAsset(project.id, 'music', { provider: 'freesound', mimeType: music.mimeType, uri: music.downloadUrl, externalId: `freesound:${music.id}` }, { provider: 'freesound', license: 'public_domain', sourceUrl: music.pageUrl, provenance: { title: music.title, author: music.author, license: music.license, licenseUrl: music.licenseUrl, attribution: music.attribution, externalId: `freesound:${music.id}`, costTier: 'free' } })
+        if (music) musicAsset = await deps.store.putAsset(project.id, 'music', { provider: music.source ?? 'freesound', mimeType: music.mimeType, uri: music.downloadUrl, externalId: `${music.source ?? 'freesound'}:${music.id}` }, { provider: music.source ?? 'freesound', license: music.licenseStatus ?? 'public_domain', sourceUrl: music.pageUrl, provenance: { title: music.title, author: music.author, license: music.license, licenseUrl: music.licenseUrl, attribution: music.attribution, externalId: `${music.source ?? 'freesound'}:${music.id}`, costTier: 'free' } })
         const composition = buildShortComposition({ storyboardId: board.id, title: script.title, script, scenes, durationsMs: scenes.map((s, i) => durations[s.position - 1] ?? durations[i]), imageAssetIds: scenes.map((_, i) => imageAssets[i]?.id ?? null), voiceAssetId: voiceAsset.id, audioMs: audioMs!, musicAssetId: musicAsset?.id ?? null })
         const job = await deps.store.createRenderJob(project.id, composition)
         const item = await deps.store.saveItem({
           status: 'prepared', project_id: project.id, render_job_id: job.id, opportunity_id: opportunityId, topic: proposal.topic, topic_key: topicKey, theme, prepared_on: today,
           interest: evidence(), sources: assessed.verdicts, verification: { ...verification, statement: proposal.statement, keyTerms: proposal.keyTerms },
-          checks, plan: { ...(demo ? { demo: true } : {}), title: script.title, description: script.description, hashtags: script.hashtags, scenes: script.scenes.length, seconds: Math.round(audioMs! / 1000), music: music ? { id: music.id, author: music.author, license: music.license } : null, musicMissing: !music },
+          checks, plan: { ...(demo ? { demo: true } : {}), title: script.title, description: script.description, hashtags: script.hashtags, scenes: script.scenes.length, seconds: Math.round(audioMs! / 1000), music: music ? { id: music.id, title: music.title, author: music.author, license: music.license, source: music.source ?? 'freesound', attribution: music.attribution } : null, musicMissing: !music, ...(music && music.licenseStatus === 'licensed' ? { musicCredit: music.attribution } : {}) },
           spend: { usd: 0, textCalls, imageCalls: images.length, voiceCalls: 1, tier: 'free', models: { image: freeNow.image.id, voice: freeNow.voice.id }, note: 'Solo modelos con nivel gratuito; la factura real depende de que la cuenta del proveedor no tenga facturación activa.' },
           discarded_reason: null,
         })

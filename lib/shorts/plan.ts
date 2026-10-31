@@ -65,7 +65,7 @@ export function buildShortComposition(input: {
   }))
   const voice: AudioClip = { id: 'voice-main', assetId: input.voiceAssetId, kind: 'voice', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: input.audioMs, volume: 1, muted: false }
   return {
-    ...base, clips, audioClips: [voice], musicAssetId: input.musicAssetId, musicVolume: 0.12, duckMusic: true, subtitles: true, fadeMs: 150,
+    ...base, clips, audioClips: [voice], musicAssetId: input.musicAssetId, musicVolume: 0.12, duckMusic: true, subtitles: true, captionStyle: 'viral', fadeMs: 150,
     hookText: input.script.scenes[0].onScreenText || null, hookMs: HOOK_MS, editedManually: true,
   }
 }

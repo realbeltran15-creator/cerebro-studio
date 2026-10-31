@@ -14,8 +14,8 @@ export const TEXT_ANIMATIONS: Record<TextAnimation, string> = { none: 'Sin anima
 /** How subtitles are drawn: classic box, big bold outlined text, or bold with the spoken word highlighted (Shorts style). */
 export type CaptionPosition = 'bottom' | 'center' | 'top'
 export const CAPTION_POSITIONS: Record<CaptionPosition, string> = { bottom: 'Abajo', center: 'Centro', top: 'Arriba' }
-export type CaptionStyle = 'box' | 'bold' | 'karaoke'
-export const CAPTION_STYLES: Record<CaptionStyle, string> = { box: 'Clásico (caja)', bold: 'Grande y en negrita', karaoke: 'Palabra a palabra (resaltada)' }
+export type CaptionStyle = 'box' | 'bold' | 'karaoke' | 'viral'
+export const CAPTION_STYLES: Record<CaptionStyle, string> = { box: 'Clásico (caja)', bold: 'Grande y en negrita', karaoke: 'Palabra a palabra (resaltada)', viral: 'Viral (2-3 palabras, color y rebote)' }
 export type TextFont = 'sans' | 'serif' | 'condensed' | 'mono'
 export const TEXT_FONTS: Record<TextFont, { label: string; css: string }> = {
   sans: { label: 'Sans (moderna)', css: 'system-ui, -apple-system, Segoe UI, sans-serif' },
@@ -485,7 +485,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
     musicVolume: clamp(v.musicVolume ?? 0.25, 0, 1, 0.25),
     duckMusic: v.duckMusic !== false,
     subtitles: v.subtitles !== false,
-    captionStyle: v.captionStyle === 'bold' || v.captionStyle === 'karaoke' ? v.captionStyle : 'box',
+    captionStyle: v.captionStyle === 'bold' || v.captionStyle === 'karaoke' || v.captionStyle === 'viral' ? v.captionStyle : 'box',
     ...(v.captionPosition === 'top' || v.captionPosition === 'center' ? { captionPosition: v.captionPosition } : {}),
     fadeMs: clamp(v.fadeMs ?? 300, 0, 1500, 300),
     hookText: typeof v.hookText === 'string' && v.hookText.trim() ? v.hookText.trim().slice(0, 120) : null,
@@ -738,8 +738,12 @@ function parseCues(raw: unknown[], durationMs: number) {
 }
 
 /** Captions of one clip: its timed cues when it has them, otherwise the narration spread over the clip. */
-export function clipCaptions(clip: Pick<Clip, 'narration' | 'durationMs' | 'cues'>) {
-  return clip.cues?.length ? clip.cues.map(c => ({ text: c.text, startMs: c.startMs, endMs: Math.min(c.endMs, clip.durationMs) })) : captionChunks(clip.narration ?? null, clip.durationMs)
+/** Words per caption: the viral look shows only a few at a time. */
+export const VIRAL_CAPTION_WORDS = 3
+export const captionWordsFor = (style: CaptionStyle | undefined) => (style === 'viral' ? VIRAL_CAPTION_WORDS : 10)
+
+export function clipCaptions(clip: Pick<Clip, 'narration' | 'durationMs' | 'cues'>, maxWords = 10) {
+  return clip.cues?.length ? clip.cues.map(c => ({ text: c.text, startMs: c.startMs, endMs: Math.min(c.endMs, clip.durationMs) })) : captionChunks(clip.narration ?? null, clip.durationMs, maxWords)
 }
 
 export function captionChunks(text: string | null, durationMs: number, maxWords = 10) {
@@ -767,9 +771,9 @@ export function videoBitrateFor(durationMs: number, maxBytes = 50 * 1024 * 1024,
 export type CaptionCue = { startMs: number; endMs: number; text: string }
 
 /** The same caption cues the renderer burns into the video (same chunking and timing), on the montage's own timeline. */
-export function compositionCues(c: Pick<Composition, 'clips'> & { subtitles?: boolean }): CaptionCue[] {
+export function compositionCues(c: Pick<Composition, 'clips'> & { subtitles?: boolean; captionStyle?: CaptionStyle }): CaptionCue[] {
   const starts = clipStarts(c)
-  return c.clips.flatMap((clip, i) => clipCaptions(clip).map(ch => ({ startMs: Math.round(starts[i] + ch.startMs), endMs: Math.round(starts[i] + ch.endMs), text: ch.text })))
+  return c.clips.flatMap((clip, i) => clipCaptions(clip, captionWordsFor(c.captionStyle)).map(ch => ({ startMs: Math.round(starts[i] + ch.startMs), endMs: Math.round(starts[i] + ch.endMs), text: ch.text })))
 }
 
 const two = (n: number) => String(Math.floor(n)).padStart(2, '0')

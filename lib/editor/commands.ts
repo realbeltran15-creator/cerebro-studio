@@ -542,9 +542,9 @@ function runOne(c: Composition, text: string, ctx: CommandContext, span: Range |
   // ---- Format and subtitles
   const format: OutputFormat | null = /\b(vertical|9:16|short|reel|tiktok)\b/.test(s) ? '9:16' : /\b(horizontal|16:9|youtube)\b/.test(s) ? '16:9' : /\b(cuadrado|1:1)\b/.test(s) ? '1:1' : null
   if (format && /\b(formato|pasalo|ponlo|hazlo|convierte)\b/.test(s)) return ok({ ...c, format }, `Formato ${format}.`)
-  if (/\bsubtitulos?\b/.test(s) && /\b(palabra a palabra|karaoke|dinamicos|grandes|negrita|clasicos|con caja|caja)\b/.test(s)) {
-    const style = /\b(palabra a palabra|karaoke|dinamicos)\b/.test(s) ? 'karaoke' : /\b(grandes|negrita)\b/.test(s) ? 'bold' : 'box'
-    return ok({ ...c, subtitles: true, captionStyle: style }, `Subtítulos ${style === 'karaoke' ? 'palabra a palabra' : style === 'bold' ? 'grandes en negrita' : 'clásicos con caja'}.`)
+  if (/\bsubtitulos?\b/.test(s) && /\b(palabra a palabra|karaoke|dinamicos|grandes|negrita|clasicos|con caja|caja|virales?|vistosos?)\b/.test(s)) {
+    const style = /\b(virales?|vistosos?)\b/.test(s) ? 'viral' : /\b(palabra a palabra|karaoke|dinamicos)\b/.test(s) ? 'karaoke' : /\b(grandes|negrita)\b/.test(s) ? 'bold' : 'box'
+    return ok({ ...c, subtitles: true, captionStyle: style }, `Subtítulos ${style === 'viral' ? 'virales (2-3 palabras, color y rebote)' : style === 'karaoke' ? 'palabra a palabra' : style === 'bold' ? 'grandes en negrita' : 'clásicos con caja'}.`)
   }
   if (/\bsubtitulos?\b/.test(s)) {
     const on = !/\b(quita|desactiva|sin|oculta|elimina)\b/.test(s)
