@@ -126,7 +126,7 @@ export const catalog: CatalogModel[] = [
   },
   {
     id: 'openai:gpt-image-1', modality: 'image', provider: 'openai', label: 'OpenAI GPT Image',
-    strength: 'Realismo documental con los estilos del canal. Según terceros se retira el 23-oct-2026: usa GPT Image 2 / 1.5.',
+    strength: 'Realismo documental con los estilos del canal. Según terceros se retiraba el 23-oct-2026 (fecha ya pasada): si falla, usa GPT Image 2 / 1.5.',
     tier: 'paid', price: '≈ $0.06 (media) · $0.25 (alta) por imagen horizontal', priceConfirmed: true,
     estimateUsd: o => (o.quality === 'high' ? 0.25 : 0.06), quality: 4, speed: 'medium', capabilities: ['text_in_image', 'reference_images'],
     env: ['OPENAI_API_KEY'], sync: true, formats: ['16:9', '9:16', '1:1'], maxVariants: 1,

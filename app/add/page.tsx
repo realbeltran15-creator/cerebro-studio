@@ -190,7 +190,8 @@ function ShortcutSetup({ projects }: { projects: Project[] }) {
   const [dest, setDest] = useState('library')
   const [msg, setMsg] = useState('')
   const [confirmRevoke, setConfirmRevoke] = useState(false)
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const [origin, setOrigin] = useState('')
+  useEffect(() => { setOrigin(window.location.origin) }, [])
   const load = useCallback(() => fetch('/api/ios/token', { cache: 'no-store' }).then(r => r.json()).then((j: NonNullable<typeof status>) => { setStatus(j); setDest(j.destination ?? 'library') }).catch(() => setStatus(null)), [])
   useEffect(() => { void load() }, [load])
   async function create() {
