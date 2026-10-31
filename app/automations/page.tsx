@@ -1,5 +1,6 @@
 'use client'
 
+import { RUN_KIND_LABEL, shortsRunKind } from '@/lib/shorts/run-status'
 import Link from 'next/link'
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
@@ -33,7 +34,7 @@ function summaryText(r: Run) {
   if ('matched' in s) return `${String(s.checked)} en tendencia · ${String(s.matched)} coinciden · ${String(s.saved)} guardadas${Number(s.duplicates) ? ` · ${String(s.duplicates)} ya existían` : ''}${Array.isArray(s.keywords) ? ` · palabras usadas: ${(s.keywords as string[]).join(', ')}` : ''}`
   if ('outcome' in s) {
     const o = s.outcome as { status?: string; topic?: string; message?: string }
-    return o.status === 'prepared' ? `Short preparado: «${String(o.topic)}». Revísalo en Shorts.` : `Hoy no se crea Short: ${String(o.message ?? 'sin motivo')}`
+    return o.status === 'prepared' ? `Short preparado: «${String(o.topic)}». Revísalo en Shorts.` : `No se creó ningún Short: ${String(o.message ?? 'sin motivo')}`
   }
   if ('updated' in s) return `${String(s.updated)} de ${String(s.checked)} actualizadas${Number(s.missing) ? ` · ${String(s.missing)} ya no disponibles` : ''}`
   return 'Completada'
@@ -211,7 +212,7 @@ export default function AutomationsPage() {
         const top = Array.isArray(r.summary?.top) ? r.summary.top as Array<{ title: string; url: string; viewsGained: number }> : []
         return <div key={r.id} className="listItem" style={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, minWidth: 240 }}>
-            <b>{a?.name ?? 'Automatización'}</b> <span className={r.status === 'succeeded' ? 'pill ok' : r.status === 'failed' ? 'pill warn' : 'pill'}>{r.status === 'succeeded' ? 'Correcta' : r.status === 'failed' ? 'Falló' : 'En curso'}</span> <span className="pill">{r.trigger === 'manual' ? 'Manual' : 'Programada'}</span>
+            <b>{a?.name ?? 'Automatización'}</b> {a?.kind === 'shorts_factory' ? (() => { const k = shortsRunKind(r); return <span className={k === 'generated' ? 'pill ok' : k === 'error' ? 'pill warn' : 'pill'}>{RUN_KIND_LABEL[k]}</span> })() : <span className={r.status === 'succeeded' ? 'pill ok' : r.status === 'failed' ? 'pill warn' : 'pill'}>{r.status === 'succeeded' ? 'Correcta' : r.status === 'failed' ? 'Falló' : 'En curso'}</span>} <span className="pill">{r.trigger === 'manual' ? 'Manual' : 'Programada'}</span>
             <span className="small" style={{ display: 'block' }}>{summaryText(r)}</span>
             {matches.length > 0 && <ul className="small" style={{ margin: '4px 0 0 16px' }}>{matches.slice(0, 5).map(m => <li key={m.url}><a href={m.url} target="_blank" rel="noopener noreferrer">{m.title}</a></li>)}</ul>}
             {top.length > 0 && <ul className="small" style={{ margin: '4px 0 0 16px' }}>{top.map(m => <li key={m.url}><a href={m.url} target="_blank" rel="noopener noreferrer">{m.title}</a> · +{m.viewsGained.toLocaleString('es-ES')} vistas</li>)}</ul>}

@@ -86,7 +86,32 @@ export function chooseFreeModels(cfg: ShortsConfig, models: CatalogModel[], avai
   return reasons.length || !image || !voiceModel ? { ok: false, reasons } : { ok: true, image, voice: voiceModel }
 }
 
-export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): Promise<{ outcome: Outcome; log: string[]; textCalls: number }> {
+/** Themes for the free test Short. They only steer the proposal: no trend data is claimed for them. */
+export const DEMO_THEMES = ['astronomía y el universo', 'el cuerpo humano', 'océanos y vida marina', 'animales extraordinarios', 'historia de la ciencia'] as const
+
+function demoProposalPrompt(cfg: ShortsConfig, theme: string, avoid: string[]) {
+  return {
+    system: proposalPrompt(cfg, [], []).system,
+    user: [
+      `Canal: ${cfg.channelName}. Esto es un Short de PRUEBA: no hay datos de tendencias, así que no te apoyes en vídeos ni en cifras de popularidad.`,
+      `Tema general: ${theme}.`,
+      avoid.length ? `Temas ya usados (no repetir): ${avoid.slice(0, 40).join('; ')}.` : '',
+      'Propón UN dato concreto y comprobable.',
+      '- topic: el tema en pocas palabras.',
+      '- statement: el dato en una frase, con la cifra o el nombre exactos.',
+      '- keyTerms: 1 a 4 términos que DEBEN aparecer en cualquier página que lo respalde (cifras sin separadores o nombres propios).',
+      '- sources: 2 a 4 páginas de dominios distintos que lo respalden (url https completa y título).',
+    ].filter(Boolean).join('\n'),
+  }
+}
+
+const demoEvidence = (theme: string) => ({
+  demo: true, theme,
+  note: 'Short de prueba: tema de demostración elegido a mano. No hay datos de Radar ni estadísticas de tendencia detrás de este tema.',
+  labels: 'sin datos de tendencia (modo de prueba)',
+})
+
+export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, opts: { demo?: boolean } = {}): Promise<{ outcome: Outcome; log: string[]; textCalls: number }> {
   const log: string[] = []
   let textCalls = 0
   const say = (m: string) => { log.push(m) }
@@ -110,10 +135,17 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): P
     ...deps.existingProjectNames,
   ]
   const boost = historyBoost(deps.items.map(i => ({ theme: i.theme, retention: i.retention })))
-  const { ranked, nicheMedian, poolSize, blocker } = rankCandidates(candidatesFromOpportunities(deps.opportunities), cfg, { previousTopics, history: boost })
-  say(`Radar: ${poolSize} vídeos con vistas, mediana del nicho ${nicheMedian ? Math.round(nicheMedian) : 'n/d'}.`)
-  const proven = ranked.filter(r => r.provenInterest)
-  if (!proven.length) return done(skip(poolSize < cfg.minPoolSize ? 'no_data' : 'no_proven_interest', `No se crea el Short hoy: ${blocker ?? 'sin interés comprobado.'}`))
+  const demo = opts.demo === true
+  let proven: RankedCandidate[] = [], nicheMedian: number | null = null, poolSize = 0
+  if (demo) say('Modo de prueba gratis: se omite el Radar y no se usa ninguna estadística de tendencias.')
+  else {
+    const r = rankCandidates(candidatesFromOpportunities(deps.opportunities), cfg, { previousTopics, history: boost })
+    nicheMedian = r.nicheMedian; poolSize = r.poolSize
+    say(`Radar: ${poolSize} vídeos con vistas, mediana del nicho ${nicheMedian ? Math.round(nicheMedian) : 'n/d'}.`)
+    proven = r.ranked.filter(x => x.provenInterest)
+    if (!proven.length) return done(skip(poolSize < cfg.minPoolSize ? 'no_data' : 'no_proven_interest', `No se crea el Short hoy: ${r.blocker ?? 'sin interés comprobado.'}`))
+  }
+  const demoStart = Math.floor(deps.now().getTime() / 86400000)
 
   const call: TextCall = async (task, input) => {
     if (textCalls >= cfg.maxTextCalls) throw new BudgetError('Tope diario de llamadas de texto alcanzado.')
@@ -122,12 +154,16 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): P
   }
 
   const discardedTopics: string[] = []
-  for (let attempt = 0; attempt < Math.min(cfg.maxCandidatesPerDay, proven.length); attempt++) {
-    const lead = proven[attempt]
-    const titles = proven.slice(attempt, attempt + 4).map(r => r.candidate.title)
+  const attempts = demo ? Math.min(cfg.maxCandidatesPerDay, DEMO_THEMES.length) : Math.min(cfg.maxCandidatesPerDay, proven.length)
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const lead = demo ? null : proven[attempt]
+    const demoTheme = DEMO_THEMES[(demoStart + attempt) % DEMO_THEMES.length]
+    const evidence = () => demo ? demoEvidence(demoTheme) : interestEvidence(lead!, nicheMedian, poolSize)
+    const opportunityId = lead?.candidate.opportunityId ?? null
+    const titles = demo ? [] : proven.slice(attempt, attempt + 4).map(r => r.candidate.title)
     try {
       // 3. Proposal, repeat check, source assessment, verification.
-      const p = proposalPrompt(cfg, titles, [...previousTopics, ...discardedTopics])
+      const p = demo ? demoProposalPrompt(cfg, demoTheme, [...previousTopics, ...discardedTopics]) : proposalPrompt(cfg, titles, [...previousTopics, ...discardedTopics])
       const proposal = (await call('analysis', { ...p, schema: proposalSchema, schemaName: 'short_proposal', validate: parseProposal })).data
       const topicKey = topicKeyOf(proposal.topic)
       const theme = classifyTheme(`${proposal.topic} ${proposal.statement}`)
@@ -136,7 +172,7 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): P
       say(`«${proposal.topic}»: ${assessed.accepted.length} fuente(s) aceptada(s) de ${assessed.verdicts.length}.`)
       const discard = async (reason: string) => {
         discardedTopics.push(proposal.topic)
-        await deps.store.saveDiscarded({ topic: proposal.topic, topicKey, theme, reason, opportunityId: lead.candidate.opportunityId, sources: assessed.verdicts, interest: interestEvidence(lead, nicheMedian, poolSize) })
+        await deps.store.saveDiscarded({ topic: proposal.topic, topicKey, theme, reason, opportunityId, sources: assessed.verdicts, interest: evidence() })
       }
       if (!assessed.ok) { await discard('Menos de 2 fuentes fiables que contengan el dato.'); continue }
       const verification = (await call('analysis', { ...verificationPrompt(proposal.statement, assessed.accepted.map(s => ({ domain: s.domain, excerpt: s.excerpt ?? '' }))), schema: verificationSchema, schemaName: 'short_verification', validate: parseVerification })).data
@@ -180,7 +216,7 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): P
         const project = await deps.store.createProject(`Short · ${proposal.topic}`.slice(0, 120), `${cfg.channelName}: ${proposal.statement}`.slice(0, 500))
         projectId = project.id
         const sections = script.scenes.map((s, i) => ({ id: `sec-${i + 1}`, heading: i === 0 ? 'Gancho + dato' : `Escena ${i + 1}`, basis: 'verified_fact', text: s.narration, sources: assessed.accepted.map(a => a.url), speaker: null }))
-        const scriptRow = await deps.store.createScript(project.id, { title: script.title, hook: script.scenes[0].narration, cta: script.scenes[script.scenes.length - 1].narration, idea: proposal.statement, brief: `Short de curiosidades para ${cfg.channelName}. Fuentes: ${assessed.accepted.map(a => a.url).join(' · ')}`, sections, opportunityId: lead.candidate.opportunityId })
+        const scriptRow = await deps.store.createScript(project.id, { title: script.title, hook: script.scenes[0].narration, cta: script.scenes[script.scenes.length - 1].narration, idea: proposal.statement, brief: `Short de curiosidades para ${cfg.channelName}. Fuentes: ${assessed.accepted.map(a => a.url).join(' · ')}`, sections, opportunityId: opportunityId })
         const board = await deps.store.createStoryboard(project.id, scriptRow.id, script.title)
         const durations = sceneDurations(script.scenes.map(s => s.narration), audioMs!)
         const scenes = await deps.store.createScenes(board.id, script.scenes.map((s, i) => ({ position: i + 1, duration_ms: durations[i], narration: s.narration, visual_prompt: `${s.visual}. ${IMAGE_STYLE}`, metadata: { onScreenText: s.onScreenText, basis: 'verified_fact', sources: assessed.accepted.map(a => a.url), shorts_factory: true } })))
@@ -195,9 +231,9 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): P
         const composition = buildShortComposition({ storyboardId: board.id, title: script.title, script, scenes, durationsMs: scenes.map((s, i) => durations[s.position - 1] ?? durations[i]), imageAssetIds: scenes.map((_, i) => imageAssets[i]?.id ?? null), voiceAssetId: voiceAsset.id, audioMs: audioMs!, musicAssetId: musicAsset?.id ?? null })
         const job = await deps.store.createRenderJob(project.id, composition)
         const item = await deps.store.saveItem({
-          status: 'prepared', project_id: project.id, render_job_id: job.id, opportunity_id: lead.candidate.opportunityId, topic: proposal.topic, topic_key: topicKey, theme, prepared_on: today,
-          interest: interestEvidence(lead, nicheMedian, poolSize), sources: assessed.verdicts, verification: { ...verification, statement: proposal.statement, keyTerms: proposal.keyTerms },
-          checks, plan: { title: script.title, description: script.description, hashtags: script.hashtags, scenes: script.scenes.length, seconds: Math.round(audioMs! / 1000), music: music ? { id: music.id, author: music.author, license: music.license } : null, musicMissing: !music },
+          status: 'prepared', project_id: project.id, render_job_id: job.id, opportunity_id: opportunityId, topic: proposal.topic, topic_key: topicKey, theme, prepared_on: today,
+          interest: evidence(), sources: assessed.verdicts, verification: { ...verification, statement: proposal.statement, keyTerms: proposal.keyTerms },
+          checks, plan: { ...(demo ? { demo: true } : {}), title: script.title, description: script.description, hashtags: script.hashtags, scenes: script.scenes.length, seconds: Math.round(audioMs! / 1000), music: music ? { id: music.id, author: music.author, license: music.license } : null, musicMissing: !music },
           spend: { usd: 0, textCalls, imageCalls: images.length, voiceCalls: 1, tier: 'free', models: { image: freeNow.image.id, voice: freeNow.voice.id }, note: 'Solo modelos con nivel gratuito; la factura real depende de que la cuenta del proveedor no tenga facturación activa.' },
           discarded_reason: null,
         })
@@ -210,7 +246,7 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps): P
     } catch (e) {
       if (e instanceof BudgetError) return done(skip('text_budget_exhausted', 'Se alcanzó el tope diario de llamadas de texto antes de tener un Short verificado.'))
       say(`Intento ${attempt + 1} fallido: ${msg(e)}`)
-      if (attempt === Math.min(cfg.maxCandidatesPerDay, proven.length) - 1) return done(skip('all_candidates_discarded', `Todos los temas probados se descartaron o fallaron (último error: ${msg(e)}).`))
+      if (attempt === attempts - 1) return done(skip('all_candidates_discarded', `Todos los temas probados se descartaron o fallaron (último error: ${msg(e)}).`))
     }
   }
   return done(skip('all_candidates_discarded', 'Todos los temas probados se descartaron (repetidos, sin fuentes fiables o con un guion que no pasa los controles).'))

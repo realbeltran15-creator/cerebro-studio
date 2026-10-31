@@ -384,6 +384,37 @@ describe('prepareDailyShort', () => {
     expect(store.assets.filter(a => a.kind === 'image').every(a => a.provenance.allowancePool === 'cloudflare-neurons')).toBe(true)
     expect(store.assets.find(a => a.kind === 'music')!.license).toBe('public_domain')
   })
+  it('test mode: makes a Short without any Radar data, labelled as a demo, with no trend statistics', async () => {
+    const { d, store, counts } = deps({ opportunities: [] })
+    const { outcome } = await prepareDailyShort(cfg, d, { demo: true })
+    expect(outcome).toMatchObject({ status: 'prepared' })
+    const item = store.items[0] as Record<string, any>
+    expect(item.plan.demo).toBe(true)
+    expect(item.opportunity_id).toBeNull()
+    expect(item.interest.demo).toBe(true)
+    expect(item.interest.video).toBeUndefined()
+    expect(item.interest.components).toBeUndefined()
+    expect(item.spend).toMatchObject({ usd: 0, tier: 'free' })
+    expect(item.checks.every((c: { ok: boolean }) => c.ok)).toBe(true)
+    expect(item.sources.filter((s: { status: string }) => s.status === 'accepted')).toHaveLength(2)
+    expect(counts.text).toBe(3)
+  })
+  it('test mode keeps the quality floor and the source check', async () => {
+    const a = deps({ opportunities: [], freeModels: () => ({ ok: false, reasons: ['Voz: no disponible'] }) })
+    expect((await prepareDailyShort(cfg, a.d, { demo: true })).outcome).toMatchObject({ status: 'skipped', reason: 'quality_floor_unmet' })
+    expect(a.counts.text).toBe(0)
+    const b = deps({ opportunities: [], fetchPage: async () => ({ ok: false, status: 404, text: '' }) })
+    const r = await prepareDailyShort(cfg, b.d, { demo: true })
+    expect(r.outcome.status).toBe('skipped')
+    expect(b.store.items).toHaveLength(0)
+    expect(b.store.calls).not.toContain('project')
+  })
+  it('the normal run still demands Radar data', async () => {
+    const { d, counts } = deps({ opportunities: [] })
+    const { outcome } = await prepareDailyShort(cfg, d)
+    expect(outcome).toMatchObject({ status: 'skipped', reason: 'no_data' })
+    expect(counts.text).toBe(0)
+  })
   it('prepares at most one Short a day', async () => {
     const items: ItemRow[] = [{ topic: 'otro tema', topic_key: 'otro tema', theme: 'otros', status: 'prepared', prepared_on: '2026-10-12', created_at: '2026-10-12T07:00:00Z', retention: null }]
     const { d, counts } = deps({ items })

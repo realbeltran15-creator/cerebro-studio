@@ -11,13 +11,14 @@ import { isRetentionDue, retentionWindow, themeRetention, type ObservedRetention
 import type { Check } from '@/lib/shorts/script'
 import type { SourceVerdict } from '@/lib/shorts/sources'
 import { AdminHint } from '../components/admin-hint'
+import { RUN_KIND_LABEL, type RunKind } from '@/lib/shorts/run-status'
 import { ShortsModesPanel } from '../components/shorts-modes-panel'
 
 type Item = {
   id: string; status: string; topic: string; theme: string; project_id: string | null; render_job_id: string | null; publication_job_id: string | null
   interest: { video?: { title: string; url: string | null; channel: string | null; views: number | null }; nicheMedianViews?: number | null; poolSize?: number; components?: Record<string, { value: number; kind: string; note: string }>; score?: number }
   sources: SourceVerdict[]; verification: { supported?: boolean; statement?: string; note?: string }; checks: Check[]
-  plan: { title?: string; description?: string; hashtags?: string[]; seconds?: number; scenes?: number; music?: { author: string; license: string } | null; musicMissing?: boolean }
+  plan: { demo?: boolean; title?: string; description?: string; hashtags?: string[]; seconds?: number; scenes?: number; music?: { author: string; license: string } | null; musicMissing?: boolean }
   spend: { usd?: number; textCalls?: number; imageCalls?: number; voiceCalls?: number; models?: { image?: string; voice?: string } }
   discarded_reason: string | null; video_id: string | null; published_at: string | null; retention: ObservedRetention | null; created_at: string
 }
@@ -38,6 +39,7 @@ export default function ShortsPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [renderKey, setRenderKey] = useState(0)
+  const [demoState, setDemoState] = useState<{ kind: RunKind; text: string } | null>(null)
 
   const load = useCallback(async () => {
     const { data, error: e } = await supabase.from('shorts_factory_items').select('*').order('created_at', { ascending: false }).limit(60)
@@ -113,6 +115,22 @@ export default function ShortsPage() {
     } catch (e) { setError(e instanceof Error ? e.message : 'La subida falló.') } finally { setBusy(false) }
   }
 
+  async function generateDemo() {
+    if (demoState?.kind === 'running') return
+    setDemoState({ kind: 'running', text: 'Generando el Short de prueba con recursos gratuitos: guion, voz, imágenes y montaje. Puede tardar unos minutos; no cierres esta pestaña.' })
+    try {
+      const r = await fetch('/api/shorts/demo', { method: 'POST' })
+      const json = await r.json() as { ok?: boolean; outcome?: { status: string; reason?: string; message?: string; itemId?: string; topic?: string }; error?: string }
+      if (json.outcome?.status === 'prepared') {
+        setDemoState({ kind: 'generated', text: `Short generado: «${json.outcome.topic}». Abajo se monta el vídeo en tu navegador; cuando termine podrás verlo y descargar el MP4.` })
+        setSelectedId(json.outcome.itemId ?? ''); await load()
+      } else if (json.outcome?.status === 'skipped') {
+        const bad = ['generation_failed', 'storage_failed', 'voice_quality'].includes(json.outcome.reason ?? '')
+        setDemoState({ kind: bad ? 'error' : 'skipped', text: json.outcome.message ?? 'No se creó el Short.' })
+      } else setDemoState({ kind: 'error', text: json.error ?? 'La generación falló.' })
+    } catch (e) { setDemoState({ kind: 'error', text: e instanceof Error ? e.message : 'La generación falló.' }) }
+  }
+
   async function discard() {
     if (!selected || !window.confirm('¿Descartar este Short? El tema no volverá a proponerse.')) return
     const { error: e } = await supabase.from('shorts_factory_items').update({ status: 'discarded', discarded_reason: 'Descartado por el propietario en la pantalla de aprobación.', updated_at: new Date().toISOString() }).eq('id', selected.id)
@@ -124,6 +142,13 @@ export default function ShortsPage() {
     {pending && <p className="warnBox">Falta aplicar la migración <code>20261010120000_shorts_factory.sql</code> en Supabase. Hasta entonces la fábrica no puede guardar Shorts.</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
+
+    {!pending && <section className="panel" aria-labelledby="sh-demo" style={{ marginBottom: 14 }}>
+      <h3 id="sh-demo">Probar la fábrica (gratis)</h3>
+      <p className="muted small" style={{ margin: '6px 0' }}>Crea un solo Short de demostración, de principio a fin, sin necesitar datos del Radar y solo con herramientas gratuitas. El tema es de demostración: no se inventa ninguna estadística de tendencias. Mantiene las comprobaciones de fuentes y de calidad, no publica nada y no activa la ejecución diaria.</p>
+      <button type="button" onClick={() => void generateDemo()} disabled={demoState?.kind === 'running'}>{demoState?.kind === 'running' ? 'Generando…' : 'Generar Short de prueba (gratis)'}</button>
+      {demoState && <p className={demoState.kind === 'error' ? 'error' : demoState.kind === 'generated' ? 'notice' : 'muted small'} role="status" style={{ marginTop: 8 }}><span className={demoState.kind === 'generated' ? 'pill ok' : demoState.kind === 'error' ? 'pill warn' : 'pill'}>{RUN_KIND_LABEL[demoState.kind]}</span> {demoState.text}</p>}
+    </section>}
 
     {!pending && items.length === 0 && <p className="emptyState">Todavía no hay Shorts. Crea la automatización «Fábrica de Shorts de curiosidades» en <a href="/automations">Automatizaciones</a> y ejecútala (o espera a la ejecución diaria).</p>}
 
@@ -140,7 +165,7 @@ export default function ShortsPage() {
 
       {selected && <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <section className="panel">
-          <div className="cardHead"><h2>{selected.plan.title ?? selected.topic}</h2><span className="pill">{statusLabel[selected.status] ?? selected.status}</span></div>
+          <div className="cardHead"><h2>{selected.plan.title ?? selected.topic}</h2>{selected.plan.demo && <span className="pill info">Prueba</span>}<span className="pill">{statusLabel[selected.status] ?? selected.status}</span></div>
           <p className="muted small">Tema: {selected.topic} · {selected.theme} · ≈ {selected.plan.seconds ?? '?'} s · {selected.plan.scenes ?? '?'} escenas</p>
           <p className="pill ok" style={{ alignSelf: 'flex-start' }}>Coste de generación: {selected.spend.usd ?? 0} USD · {selected.spend.textCalls ?? 0} llamadas de texto, {selected.spend.imageCalls ?? 0} imágenes, {selected.spend.voiceCalls ?? 0} voz (solo opciones gratuitas)</p>
           {selected.discarded_reason && <p className="warnBox">{selected.discarded_reason}</p>}
@@ -165,6 +190,7 @@ export default function ShortsPage() {
 
         <section className="panel" aria-labelledby="sh-interest">
           <h3 id="sh-interest">Por qué este tema</h3>
+          {selected.plan.demo && <p className="small">Tema de demostración elegido a mano para probar la fábrica. No hay datos de Radar ni de tendencias detrás.</p>}
           {selected.interest.video && <p className="small">Vídeo del Radar: <a href={selected.interest.video.url ?? '#'} target="_blank" rel="noopener noreferrer">{selected.interest.video.title}</a> — {selected.interest.video.views?.toLocaleString('es-ES') ?? '?'} vistas <span className="pill info">Observado</span> (mediana del nicho {Math.round(selected.interest.nicheMedianViews ?? 0).toLocaleString('es-ES')}, {selected.interest.poolSize} vídeos)</p>}
           <ul className="small" style={{ paddingLeft: 18 }}>{Object.entries(selected.interest.components ?? {}).map(([k, c]) => <li key={k}>{c.note} <span className="pill">{kindLabel[c.kind] ?? c.kind}</span></li>)}</ul>
         </section>
