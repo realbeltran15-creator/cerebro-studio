@@ -4,11 +4,13 @@
 create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
 create schema auth;
 create table auth.users (id uuid primary key);
-create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+create function auth.uid() returns uuid language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid $$;
 grant usage on schema auth, public to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
 alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
 alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+-- Supabase concede EXECUTE por defecto a estos roles en funciones nuevas del esquema public (las migraciones lo revocan donde procede).
+alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
 
 create table public.projects (
   id uuid primary key default gen_random_uuid(), owner_id uuid not null references auth.users(id) on delete cascade, name text not null,

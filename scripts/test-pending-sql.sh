@@ -84,6 +84,27 @@ cp $DIR/sb1.err /tmp/sb1.err 2>/dev/null; cat $DIR/sb*.err | sort | uniq -c | he
 if [ "$nb" = 1 ] && [ "$ns" = 2 ]; then ok "10 llamadas concurrentes: 1 storyboard, 2 escenas"
 else find_ "CARRERA create_storyboard_from_script: 10 llamadas concurrentes -> $nb storyboards, $ns escenas (esperado 1 y 2). La propuesta NO es segura bajo concurrencia." "necesita bloqueo (p.ej. pg_advisory_xact_lock por script) o índice único parcial en storyboards(script_id)"; fi
 
+echo "== regresión: bloqueo por guion en create_storyboard_from_script =="
+# 1) Independencia: una sesión retiene el lock del guion X; otra llamada sobre el guion Y NO debe esperar.
+sql "insert into scripts(id,owner_id,project_id,title,version) values ('aaaaaaaa-0000-0000-0000-0000000000a3','$A','$PA','Guion A3',3)" >/dev/null; SA3=aaaaaaaa-0000-0000-0000-0000000000a3
+$PSQL postgres -c "begin; select pg_advisory_xact_lock(hashtextextended('storyboard_from_script:$SA2',0)); select pg_sleep(4); commit;" >/dev/null 2>&1 & HOLD=$!
+sleep 0.6
+t0=$(date +%s%N); as $A "select create_storyboard_from_script('$SA3','$SC'::jsonb)" >/dev/null; t1=$(date +%s%N)
+ms=$(( (t1-t0)/1000000 )); [ $ms -lt 2000 ] && ok "guion Y no espera al lock del guion X (${ms} ms con X retenido 4 s)" || bad "independencia de locks" "${ms} ms"
+t0=$(date +%s%N); as $A "select create_storyboard_from_script('$SA2','$SC'::jsonb)" >/dev/null; t1=$(date +%s%N)
+ms=$(( (t1-t0)/1000000 )); [ $ms -ge 2000 ] && ok "el MISMO guion sí espera al lock retenido (${ms} ms)" || bad "mismo guion debe esperar" "${ms} ms"
+wait $HOLD
+# 2) Liberación tras fallo: una llamada que falla (p_scenes inválido) no deja el lock retenido.
+as $A "select create_storyboard_from_script('$SA3','[{\"position\":\"x\",\"duration_ms\":\"no\"}]'::jsonb)" >/dev/null 2>&1
+eq "tras una llamada fallida no queda ningún advisory lock retenido" "$(sql "select count(*) from pg_locks where locktype='advisory'")" 0
+t0=$(date +%s%N); as $A "select create_storyboard_from_script('$SA3','$SC'::jsonb)" >/dev/null; t1=$(date +%s%N)
+[ $(( (t1-t0)/1000000 )) -lt 2000 ] && ok "tras el fallo, la siguiente llamada al mismo guion entra sin esperar" || bad "lock tras fallo" "esperó"
+eq "el fallo no dejó storyboards/escenas duplicadas del guion A3" "$(sql "select count(*) from storyboards where script_id='$SA3'")" 1
+# 3) Identificador estable y sin colisiones prácticas: 100 000 uuids distintos -> 100 000 claves distintas; misma entrada -> misma clave.
+eq "hashtextextended determinista (misma entrada, misma clave)" "$(sql "select hashtextextended('storyboard_from_script:$SA',0)=hashtextextended('storyboard_from_script:$SA',0)")" t
+eq "100 000 guiones distintos -> 100 000 claves de 64 bits distintas (0 colisiones)" "$(sql "select count(distinct hashtextextended('storyboard_from_script:'||gen_random_uuid()::text,0)) from generate_series(1,100000)")" 100000
+eq "el prefijo separa dominios (no choca con el lock de gasto del mismo uuid)" "$(sql "select hashtextextended('storyboard_from_script:$SA',0)<>hashtextextended('generation_spend:$SA',0)")" t
+
 echo "== reorder_scenes / escenas =="
 RB=$(as $A "insert into storyboards(owner_id,project_id,title) values ('$A','$PA','R') returning id" | head -1)
 for p in 1 2 3 4 5; do sql "insert into scenes(owner_id,storyboard_id,position,narration) values ('$A','$RB',$p,'e$p')" >/dev/null; done
