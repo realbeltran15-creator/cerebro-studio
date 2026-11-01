@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { compositionCues, compositionIssues, cuesToSrt, cuesToVtt, EXPORT_AUDIO_KBPS, EXPORT_FPS, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, projectDurationMs, type Composition, type ExportAudioKbps, type ExportFps, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
+import { compositionCues, compositionIssues, incompleteRenderNotice, cuesToSrt, cuesToVtt, EXPORT_AUDIO_KBPS, EXPORT_FPS, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, projectDurationMs, type Composition, type ExportAudioKbps, type ExportFps, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
 import { downloadText } from '@/lib/library'
 import { saveDerivedVideo, saveRender, type EditorAsset } from '@/lib/editor/client'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
@@ -205,6 +205,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   async function run(record: boolean) {
     // Synchronous guard: state updates are async, so repeated clicks during the save would pass a mode check.
     if (busyRef.current) return
+    if (record) { const notice = incompleteRenderNotice(composition); if (notice && !window.confirm(notice)) return }
     busyRef.current = true
     setMode('loading'); setError(''); setStatus(record ? 'Guardando el montaje…' : '')
     // The destination was chosen BEFORE (its own button); nothing is rendered without one.

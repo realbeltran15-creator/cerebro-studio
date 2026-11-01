@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Composition } from './composition'
+import { incompleteRenderNotice, type Composition } from './composition'
 import type { MediaSource } from './renderer'
 import { containerOf } from './container'
 import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
@@ -117,6 +117,8 @@ export async function saveRender(supabase: SupabaseClient, input: {
       bytes: input.blob.size,
       renderer: input.renderer ?? 'browser-mediarecorder',
       renderedAt: new Date().toISOString(),
+      // A montage saved with scenes in black or narration without voice is marked, so it is never taken for a finished video.
+      incomplete: incompleteRenderNotice(input.composition) !== null,
       settings: {
         clips: input.composition.clips.length, audioClips: input.composition.audioClips?.length ?? 0, editedManually: input.composition.editedManually === true, fadeMs: input.composition.fadeMs, subtitles: input.composition.subtitles,
         music: Boolean(input.composition.musicAssetId) || (input.composition.audioClips ?? []).some(a => a.kind === 'music'), duckMusic: input.composition.duckMusic, musicVolume: input.composition.musicVolume,

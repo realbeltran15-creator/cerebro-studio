@@ -702,6 +702,20 @@ export function compositionIssues(c: Composition): CompositionIssue[] {
   return issues
 }
 
+/**
+ * A montage that still has scenes without picture or narration without voice can be rendered, but it must not be saved as if it were
+ * finished: the person confirms it first. Returns the text of that confirmation, or null when nothing is missing.
+ */
+export function incompleteRenderNotice(c: Composition): string | null {
+  const issues = compositionIssues(c).filter(i => !i.blocking && /sin imagen ni v??deo|sin voz|no voz asignada/.test(i.message))
+  if (!issues.length) return null
+  const black = issues.filter(i => /sin imagen ni v??deo/.test(i.message)).length
+  const mute = issues.filter(i => /no voz asignada/.test(i.message)).length
+  const parts = [] as string[]
+  if (black) parts.push(`${black} sin imagen ni v??deo (saldr??n en negro)`)
+  if (mute) parts.push(`${mute} con narraci??n pero sin voz (el v??deo no incluir?? esa narraci??n)`)
+  return `Este montaje est?? incompleto: ${parts.join(' y ')}. ??Guardar el v??deo igualmente? Quedar?? en la Biblioteca como una versi??n incompleta, no como terminada.`
+}
 /** Platform length limits for vertical video (checked before rendering a Short). */
 export const shortPlatforms = [
   { id: 'youtube_shorts', label: 'YouTube Shorts', maxMs: 180_000 },

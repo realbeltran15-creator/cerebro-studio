@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { captionChunks, clipStarts, compositionIssues, emptyComposition, parseComposition, syncWithScenes, toShort, totalDurationMs, videoBitrateFor } from '@/lib/editor/composition'
+import { captionChunks, clipStarts, compositionIssues, emptyComposition, incompleteRenderNotice, parseComposition, syncWithScenes, toShort, totalDurationMs, videoBitrateFor } from '@/lib/editor/composition'
 
 const base = () => {
   const c = emptyComposition('sb', 'T')
@@ -42,6 +42,12 @@ describe('composition', () => {
     expect(issues.map(i => i.message)).toEqual(['Escena 1: sin imagen ni vídeo (se renderizará en negro).', 'Escena 1: tiene narración pero no voz asignada.'])
   })
 
+  it('asks for confirmation before saving an incomplete montage, and not for a complete one', () => {
+    const incomplete = syncWithScenes(base(), [{ id: 'b', position: 1, duration_ms: 1000, narration: 'n' }])
+    expect(incompleteRenderNotice(incomplete)).toMatch(/1 sin imagen ni v??deo.*1 con narraci??n pero sin voz.*incompleta/)
+    const done = base(); done.clips[0].voiceAssetId = 'voz'
+    expect(incompleteRenderNotice(done)).toBeNull()
+  })
   it('builds a vertical short from selected clips', () => {
     const s = toShort(base(), 'job1', ['a'], ' Hook ')
     expect(s.format).toBe('9:16')
