@@ -182,14 +182,17 @@ export default function ScriptsPage() {
   async function save() {
     if (!selected || !draft) return
     if (!draft.title.trim()) { setError('El guion necesita un título.'); return }
+    if (busy) return
     setBusy(true); setError('')
-    const { error: e } = await supabase.from('scripts').update({
+    // Control de concurrencia optimista: solo guarda si nadie lo cambió desde que se cargó (evita pisar cambios de otra pestaña).
+    const { data: saved, error: e } = await supabase.from('scripts').update({
       title: draft.title.trim(), status: draft.status, idea: draft.idea?.trim() || null, brief: draft.brief?.trim() || null,
       hook: draft.hook?.trim() || null, cta: draft.cta?.trim() || null, review_notes: draft.review_notes?.trim() || null,
       sections: draft.sections, updated_at: new Date().toISOString(),
-    }).eq('id', selected.id)
+    }).eq('id', selected.id).eq('updated_at', selected.updated_at).select('id')
     setBusy(false)
     if (e) { setError(e.message); return }
+    if (!saved || saved.length === 0) { setError('Este guion se modificó en otra pestaña o dispositivo. No se ha guardado nada para no pisar esos cambios: recarga la página, copia lo que necesites y vuelve a editar.'); return }
     setDirty(false); setNotice('Guardado.')
     await loadProject(projectId, selected.id)
   }
@@ -219,9 +222,13 @@ export default function ScriptsPage() {
     if (dirty) { setError('Guarda el guion antes de convertirlo en storyboard.'); return }
     const planned = scriptToScenes({ id: selected.id, version: selected.version, hook: draft.hook, cta: draft.cta, sections: draft.sections })
     if (planned.length === 0) { setError('El guion no tiene texto para convertir en escenas.'); return }
+    if (busy) return
     setBusy(true); setError('')
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setBusy(false); return }
+    // Ya existe un storyboard de este guion: se abre en vez de crear un duplicado (doble clic, reintento, otra pestaña).
+    const { data: existing } = await supabase.from('storyboards').select('id').eq('script_id', selected.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    if (existing) { setBusy(false); router.push(`/create?project=${projectId}&storyboard=${(existing as { id: string }).id}`); return }
     const { data: board, error: be } = await supabase.from('storyboards')
       .insert({ owner_id: user.id, project_id: projectId, script_id: selected.id, title: `${draft.title} · guion v${selected.version}`, aspect_ratio: '16:9' })
       .select('id').single()
