@@ -1,11 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { basisLabels, formatDuration } from '@/lib/scripts'
+import { friendlyDbMessage } from '@/lib/script-integrity'
 import type { ProjectRow, SceneRow, ScriptBasis, StoryboardRow } from '@/lib/types/database'
 
 type SceneForm = {
@@ -46,11 +47,12 @@ export default function CreatePage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
 
   const loadScenes = useCallback(async (id: string) => {
     const { data, error: e } = await supabase.from('scenes').select('*').eq('storyboard_id', id).order('position')
     setScenes((data ?? []) as SceneRow[])
-    if (e) setError(e.message)
+    if (e) setError(friendlyDbMessage(e, 'No se pudieron cargar las escenas.'))
   }, [supabase])
 
   const load = useCallback(async () => {
@@ -61,7 +63,7 @@ export default function CreatePage() {
     const projectRows = (p ?? []) as ProjectRow[]
     const boardRows = (b ?? []) as StoryboardRow[]
     setProjects(projectRows); setBoards(boardRows)
-    if (pe || be) setError(pe?.message || be?.message || 'Error al cargar')
+    if (pe || be) setError(friendlyDbMessage(pe ?? be, 'Error al cargar'))
     return { projectRows, boardRows }
   }, [supabase])
 
@@ -86,22 +88,27 @@ export default function CreatePage() {
 
   async function createBoard(event: FormEvent) {
     event.preventDefault(); setError(''); setNotice('')
+    if (submitting.current) return
+    submitting.current = true
+    try {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user || !projectId || !title.trim()) return
     setBusy(true)
     const { data, error: e } = await supabase.from('storyboards').insert({ owner_id: user.id, project_id: projectId, title: title.trim(), aspect_ratio: '16:9' }).select('id').single()
     setBusy(false)
-    if (e) { setError(e.message); return }
+    if (e) { setError(friendlyDbMessage(e, 'No se pudo crear el storyboard.')); return }
     setTitle(''); setNotice('Storyboard creado. Añade escenas sin coste de IA.')
     await load()
     if (data) selectBoard(data.id)
+    } finally { submitting.current = false }
   }
 
   async function saveScene(event: FormEvent) {
     event.preventDefault(); setError(''); setNotice('')
-    if (!selected || busy) return
+    if (!selected || busy || submitting.current) return
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
+    submitting.current = true
     setBusy(true)
     const existing = editing ? scenes.find(s => s.id === editing) : null
     const metadata = {
@@ -118,8 +125,11 @@ export default function CreatePage() {
     const { error: e } = existing
       ? await supabase.from('scenes').update(fields).eq('id', existing.id)
       : await supabase.from('scenes').insert({ ...fields, owner_id: user.id, storyboard_id: selected, position: nextPosition })
-    setBusy(false)
-    if (e) { setError(e.message); return }
+    setBusy(false); submitting.current = false
+    if (e) {
+      if (e.code === '23505') { await loadScenes(selected); setError('Otra pestaña añadió una escena al mismo tiempo. Se recargó la lista; tu texto sigue en el formulario: pulsa Guardar de nuevo.'); return }
+      setError(friendlyDbMessage(e, 'No se pudo guardar la escena. Tu texto sigue en el formulario: reintenta en unos segundos.')); return
+    }
     setForm(emptyForm); setEditing(null)
     setNotice(existing ? `Escena ${existing.position} actualizada.` : 'Escena guardada. No se ha solicitado ninguna generación de pago.')
     await loadScenes(selected)

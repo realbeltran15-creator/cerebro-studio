@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { learningFromSnapshots, type Learning, type SnapshotRow } from '@/lib/analytics/learning'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
+import { classifyScriptInsertError, friendlyDbMessage, planStoryboardResume, type ExistingScene } from '@/lib/script-integrity'
 import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import {
@@ -50,6 +51,7 @@ export default function ScriptsPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [conflict, setConflict] = useState(false)
   const [migrationPending, setMigrationPending] = useState(false)
   const [requestedScript, setRequestedScript] = useState('')
   const [assistReady, setAssistReady] = useState<boolean | null>(null)
@@ -174,7 +176,11 @@ export default function ScriptsPage() {
       sections: defaultStructure.map(s => makeSection(s.heading, s.basis)),
     }).select('id').single()
     setBusy(false)
-    if (e) { if (isMissingScriptsTable(e)) setMigrationPending(true); else setError(e.message); return }
+    if (e) {
+      if (isMissingScriptsTable(e)) { setMigrationPending(true); return }
+      if (classifyScriptInsertError(e) === 'version_conflict') { await loadProject(project.id); setNotice('Otra pestaña ya había creado el guion. Se ha abierto tal cual, sin modificarlo.'); return }
+      setError(friendlyDbMessage(e, 'No se pudo crear el guion.')); return
+    }
     await loadProject(project.id, data.id)
     setNotice('Guion creado con la ficha y la investigación del proyecto.')
   }
@@ -191,8 +197,9 @@ export default function ScriptsPage() {
       sections: draft.sections, updated_at: new Date().toISOString(),
     }).eq('id', selected.id).eq('updated_at', selected.updated_at).select('id')
     setBusy(false)
-    if (e) { setError(e.message); return }
-    if (!saved || saved.length === 0) { setError('Este guion se modificó en otra pestaña o dispositivo. No se ha guardado nada para no pisar esos cambios: recarga la página, copia lo que necesites y vuelve a editar.'); return }
+    if (e) { setError(friendlyDbMessage(e, 'No se pudo guardar. Tus cambios siguen en pantalla: reintenta en unos segundos.')); return }
+    if (!saved || saved.length === 0) { setConflict(true); setError('Este guion se modificó en otra pestaña o dispositivo. No se ha guardado nada para no pisar esos cambios. Tu texto sigue aquí: cópialo o carga la versión guardada.'); return }
+    setConflict(false)
     setDirty(false); setNotice('Guardado.')
     await loadProject(projectId, selected.id)
   }
@@ -212,7 +219,10 @@ export default function ScriptsPage() {
       source_opportunity_id: selected.source_opportunity_id, sections: draft.sections,
     }).select('id').single()
     setBusy(false)
-    if (e) { setError(e.message); return }
+    if (e) {
+      if (classifyScriptInsertError(e) === 'version_conflict') { await loadProject(projectId); setNotice('Otra pestaña acaba de crear una versión nueva. Se ha recargado la lista; no se ha perdido nada.'); return }
+      setError(friendlyDbMessage(e, 'No se pudo crear la versión.')); return
+    }
     await loadProject(projectId, data.id)
     setNotice(`Versión ${version} creada a partir de la ${selected.version}.`)
   }
@@ -226,20 +236,26 @@ export default function ScriptsPage() {
     setBusy(true); setError('')
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setBusy(false); return }
-    // Ya existe un storyboard de este guion: se abre en vez de crear un duplicado (doble clic, reintento, otra pestaña).
+    // Reanudable e idempotente: si ya hay storyboard de este guion se completan SOLO las escenas que faltan.
+    // Nunca se borra ni se reconstruye nada, y las ediciones manuales de escenas existentes se conservan.
     const { data: existing } = await supabase.from('storyboards').select('id').eq('script_id', selected.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
-    if (existing) { setBusy(false); router.push(`/create?project=${projectId}&storyboard=${(existing as { id: string }).id}`); return }
-    const { data: board, error: be } = await supabase.from('storyboards')
-      .insert({ owner_id: user.id, project_id: projectId, script_id: selected.id, title: `${draft.title} · guion v${selected.version}`, aspect_ratio: '16:9' })
-      .select('id').single()
-    if (be) { setBusy(false); setError(be.message); return }
-    const { error: se } = await supabase.from('scenes').insert(planned.map(p => ({ ...p, owner_id: user.id, storyboard_id: board.id })))
-    if (se) {
-      await supabase.from('storyboards').delete().eq('id', board.id)
-      setBusy(false); setError(`No se pudieron crear las escenas: ${se.message}`); return
+    let boardId = (existing as { id: string } | null)?.id ?? null
+    if (!boardId) {
+      const { data: board, error: be } = await supabase.from('storyboards')
+        .insert({ owner_id: user.id, project_id: projectId, script_id: selected.id, title: `${draft.title} · guion v${selected.version}`, aspect_ratio: '16:9' })
+        .select('id').single()
+      if (be || !board) { setBusy(false); setError(friendlyDbMessage(be, 'No se pudo crear el storyboard.')); return }
+      boardId = (board as { id: string }).id
+    }
+    const { data: have, error: he } = await supabase.from('scenes').select('position,metadata').eq('storyboard_id', boardId)
+    if (he) { setBusy(false); setError(friendlyDbMessage(he, 'No se pudieron leer las escenas existentes.')); return }
+    const plan = planStoryboardResume(planned, (have ?? []) as ExistingScene[])
+    if (plan.toInsert.length) {
+      const { error: se } = await supabase.from('scenes').insert(plan.toInsert.map(p => ({ ...p, owner_id: user.id, storyboard_id: boardId })))
+      if (se) { setBusy(false); setError(`${friendlyDbMessage(se, 'No se pudieron crear todas las escenas.')} El storyboard quedó incompleto pero no se ha borrado nada: pulsa de nuevo para reanudar.`); return }
     }
     setBusy(false)
-    router.push(`/create?project=${projectId}&storyboard=${board.id}`)
+    router.push(`/create?project=${projectId}&storyboard=${boardId}`)
   }
 
   const warnings = useMemo(() => draft ? scriptWarnings(draft) : [], [draft])
@@ -254,6 +270,13 @@ export default function ScriptsPage() {
       {migrationPending && <p className="warnBox">Falta aplicar la migración <code>supabase/migrations/20260926120000_scripts_module.sql</code> en Supabase. Hasta entonces no se pueden guardar guiones.</p>}
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
+      {conflict && draft && <div className="warnBox" role="alert">
+        <p style={{ margin: '0 0 8px' }}>Conflicto de edición: hay una versión más reciente guardada. Tu borrador no se ha perdido.</p>
+        <div className="pageActions">
+          <button type="button" className="ghost" onClick={() => { void navigator.clipboard?.writeText(JSON.stringify(draft, null, 2)).then(() => setNotice('Tu borrador se copió al portapapeles.'), () => setError('No se pudo copiar. Selecciona el texto manualmente.')) }}>Copiar mi borrador</button>
+          <button type="button" onClick={() => { setConflict(false); setDirty(false); setError(''); void loadProject(projectId, selected?.id) }}>Cargar la versión guardada (descarta mis cambios)</button>
+        </div>
+      </div>}
 
       <div className="scriptLayout">
         <aside className="scriptSide">

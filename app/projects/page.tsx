@@ -7,6 +7,7 @@ import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { createClient } from '../../lib/supabase/client'
 import { projectStatusLabel } from '@/lib/progress'
+import { friendlyDbMessage } from '@/lib/script-integrity'
 
 type Project = { id: string; name: string; description: string | null; status: string; created_at: string; updated_at: string }
 
@@ -20,6 +21,7 @@ export default function ProjectsPage() {
   const [notice, setNotice] = useState('')
   const [authenticated, setAuthenticated] = useState<boolean | null>(null)
   const nameInput = useRef<HTMLInputElement>(null)
+  const submitting = useRef(false)
 
   async function loadProjects() {
     try {
@@ -48,7 +50,8 @@ export default function ProjectsPage() {
   async function createProject(event: FormEvent) {
     event.preventDefault()
     const cleanName = name.trim()
-    if (!cleanName) return
+    if (!cleanName || submitting.current) return
+    submitting.current = true
     setBusy(true)
     try {
       const supabase = createClient()
@@ -58,7 +61,7 @@ export default function ProjectsPage() {
       const { data, error } = await supabase.from('projects').insert({ owner_id: user.id, name: cleanName, status: 'draft', target_platforms: ['youtube'] }).select('id').single()
       if (error) throw error
       router.push(`/projects/${data.id}`)
-    } catch (error) { setMessage(`No se pudo crear: ${error instanceof Error ? error.message : 'error desconocido'}`) } finally { setBusy(false) }
+    } catch (error) { setMessage(`No se pudo crear: ${friendlyDbMessage(error as { code?: string; message?: string }, 'inténtalo de nuevo en unos segundos')}`) } finally { submitting.current = false; setBusy(false) }
   }
 
   async function signOut() {
