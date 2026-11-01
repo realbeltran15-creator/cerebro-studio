@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { captionChunks, clipStarts, compositionIssues, emptyComposition, incompleteRenderNotice, parseComposition, syncWithScenes, toShort, totalDurationMs, videoBitrateFor } from '@/lib/editor/composition'
+import { captionChunks, clipStarts, compositionIssues, emptyComposition, incompleteRenderNotice, isIncompleteRender, parseComposition, syncWithScenes, toShort, totalDurationMs, videoBitrateFor } from '@/lib/editor/composition'
 
 const base = () => {
   const c = emptyComposition('sb', 'T')
@@ -48,6 +48,12 @@ describe('composition', () => {
     const done = base(); done.clips[0].voiceAssetId = 'voz'
     expect(incompleteRenderNotice(done)).toBeNull()
   })
+  it('recognises a render saved as incomplete', () => {
+    expect(isIncompleteRender({ incomplete: true })).toBe(true)
+    expect(isIncompleteRender({ incomplete: false })).toBe(false)
+    expect(isIncompleteRender(null)).toBe(false)
+  })
+
   it('builds a vertical short from selected clips', () => {
     const s = toShort(base(), 'job1', ['a'], ' Hook ')
     expect(s.format).toBe('9:16')

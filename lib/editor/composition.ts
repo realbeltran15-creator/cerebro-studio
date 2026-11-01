@@ -716,6 +716,9 @@ export function incompleteRenderNotice(c: Composition): string | null {
   if (mute) parts.push(`${mute} con narración pero sin voz (el vídeo no incluirá esa narración)`)
   return `Este montaje está incompleto: ${parts.join(' y ')}. ¿Guardar el vídeo igualmente? Quedará en la Biblioteca como una versión incompleta, no como terminada.`
 }
+/** True when the render was saved with scenes in black or narration without voice (see incompleteRenderNotice). */
+export const isIncompleteRender = (provenance: Record<string, unknown> | null | undefined) => provenance?.incomplete === true
+
 /** Platform length limits for vertical video (checked before rendering a Short). */
 export const shortPlatforms = [
   { id: 'youtube_shorts', label: 'YouTube Shorts', maxMs: 180_000 },

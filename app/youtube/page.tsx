@@ -8,6 +8,7 @@ import { ResearchCapture } from './research-capture'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { YouTubePayload } from '@/lib/publication/youtube'
 import type { ProjectRow } from '@/lib/types/database'
+import { isIncompleteRender } from '@/lib/editor/composition'
 
 type Job = { id: string; project_id: string; status: string; created_at: string; approved_at: string | null; payload: YouTubePayload; result: Record<string, unknown> | null }
 type Asset = { id: string; asset_type: string; license_status: string; provenance: Record<string, unknown> | null; created_at: string }
@@ -84,6 +85,7 @@ export default function YouTubePage() {
     e.preventDefault()
     setError(''); setNotice('')
     if (!form.title.trim()) { setError('El título es obligatorio.'); return }
+    if (isIncompleteRender(assets.find(a => a.id === form.videoAssetId)?.provenance)) { setError('Este vídeo se guardó incompleto (escenas en negro o narración sin voz). Termínalo en el Editor y vuelve a renderizarlo antes de prepararlo para YouTube.'); return }
     if (!form.videoAssetId) { setError('Elige el vídeo. Si no hay ninguno, renderízalo en el Editor.'); return }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setError('La sesión ha caducado.'); return }
@@ -185,7 +187,7 @@ export default function YouTubePage() {
           <label>Vídeo
             <select value={form.videoAssetId} onChange={e => setForm({ ...form, videoAssetId: e.target.value })}>
               <option value="">— Elige un vídeo</option>
-              {videos.map(v => <option key={v.id} value={v.id}>{String(v.provenance?.title ?? 'Vídeo')} · {new Date(v.created_at).toLocaleDateString()}</option>)}
+              {videos.map(v => <option key={v.id} value={v.id}>{String(v.provenance?.title ?? 'Vídeo')} · {new Date(v.created_at).toLocaleDateString()}{isIncompleteRender(v.provenance) ? ' · INCOMPLETO' : ''}</option>)}
             </select>
           </label>
           <label>Miniatura

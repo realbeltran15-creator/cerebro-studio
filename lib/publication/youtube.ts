@@ -107,6 +107,9 @@ export async function publishJob(db: SupabaseClient, ownerId: string, jobId: str
   // written directly through RLS, or a payload/video changed after approving, does not carry a valid seal.
   if (!(await approvalStillValid(db, job))) throw new PublishError(STALE_APPROVAL_MESSAGE, 403)
 
+  // A render saved with scenes in black or narration without voice is never uploaded as if it were finished.
+  const { data: videoRow } = await db.from('assets').select('provenance').eq('id', job.payload.videoAssetId ?? '').eq('owner_id', ownerId).maybeSingle()
+  if ((videoRow?.provenance as Record<string, unknown> | null | undefined)?.incomplete === true) throw new PublishError('Este vídeo se guardó incompleto (escenas en negro o narración sin voz). No se ha subido nada: termínalo en el Editor y vuelve a renderizarlo.', 409)
   const problem = validatePayload(job.payload)
   if (problem) throw new PublishError(problem)
   const connection = await youtubeConnection(db, ownerId)
