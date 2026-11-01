@@ -44,7 +44,7 @@ describe('composition', () => {
 
   it('asks for confirmation before saving an incomplete montage, and not for a complete one', () => {
     const incomplete = syncWithScenes(base(), [{ id: 'b', position: 1, duration_ms: 1000, narration: 'n' }])
-    expect(incompleteRenderNotice(incomplete)).toMatch(/1 sin imagen ni v??deo.*1 con narraci??n pero sin voz.*incompleta/)
+    expect(incompleteRenderNotice(incomplete)).toMatch(/1 sin imagen ni vídeo.*1 con narración pero sin voz.*incompleta/)
     const done = base(); done.clips[0].voiceAssetId = 'voz'
     expect(incompleteRenderNotice(done)).toBeNull()
   })
