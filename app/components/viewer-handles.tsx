@@ -138,8 +138,9 @@ export function ViewerHandles({ comp, player, kindOf, playheadMs, selection, onS
   function up() { if (drag.current) { drag.current = null; end(); force(n => n + 1) } }
 
   const pct = (v: number, of: number) => `${v / of * 100}%`
-  return <div ref={layer} className="viewerHandles" style={{ position: 'absolute', inset: 0, cursor: 'default', touchAction: 'none' }}
-    onPointerDown={e => down(e, 'move')} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+  return <div ref={layer} className="viewerHandles" style={{ position: 'absolute', inset: 0, cursor: 'default', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}
+    // Sin selección ni arrastre nativo: si el navegador inicia un «dragstart» cancela el puntero y el redimensionado se queda a medias.
+    onDragStart={e => e.preventDefault()} onPointerDown={e => down(e, 'move')} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
     onDoubleClick={() => player?.toggle()} aria-label="Capas del visor" role="application">
     {shown && <div className="viewerBox" aria-label={`Seleccionado en el visor: ${shown.kind === 'main' ? 'imagen principal' : shown.kind === 'overlay' ? 'superposición' : 'texto'}`}
       style={{ position: 'absolute', left: pct(shown.box.cx - shown.box.w / 2, w), top: pct(shown.box.cy - shown.box.h / 2, h), width: pct(shown.box.w, w), height: pct(shown.box.h, h), transform: `rotate(${shown.box.rotation}deg)`, outline: '2px solid #ffd23f', boxShadow: '0 0 0 1px rgba(0,0,0,.6)', pointerEvents: 'none' }}>

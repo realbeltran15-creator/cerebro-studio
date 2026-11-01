@@ -648,8 +648,13 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 90000 })
   const convert = page.getByRole('button', { name: /Convertir a MP4 compatible/ })
   await convert.waitFor({ timeout: 15000 }).catch(() => undefined)
+  // What this browser really recorded decides what the panel must show: Chrome/Edge 126+ record H.264 MP4 (Instagram-ready, no warning);
+  // browsers that record WebM/VP9 must be flagged and offered the conversion.
+  const savedMime = await page.evaluate(() => window.__DB.assets.find(a => a.source_provider === 'browser-render')?.provenance?.mimeType ?? '')
   const needsConversion = await convert.count()
-  check('render panel: a VP9/WebM render is flagged as not Instagram-ready and offers the conversion', needsConversion === 1 && await page.getByText(/Instagram/).count() >= 1)
+  const igWarning = await page.getByText(/Instagram (solo acepta|rechaza)/).count()
+  const instagramReady = /^video\/(mp4|quicktime)/.test(savedMime) && /avc1|h264|hvc1|hev1/i.test(savedMime)
+  check(`render panel: the recorded format (${savedMime}) is flagged for Instagram only when it is not Instagram-ready`, savedMime !== '' && (instagramReady ? needsConversion === 0 && igWarning === 0 : needsConversion === 1 && igWarning >= 1), { savedMime, needsConversion, igWarning })
   if (needsConversion) {
     await convert.click()
     await page.getByText(/MP4 compatible con Instagram guardado/).waitFor({ timeout: 240000 })
@@ -1731,6 +1736,8 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.mouse.move(stage.x + stage.width * 0.5, stage.y + stage.height * 0.5)
   await page.mouse.down(); await page.mouse.move(stage.x + stage.width * 0.75, stage.y + stage.height * 0.5, { steps: 6 }); await page.mouse.up()
   check('viewer: dragging the layer on the viewer moves it (now at 75 % across)', await settle(0.75, 0.5, isBlue) && isRed(await pixel(0.5, 0.5)) && /Horizontal \(75 %\)/.test(await page.getByText(/^Horizontal \(/).first().textContent()), [await pixel(0.75, 0.5), await page.getByText(/^Horizontal \(/).first().textContent()])
+  // The handle can sit below the fold on a 1000 px window: bring it into view first (a real user scrolls too).
+  await page.getByRole('button', { name: 'Redimensionar' }).scrollIntoViewIfNeeded()
   const handle = await page.getByRole('button', { name: 'Redimensionar' }).boundingBox()
   await page.mouse.move(handle.x + 7, handle.y + 7); await page.mouse.down(); await page.mouse.move(handle.x + 7 + stage.width * 0.1, handle.y + 7 + stage.height * 0.1, { steps: 5 }); await page.mouse.up()
   const sizeText = await page.getByText(/^Tamaño \(/).first().textContent()
@@ -2179,7 +2186,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await clips.nth(0).click()
   check('properties: a photo shows its groups («Foto» and «Transición» open, the advanced ones closed)', /foto/.test(await head()) && await expanded('Foto') === 'true' && await expanded('Transición') === 'true' && await expanded('Color y efectos') === 'false' && await page.getByLabel('Volumen del vídeo', { exact: false }).count() === 0, await head())
   await clips.nth(1).click()
-  check('properties: a video adds its own tools (start in the video, speed, volume)', /vídeo/.test(await head()) && await page.getByLabel(/Volumen del vídeo/).isVisible() && await page.locator('#ed-props').getByLabel('Velocidad').isVisible(), await head())
+  check('properties: a video adds its own tools (start in the video, speed, volume)', /vídeo/.test(await head()) && await page.getByLabel(/Volumen del vídeo/).first().isVisible() && await page.locator('#ed-props').getByLabel(/^Velocidad/).isVisible(), await head())
   await page.locator('[aria-label="Pista de Voz"] > div').first().click()
   check('properties: an audio clip shows sound and automation groups, not picture tools', /^Audio/.test(await head()) && await expanded('Sonido') === 'true' && await page.locator('button.edSectionHead', { hasText: 'Automatización' }).count() === 1 && await page.locator('button.edSectionHead', { hasText: 'Color y efectos' }).count() === 0, await head())
   await page.getByRole('button', { name: 'Añadir texto', exact: true }).click()
