@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { hashPayload } from './hash'
-import type { Approval, ApprovalAction, Job, JobStatus, QueueStore, StepState } from './types'
+import type { Approval, ApprovalAction, Job, JobStatus, StepState, SyncQueueStore } from './types'
 
 /** Almacen en memoria con la misma semantica que job_queue + claim_next_job (para simulacion y tests). */
-export function createMemoryStore(): QueueStore & { all(): Job[] } {
+export function createMemoryStore(): SyncQueueStore & { all(): Job[] } {
   const jobs = new Map<string, Job>()
   const approvals: Approval[] = []
   const owns = (j: Job | undefined, token: string): j is Job => !!j && j.status === 'running' && j.claimToken === token
@@ -12,7 +12,9 @@ export function createMemoryStore(): QueueStore & { all(): Job[] } {
     all: () => [...jobs.values()].map(j => ({ ...j })),
     enqueue: (n, now) => {
       for (const j of jobs.values()) {
-        if (j.ownerId === n.ownerId && j.kind === n.kind && j.idempotencyKey === n.idempotencyKey) return { job: { ...j }, created: false }
+        if (j.ownerId === n.ownerId && j.kind === n.kind && j.idempotencyKey === n.idempotencyKey) {
+          return { job: { ...j }, created: false, payloadMismatch: j.payloadHash !== hashPayload(n.payload ?? {}) }
+        }
       }
       const payload = n.payload ?? {}
       const job: Job = {
@@ -23,13 +25,13 @@ export function createMemoryStore(): QueueStore & { all(): Job[] } {
         awaitingReason: null, dryRun: n.dryRun ?? true, createdAt: now, updatedAt: now,
       }
       jobs.set(job.id, job)
-      return { job: { ...job }, created: true }
+      return { job: { ...job }, created: true, payloadMismatch: false }
     },
     get: id => { const j = jobs.get(id); return j ? structuredClone(j) : null },
-    claim: (executorId, leaseMs, now) => {
+    claim: (executorId, leaseMs, now, kinds) => {
       const ready = [...jobs.values()].filter(j =>
         (j.status === 'pending' && j.availableAt <= now) || (j.status === 'running' && (j.leaseExpiresAt ?? 0) < now),
-      ).sort((a, b) => a.priority - b.priority || a.availableAt - b.availableAt)
+      ).filter(j => !kinds || kinds.includes(j.kind)).sort((a, b) => a.priority - b.priority || a.availableAt - b.availableAt)
       const j = ready[0]
       if (!j) return null
       j.status = 'running'; j.executorId = executorId; j.claimToken = randomUUID()

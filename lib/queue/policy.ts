@@ -53,7 +53,7 @@ export function decide(i: PolicyInput): Decision {
     return { action: 'fail', code: 'rate_limited', message, httpStatus: 429, releaseReservation: true }
   }
   if (status !== undefined && status >= 400 && status < 500) {
-    return { action: 'fail', code: 'client_error', message, httpStatus: status, releaseReservation: true }
+    return { action: 'fail', code: (e instanceof StepError && e.code) || 'client_error', message, httpStatus: status, releaseReservation: true }
   }
   // 5xx, timeout, red o error desconocido: resultado incierto.
   const code = (e instanceof StepError && e.code) || (status ? 'server_error' : 'unknown_error')

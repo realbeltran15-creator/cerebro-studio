@@ -130,7 +130,7 @@ grant select on public.job_queue, public.job_approvals, public.budget_limits, pu
 
 -- ───────────────────────── funciones atomicas ─────────────────────────
 -- Reclamar: un solo ejecutor gana (FOR UPDATE SKIP LOCKED). Recupera tambien leases caducados.
-create or replace function public.claim_next_job(p_executor text, p_lease_seconds int default 60)
+create or replace function public.claim_next_job(p_executor text, p_lease_seconds int default 60, p_kinds text[] default null)
 returns public.job_queue
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare j public.job_queue;
@@ -138,6 +138,7 @@ begin
   select * into j from public.job_queue
    where ((status = 'pending' and available_at <= now())
        or (status = 'running' and lease_expires_at < now()))
+     and (p_kinds is null or kind = any(p_kinds))   -- un worker solo reclama tipos que sabe ejecutar
    order by priority, available_at
    for update skip locked
    limit 1;
@@ -280,13 +281,132 @@ begin
   return n;
 end $$;
 
+-- ───────────────────────── API para el adaptador (todo via RPC; nada de SQL suelto desde la app) ─────────────────────────
+-- Encolar: idempotente por (owner, kind, clave). Misma clave con OTRO payload no crea nada y avisa (payload_mismatch).
+create or replace function public.enqueue_job(p_owner uuid, p_project uuid, p_kind text, p_key text, p_payload jsonb,
+  p_payload_hash text, p_priority int default 100, p_max_attempts int default 3, p_dry_run boolean default true)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare j public.job_queue; made boolean := true;
+begin
+  if p_project is not null and not exists (select 1 from public.projects where id = p_project and owner_id = p_owner) then
+    raise exception 'el proyecto % no pertenece al propietario', p_project using errcode = 'insufficient_privilege';
+  end if;
+  insert into public.job_queue (owner_id, project_id, kind, idempotency_key, payload, payload_hash, priority, max_attempts, dry_run)
+    values (p_owner, p_project, p_kind, p_key, coalesce(p_payload, '{}'::jsonb), p_payload_hash, p_priority, p_max_attempts, p_dry_run)
+    on conflict (owner_id, kind, idempotency_key) do nothing
+    returning * into j;
+  if not found then
+    made := false;
+    select * into j from public.job_queue where owner_id = p_owner and kind = p_kind and idempotency_key = p_key;
+  end if;
+  return jsonb_build_object('job', to_jsonb(j), 'created', made, 'payload_mismatch', (not made) and j.payload_hash <> p_payload_hash);
+end $$;
+
+create or replace function public.get_job(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public, pg_temp as $$ select to_jsonb(j) from public.job_queue j where j.id = p_id $$;
+
+create or replace function public.request_cancel_job(p_owner uuid, p_id uuid) returns boolean
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.job_queue set
+      status = case when status = 'running' then status else 'cancelled' end,
+      cancel_requested = true, updated_at = now(),
+      finished_at = case when status = 'running' then finished_at else now() end
+   where id = p_id and owner_id = p_owner and status in ('pending','running','awaiting_approval');
+  return found;
+end $$;
+
+create or replace function public.resume_job(p_owner uuid, p_id uuid) returns boolean
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.job_queue set status = 'pending', awaiting_reason = null, available_at = now(), updated_at = now()
+   where id = p_id and owner_id = p_owner and status = 'awaiting_approval';
+  return found;
+end $$;
+
+create or replace function public.grant_approval(p_owner uuid, p_job uuid, p_step text, p_action text, p_payload_hash text,
+  p_max_amount jsonb, p_expires timestamptz) returns boolean
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if not exists (select 1 from public.job_queue where id = p_job and owner_id = p_owner) then return false; end if;
+  insert into public.job_approvals (owner_id, job_id, step, action, payload_hash, max_amount, expires_at)
+    values (p_owner, p_job, p_step, p_action, p_payload_hash, coalesce(p_max_amount, '{}'::jsonb), p_expires)
+    on conflict (job_id, step, action) do update set payload_hash = excluded.payload_hash, max_amount = excluded.max_amount,
+      expires_at = excluded.expires_at, revoked_at = null;
+  return true;
+end $$;
+
+create or replace function public.revoke_approval(p_owner uuid, p_job uuid, p_step text, p_action text) returns boolean
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.job_approvals set revoked_at = now()
+   where owner_id = p_owner and job_id = p_job and step = p_step and action = p_action and revoked_at is null;
+  return found;
+end $$;
+
+create or replace function public.get_approval(p_job uuid, p_step text, p_action text) returns jsonb
+language sql stable security definer set search_path = public, pg_temp as $$
+  select to_jsonb(a) from public.job_approvals a where a.job_id = p_job and a.step = p_step and a.action = p_action $$;
+
+create or replace function public.set_budget_limit(p_owner uuid, p_provider text, p_project uuid, p_unit text, p_limit numeric) returns boolean
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.budget_limits set daily_limit = greatest(0, p_limit), updated_at = now()
+   where owner_id = p_owner and provider = p_provider and unit = p_unit and project_id is not distinct from p_project;
+  if not found then
+    insert into public.budget_limits (owner_id, provider, project_id, unit, daily_limit) values (p_owner, p_provider, p_project, p_unit, greatest(0, p_limit));
+  end if;
+  return true;
+end $$;
+
+create or replace function public.budget_used(p_owner uuid, p_provider text, p_unit text) returns numeric
+language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce(sum(case when state = 'settled' then actual else reserved end), 0) from public.budget_entries
+   where owner_id = p_owner and provider = p_provider and unit = p_unit and day = (now() at time zone 'utc')::date and state <> 'released' $$;
+
+-- Reserva multi-unidad TODO O NADA en una sola transaccion. p_costs = {"eur": 0.5, "quota": 100}; un null = precio desconocido.
+create or replace function public.reserve_budget_multi(p_owner uuid, p_job uuid, p_step text, p_provider text, p_project uuid,
+  p_costs jsonb, p_key text) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare u text; v jsonb; amt numeric; lim numeric; used numeric; today date := (now() at time zone 'utc')::date;
+begin
+  if jsonb_typeof(p_costs) <> 'object' then return jsonb_build_object('ok', false, 'code', 'invalid_amount', 'unit', null); end if;
+  for u in select k from jsonb_object_keys(p_costs) k order by k loop                     -- orden fijo: sin interbloqueos
+    if u not in ('eur','usd','credits','quota') then return jsonb_build_object('ok', false, 'code', 'invalid_amount', 'unit', u); end if;
+    v := p_costs -> u;
+    if jsonb_typeof(v) = 'null' then return jsonb_build_object('ok', false, 'code', 'unknown_price', 'unit', u); end if;
+    if jsonb_typeof(v) <> 'number' or (v #>> '{}')::numeric < 0 then return jsonb_build_object('ok', false, 'code', 'invalid_amount', 'unit', u); end if;
+    perform pg_advisory_xact_lock(hashtextextended(p_owner::text || p_provider || u || today::text, 0));
+  end loop;
+  if (select count(*) from jsonb_object_keys(p_costs)) > 0 and not exists (
+       select 1 from jsonb_object_keys(p_costs) k where not exists
+         (select 1 from public.budget_entries where owner_id = p_owner and idempotency_key = p_key || ':' || k)) then
+    return jsonb_build_object('ok', true, 'reused', true);                                  -- reintento: no duplica
+  end if;
+  for u in select k from jsonb_object_keys(p_costs) k order by k loop
+    amt := (p_costs ->> u)::numeric;
+    select coalesce(min(daily_limit), 0) into lim from public.budget_limits
+     where owner_id = p_owner and provider = p_provider and unit = u and (project_id is null or project_id = p_project);
+    select coalesce(sum(case when state = 'settled' then actual else reserved end), 0) into used from public.budget_entries
+     where owner_id = p_owner and provider = p_provider and unit = u and day = today and state <> 'released';
+    if used + amt > lim then return jsonb_build_object('ok', false, 'code', 'budget_exhausted', 'unit', u); end if;
+  end loop;
+  for u in select k from jsonb_object_keys(p_costs) k order by k loop
+    insert into public.budget_entries (owner_id, job_id, step, provider, project_id, unit, day, reserved, idempotency_key)
+      values (p_owner, p_job, p_step, p_provider, p_project, u, today, (p_costs ->> u)::numeric, p_key || ':' || u)
+      on conflict (owner_id, idempotency_key) do nothing;
+  end loop;
+  return jsonb_build_object('ok', true, 'reused', false);
+end $$;
+
 -- Solo service_role ejecuta las funciones privilegiadas. Ningun otro rol (ni public) puede.
 do $$
 declare f record;
 begin
   for f in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'public' and p.proname in ('claim_next_job','reserve_budget','heartbeat_job','save_job_steps','finish_job',
-              'check_approval','settle_budget','release_budget','mark_budget_uncertain','resolve_uncertain_budget') loop
+              'check_approval','settle_budget','release_budget','mark_budget_uncertain','resolve_uncertain_budget',
+              'enqueue_job','get_job','request_cancel_job','resume_job','grant_approval','revoke_approval','get_approval','set_budget_limit','budget_used','reserve_budget_multi') loop
     execute format('revoke all on function %s from public, anon, authenticated', f.sig);
     execute format('grant execute on function %s to service_role', f.sig);
   end loop;

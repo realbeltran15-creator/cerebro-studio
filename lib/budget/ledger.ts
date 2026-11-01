@@ -113,3 +113,7 @@ export function createMemoryLedger(): BudgetLedger {
 
 /** Un coste es «gratis» solo si todas sus cantidades son exactamente 0 (ninguna desconocida). */
 export const isFreeCost = (c: Cost) => Object.values(c).every(v => v === 0)
+
+import type { Asyncify } from '@/lib/queue/types'
+/** Lo que necesita el ejecutor: el mismo contrato, sincrono (memoria) o asincrono (PostgreSQL). */
+export type AsyncBudgetLedger = Asyncify<Pick<BudgetLedger, 'reserve' | 'settle' | 'release' | 'markUncertain' | 'resolveUncertain' | 'used' | 'setLimit'>>

@@ -20,7 +20,9 @@
     "test:repeat": "node scripts/repeat-video-test.mjs",
     "test:looks": "node scripts/looks-test.mjs",
     "test:upload": "node scripts/upload-test.mjs",
-    "test:ticket": "node scripts/ticket-test.mjs"
+    "test:ticket": "node scripts/ticket-test.mjs",
+    "queue:simulate": "node scripts/queue-simulate.mjs",
+    "test:queue-sql": "bash scripts/test-job-queue-sql.sh"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "1.61.3",
@@ -37,12 +39,14 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@napi-rs/canvas": "^1.0.13",
     "@types/node": "latest",
+    "@types/pg": "^8.23.1",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "axe-core": "^4.14.0",
     "esbuild": "^0.28.2",
     "eslint": "latest",
     "eslint-config-next": "latest",
+    "pg": "^8.23.1",
     "playwright-core": "^1.56.1",
     "typescript": "latest",
     "vitest": "latest"

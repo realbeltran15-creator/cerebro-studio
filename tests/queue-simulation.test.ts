@@ -110,7 +110,7 @@ describe('4B.0 simulación: timeout, reinicio y lease', () => {
     const w = world({ analyze: n => (n === 1 ? gate : undefined) })
     const j = w.enqueue('job-restart-1', 'local')
     const pendingA = runOnce({ ...w.exec('A'), registry: { local: [{ name: 'analyze', kind: 'safe', timeoutMs: 100_000, run: async () => { w.calls.analyze++; await gate; return { result: 'A' } } }, ...(w.exec().registry.local.slice(1))] } })
-    await Promise.resolve()
+    await new Promise(r => setTimeout(r, 5))                                   // A llega a su paso
     w.clock.advance(5_000)                                                    // el lease de A caduca
     const b = await runOnce(w.exec('B'))
     expect(b.outcome).toBe('completed')
@@ -266,7 +266,7 @@ describe('4B.0 simulación: cancelación', () => {
     const w = world(); let id = ''
     const reg: Registry = {
       local: [
-        { name: 'analyze', kind: 'safe', run: async ctx => { w.calls.analyze++; w.store.requestCancel(id, OWNER, w.clock.now()); return { result: ctx.isCancelled() } } },
+        { name: 'analyze', kind: 'safe', run: async ctx => { w.calls.analyze++; w.store.requestCancel(id, OWNER, w.clock.now()); return { result: await ctx.isCancelled() } } },
         { name: 'render', kind: 'safe', run: async () => { w.calls.render++; return {} } },
       ],
     }
@@ -298,7 +298,7 @@ describe('4B.0 simulación: control de calidad', () => {
     }
     const reg: Registry = { pipeline: [w.exec().registry.pipeline[0], qc, ...w.exec().registry.pipeline.slice(1)] }
     const j = w.enqueue('job-qc-1'); w.approve(j, 'generate', 'spend'); w.approve(j, 'publish', 'publish')
-    expect(await runOnce({ ...w.exec(), registry: reg })).toMatchObject({ outcome: 'failed', reason: 'client_error' })
+    expect(await runOnce({ ...w.exec(), registry: reg })).toMatchObject({ outcome: 'failed', reason: 'qc_failed' })
     expect(w.calls).toMatchObject({ qc: 1, generate: 0, render: 0, publish: 0 })
     expect(w.charged()).toBe(0)
   })
@@ -362,8 +362,9 @@ describe('4B.0 simulación: aprobaciones y publicación', () => {
     expect(ran).toBe(false)
   })
 
-  it('un trabajo desconocido falla sin ejecutar nada', async () => {
-    const w = world(); w.enqueue('job-unk-1', 'nope')
-    expect(await runOnce(w.exec())).toMatchObject({ outcome: 'failed', reason: 'unknown_kind' })
+  it('un worker no reclama tipos que no sabe ejecutar: el trabajo queda intacto en la cola', async () => {
+    const w = world(); const j = w.enqueue('job-unk-1', 'nope')
+    expect(await runOnce(w.exec())).toEqual({ outcome: 'idle' })
+    expect((w.store.get(j.id) as Job)).toMatchObject({ status: 'pending', attempts: 0 })
   })
 })

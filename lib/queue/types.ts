@@ -10,6 +10,10 @@ export type StepState = {
   /** Resultado del paso: un paso completado NUNCA se vuelve a ejecutar al reanudar. */
   result?: unknown
   error?: { code: string; message: string }
+  /** Trazabilidad por etapa (ms desde epoch / duración / pasos de los que depende). */
+  startedAt?: number
+  durationMs?: number
+  dependsOn?: string[]
 }
 
 export type JobError = { code: string; message: string; httpStatus?: number; retryable: boolean }
@@ -66,11 +70,12 @@ export type Approval = {
  * (caduco y otro ejecutor lo reclamo) la escritura se rechaza (fencing). La implementacion Supabase
  * (4B.1) usara claim_next_job y UPDATE ... WHERE claim_token = $token.
  */
-export type QueueStore = {
+export type SyncQueueStore = {
   /** Idempotente por (ownerId, kind, idempotencyKey): devuelve el existente sin crear otro. */
-  enqueue(n: NewJob, now: number): { job: Job; created: boolean }
+  enqueue(n: NewJob, now: number): { job: Job; created: boolean; /** La clave ya existia con OTRO payload: no se creo nada. */ payloadMismatch: boolean }
   get(id: string): Job | null
-  claim(executorId: string, leaseMs: number, now: number): Job | null
+  /** `kinds`: solo reclama trabajos de esos tipos (un worker no debe tocar lo que no sabe ejecutar). */
+  claim(executorId: string, leaseMs: number, now: number, kinds?: string[]): Job | null
   /** false si el token ya no es vigente. */
   heartbeat(id: string, token: string, leaseMs: number, now: number): boolean
   /** Reemplaza steps/currentStep. false = lease perdido. */
@@ -89,3 +94,10 @@ export type QueueStore = {
 }
 
 export type { Cost }
+
+/** Cualquier metodo puede ser sincrono (memoria) o asincrono (PostgreSQL). El ejecutor siempre hace await. */
+export type MaybeAsync<T> = T | Promise<T>
+export type Asyncify<T> = {
+  [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => MaybeAsync<R> : T[K] extends object ? Asyncify<T[K]> : T[K]
+}
+export type QueueStore = Asyncify<SyncQueueStore>

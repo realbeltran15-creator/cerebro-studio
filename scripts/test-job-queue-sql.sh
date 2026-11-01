@@ -82,7 +82,12 @@ for fn in "claim_next_job('x',60)" "reserve_budget('$A',null,'s','gen',null,'eur
           "check_approval(gen_random_uuid(),'s','spend')" "settle_budget('$A','k','eur',0)" "release_budget('$A','k')" \
           "mark_budget_uncertain('$A','k')" "resolve_uncertain_budget('$A','k',true)"; do
   for who in ua ub an; do r=$($who "select $fn"); denied "$r" || fail "$who pudo ejecutar $fn -> $r"; done
-done; ok "ningun rol salvo service_role puede ejecutar las 10 funciones privilegiadas"
+done; ok "ningun rol salvo service_role puede ejecutar las funciones privilegiadas"
+n=$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' and p.prorettype <> 'trigger'::regtype and (has_function_privilege('anon',p.oid,'execute') or has_function_privilege('authenticated',p.oid,'execute') or has_function_privilege('public',p.oid,'execute'))")
+[ "$n" = "0" ] || fail "hay funciones ejecutables por anon/authenticated/public: $n"
+n=$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prorettype <> 'trigger'::regtype and not has_function_privilege('service_role',p.oid,'execute')")
+[ "$n" = "0" ] || fail "funciones que service_role no puede ejecutar: $n"
+ok "TODAS las funciones de public (no solo las nombradas) restringidas a service_role"
 n=$(q "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and prosecdef and not exists (select 1 from unnest(coalesce(proconfig,'{}')) c where c like 'search_path=%')")
 [ "$n" = "0" ] || fail "funciones SECURITY DEFINER sin search_path fijo: $n"; ok "toda funcion SECURITY DEFINER fija search_path"
 
