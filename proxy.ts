@@ -1,9 +1,19 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { betaVerdict } from '@/lib/beta-scope'
 
 const protectedPrefixes = ['/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose', '/automations', '/studio', '/usage', '/social', '/connectors', '/campaigns', '/shorts', '/influencer', '/calendar', '/workflows', '/add']
 
+/** Paths that ran this proxy before the beta scope existed (the old matcher). */
+const AUTH_AWARE = ['/studio', '/usage', '/projects', '/market-intelligence', '/opportunities', '/scripts', '/create', '/library', '/youtube', '/analytics', '/images', '/videos', '/voices', '/thumbnails', '/radar', '/audio', '/editor', '/repurpose', '/automations', '/social', '/connectors', '/campaigns', '/shorts', '/influencer', '/calendar', '/workflows', '/add']
+const isAuthAware = (p: string) => AUTH_AWARE.some(x => p === x || p.startsWith(`${x}/`))
+
 export async function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname
+  const verdict = betaVerdict(path)
+  if (verdict === 'api-closed') return NextResponse.json({ error: 'Esta función está desactivada en la beta privada.', blocked: 'beta' }, { status: 404, headers: { 'Cache-Control': 'no-store' } })
+  if (verdict === 'redirect-home') { const home = request.nextUrl.clone(); home.pathname = '/'; home.search = '?beta=fuera-de-alcance'; return NextResponse.redirect(home) }
+  if (!isAuthAware(path)) return NextResponse.next()
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -37,12 +47,8 @@ export async function proxy(request: NextRequest) {
   return response
 }
 
+// Runs on every path so the beta scope (lib/beta-scope.ts) can close what is out of scope; static files and Next internals are excluded.
+// Paths that were not in the previous, narrower matcher get a plain pass-through below, so nothing else changes.
 export const config = {
-  matcher: [
-    '/studio/:path*', '/usage/:path*',
-    '/projects/:path*', '/market-intelligence/:path*', '/opportunities/:path*', '/scripts/:path*', '/create/:path*',
-    '/library/:path*', '/youtube/:path*', '/analytics/:path*', '/images/:path*', '/videos/:path*', '/voices/:path*', '/thumbnails/:path*', '/radar/:path*', '/audio/:path*', '/editor/:path*', '/repurpose/:path*', '/automations/:path*',
-    // Previously missing from the matcher although listed as protected: the pages rendered without a session (data stayed behind RLS).
-    '/social/:path*', '/connectors/:path*', '/campaigns/:path*', '/shorts/:path*', '/influencer/:path*', '/calendar/:path*', '/workflows/:path*', '/add/:path*', '/add',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|manifest.webmanifest|images/).*)'],
 }

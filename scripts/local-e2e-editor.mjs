@@ -17,7 +17,7 @@ const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
 const anon = (() => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role: 'anon', iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` })()
 const storageDir = mkdtempSync(path.join(os.tmpdir(), 'lite-e2e-'))
 const lite = await startLite({ port: LITE, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir, onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{}')`) })
-const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
+const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', NEXT_PUBLIC_CEREBRO_BETA: 'private', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
 let pass = 0, fail = 0
 const t = async (name, fn) => { try { const r = await fn(); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message.split('\n').slice(0, 3).join(' | ')) } }
 if (!process.env.SKIP_BUILD) { console.log('next build…'); const b = spawn('npx', ['next', 'build'], { cwd: root, env, stdio: 'ignore' }); const code = await new Promise(r => b.on('exit', r)); if (code) { console.log('FAIL build', code); process.exit(1) } }
@@ -97,9 +97,13 @@ await step('8 importar un audio real (WAV) con el Centro de importación', async
   const n = Number(sq(`select count(*) from assets where storage_path like '%.wav' or asset_type in ('music','voice','sfx')`)); console.log('   audios en BD:', n)
   return n >= 1 || (await dump(page, 'import'), false)
 })
-await step('9 opciones de exportación visibles', async () => {
-  for (const l of ['Modo de exportación', 'Resolución', 'Calidad', 'Destino']) console.log('   ', l, '=', JSON.stringify(await page.getByLabel(l, { exact: true }).first().locator('option').allInnerTexts().catch(() => '?')))
-  return true
+await step('9 política beta: el modo tiempo real no se puede elegir', async () => {
+  await page.getByRole('button', { name: /^Exportar/ }).first().click(); await page.locator('#ed-export').waitFor({ state: 'visible' })
+  const sel = page.locator('#ed-export').getByLabel('Modo de exportación', { exact: true }).first()
+  const opts = await sel.locator('option').allInnerTexts(); const dis = await sel.isDisabled()
+  console.log('   modo:', opts, '| bloqueado:', dis)
+  await page.locator('#ed-export button[aria-label="Cerrar exportación"]').click()
+  return dis && opts.length === 1 && /Rápida/.test(opts[0])
 })
 await step('10 edición: música de fondo + guardar ahora (persistencia del montaje)', async () => {
   const sel = page.locator('select').filter({ has: page.locator('option', { hasText: 'Sin música' }) }).first()
@@ -117,7 +121,7 @@ const findFile = rel => { const out = []; const walk = d => { for (const n of re
 await step('11 exportar MP4 (modo rápido, 480p, 24 fps) a la Biblioteca desde el RenderPanel', async () => {
   await page.getByRole('button', { name: /^Exportar/ }).first().click(); await page.locator('#ed-export').waitFor({ state: 'visible' })
   const pick = async (l, v) => page.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
-  await pick('Modo de exportación', 'fast'); await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
   await page.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
   const t0 = Date.now(); let st = ''; await page.waitForTimeout(1500); console.log('   confirmaciones aceptadas:', page.dialogs)
   while (Date.now() - t0 < 270000) { st = sq(`select status from render_jobs where status<>'draft' order by created_at desc limit 1`); if (st === 'completed' || st === 'failed') break; await page.waitForTimeout(2000) }
@@ -206,5 +210,27 @@ await step('19 tras restaurar el medio, la misma exportación se completa', asyn
   while (Date.now() - t0 < 120000) { n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > before) break; await page.waitForTimeout(1500) }
   console.log('   completados:', before, '→', n, `en ${Math.round((Date.now() - t0) / 1000)} s`)
   return n === before + 1
+})
+await step('20 alcance cerrado de la beta: páginas y API fuera de alcance no se pueden usar', async () => {
+  const r = {}
+  for (const p of ['/youtube', '/studio', '/campaigns', '/editor/auto']) { await page.goto(base + p); await page.waitForLoadState('domcontentloaded'); r[p] = new URL(page.url()).pathname + new URL(page.url()).search }
+  await page.goto(base + '/projects'); await settle(page)
+  const nav = (await page.locator('nav').allInnerTexts()).join(' ')
+  const apis = await page.evaluate(async () => { const o = {}; for (const [u, m] of [['/api/providers/render', 'POST'], ['/api/scripts/assist', 'POST'], ['/api/transcribe', 'POST'], ['/api/cron/automations', 'GET'], ['/api/oauth/youtube/start', 'GET']]) { const x = await fetch(u, { method: m, redirect: 'manual' }); o[u] = x.status + ':' + ((await x.json().catch(() => ({}))).blocked ?? '-') } return o })
+  console.log('   redirecciones:', JSON.stringify(r)); console.log('   API cerradas:', JSON.stringify(apis)); console.log('   menú contiene YouTube/Campañas/Automatizaciones:', /YouTube|Campañas|Automatizaciones/.test(nav), '| Proyectos/Biblioteca:', /Proyectos/.test(nav) && /Biblioteca/.test(nav))
+  return Object.values(r).every(v => v === '/?beta=fuera-de-alcance') && Object.values(apis).every(v => v === '404:beta') && !/YouTube|Campañas|Automatizaciones/.test(nav) && /Proyectos/.test(nav) && /Biblioteca/.test(nav)
+})
+await step('21 el servidor se niega a arrancar si la beta apunta a Production o lleva claves de pago/privilegiadas', async () => {
+  const bad = { ...env, NEXT_PUBLIC_SUPABASE_URL: 'https://psbvqdaksrfrkxbewrll.supabase.co', FAL_KEY: 'x', SUPABASE_SERVICE_ROLE_KEY: 'y' }
+  const child = spawn('npx', ['next', 'start', '-p', '54389'], { cwd: root, env: bad, stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+  let out = ''; child.stdout.on('data', d => out += d); child.stderr.on('data', d => out += d)
+  const t0 = Date.now(); let exited = null; child.on('exit', c => { exited = c ?? -1 })
+  while (Date.now() - t0 < 40000 && exited === null && !/Configuración de la beta rechazada/.test(out)) await new Promise(r => setTimeout(r, 500))
+  await new Promise(r => setTimeout(r, 4000))
+  let served = null; try { const x = await fetch('http://127.0.0.1:54389/login', { signal: AbortSignal.timeout(8000) }); served = x.status } catch { served = 'sin respuesta' }
+  const stillRunning = exited === null
+  try { process.kill(-child.pid) } catch {}
+  console.log('   mensaje de rechazo:', /Configuración de la beta rechazada/.test(out), '| nombra FAL_KEY sin valor:', /FAL_KEY/.test(out) && !out.includes('FAL_KEY=x') && !/=y\b/.test(out), '| proceso:', stillRunning ? 'sigue vivo' : 'terminó ' + exited, '| /login responde:', served)
+  return /Configuración de la beta rechazada/.test(out) && !stillRunning && exited !== 0 && served === 'sin respuesta'
 })
 await finish()

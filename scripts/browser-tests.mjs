@@ -22,7 +22,7 @@ if (!chrome || !existsSync(chrome)) { console.log('Chromium not found (set CHROM
 async function bundle(entry, stdinContents, extraDefine = {}) {
   const out = await build({
     ...(stdinContents ? { stdin: { contents: stdinContents, resolveDir: root, loader: 'tsx' } } : { entryPoints: [entry] }), bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
-    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_DROPBOX_APP_KEY': 'undefined', 'process.env.NEXT_PUBLIC_CONTACT_EMAIL': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined', 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"http://127.0.0.1:9"', 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', ...extraDefine }, alias: { '@': root },
+    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_CEREBRO_BETA': 'undefined', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_DROPBOX_APP_KEY': 'undefined', 'process.env.NEXT_PUBLIC_CONTACT_EMAIL': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined', 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"http://127.0.0.1:9"', 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', ...extraDefine }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
       b.onResolve({ filter: /(^@\/lib|\.\.\/lib|\.\/lib)\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
@@ -1886,6 +1886,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   check('verify-ui: saved and reopened with everything (marker included)', await page.getByRole('button', { name: /^Marcador Marcador 1/ }).count() === 1 && await page.locator('[aria-label="Pista de Superposición 1"] > div').count() === 1 && await page.locator('[aria-label="Pista de Música"] > div').count() === 2)
   await openExport(page)
   check('verify-ui: the export defaults to the fast mode', (await page.getByLabel('Modo de exportación').inputValue()) === 'fast')
+  check('verify-ui: beta policy — the mode selector is locked and offers no real-time option', (await page.getByLabel('Modo de exportación').isDisabled()) && (await page.getByLabel('Modo de exportación').locator('option').allInnerTexts()).join('|') === 'Rápida (fotograma a fotograma)')
   await page.getByRole('button', { name: /Renderizar y guardar/ }).click()
   await page.getByText(/Vídeo guardado en la Biblioteca/).waitFor({ timeout: 120000 })
   const status = await page.locator('[role="status"]').allInnerTexts()

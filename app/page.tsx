@@ -6,6 +6,7 @@ import { StudioShell } from './components/studio-shell'
 import { Icon } from './components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { moduleStateLabels, studioModules } from '@/lib/module-status'
+import { inBetaScope } from '@/lib/beta-scope'
 import { formatDuration } from '@/lib/scripts'
 import { overviewIndex, projectProgress, projectStatusLabel, type ProgressInput } from '@/lib/progress'
 
@@ -117,7 +118,7 @@ export default function Home() {
   const views = sumMetric(snapshots, 'views')
   const subs = sumMetric(snapshots, 'subscribersGained')
   const minutes = sumMetric(snapshots, 'estimatedMinutesWatched')
-  const tiles = studioModules.filter(m => m.tile)
+  const tiles = inBetaScope(studioModules).filter(m => m.tile)
 
   return (
     <StudioShell>

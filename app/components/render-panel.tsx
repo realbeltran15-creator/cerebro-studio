@@ -11,6 +11,7 @@ import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { pickMimeType, recordingSupported, renderComposition } from '@/lib/editor/renderer'
+import { effectiveExportMode, exportNeedsRecorder, mayFallBackToRealtime, REALTIME_EXPORT_ENABLED } from '@/lib/editor/export-policy'
 import { fidelityWarning } from '@/lib/editor/frame-quality'
 import { exportStageOf, fastExport, fastExportSupported, FastExportUnsupported, type ExportStage } from '@/lib/editor/fast-export'
 import { checkingSink, headOfComposition } from '@/lib/editor/export-selftest'
@@ -99,7 +100,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   useEffect(() => {
     let off = false
     void (async () => {
-      const e: 'mp4' | 'webm' = (exp.mode ?? 'fast') === 'fast' ? ((await fastExportSupported(plan.width, plan.height).catch(() => null))?.container ?? 'webm') : (/mp4/.test(pickMimeType() ?? '') ? 'mp4' : 'webm')
+      const e: 'mp4' | 'webm' = effectiveExportMode(exp.mode) === 'fast' ? ((await fastExportSupported(plan.width, plan.height).catch(() => null))?.container ?? 'webm') : (/mp4/.test(pickMimeType() ?? '') ? 'mp4' : 'webm')
       if (!off) setExt(e)
     })()
     return () => { off = true }
@@ -113,8 +114,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     })()
     return () => { off = true }
   }, [mode])
-  const directDrive = where === 'drive' && driveMode === 'direct' && ext === 'mp4' && (exp.mode ?? 'fast') === 'fast'
-  const directDropbox = where === 'dropbox' && ext === 'mp4' && (exp.mode ?? 'fast') === 'fast'
+  const directDrive = where === 'drive' && driveMode === 'direct' && ext === 'mp4' && effectiveExportMode(exp.mode) === 'fast'
+  const directDropbox = where === 'dropbox' && ext === 'mp4' && effectiveExportMode(exp.mode) === 'fast'
   const advice = spaceAdvice({ where, directOk: directDropbox, dropboxReady: !!dropboxAppKey(), driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes, browserFreeBytes: free.browser, libraryFreeBytes: free.library, libraryMaxFileBytes: free.maxFile, folderSupported: folderSaveSupported(), tempSupported: tempStorageSupported() })
   const footprint = exportFootprint({ where, driveMode: directDrive ? 'direct' : 'temp', estimatedBytes: plan.estimatedBytes })
   const convertConfig = transcodeConfigFromEnv()
@@ -140,7 +141,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const total = totalDurationMs(composition)
   const { width, height } = plan
   useEffect(() => {
-    if (!autoStart || previewOnly || autoStarted.current || blocking || composition.clips.length === 0 || !recordingSupported()) return
+    if (!autoStart || previewOnly || autoStarted.current || blocking || composition.clips.length === 0 || (exportNeedsRecorder() && !recordingSupported())) return
     autoStarted.current = true
     void run(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +267,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         else setNotice('')
       })
       setMode(record ? 'render' : 'preview')
-      setStatus(record ? 'Grabando en tiempo real. Mantén esta pestaña visible hasta que termine.' : 'Vista previa en reproducción.')
+      setStatus(record ? (REALTIME_EXPORT_ENABLED ? 'Grabando en tiempo real. Mantén esta pestaña visible hasta que termine.' : 'Preparando la exportación rápida…') : 'Vista previa en reproducción.')
       const realtime = () => renderComposition({
         composition, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), record, signal: controller.signal,
         onProgress: (elapsed, t) => { guard?.progress(); setProgress({ elapsed, total: t }) },
@@ -274,7 +275,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       let result: Awaited<ReturnType<typeof renderComposition>>
       let renderer: 'browser-fast' | 'browser-mediarecorder' = 'browser-mediarecorder'
       const clock = stopwatch()
-      if (record && (exp.mode ?? 'fast') === 'fast') {
+      if (record && effectiveExportMode(exp.mode) === 'fast') {
         try {
           setStatus('Exportación rápida: se dibuja fotograma a fotograma (no hace falta esperar al tiempo real). Mantén esta pestaña a la vista: en segundo plano el navegador la frena.')
           if (fileHandle) streamTo = await fileHandle.createWritable()
@@ -307,6 +308,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
           // hiding the real cause. A long export therefore fails with the real error (and the last known state) instead of falling back.
           if (projectDurationMs(composition) > 15 * 60_000 && !(e instanceof FastExportUnsupported)) throw new Error(`${e instanceof Error ? e.message : 'La exportación rápida se detuvo.'}${lastLive ? ` Último estado: ${lastLive}.` : ''}`)
           if (projectDurationMs(composition) > 15 * 60_000) throw e
+          // Beta policy: no silent switch to the non-deterministic real-time recording; the export fails with the real reason.
+          if (!mayFallBackToRealtime()) throw new Error(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} No se ha guardado ningún vídeo. Usa Chrome o Edge de escritorio actualizado, o prueba con una resolución menor.`)
           // Anything the fast path cannot do here (a codec, a file it cannot read by ranges…) falls back to the real-time recording.
           setStatus(`${e instanceof FastExportUnsupported ? e.message : `La exportación rápida no pudo terminar (${e instanceof Error ? e.message : 'error'}).`} Se exporta en tiempo real: mantén la pestaña visible.`)
           setProgress({ elapsed: 0, total: 0 })
@@ -494,7 +497,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       <label>Resolución<select aria-label="Resolución" value={exp.resolution ?? ''} onChange={e => setExport({ resolution: (e.target.value || undefined) as ExportResolution | undefined })}><option value="">Estándar</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option><option value="1440">1440p (2K)</option><option value="2160">2160p (4K)</option></select></label>
       <label>Calidad<select aria-label="Calidad" value={exp.videoKbps ? 'custom' : exp.quality} onChange={e => e.target.value === 'custom' ? setExport({ videoKbps: Math.round(plan.wantedBps / 1000) }) : setExport({ quality: e.target.value === 'high' ? 'high' : 'normal', videoKbps: null })}><option value="normal">Normal</option><option value="high">Alta</option><option value="custom">Personalizada</option></select></label>
       {exp.videoKbps ? <label>Vídeo (kbit/s)<input aria-label="Bitrate de vídeo" type="number" min={200} max={40000} step={100} value={exp.videoKbps} onChange={e => setExport({ videoKbps: Math.min(40000, Math.max(200, Number(e.target.value) || 200)) })} style={{ width: 100 }} /></label> : null}
-      <label>Modo<select aria-label="Modo de exportación" value={exp.mode ?? 'fast'} onChange={e => setExport({ mode: e.target.value === 'realtime' ? 'realtime' : undefined })}><option value="fast">Rápida (fotograma a fotograma)</option><option value="realtime">En tiempo real (grabación)</option></select></label>
+      <label>Modo<select aria-label="Modo de exportación" value={effectiveExportMode(exp.mode)} disabled={!REALTIME_EXPORT_ENABLED} title={REALTIME_EXPORT_ENABLED ? undefined : 'En esta versión el vídeo se exporta siempre en modo rápido, que es exacto.'} onChange={e => setExport({ mode: e.target.value === 'realtime' && REALTIME_EXPORT_ENABLED ? 'realtime' : undefined })}><option value="fast">Rápida (fotograma a fotograma)</option>{REALTIME_EXPORT_ENABLED && <option value="realtime">En tiempo real (grabación)</option>}</select></label>
       <label>Imágenes por segundo<select aria-label="Imágenes por segundo" value={exp.fps ?? 30} onChange={e => setExport({ fps: Number(e.target.value) === 30 ? undefined : Number(e.target.value) as ExportFps })}>{EXPORT_FPS.map(f => <option key={f} value={f}>{f} fps</option>)}</select></label>
       <label>Audio<select aria-label="Calidad de audio" value={exp.audioKbps ?? 128} onChange={e => setExport({ audioKbps: Number(e.target.value) === 128 ? undefined : Number(e.target.value) as ExportAudioKbps })}>{EXPORT_AUDIO_KBPS.map(k => <option key={k} value={k}>{k} kbit/s</option>)}</select></label>
       <label>Destino<select aria-label="Destino" value={where} onChange={e => { const w = e.target.value as ExportWhere; setWhere(w); setExport({ destination: w === 'library' ? 'library' : 'download' }) }}>
@@ -507,14 +510,14 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         <option value="phone">Guardar en el iPhone (hoja de compartir)</option>
       </select></label>
       {where === 'drive' && <label>Envío a Drive<select aria-label="Modo de envío a Drive" value={driveMode} onChange={e => setDriveMode(e.target.value === 'temp' ? 'temp' : 'direct')}>
-        <option value="direct" disabled={ext !== 'mp4' || (exp.mode ?? 'fast') !== 'fast'}>Directo mientras se renderiza (sin copia en este equipo)</option>
+        <option value="direct" disabled={ext !== 'mp4' || effectiveExportMode(exp.mode) !== 'fast'}>Directo mientras se renderiza (sin copia en este equipo)</option>
         <option value="temp">Con temporal local (se puede reintentar la subida)</option>
       </select></label>}
       <span className="small muted" aria-label="Estimación">{width}×{height} · {plan.fps} fps · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
     </div>}
-    {!previewOnly && (exp.mode ?? 'fast') === 'realtime' && <p className="muted small">El modo tiempo real graba lo que se ve mientras se reproduce: si el equipo va justo, la imagen puede ir a saltos y diferir de la vista previa (se mide y se avisa al terminar). El modo rápido dibuja fotograma a fotograma y es exacto.</p>}
-    {!previewOnly && (exp.mode ?? 'fast') === 'realtime' && plan.fps !== 30 && <p className="warnBox small">En tiempo real las imágenes por segundo las marca la pantalla (normalmente 60), no este ajuste: usa el modo rápido para fijarlas.</p>}
-    {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
+    {!previewOnly && effectiveExportMode(exp.mode) === 'realtime' && <p className="muted small">El modo tiempo real graba lo que se ve mientras se reproduce: si el equipo va justo, la imagen puede ir a saltos y diferir de la vista previa (se mide y se avisa al terminar). El modo rápido dibuja fotograma a fotograma y es exacto.</p>}
+    {!previewOnly && effectiveExportMode(exp.mode) === 'realtime' && plan.fps !== 30 && <p className="warnBox small">En tiempo real las imágenes por segundo las marca la pantalla (normalmente 60), no este ajuste: usa el modo rápido para fijarlas.</p>}
+    {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && effectiveExportMode(exp.mode) === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
     {!previewOnly && (where === 'folder' || where === 'drive' || where === 'dropbox') && <div className="field-row" style={{ alignItems: 'center' }} aria-label="Destino elegido">
       <button type="button" className="ghost small" disabled={mode !== 'idle'} onClick={() => void chooseDestination()}>{dest ? 'Cambiar destino…' : where === 'folder' ? 'Elegir carpeta o disco…' : where === 'dropbox' ? 'Conectar Dropbox…' : 'Elegir carpeta de Drive…'}</button>
       {where === 'drive' && <button type="button" className="ghost small" disabled={mode !== 'idle'} title="No usa el selector de Google: sirve si el navegador bloquea sus cookies" onClick={() => void chooseAppDriveFolder()}>Usar carpeta «Cerebro Studio»</button>}
@@ -541,13 +544,13 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     {notice && <p className="small" role="status" aria-label="Aviso de la exportación" style={{ color: '#ffd23f' }}>{notice}</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {issues.length > 0 && <ul className="warnList">{issues.map((i, k) => <li key={k}>{i.message}</li>)}</ul>}
-    {!recordingSupported() && <p className="warnBox">Este navegador no puede grabar vídeo desde canvas. Usa Chrome, Edge o Firefox de escritorio.</p>}
+    {exportNeedsRecorder() && !recordingSupported() && <p className="warnBox">Este navegador no puede grabar vídeo desde canvas. Usa Chrome, Edge o Firefox de escritorio.</p>}
     <div className="pageActions">
       {mode === 'idle' ? <>
         {!exportOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} onClick={() => void run(false)}><Icon name="eye" size={16} />Vista previa (no guarda)</button>}
         {!previewOnly && <button type="button" className="ghost" disabled={blocking || composition.clips.length === 0} title="Para vídeos largos: se renderiza en tu PC con FFmpeg, sin navegador abierto y sin coste" onClick={() => void preparePackage()}><Icon name="video" size={16} />Paquete para renderizar en mi PC</button>}
-        {!previewOnly && <button type="button" className="ghost" disabled={selfTest.busy || composition.clips.length === 0 || !recordingSupported()} title="Renderiza solo los primeros 20 s con este formato y modo de escritura, sin guardar ni enviar nada, para descubrir problemas en segundos" onClick={() => void runSelfTest()}>Probar 20 s (no guarda nada)</button>}
-        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary) || ((where === 'folder' || where === 'drive') && !dest)} title={(where === 'folder' || where === 'drive') && !dest ? 'Elige primero el destino' : undefined} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Renderizar y guardar en el destino' : where === 'drive' ? (directDrive ? 'Renderizar y enviar a Drive' : 'Renderizar y subir a Drive') : 'Renderizar y guardar'}</button>}
+        {!previewOnly && <button type="button" className="ghost" disabled={selfTest.busy || composition.clips.length === 0 || (exportNeedsRecorder() && !recordingSupported())} title="Renderiza solo los primeros 20 s con este formato y modo de escritura, sin guardar ni enviar nada, para descubrir problemas en segundos" onClick={() => void runSelfTest()}>Probar 20 s (no guarda nada)</button>}
+        {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || (exportNeedsRecorder() && !recordingSupported()) || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary) || ((where === 'folder' || where === 'drive') && !dest)} title={(where === 'folder' || where === 'drive') && !dest ? 'Elige primero el destino' : undefined} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Renderizar y guardar en el destino' : where === 'drive' ? (directDrive ? 'Renderizar y enviar a Drive' : 'Renderizar y subir a Drive') : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {selfTest.text && <p className={`small ${/falló|no es válido/.test(selfTest.text) ? 'warnBox' : 'notice'}`} role="status" aria-label="Resultado de la prueba de 20 segundos">{selfTest.text}</p>}
       {pendingDrive && mode === 'idle' && <><button type="button" onClick={() => void retryDrive()} disabled={driveBusy}>Reintentar subida a Drive</button><button type="button" className="ghost" onClick={() => void (async () => { await removeExportTemp(pendingDrive.temp); setPendingDrive(null); setStatus('Temporal borrado. El vídeo no se subió.') })()}>Descartar el temporal</button></>}
@@ -565,6 +568,6 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         : <p className="muted small">{native === null ? 'Comprobando si este navegador puede convertir el vídeo…' : 'Este navegador no puede codificar H.264; renderiza con Chrome, Edge o Safari para obtener un MP4 compatible.'}</p>}
     </div>}
     {download && mode === 'idle' && !error && plan.destination !== 'download' && <p className="notice" role="status">Guardado en la Biblioteca. Siguiente: <Link className="open" href={`/repurpose?project=${projectId}`}>versión vertical</Link> · <Link className="open" href={`/youtube?project=${projectId}`}>preparar YouTube</Link> · <Link className="open" href={`/social?project=${projectId}`}>preparar Instagram / TikTok</Link>. Preparar no publica.</p>}
-    <p className="muted small">{exportOnly ? 'La exportación usa el mismo motor que el reproductor: sale exactamente lo que ves.' : '«Vista previa» solo reproduce el montaje; «Renderizar y guardar» graba el vídeo y lo guarda en la Biblioteca.'} El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos): mantén la pestaña abierta y visible hasta que termine; si un archivo tarda en cargar, la grabación se detiene y continúa sin saltos. Sin coste externo. Salida MP4 (H.264 + AAC) en Chrome, Edge y Safari; WebM en Firefox. Para la Biblioteca el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>
+    <p className="muted small">{exportOnly ? 'La exportación usa el mismo motor que el reproductor: sale exactamente lo que ves.' : '«Vista previa» solo reproduce el montaje; «Renderizar y guardar» graba el vídeo y lo guarda en la Biblioteca.'}{REALTIME_EXPORT_ENABLED ? ' El render se hace en tu navegador en tiempo real (un vídeo de 3 minutos tarda 3 minutos): mantén la pestaña abierta y visible hasta que termine; si un archivo tarda en cargar, la grabación se detiene y continúa sin saltos.' : ' El render se hace en tu navegador, fotograma a fotograma (suele ser más rápido que el tiempo real): mantén la pestaña abierta y visible hasta que termine.'} Sin coste externo. Salida MP4 (H.264 + AAC) en Chrome, Edge y Safari; WebM en Firefox. Para la Biblioteca el bitrate se ajusta para no superar 50 MB. Los subtítulos se reparten por número de palabras: es una aproximación, no una alineación exacta.</p>
   </section>
 }

@@ -1,3 +1,4 @@
+import { inBetaScope } from './beta-scope'
 /**
  * Single source of truth for how finished each module really is.
  * Update this file whenever a module changes state — the UI reads it
@@ -65,7 +66,7 @@ export const studioModules: StudioModule[] = [
 ]
 
 /** Sidebar sections in work-cycle order; modules without a group come first (Inicio). */
-export function groupedModules(mods: StudioModule[] = studioModules) {
+export function groupedModules(mods: StudioModule[] = inBetaScope(studioModules)) {
   return [
     { id: null, label: '', modules: mods.filter(m => !m.group) },
     ...moduleGroups.map(g => ({ id: g.id, label: g.label, modules: mods.filter(m => m.group === g.id) })),
