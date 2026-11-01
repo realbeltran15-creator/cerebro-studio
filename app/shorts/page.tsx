@@ -164,8 +164,8 @@ export default function ShortsPage() {
   return <StudioShell title="Shorts" eyebrow="FÁBRICA DE CURIOSIDADES">
     <p className="muted" style={{ marginBottom: 14 }}>Un Short al día, preparado con recursos gratuitos. Nada se sube sin tu aprobación, y siempre como privado con el contenido sintético declarado.</p>
     {pending && <p className="warnBox">Falta aplicar la migración <code>20261010120000_shorts_factory.sql</code> en Supabase. Hasta entonces la fábrica no puede guardar Shorts.</p>}
-    {error && <p className="error" role="alert">{error}</p>}
-    {notice && <p className="notice" role="status">{notice}</p>}
+    {error && !selected && <p className="error" role="alert">{error}</p>}
+    {notice && !selected && <p className="notice" role="status">{notice}</p>}
 
     {!pending && <section className="panel" aria-labelledby="sh-demo" style={{ marginBottom: 14 }}>
       <h3 id="sh-demo">Probar la fábrica (gratis)</h3>

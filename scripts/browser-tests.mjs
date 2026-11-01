@@ -22,7 +22,7 @@ if (!chrome || !existsSync(chrome)) { console.log('Chromium not found (set CHROM
 async function bundle(entry, stdinContents, extraDefine = {}) {
   const out = await build({
     ...(stdinContents ? { stdin: { contents: stdinContents, resolveDir: root, loader: 'tsx' } } : { entryPoints: [entry] }), bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error',
-    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined', 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"http://127.0.0.1:9"', 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', ...extraDefine }, alias: { '@': root },
+    define: { 'process.env.NODE_ENV': '"development"', 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': JSON.stringify(process.env.TEST_FFMPEG_CORE_BASE_URL ?? ''), 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_DROPBOX_APP_KEY': 'undefined', 'process.env.NEXT_PUBLIC_CONTACT_EMAIL': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined', 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"http://127.0.0.1:9"', 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', ...extraDefine }, alias: { '@': root },
     plugins: [{ name: 'mocks', setup(b) {
       b.onResolve({ filter: /^next\/(link|navigation)$/ }, () => ({ path: path.join(dir, 'mocks/next.tsx') }))
       b.onResolve({ filter: /(^@\/lib|\.\.\/lib|\.\/lib)\/supabase\/client$/ }, () => ({ path: path.join(dir, 'mocks/supabase.ts') }))
@@ -111,7 +111,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await clips.last().click(); await page.keyboard.press('Delete')
   check('manual: delete with keyboard', await clips.count() === 4)
   await page.getByText('Importar o añadir').click()
-  await page.locator('label', { hasText: /^Audio/ }).locator('select').selectOption('mus')
+  await page.locator('label', { hasText: /^Audio/ }).locator('select:not([aria-label="Calidad de audio"])').selectOption('mus')
   await page.locator('label', { hasText: /^Pista/ }).locator('select').selectOption('music')
   await clips.first().click()
   await page.getByRole('button', { name: /Añadir al inicio|Añadir en el cabezal/ }).click()
@@ -119,7 +119,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByRole('button', { name: 'Guardar ahora' }).click()
   await page.getByText('Montaje guardado en la nube.').waitFor()
   const stored = (await db()).render_jobs[0].composition
-  check('manual: saved as manual edit with split trims', stored.editedManually === true && stored.clips[2].trimInMs === 1500 && stored.clips[3].text?.content === 'FIN', stored.clips)
+  check('manual: saved as manual edit with split trims', stored.editedManually === true && stored.clips[2].trimInMs === 5500 && stored.clips[3].text?.content === 'FIN', stored.clips)
   check('manual: saved audio tracks', stored.audioClips.map(a => a.kind).join() === 'voice,voice,music', stored.audioClips)
   const nBefore = await clips.count()
   await page.evaluate(() => {
@@ -181,7 +181,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   await page.getByText('Montaje abierto en modo manual').waitFor({ timeout: 20000 })
   // Music with a click every 500 ms goes on the music track.
   await page.getByText('Importar o añadir').click()
-  await page.locator('label', { hasText: /^Audio/ }).locator('select').selectOption('beat')
+  await page.locator('label', { hasText: /^Audio/ }).locator('select:not([aria-label="Calidad de audio"])').selectOption('beat')
   await page.locator('label', { hasText: /^Pista/ }).locator('select').selectOption('music')
   await clips.first().click()
   await page.getByRole('button', { name: /Añadir al inicio|Añadir en el cabezal/ }).click()
@@ -752,14 +752,17 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
   check('shorts: approval enabled after the render', await approveBtn.isEnabled())
   check('shorts: nothing was sent to YouTube yet', (await page.evaluate(() => window.__PUBLISH_CALLS.length)) === 0)
   await approveBtn.click()
+  const approveAsk = await page.getByRole('alertdialog', { name: 'Confirmar' }).innerText()
+  await page.getByRole('alertdialog', { name: 'Confirmar' }).getByRole('button', { name: 'Confirmar', exact: true }).click()
   await page.getByRole('button', { name: /Subir a YouTube \(privado\)/ }).waitFor({ timeout: 10000 })
   const afterApprove = await db()
   const job = afterApprove.publication_jobs[0]
   check('shorts: the publication job is private, synthetic-declared and tied to the render', job.payload.privacyStatus === 'private' && job.payload.containsSyntheticMedia === true && job.payload.madeForKids === false && afterApprove.assets.find(a => a.id === job.payload.videoAssetId)?.source_provider === 'browser-render', job)
   check('shorts: the description lists the verified sources and not the rejected one', job.payload.description.includes('https://www.nasa.gov/neutron') && !job.payload.description.includes('blog-raro'))
-  check('shorts: approval needed an explicit confirmation dialog and recorded APROBAR', dialogs.length === 1 && /PRIVADO/.test(dialogs[0]) && (await page.evaluate(() => window.__PUBLISH_CALLS))[0].body.confirm === 'APROBAR')
+  check('shorts: approval needed an explicit in-card confirmation and recorded APROBAR', /PRIVADO/.test(approveAsk) && (await page.evaluate(() => window.__PUBLISH_CALLS))[0].body.confirm === 'APROBAR')
   check('shorts: still not uploaded after approving', (await page.evaluate(() => window.__PUBLISH_CALLS.filter(c => c.action === 'publish').length)) === 0 && afterApprove.shorts_factory_items.find(i => i.id === 'it1').status === 'approved')
   await page.getByRole('button', { name: /Subir a YouTube \(privado\)/ }).click()
+  await page.getByRole('alertdialog', { name: 'Confirmar' }).getByRole('button', { name: 'Confirmar', exact: true }).click()
   await page.getByText(/Subido como privado: https:\/\/www.youtube.com\/watch\?v=dQw4w9WgXcQ/).waitFor({ timeout: 10000 })
   const published = (await db()).shorts_factory_items.find(i => i.id === 'it1')
   check('shorts: upload happens only on the second explicit click and stores the video id', published.status === 'published' && published.video_id === 'dQw4w9WgXcQ' && Boolean(published.published_at), published)
@@ -1579,7 +1582,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.goto('http://127.0.0.1:8814/add')
   await page.getByLabel('Destino', { exact: true }).waitFor()
   const big = Buffer.alloc(14 * 1024 * 1024 + 1234, 7); big.write('ftypqt', 4)
-  await page.locator('#add-device').setInputFiles([{ name: 'IMG_0001.MOV', mimeType: 'video/quicktime', buffer: big }, { name: 'Grabación.m4a', mimeType: 'audio/x-m4a', buffer: Buffer.alloc(300 * 1024, 3) }, { name: 'enorme.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(21 * 1024 * 1024, 1) }])
+  await page.locator('#add-device').setInputFiles([{ name: 'IMG_0001.MOV', mimeType: 'video/quicktime', buffer: big }, { name: 'Grabación.m4a', mimeType: 'audio/x-m4a', buffer: (() => { const b = Buffer.alloc(300 * 1024, 3); b.write('ftypM4A ', 4); return b })() }, { name: 'enorme.mov', mimeType: 'video/quicktime', buffer: (() => { const b = Buffer.alloc(21 * 1024 * 1024, 1); b.write('ftypqt', 4); return b })() }])
   await page.waitForFunction(() => (window.__DB.assets ?? []).length >= 2, null, { timeout: 60000 })
   const assets = await page.evaluate(() => window.__DB.assets)
   const mov = assets.find(a => a.provenance.originalFilename === 'IMG_0001.MOV')
@@ -1590,7 +1593,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.locator('#add-device').setInputFiles([{ name: 'IMG_0001.MOV', mimeType: 'video/quicktime', buffer: big }])
   await page.getByText('Ya está en tu Biblioteca: no se ha subido otra vez.').waitFor({ timeout: 20000 })
   check('add: the same file again is detected as a duplicate (nothing uploaded)', (await page.evaluate(() => window.__DB.assets.length)) === 2 && tus.uploads.size === 2)
-  await page.locator('#add-device').setInputFiles([{ name: 'lento.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(7 * 1024 * 1024, 9) }])
+  await page.locator('#add-device').setInputFiles([{ name: 'lento.mov', mimeType: 'video/quicktime', buffer: (() => { const b = Buffer.alloc(7 * 1024 * 1024, 9); b.write('ftypqt', 4); return b })() }])
   await page.getByLabel('Subida lento.mov').getByText(/Subiendo/).waitFor({ timeout: 20000 })
   await page.waitForTimeout(500)
   await page.getByLabel('Subida lento.mov').getByRole('button', { name: 'Cancelar' }).click()

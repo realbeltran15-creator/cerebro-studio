@@ -4,6 +4,7 @@ const asset = (id, type, title) => ({ id, project_id: 'p1', owner_id: 'u1', asse
 const clip = (id, vis, voice, dur, text) => ({ id, sceneId: id, position: 1, narration: `subtítulo ${id}`, visualAssetId: vis, voiceAssetId: voice, durationMs: dur, motion: 'none', text })
 const source = (url, domain, status, reason) => ({ url, title: domain, domain, status, reason })
 window.__DB = {
+  channel_connections: [{ id: 'cc1', owner_id: 'u1', provider: 'youtube', external_account_id: 'UCshortsshortsshortsshorts', external_account_name: 'Canal de prueba', status: 'connected' }],
   render_jobs: [{ id: 'job1', project_id: 'p1', status: 'draft', composition: { version: 1, storyboardId: 'sb', title: 'La cucharadita más pesada', format: '9:16', subtitles: true, hookText: '6.000 millones', hookMs: 800, clips: [clip('a', 'img', 'v1', 1000, { content: '6.000 millones', position: 'center', sizePct: 8 }), clip('b', 'img', 'v2', 1000, null)], musicAssetId: null, musicVolume: 0.12, duckMusic: true, fadeMs: 150 } }],
   assets: [asset('img', 'image', 'Foto'), asset('v1', 'voice', 'Voz 1'), asset('v2', 'voice', 'Voz 2')],
   publication_jobs: [],

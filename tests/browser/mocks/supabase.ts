@@ -14,6 +14,7 @@ function q(table: string) {
     eq(c: string, v: any) { filters.push(r => (c.includes('->>') ? r[c.split('->>')[0]]?.[c.split('->>')[1]] : r[c]) === v); return api },
     neq(c: string, v: any) { filters.push(r => r[c] !== v); return api },
     in(c: string, v: any[]) { filters.push(r => v.includes(r[c])); return api },
+    like(c: string, pattern: string) { const re = new RegExp('^' + pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$'); filters.push(r => re.test(String(r[c] ?? ''))); return api },
     not(c: string, _o: string, v: any) { filters.push(r => r[c] !== v); return api },
     or(expr: string) { const parts = expr.split(',').map(p => { const [col, op, ...rest] = p.split('.'); const v = rest.join('.'); return (r: any) => (op === 'is' && v === 'null' ? r[col] == null : op === 'eq' ? String(r[col]) === v : false) }); filters.push(r => parts.some(f => f(r))); return api },
     order() { return api }, limit() { return api }, range() { return api },
