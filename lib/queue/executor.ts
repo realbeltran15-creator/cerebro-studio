@@ -165,7 +165,8 @@ export async function runOnce(d: ExecutorDeps): Promise<RunOutcome> {
         return d.store.requeue(id, token, d.now() + dec.delayMs, d.now()) ? { outcome: 'requeued', jobId: id, reason: dec.code } : lost()
       }
       if (dec.action === 'await') {
-        st.error = { code: dec.code, message: dec.message }     // el paso se queda «running»: no se libera la reserva
+        st.error = { code: dec.code, message: dec.message }     // el paso se queda «running»
+        if (!free) d.ledger.markUncertain(stepKey, job.ownerId)  // quizá cobrado: ni se libera sola ni cuenta como libre
         if (!save(def.name)) return lost()
         return fin('awaiting_approval', { awaitingReason: dec.reason })
       }

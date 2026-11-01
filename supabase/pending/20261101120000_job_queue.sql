@@ -91,7 +91,7 @@ create table if not exists public.budget_entries (
   day date not null,
   reserved numeric(14,4) not null check (reserved >= 0),
   actual numeric(14,4) check (actual >= 0),
-  state text not null default 'reserved' check (state in ('reserved','settled','released')),
+  state text not null default 'reserved' check (state in ('reserved','uncertain','settled','released')),
   idempotency_key text not null,               -- una reserva por (trabajo, paso, unidad)
   created_at timestamptz not null default now(),
   settled_at timestamptz,
@@ -132,7 +132,7 @@ grant select on public.job_queue, public.job_approvals, public.budget_limits, pu
 -- Reclamar: un solo ejecutor gana (FOR UPDATE SKIP LOCKED). Recupera tambien leases caducados.
 create or replace function public.claim_next_job(p_executor text, p_lease_seconds int default 60)
 returns public.job_queue
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, pg_temp as $$
 declare j public.job_queue;
 begin
   select * into j from public.job_queue
@@ -157,28 +157,137 @@ create or replace function public.reserve_budget(
   p_owner uuid, p_job uuid, p_step text, p_provider text, p_project uuid,
   p_unit text, p_amount numeric, p_key text)
 returns boolean
-language plpgsql security definer set search_path = public as $$
-declare lim numeric; used numeric; today date := (now() at time zone 'utc')::date;
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare lim numeric; used numeric; today date := (now() at time zone 'utc')::date; k text := p_key || ':' || p_unit;   -- misma convencion que settle/release
 begin
   if p_amount is null or p_amount < 0 then return false; end if;   -- precio desconocido = bloqueo
   perform pg_advisory_xact_lock(hashtextextended(p_owner::text || p_provider || p_unit || today::text, 0));
-  if exists (select 1 from public.budget_entries where owner_id = p_owner and idempotency_key = p_key) then
+  if exists (select 1 from public.budget_entries where owner_id = p_owner and idempotency_key = k) then
     return true;                                                    -- reintento: no duplica
   end if;
   select coalesce(min(daily_limit), 0) into lim from public.budget_limits
    where owner_id = p_owner and provider = p_provider and unit = p_unit
      and (project_id is null or project_id = p_project);
-  select coalesce(sum(case when state = 'settled' then actual when state = 'reserved' then reserved else 0 end), 0)
+  select coalesce(sum(case when state = 'settled' then actual when state in ('reserved','uncertain') then reserved else 0 end), 0)
     into used from public.budget_entries
    where owner_id = p_owner and provider = p_provider and unit = p_unit and day = today and state <> 'released';
   if used + p_amount > lim then return false; end if;
   insert into public.budget_entries (owner_id, job_id, step, provider, project_id, unit, day, reserved, idempotency_key)
-    values (p_owner, p_job, p_step, p_provider, p_project, p_unit, today, p_amount, p_key);
+    values (p_owner, p_job, p_step, p_provider, p_project, p_unit, today, p_amount, k);
   return true;
 end $$;
 
-revoke all on function public.claim_next_job(text, int) from public, anon, authenticated;
-revoke all on function public.reserve_budget(uuid, uuid, text, text, uuid, text, numeric, text) from public, anon, authenticated;
-grant execute on function public.claim_next_job(text, int) to service_role;
-grant execute on function public.reserve_budget(uuid, uuid, text, text, uuid, text, numeric, text) to service_role;
--- La conciliacion (settle) y la liberacion (release) son UPDATE sobre budget_entries desde service_role.
+
+-- Escrituras del ejecutor con fencing: solo el dueno del lease vigente (claim_token) puede escribir.
+create or replace function public.heartbeat_job(p_id uuid, p_token uuid, p_lease_seconds int default 60)
+returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.job_queue set lease_expires_at = now() + make_interval(secs => p_lease_seconds), updated_at = now()
+   where id = p_id and claim_token = p_token and status = 'running' and lease_expires_at >= now();
+  return found;
+end $$;
+
+create or replace function public.save_job_steps(p_id uuid, p_token uuid, p_steps jsonb, p_current text)
+returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.job_queue set steps = p_steps, current_step = p_current, updated_at = now()
+   where id = p_id and claim_token = p_token and status = 'running' and lease_expires_at >= now();
+  return found;
+end $$;
+
+-- Termina, espera aprobacion o devuelve a la cola (p_status = 'pending' + p_available_at). Libera el lease.
+create or replace function public.finish_job(p_id uuid, p_token uuid, p_status text, p_result jsonb default null,
+  p_error jsonb default null, p_awaiting text default null, p_available_at timestamptz default null)
+returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if p_status not in ('pending','awaiting_approval','completed','failed','cancelled') then return false; end if;
+  update public.job_queue set status = p_status, result = coalesce(p_result, result), error = p_error,
+      awaiting_reason = p_awaiting, available_at = coalesce(p_available_at, available_at),
+      executor_id = null, claim_token = null, lease_expires_at = null, locked_at = null,
+      finished_at = case when p_status in ('completed','failed','cancelled') then now() else finished_at end,
+      updated_at = now()
+   where id = p_id and claim_token = p_token and status = 'running' and lease_expires_at >= now();
+  return found;
+end $$;
+
+-- Los estados terminales son inmutables: nada puede «resucitar» un trabajo completado, fallido o cancelado.
+create or replace function public.job_queue_terminal_guard() returns trigger language plpgsql as $$
+begin
+  if old.status in ('completed','failed','cancelled') and new.status is distinct from old.status then
+    raise exception 'job % ya esta en estado terminal %', old.id, old.status using errcode = 'check_violation';
+  end if;
+  return new;
+end $$;
+drop trigger if exists job_queue_terminal_guard on public.job_queue;
+create trigger job_queue_terminal_guard before update on public.job_queue for each row execute function public.job_queue_terminal_guard();
+
+-- Fuente unica de verdad de las aprobaciones: devuelve el problema (o null si es valida).
+create or replace function public.check_approval(p_job uuid, p_step text, p_action text)
+returns text language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare a public.job_approvals; j public.job_queue;
+begin
+  select * into j from public.job_queue where id = p_job;
+  if not found then return 'job_not_found'; end if;
+  select * into a from public.job_approvals where job_id = p_job and step = p_step and action = p_action;
+  if not found then return 'approval_missing'; end if;
+  if a.owner_id <> j.owner_id then return 'approval_invalidated'; end if;
+  if a.revoked_at is not null then return 'approval_revoked'; end if;
+  if a.expires_at <= now() then return 'approval_expired'; end if;
+  if a.payload_hash <> j.payload_hash then return 'approval_invalidated'; end if;
+  return null;
+end $$;
+
+-- Presupuesto: conciliar, liberar (solo lo NO incierto) y resolver lo incierto a mano.
+-- Las claves de reserva son «<base>:<unidad>»; starts_with evita comodines LIKE.
+create or replace function public.settle_budget(p_owner uuid, p_keybase text, p_unit text, p_actual numeric)
+returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.budget_entries set state = 'settled', actual = coalesce(p_actual, reserved), settled_at = now()
+   where owner_id = p_owner and idempotency_key = p_keybase || ':' || p_unit and state in ('reserved','uncertain');
+  return found;
+end $$;
+
+create or replace function public.release_budget(p_owner uuid, p_keybase text)
+returns int language plpgsql security definer set search_path = public, pg_temp as $$
+declare n int;
+begin
+  update public.budget_entries set state = 'released', settled_at = now()
+   where owner_id = p_owner and starts_with(idempotency_key, p_keybase || ':') and state = 'reserved';   -- 'uncertain' NO se libera
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+create or replace function public.mark_budget_uncertain(p_owner uuid, p_keybase text)
+returns int language plpgsql security definer set search_path = public, pg_temp as $$
+declare n int;
+begin
+  update public.budget_entries set state = 'uncertain'
+   where owner_id = p_owner and starts_with(idempotency_key, p_keybase || ':') and state = 'reserved';
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- Solo una persona (via ruta de servidor) decide el destino de lo incierto: cobrado (actual) o no cobrado.
+create or replace function public.resolve_uncertain_budget(p_owner uuid, p_keybase text, p_charged boolean, p_actual numeric default null)
+returns int language plpgsql security definer set search_path = public, pg_temp as $$
+declare n int;
+begin
+  update public.budget_entries set
+      state = case when p_charged then 'settled' else 'released' end,
+      actual = case when p_charged then coalesce(p_actual, reserved) else actual end, settled_at = now()
+   where owner_id = p_owner and starts_with(idempotency_key, p_keybase || ':') and state = 'uncertain';
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+-- Solo service_role ejecuta las funciones privilegiadas. Ningun otro rol (ni public) puede.
+do $$
+declare f record;
+begin
+  for f in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public' and p.proname in ('claim_next_job','reserve_budget','heartbeat_job','save_job_steps','finish_job',
+              'check_approval','settle_budget','release_budget','mark_budget_uncertain','resolve_uncertain_budget') loop
+    execute format('revoke all on function %s from public, anon, authenticated', f.sig);
+    execute format('grant execute on function %s to service_role', f.sig);
+  end loop;
+end $$;

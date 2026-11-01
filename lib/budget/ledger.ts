@@ -25,7 +25,7 @@ export type BudgetEntry = {
   day: string
   reserved: number
   actual: number | null
-  state: 'reserved' | 'settled' | 'released'
+  state: 'reserved' | 'uncertain' | 'settled' | 'released'
 }
 
 export type BudgetLedger = {
@@ -33,7 +33,12 @@ export type BudgetLedger = {
   /** Atomica: o reserva todas las unidades o ninguna. */
   reserve(r: { ownerId: string; jobId: string; step: string; provider: string; projectId: string | null; cost: Cost; keyBase: string; now: Date }): ReserveResult
   settle(keyBase: string, ownerId: string, actual: Cost): void
+  /** Libera SOLO lo que sigue «reserved». Una reserva «uncertain» (quizá cobrada) nunca se libera sola. */
   release(keyBase: string, ownerId: string): void
+  /** Marca como incierta una reserva cuyo cobro no se puede descartar. Sigue contando contra el límite. */
+  markUncertain(keyBase: string, ownerId: string): void
+  /** Decisión humana sobre lo incierto: cobrado (se concilia) o no cobrado (se libera). */
+  resolveUncertain(keyBase: string, ownerId: string, r: { charged: boolean; actual?: Cost }): void
   used(ownerId: string, provider: string, unit: BudgetUnit, now: Date): number
   entries(): BudgetEntry[]
 }
@@ -83,7 +88,7 @@ export function createMemoryLedger(): BudgetLedger {
     },
     settle: (keyBase, ownerId, actual) => {
       for (const e of list) {
-        if (e.ownerId !== ownerId || !e.key.startsWith(`${keyBase}:`) || e.state !== 'reserved') continue
+        if (e.ownerId !== ownerId || !e.key.startsWith(`${keyBase}:`) || (e.state !== 'reserved' && e.state !== 'uncertain')) continue
         const a = actual[e.unit]
         e.actual = typeof a === 'number' && a >= 0 ? a : e.reserved   // sin dato real: se mantiene lo reservado
         e.state = 'settled'
@@ -91,6 +96,15 @@ export function createMemoryLedger(): BudgetLedger {
     },
     release: (keyBase, ownerId) => {
       for (const e of list) if (e.ownerId === ownerId && e.key.startsWith(`${keyBase}:`) && e.state === 'reserved') e.state = 'released'
+    },
+    markUncertain: (keyBase, ownerId) => {
+      for (const e of list) if (e.ownerId === ownerId && e.key.startsWith(`${keyBase}:`) && e.state === 'reserved') e.state = 'uncertain'
+    },
+    resolveUncertain: (keyBase, ownerId, r) => {
+      for (const e of list) {
+        if (e.ownerId !== ownerId || !e.key.startsWith(`${keyBase}:`) || e.state !== 'uncertain') continue
+        if (r.charged) { const a = r.actual?.[e.unit]; e.actual = typeof a === 'number' && a >= 0 ? a : e.reserved; e.state = 'settled' } else e.state = 'released'
+      }
     },
     used: (ownerId, provider, unit, now) => usedOf(ownerId, provider, unit, dayOf(now)),
     entries: () => list.map(e => ({ ...e })),

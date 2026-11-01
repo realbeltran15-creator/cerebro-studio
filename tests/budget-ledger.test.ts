@@ -58,4 +58,19 @@ describe('presupuesto agregado', () => {
     expect(reserve(l, 'a', { eur: 3 }, { projectId: 'proj' })).toMatchObject({ ok: false })
     expect(reserve(l, 'b', { eur: 3 }, { projectId: 'otro' })).toMatchObject({ ok: true })
   })
+
+  it('una reserva incierta no se libera sola, sigue contando y solo una decisión humana la resuelve', () => {
+    const l = createMemoryLedger(); l.setLimit({ ownerId: O, provider: 'p', unit: 'credits', dailyLimit: 10 })
+    reserve(l, 'a', { credits: 8 })
+    l.markUncertain('a', O)
+    l.release('a', O)                                                   // un fallo posterior NO la libera
+    expect(l.entries()[0].state).toBe('uncertain')
+    expect(reserve(l, 'b', { credits: 5 })).toMatchObject({ ok: false, code: 'budget_exhausted' })   // sigue ocupando hueco
+    l.resolveUncertain('a', O, { charged: false })
+    expect(l.entries()[0].state).toBe('released')
+    expect(reserve(l, 'b', { credits: 5 })).toMatchObject({ ok: true })
+    reserve(l, 'c', { credits: 1 }); l.markUncertain('c', O)
+    l.resolveUncertain('c', O, { charged: true, actual: { credits: 1 } })
+    expect(l.entries().find(e => e.key === 'c:credits')).toMatchObject({ state: 'settled', actual: 1 })
+  })
 })

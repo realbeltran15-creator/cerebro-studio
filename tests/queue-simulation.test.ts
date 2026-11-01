@@ -96,7 +96,7 @@ describe('4B.0 simulación: timeout, reinicio y lease', () => {
     const j = w.enqueue('job-timeout-2'); w.approve(j, 'generate', 'spend'); w.ledger.setLimit({ ownerId: OWNER, provider: 'gen', unit: 'credits', dailyLimit: 10 })
     const o = await runOnce(w.exec())
     expect(o).toMatchObject({ outcome: 'awaiting_approval', reason: 'uncertain_outcome' })
-    expect(w.spend(j)).toMatchObject([{ state: 'reserved', reserved: 5 }])
+    expect(w.spend(j)).toMatchObject([{ state: 'uncertain', reserved: 5 }])
     // Reanudar sin aprobación de reintento: no llama al proveedor otra vez.
     w.store.resume(j.id, OWNER, w.clock.now())
     expect(await runOnce(w.exec())).toMatchObject({ outcome: 'awaiting_approval', reason: 'uncertain_outcome' })
@@ -231,7 +231,7 @@ describe('4B.0 simulación: errores del proveedor', () => {
   it('500 en un paso con cargo: resultado incierto, la reserva se conserva y no se reintenta', async () => {
     const { w, j } = setup(() => { throw new StepError('oops', { httpStatus: 500 }) })
     expect(await runOnce(w.exec())).toMatchObject({ outcome: 'awaiting_approval', reason: 'uncertain_outcome' })
-    expect(w.spend(j)).toMatchObject([{ state: 'reserved' }])
+    expect(w.spend(j)).toMatchObject([{ state: 'uncertain' }])
     w.clock.advance(HOUR)
     expect(await runOnce(w.exec())).toEqual({ outcome: 'idle' })
     expect(w.calls.generate).toBe(1)
