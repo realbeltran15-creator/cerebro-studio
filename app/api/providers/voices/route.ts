@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { listVoices } from '@/lib/providers/elevenlabs'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Voices available to the configured ElevenLabs account (names and ids only). */
 export async function GET() {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

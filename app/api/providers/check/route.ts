@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { checkable, runCheck, type CheckProvider } from '@/lib/providers/check'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 45
@@ -12,6 +13,7 @@ export const maxDuration = 45
  * endpoints. The response never contains a key.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

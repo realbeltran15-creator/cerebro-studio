@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server'
 import { randomBytes } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { authUrl, googleOAuthConfigured, type ScopeSet } from '@/lib/oauth/google'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const url = new URL(request.url)
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

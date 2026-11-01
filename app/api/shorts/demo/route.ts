@@ -6,6 +6,7 @@ import { defaultShortsConfig, shortsConfig } from '@/lib/shorts/config'
 import { prepareDailyShort } from '@/lib/shorts/factory'
 import { liveDeps } from '@/lib/shorts/live'
 import { findCommonsMusic } from '@/lib/shorts/commons-music'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -15,6 +16,7 @@ export const maxDuration = 300
  * It never publishes and never turns on the daily automation.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

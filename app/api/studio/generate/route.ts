@@ -17,6 +17,7 @@ import { encryptJson, tokenEncryptionConfigured } from '@/lib/security/tokens'
 import { thumbnailPrompt, validThumbnail } from '@/lib/providers/thumbnail-prompt'
 import { capViolation, spendCaps, spendStatus } from '@/lib/providers/spend'
 import { listJobs, recordJob } from '@/lib/providers/job-ledger'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -49,6 +50,7 @@ const suggestion = (r: ReturnType<typeof recommendAlternatives>) => ({
  * through /api/studio/job. Nothing is retried automatically, so a failure never charges twice.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

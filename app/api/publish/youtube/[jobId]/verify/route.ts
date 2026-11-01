@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { publicationWriter } from '@/lib/supabase/admin'
 import { PublishError, verifyPublishedVideo } from '@/lib/publication/youtube'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Checks on YouTube that the uploaded video exists, belongs to the connected channel and has the expected visibility (1 unit). */
 export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+  const blocked = previewBlock('publication'); if (blocked) return blocked
   const { jobId } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

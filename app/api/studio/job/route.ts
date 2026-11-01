@@ -6,6 +6,7 @@ import type { FalJob } from '@/lib/providers/fal-queue'
 import { persistGeneratedAsset } from '@/lib/providers/persist'
 import { decryptJson } from '@/lib/security/tokens'
 import { markJob } from '@/lib/providers/job-ledger'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -21,6 +22,7 @@ const MAX_AGE_MS = 48 * 3600 * 1000
  * Biblioteca once: a repeated poll finds the saved asset by its external id instead of storing a duplicate.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

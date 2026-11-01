@@ -4,12 +4,14 @@ import { timingSafeEqual } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { encryptJson, exchangeSocialCode, socialConfigured, socialPlatforms, type SocialPlatform } from '@/lib/oauth/social'
 import { serviceRoleClient } from '@/lib/supabase/admin'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
 export async function GET(request: Request, { params }: { params: Promise<{ platform: string }> }) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { platform } = await params
   const url = new URL(request.url)
   if (!socialPlatforms.includes(platform as SocialPlatform)) return NextResponse.redirect(new URL('/social', url.origin))

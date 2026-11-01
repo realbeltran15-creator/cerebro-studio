@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { serviceRoleClient } from '@/lib/supabase/admin'
 import { hashToken, newToken, SHORTCUT_KEY, type ShortcutConfig } from '@/lib/ingest/shortcut'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,6 +24,7 @@ async function validDestination(db: Awaited<ReturnType<typeof createServerSupaba
 }
 
 export async function GET() {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { db, user } = await ctx()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const row = await current(db)
@@ -30,6 +32,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { db, user } = await ctx()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const body = await request.json().catch(() => ({})) as { destination?: string }
@@ -47,6 +50,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { db, user } = await ctx()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const row = await current(db)
@@ -58,6 +62,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE() {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { db, user } = await ctx()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { error } = await db.from('connector_configs').delete().eq('provider', SHORTCUT_KEY.provider).eq('capability', SHORTCUT_KEY.capability).eq('owner_id', user.id)

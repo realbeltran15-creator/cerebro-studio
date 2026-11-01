@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { timingSafeEqual } from 'node:crypto'
 import { executeAutomation, type Automation } from '@/lib/automations/run'
 import { youtubeConfigured } from '@/lib/providers/youtube-data'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -12,6 +13,7 @@ export const maxDuration = 300
  * Uses the service role because no user session exists; the runner filters by owner itself.
  */
 export async function GET(request: Request) {
+  const blocked = previewBlock('automation'); if (blocked) return blocked
   const secret = process.env.CRON_SECRET?.trim()
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()

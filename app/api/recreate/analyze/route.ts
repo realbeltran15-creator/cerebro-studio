@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { rateLimited } from '@/lib/security/rate-limit'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { analyseReference, createPlan, publicAnalysis, RecreateError } from '@/lib/recreate/run'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -11,6 +12,7 @@ export const maxDuration = 120
  * Nothing is generated or spent here beyond text from free-tier providers, and nothing is saved until /save.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

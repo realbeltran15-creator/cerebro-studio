@@ -6,11 +6,13 @@ import { approvalKeyFor, validatePayload, type PublicationJob } from '@/lib/publ
 
 import { approvalStillValid, sealFor } from '@/lib/publication/approval'
 import { sealConfigured } from '@/lib/publication/seal'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Records the owner's explicit approval for one publication job. Does not publish anything. */
 export async function POST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+  const blocked = previewBlock('publication'); if (blocked) return blocked
   const { jobId } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

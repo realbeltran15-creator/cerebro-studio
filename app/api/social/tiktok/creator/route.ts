@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { socialAccessToken, socialConnection } from '@/lib/oauth/social'
 import { tiktokCreatorInfo } from '@/lib/publication/social'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Latest creator info for the post form (TikTok requires reading it when the post page is shown). Read-only; posts nothing. */
 export async function GET() {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

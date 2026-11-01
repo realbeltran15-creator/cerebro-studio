@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { googleOAuthConfigured, youtubeConnection } from '@/lib/oauth/google'
 import { importYouTubeAnalytics } from '@/lib/analytics/youtube'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

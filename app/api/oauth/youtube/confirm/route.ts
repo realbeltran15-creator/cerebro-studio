@@ -4,6 +4,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { serviceRoleClient } from '@/lib/supabase/admin'
 import { encryptJson } from '@/lib/security/tokens'
 import { openPending, PENDING_COOKIE, PENDING_COOKIE_OPTIONS } from '@/lib/oauth/pending'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic'
  * same Google account; the owner can remove access from their Google account settings.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

@@ -4,12 +4,14 @@ import { timingSafeEqual } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { exchangeCode, googleOAuthConfigured } from '@/lib/oauth/google'
 import { PENDING_COOKIE, PENDING_COOKIE_OPTIONS, sealPending } from '@/lib/oauth/pending'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
 export async function GET(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const url = new URL(request.url)
   const back = (status: string) => {
     const res = NextResponse.redirect(new URL(`/connectors?youtube=${status}`, url.origin))

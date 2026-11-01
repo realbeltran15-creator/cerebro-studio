@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { enhancePrompt, TextProviderError, type PromptModality } from '@/lib/providers/openai-text'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -9,6 +10,7 @@ const modalities: PromptModality[] = ['image', 'video', 'voice', 'music', 'sfx',
 
 /** "Mejorar con ChatGPT": rewrites an idea into a provider prompt. Nothing is saved. */
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

@@ -2,6 +2,7 @@ import { serviceRoleClient } from '@/lib/supabase/admin'
 import { BUCKET, SUPABASE_MAX_BYTES, storageDriver } from '@/lib/storage/server'
 import { classify, formatBytes } from '@/lib/ingest/files'
 import { bearer, ownerOfToken, text } from '@/lib/ingest/shortcut'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +12,7 @@ export const dynamic = 'force-dynamic'
  * Response (JSON): { putUrl, contentType, path }. Errors are plain text so the shortcut can show them.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const admin = serviceRoleClient()
   if (!admin) return text('Cerebro Studio no tiene activada la recepción desde iPhone en este entorno (falta la clave de servidor).', 503)
   const token = bearer(request)

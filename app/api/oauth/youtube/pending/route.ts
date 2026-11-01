@@ -3,11 +3,13 @@ import { cookies } from 'next/headers'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { openPending, PENDING_COOKIE } from '@/lib/oauth/pending'
 import { SCOPES } from '@/lib/oauth/google'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** What the owner must confirm: the channel behind the authorization waiting in the encrypted cookie. Never the tokens. */
 export async function GET() {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

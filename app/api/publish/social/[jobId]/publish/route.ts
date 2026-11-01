@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { publicationWriter } from '@/lib/supabase/admin'
 import { publishSocialJob, SocialPublishError } from '@/lib/publication/social'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 /** Publishes an approved Instagram/TikTok job. Only ever called by the owner's explicit click. */
 export async function POST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+  const blocked = previewBlock('publication'); if (blocked) return blocked
   const { jobId } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

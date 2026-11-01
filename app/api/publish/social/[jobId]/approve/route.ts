@@ -7,11 +7,13 @@ import type { SocialPlatform } from '@/lib/oauth/social'
 import { approvalStillValid, sealFor } from '@/lib/publication/approval'
 import { sealConfigured } from '@/lib/publication/seal'
 import { INCOMPLETE_VIDEO_MESSAGE, isIncompleteVideo } from '@/lib/publication/incomplete'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Records the owner's explicit approval for one Instagram/TikTok job. Does not publish anything. */
 export async function POST(request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+  const blocked = previewBlock('publication'); if (blocked) return blocked
   const { jobId } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

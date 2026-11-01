@@ -2,6 +2,7 @@ import { serviceRoleClient } from '@/lib/supabase/admin'
 import { BUCKET } from '@/lib/storage/server'
 import { classify, fingerprintKey, formatBytes } from '@/lib/ingest/files'
 import { bearer, ownerOfToken, shortcutPathOk, text } from '@/lib/ingest/shortcut'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,6 +11,7 @@ export const dynamic = 'force-dynamic'
  * (same name and size already in the account: the new copy is removed) and register it in the chosen destination. Answers plain text.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const admin = serviceRoleClient()
   if (!admin) return text('Recepción desde iPhone no activada en este entorno.', 503)
   const token = bearer(request)

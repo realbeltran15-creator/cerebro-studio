@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { refreshOpportunityMetrics } from '@/lib/automations/run'
+import { refreshOpportunityMetrics } from '@/lib/automations/refresh-metrics'
 import { youtubeConfigured } from '@/lib/providers/youtube-data'
 
 export const dynamic = 'force-dynamic'

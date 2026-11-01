@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { isPreviewDeploy } from '@/lib/security/preview-guard'
 
 /**
  * Server-only client with the service role. Used ONLY to write the publication state (approvals and publication_jobs status/result)
@@ -11,6 +12,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 let cached: SupabaseClient | null | undefined
 
 export function serviceRoleClient(): SupabaseClient | null {
+  // A Vercel Preview shares the Production database: it never gets the privileged client, even if the key is present in its environment.
+  if (isPreviewDeploy()) return null
   if (cached !== undefined) return cached
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()

@@ -3,6 +3,7 @@ import { rateLimited } from '@/lib/security/rate-limit'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { proposeScript, textConfigured, textModel, TextProviderError, type ScriptAssistMode } from '@/lib/providers/openai-text'
 import { normalizeSections } from '@/lib/scripts'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,6 +18,7 @@ const urlPattern = /https?:\/\/[^\s)\]}>"']+/g
 const text = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : null)
 
 export async function POST(request: Request) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

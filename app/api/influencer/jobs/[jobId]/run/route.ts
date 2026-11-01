@@ -4,6 +4,7 @@ import { adapterById, adapterStatus } from '@/lib/virtual-influencer/providers'
 import { OpenAIVoiceProvider } from '@/lib/providers/openai-voice'
 import { ElevenLabsVoiceProvider } from '@/lib/providers/elevenlabs'
 import { persistGeneratedAsset } from '@/lib/providers/persist'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -13,6 +14,7 @@ export const maxDuration = 120
  * identity). Adapters without an implementation here are NOT_CONNECTED.
  */
 export async function POST(_request: Request, { params }: { params: Promise<{ jobId: string }> }) {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const { jobId } = await params
   return withUser(async ({ db, userId }) => {
     const { data } = await db.from('vi_generation_jobs').select('persona_id,provider,status').eq('id', jobId).eq('owner_id', userId).maybeSingle()

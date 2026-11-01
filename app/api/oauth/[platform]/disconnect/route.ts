@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { revokeSocial, socialPlatforms, type SocialConnection, type SocialPlatform } from '@/lib/oauth/social'
 import { serviceRoleClient } from '@/lib/supabase/admin'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(_request: Request, { params }: { params: Promise<{ platform: string }> }) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { platform } = await params
   if (!socialPlatforms.includes(platform as SocialPlatform)) return NextResponse.json({ error: 'Plataforma no válida.' }, { status: 400 })
   const supabase = await createServerSupabaseClient()

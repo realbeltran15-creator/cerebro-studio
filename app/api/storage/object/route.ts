@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { ownerOfPath, removeObject } from '@/lib/storage/server'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Deletes one of the caller's stored files (used to roll back a failed upload or delete an asset). */
 export async function DELETE(request: Request) {
+  const blocked = previewBlock('destructive'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

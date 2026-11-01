@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { serviceRoleClient } from '@/lib/supabase/admin'
 import { confirmationCode, parseSignedRequest } from '@/lib/oauth/meta-signed-request'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,6 +11,7 @@ export const dynamic = 'force-dynamic'
  * Instagram account are deleted (status «revoked», token removed). Replies with the status URL and confirmation code Meta expects.
  */
 export async function POST(request: Request) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const form = await request.formData().catch(() => null)
   const signed = String(form?.get('signed_request') ?? '')
   const data = parseSignedRequest(signed, process.env.INSTAGRAM_APP_SECRET?.trim() ?? '')

@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { executeAutomation, type Automation } from '@/lib/automations/run'
 import { youtubeConfigured } from '@/lib/providers/youtube-data'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const blocked = previewBlock('automation'); if (blocked) return blocked
   const { id } = await params
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()

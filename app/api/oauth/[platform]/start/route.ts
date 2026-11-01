@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server'
 import { randomBytes } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { socialAuthUrl, socialConfigured, socialPlatforms, type SocialPlatform } from '@/lib/oauth/social'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Starts Instagram / TikTok OAuth. YouTube keeps its own route (/api/oauth/youtube). */
 export async function GET(request: Request, { params }: { params: Promise<{ platform: string }> }) {
+  const blocked = previewBlock('privileged'); if (blocked) return blocked
   const { platform } = await params
   const url = new URL(request.url)
   if (!socialPlatforms.includes(platform as SocialPlatform)) return NextResponse.redirect(new URL('/social', url.origin))

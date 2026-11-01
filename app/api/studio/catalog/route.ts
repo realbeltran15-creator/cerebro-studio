@@ -11,11 +11,13 @@ import { tokenEncryptionConfigured } from '@/lib/security/tokens'
 import { taskQuality, textConfiguredFor, textModels } from '@/lib/providers/text'
 import { sttConfigured, sttModels } from '@/lib/providers/transcribe'
 import { storageDriver } from '@/lib/storage/server'
+import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
 
 /** Models with their real availability (env names only, never values) plus live credit balances when the provider exposes them. */
 export async function GET() {
+  const blocked = previewBlock('paid-provider'); if (blocked) return blocked
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
