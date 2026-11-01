@@ -60,5 +60,21 @@ await t('A borra el storyboard y se van las escenas (cascade)', async () => { aw
 await t('borrar el guion no rompe nada (FK SET NULL)', async () => { const r = await cA.from('scripts').delete().eq('id', sc.id).select(); return !r.error && r.data.length === 1 })
 await t('subtítulo único por origen vía HTTP (5 inserts simultáneos -> 1)', async () => { const rs = await Promise.all(Array.from({ length: 5 }, () => cA.from('assets').insert({ owner_id: A, asset_type: 'subtitle', provenance: { sourceAssetId: 'srcX' } }))); const ok = rs.filter((r) => !r.error).length; const dup = rs.filter((r) => r.error?.code === '23505').length; return (ok === 1 && dup === 4) || `ok=${ok} dup=${dup}` })
 
+console.log('== bloqueos de transcripción, fallos y acceso no autorizado por HTTP ==')
+const lk = await Promise.all(Array.from({ length: 12 }, (_, i) => cSvc.rpc('acquire_transcription_lock', { p_key: 'http-k1', p_owner: `w${i}`, p_ttl_seconds: 30 })))
+await t('12 workers por HTTP (service_role): un solo ganador del lock', async () => lk.filter((r) => r.data === true).length === 1 || `ganadores=${lk.filter((r) => r.data === true).length}`)
+const win = lk.findIndex((r) => r.data === true)
+await t('liberar con dueño equivocado no libera', async () => { await cSvc.rpc('release_transcription_lock', { p_key: 'http-k1', p_owner: 'intruso' }); return (await sq(`select count(*) from transcription_locks where key='http-k1'`)) === '1' })
+await t('el dueño libera y otro worker puede adquirir', async () => { await cSvc.rpc('release_transcription_lock', { p_key: 'http-k1', p_owner: `w${win}` }); const r = await cSvc.rpc('acquire_transcription_lock', { p_key: 'http-k1', p_owner: 'nuevo', p_ttl_seconds: 30 }); return r.data === true })
+await t('authenticated y anon NO pueden adquirir/liberar locks por RPC', async () => { const a = await cA.rpc('acquire_transcription_lock', { p_key: 'x', p_owner: 'y', p_ttl_seconds: 5 }); const b = await cAnon.rpc('release_transcription_lock', { p_key: 'x', p_owner: 'y' }); return !!a.error && !!b.error })
+await sq(`insert into scripts(id,owner_id,project_id,title,version) values ('${randomUUID()}','${A}','${pA.id}','G-fallo',9)`)
+const sf = (await cA.from('scripts').select('id').eq('title', 'G-fallo').single()).data
+const bad = await cA.rpc('create_storyboard_from_script', { p_script_id: sf.id, p_scenes: [{ position: 1, duration_ms: 'no-es-numero', narration: 'x', metadata: {} }] })
+await t('RPC que falla a mitad deja 0 storyboards (rollback atómico)', async () => !!bad.error && (await sq(`select count(*) from storyboards where script_id='${sf.id}'`)) === '0' || `error=${bad.error?.message} filas=${await sq(`select count(*) from storyboards where script_id='${sf.id}'`)}`)
+await t('tras el fallo, el reintento correcto funciona (recuperación)', async () => { const r = await cA.rpc('create_storyboard_from_script', { p_script_id: sf.id, p_scenes: secs }); return !r.error && (await sq(`select count(*) from scenes s join storyboards b on b.id=s.storyboard_id where b.script_id='${sf.id}'`)) === '2' })
+await t('sin sesión (anon) no puede crear storyboards ni reordenar por RPC', async () => { const a = await cAnon.rpc('create_storyboard_from_script', { p_script_id: sf.id, p_scenes: secs }); const b = await cAnon.rpc('reorder_scenes', { p_storyboard: sb ?? randomUUID(), p_ids: [] }); return !!a.error && !!b.error })
+await t('JWT de usuario inexistente (sub desconocido) no ve ni crea datos ajenos', async () => { const ghost = client(tok(randomUUID())); const r = await ghost.from('projects').select('id'); const w = await ghost.from('projects').insert({ owner_id: A, name: 'x' }); return r.data.length === 0 && !!w.error })
+await t('payload de RPC malformado -> error controlado (4xx), PostgREST sigue vivo', async () => { const r = await cA.rpc('reorder_scenes', { p_storyboard: 'no-es-uuid', p_ids: ['tampoco'] }); const ok = await cA.from('projects').select('id'); return !!r.error && r.status >= 400 && r.status < 500 && !ok.error })
+
 console.log(`\nRESUMEN: ejecutadas ${pass + fail} · pasan ${pass} · fallan ${fail} · (PostgREST real + postgrest-js real; JWT firmados por el test, NO Supabase Auth; sin Storage/Realtime)`)
 process.exit(fail ? 1 : 0)
