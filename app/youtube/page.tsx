@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { ResearchCapture } from './research-capture'
@@ -35,6 +35,8 @@ export default function YouTubePage() {
   const [approving, setApproving] = useState<Job | null>(null)
   const [confirmText, setConfirmText] = useState('')
   const [busy, setBusy] = useState('')
+  // Synchronous guard: a double click on Preparar must not insert two drafts (state updates are asynchronous).
+  const savingRef = useRef(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -82,6 +84,12 @@ export default function YouTubePage() {
   }
 
   async function save(e: FormEvent) {
+    if (savingRef.current) { e.preventDefault(); return }
+    savingRef.current = true
+    try { await saveDraft(e) } finally { savingRef.current = false }
+  }
+
+  async function saveDraft(e: FormEvent) {
     e.preventDefault()
     setError(''); setNotice('')
     if (!form.title.trim()) { setError('El título es obligatorio.'); return }
