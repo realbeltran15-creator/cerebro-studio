@@ -7,6 +7,7 @@ import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { basisLabels, formatDuration } from '@/lib/scripts'
 import { friendlyDbMessage } from '@/lib/script-integrity'
+import { applyPositionSteps, planCompact, planMove } from '@/lib/scene-order'
 import type { ProjectRow, SceneRow, ScriptBasis, StoryboardRow } from '@/lib/types/database'
 
 type SceneForm = {
@@ -48,6 +49,8 @@ export default function CreatePage() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const submitting = useRef(false)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [linked, setLinked] = useState<number | null>(null)
 
   const loadScenes = useCallback(async (id: string) => {
     const { data, error: e } = await supabase.from('scenes').select('*').eq('storyboard_id', id).order('position')
@@ -135,6 +138,45 @@ export default function CreatePage() {
     await loadScenes(selected)
   }
 
+  async function moveScene(id: string, delta: -1 | 1) {
+    if (submitting.current || !selected) return
+    const steps = planMove(scenes, id, delta)
+    if (!steps) return
+    submitting.current = true; setBusy(true); setError(''); setNotice('')
+    const original = scenes.map(x => ({ id: x.id, position: x.position }))
+    const r = await applyPositionSteps(steps, original, async st => {
+      const { error: e } = await supabase.from('scenes').update({ position: st.position }).eq('id', st.id).eq('storyboard_id', selected)
+      return e ? e.message : null
+    })
+    submitting.current = false; setBusy(false)
+    if (!r.ok) setError(`No se pudo cambiar el orden${r.rolledBack ? '; se restauró el orden anterior.' : '. Recarga la página para ver el estado real: el orden pudo quedar a medias.'}`)
+    else setNotice('Orden actualizado.')
+    await loadScenes(selected)
+  }
+
+  async function askDelete(id: string) {
+    setConfirmDelete(id); setLinked(null); setError(''); setNotice('')
+    // Montajes que usan esta escena (se conservan; solo avisamos).
+    const { count } = await supabase.from('render_jobs').select('id', { count: 'exact', head: true }).contains('composition', { clips: [{ sceneId: id }] })
+    setLinked(count ?? 0)
+  }
+
+  async function deleteScene(id: string) {
+    if (submitting.current || !selected) return
+    submitting.current = true; setBusy(true); setError('')
+    const { data: gone, error: e } = await supabase.from('scenes').delete().eq('id', id).eq('storyboard_id', selected).select('id')
+    if (e) { submitting.current = false; setBusy(false); setError(friendlyDbMessage(e, 'No se pudo eliminar la escena.')); return }
+    const rest = scenes.filter(x => x.id !== id).map(x => ({ id: x.id, position: x.position }))
+    const r = gone && gone.length ? await applyPositionSteps(planCompact(rest), rest, async st => {
+      const { error: ce } = await supabase.from('scenes').update({ position: st.position }).eq('id', st.id).eq('storyboard_id', selected)
+      return ce ? ce.message : null
+    }) : { ok: true as const }
+    submitting.current = false; setBusy(false); setConfirmDelete(null)
+    if (editing === id) { setEditing(null); setForm(emptyForm) }
+    setNotice(gone && gone.length ? (r.ok ? 'Escena eliminada. No se ha borrado ningún archivo de la Biblioteca.' : 'Escena eliminada, pero no se pudieron renumerar las demás (el orden relativo se mantiene).') : 'La escena ya no existía.')
+    await loadScenes(selected)
+  }
+
   function editScene(s: SceneRow) { setEditing(s.id); setForm(formFromScene(s)); setNotice(''); document.getElementById('scene-form')?.scrollIntoView({ behavior: 'smooth' }) }
 
   const board = boards.find(b => b.id === selected)
@@ -180,8 +222,17 @@ export default function CreatePage() {
               <article key={s.id} className="scene">
                 <div className="cardHead" style={{ marginBottom: 6 }}>
                   <small>Escena {s.position} · {s.duration_ms / 1000} s{s.metadata?.duration_is_estimate ? ' (estimada)' : ''}</small>
-                  <button type="button" className="ghost small" onClick={() => editScene(s)}>Editar</button>
+                  <span style={{ display: 'flex', gap: 4 }}>
+                    <button type="button" className="ghost small" disabled={busy || i === 0} aria-label={`Subir la escena ${s.position}`} onClick={() => void moveScene(s.id, -1)}>↑</button>
+                    <button type="button" className="ghost small" disabled={busy || i === scenes.length - 1} aria-label={`Bajar la escena ${s.position}`} onClick={() => void moveScene(s.id, 1)}>↓</button>
+                    <button type="button" className="ghost small" onClick={() => editScene(s)}>Editar</button>
+                    <button type="button" className="ghost small" disabled={busy} aria-label={`Eliminar la escena ${s.position}`} onClick={() => void askDelete(s.id)}>Eliminar</button>
+                  </span>
                 </div>
+                {confirmDelete === s.id && <div className="warnBox" role="alertdialog" aria-label="Confirmar eliminación">
+                  <p style={{ margin: '0 0 8px' }}>¿Eliminar la escena {s.position}? Se pierde su texto y sus prompts. {linked === null ? 'Comprobando montajes…' : linked > 0 ? `${linked} montaje(s) del editor la usan: seguirán existiendo, pero esa escena quedará sin referencia.` : 'Ningún montaje la usa.'} Los archivos de la Biblioteca no se borran.</p>
+                  <div className="pageActions"><button type="button" disabled={busy} onClick={() => void deleteScene(s.id)}>Sí, eliminar</button><button type="button" className="ghost" disabled={busy} onClick={() => setConfirmDelete(null)}>Cancelar</button></div>
+                </div>}
                 {meta(s, 'heading') && <h3>{meta(s, 'heading')}</h3>}
                 {basis && basis in basisLabels && <span className="pill" style={{ marginTop: 6 }}>{basisLabels[basis]}{sources.length ? ` · ${sources.length} fuente(s)` : ''}</span>}
                 {i > 0 && meta(scenes[i - 1], 'end_state') && <p className="continuity" style={{ marginTop: 8 }}>Viene de: {meta(scenes[i - 1], 'end_state')}</p>}

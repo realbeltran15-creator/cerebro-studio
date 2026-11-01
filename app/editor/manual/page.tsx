@@ -452,7 +452,13 @@ export default function ManualEditorPage() {
     if (!job || !comp) return
     const mine = comp
     await writeVersion(mine, 'conflict')
-    if (how === 'mine') { try { await save({ force: true, reason: 'manual' }); setNotice('Tu versión ha sustituido a la otra (la otra sigue en «Puntos de recuperación» si se guardó desde aquí).') } catch { /* state shows it */ } return }
+    if (how === 'mine') {
+      // Antes de pisar la versión de la otra pestaña, se archiva como punto de recuperación (si no se puede leer, no se fuerza).
+      const { data: remote } = await supabase.from('render_jobs').select('composition').eq('id', job.id).maybeSingle()
+      const theirs = remote ? parseComposition((remote as { composition: unknown }).composition) : null
+      if (!theirs) { setError('No se pudo guardar una copia de seguridad de la otra versión, así que no se ha sobrescrito nada. Reintenta o elige «como copia».'); return }
+      await writeVersion(theirs, 'conflict')
+      try { await save({ force: true, reason: 'manual' }); setNotice('Tu versión ha sustituido a la otra. La otra versión quedó guardada en «Puntos de recuperación».') } catch { /* state shows it */ } return }
     if (how === 'copy') {
       if (copying.current) return
       copying.current = true
