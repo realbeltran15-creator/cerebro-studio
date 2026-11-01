@@ -6,6 +6,7 @@ import type { SocialPlatform } from '@/lib/oauth/social'
 
 import { approvalStillValid, sealFor } from '@/lib/publication/approval'
 import { sealConfigured } from '@/lib/publication/seal'
+import { INCOMPLETE_VIDEO_MESSAGE, isIncompleteVideo } from '@/lib/publication/incomplete'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,6 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ job
   const { data: video } = await supabase.from('assets').select('license_status,provenance').eq('id', job.payload.videoAssetId!).eq('owner_id', user.id).maybeSingle()
   const v = video as { license_status: string; provenance: Record<string, unknown> | null } | null
   if (!v) return NextResponse.json({ error: 'El vídeo elegido ya no existe.' }, { status: 404 })
+  if (isIncompleteVideo(v.provenance)) return NextResponse.json({ error: INCOMPLETE_VIDEO_MESSAGE }, { status: 409 })
   const inputs = Array.isArray(v.provenance?.inputs) ? v.provenance.inputs as Array<{ license?: string }> : []
   if (['unknown', 'restricted'].includes(v.license_status) || inputs.some(i => i.license === 'unknown' || i.license === 'restricted')) {
     return NextResponse.json({ error: 'El vídeo contiene material con licencia sin verificar o restringida. Revísalo antes de aprobar.' }, { status: 409 })

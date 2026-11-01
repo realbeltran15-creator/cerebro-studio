@@ -26,11 +26,15 @@ export default function AnalyticsPage() {
   const [notice, setNotice] = useState('')
 
   const load = useCallback(async () => {
-    const [{ data, error: e }, { data: c }] = await Promise.all([
-      supabase.from('metric_snapshots').select('id,platform,external_content_id,metric_date,project_id,observed,calculated').eq('platform', 'youtube').order('metric_date', { ascending: false }).limit(400),
+    // Two queries: the per-video rows (many) must never push the daily channel rows out of a single limited result.
+    const cols = 'id,platform,external_content_id,metric_date,project_id,observed,calculated'
+    const [{ data: ch, error: e1 }, { data: vd, error: e2 }, { data: c }] = await Promise.all([
+      supabase.from('metric_snapshots').select(cols).eq('platform', 'youtube').like('external_content_id', 'channel:%').order('metric_date', { ascending: false }).limit(120),
+      supabase.from('metric_snapshots').select(cols).eq('platform', 'youtube').not('external_content_id', 'like', 'channel:%').order('metric_date', { ascending: false }).limit(400),
       supabase.from('channel_connections').select('external_account_name,status,scopes,updated_at').eq('provider', 'youtube').eq('status', 'connected').order('updated_at', { ascending: false }).limit(1),
     ])
-    if (e) setError(e.message); else setRows((data ?? []) as Snapshot[])
+    const e = e1 ?? e2
+    if (e) setError(e.message); else setRows([...(ch ?? []), ...(vd ?? [])] as Snapshot[])
     setConnection(((c ?? [])[0] as Connection | undefined) ?? null)
   }, [supabase])
 

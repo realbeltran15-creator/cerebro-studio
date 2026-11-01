@@ -47,8 +47,10 @@ export function spendStatus(assets: UsageAsset[], pending: PendingSpend[], caps:
 }
 
 /** null when the generation fits; otherwise the reason it is refused (Spanish, for the user). */
-export function capViolation(status: SpendStatus, estimateUsd: number): string | null {
+/** `heldUsd` = paid generations already accepted but not yet booked (they count against the cap). */
+export function capViolation(status: SpendStatus, estimateUsd: number, heldUsd = 0): string | null {
   if (!(estimateUsd > 0)) return null
+  status = { ...status, todayUsd: status.todayUsd + heldUsd, monthUsd: status.monthUsd + heldUsd }
   const usd = (n: number) => `$${n.toFixed(2)}`
   if (status.caps.dailyUsd === 0 || status.caps.monthlyUsd === 0) return 'Las generaciones de pago están desactivadas (tope de gasto 0). Usa un modelo gratuito o sube el tope en la configuración del servidor.'
   if (status.todayUsd + estimateUsd > status.caps.dailyUsd + 1e-9) return `Tope diario de gasto: llevas ${usd(status.todayUsd)} hoy y esta generación (${usd(estimateUsd)}) superaría ${usd(status.caps.dailyUsd)}. No se ha enviado nada.`

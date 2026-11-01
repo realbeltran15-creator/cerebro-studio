@@ -2,6 +2,7 @@ import { instagramReadiness } from '@/lib/editor/container'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { socialAccessToken, socialConnection, SOCIAL_SCOPES, type SocialPlatform } from '@/lib/oauth/social'
 import { downloadObject, signedReadUrl } from '@/lib/storage/server'
+import { INCOMPLETE_VIDEO_MESSAGE, isIncompleteVideo } from './incomplete'
 import { assertPublicationApproved, publicationApprovalKey, type ApprovalRecord } from './guard'
 import { approvalStillValid, STALE_APPROVAL_MESSAGE } from './approval'
 
@@ -65,6 +66,7 @@ async function videoAsset(db: SupabaseClient, ownerId: string, assetId: string) 
   const { data } = await db.from('assets').select('id,asset_type,storage_path,provenance').eq('id', assetId).eq('owner_id', ownerId).maybeSingle()
   const a = data as { asset_type: string; storage_path: string | null; provenance: Record<string, unknown> | null } | null
   if (!a?.storage_path || a.asset_type !== 'video') throw new SocialPublishError('El vídeo elegido no existe.', 404)
+  if (isIncompleteVideo(a.provenance)) throw new SocialPublishError(INCOMPLETE_VIDEO_MESSAGE, 409)
   const mime = typeof a.provenance?.mimeType === 'string' ? a.provenance.mimeType : a.storage_path.endsWith('.webm') ? 'video/webm' : 'video/mp4'
   const durationMs = typeof a.provenance?.durationMs === 'number' ? a.provenance.durationMs : null
   return { path: a.storage_path, mime, durationMs }

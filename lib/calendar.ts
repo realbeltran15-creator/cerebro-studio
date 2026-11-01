@@ -25,6 +25,16 @@ export function jobDate(j: CalendarJob): { at: Date; kind: DateKind } | null {
   return null
 }
 
+/** «YYYY-MM-DD» (a real calendar day) -> ISO instant at 12:00 local time (noon is never skipped or repeated by a daylight-saving change). null if the day does not exist. */
+export function plannedIso(day: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day ?? '')
+  if (!m) return null
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const date = new Date(y, mo - 1, d, 12, 0, 0)
+  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null
+  return date.toISOString()
+}
+
 /** Local calendar day key YYYY-MM-DD. */
 export const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 

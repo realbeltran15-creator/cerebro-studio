@@ -41,3 +41,26 @@ describe('editorial calendar', () => {
     expect(formatAdvice('16:9', 'youtube')).toBeNull()
   })
 })
+
+import { plannedIso, dayKey as dk, monthGrid as mg } from '@/lib/calendar'
+import { describe as dsc, expect as ex, it as t } from 'vitest'
+
+dsc('fechas del calendario: validez y horario de verano', () => {
+  t('rechaza días inexistentes y formatos raros', () => {
+    for (const bad of ['2026-02-31', '2026-13-01', '2026-00-10', '26-01-01', '', null, undefined, '2026-1-1', '2026-04-31']) ex(plannedIso(bad as string)).toBeNull()
+    ex(plannedIso('2028-02-29')).not.toBeNull()
+    ex(plannedIso('2027-02-29')).toBeNull()
+  })
+  t('el día guardado vuelve a ser el mismo día en el calendario, también en los días de cambio de hora', () => {
+    for (const day of ['2026-03-28', '2026-03-29', '2026-03-30', '2026-10-24', '2026-10-25', '2026-10-26', '2026-12-31', '2027-01-01']) {
+      const iso = plannedIso(day)!
+      ex(dk(new Date(iso))).toBe(day)
+    }
+  })
+  t('la cuadrícula de un mes tiene 42 días consecutivos sin repetir ni saltar ninguno (incluido octubre)', () => {
+    for (const [y, m] of [[2026, 2], [2026, 9], [2026, 10], [2027, 0]]) {
+      const g = mg(y, m); ex(new Set(g.map(c => c.key)).size).toBe(42)
+      for (let i = 1; i < g.length; i++) ex(Date.parse(g[i].key) - Date.parse(g[i - 1].key)).toBe(86_400_000)
+    }
+  })
+})

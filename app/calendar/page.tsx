@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
-import { canPlan, dayKey, formatAdvice, groupByDay, monthGrid, multiPlatformDrafts, PLATFORMS, platformNames, type CalendarJob, type Platform } from '@/lib/calendar'
+import { canPlan, dayKey, formatAdvice, groupByDay, monthGrid, multiPlatformDrafts, plannedIso, PLATFORMS, platformNames, type CalendarJob, type Platform } from '@/lib/calendar'
 
 type Project = { id: string; name: string }
 type Video = { id: string; project_id: string; provenance: Record<string, unknown> | null; created_at: string }
@@ -51,7 +51,8 @@ export default function CalendarPage() {
 
   async function plan(j: CalendarJob, value: string) {
     setError(''); setNotice('')
-    const scheduled = value ? new Date(`${value}T12:00:00`).toISOString() : null
+    const scheduled = value ? plannedIso(value) : null
+    if (value && !scheduled) { setError('La fecha no es válida.'); return }
     const { error: e } = await supabase.from('publication_jobs').update({ scheduled_for: scheduled, updated_at: new Date().toISOString() }).eq('id', j.id).in('status', ['draft', 'awaiting_approval'])
     if (e) setError(e.message); else { setNotice(value ? `Fecha prevista: ${new Date(scheduled!).toLocaleDateString()}. Es un recordatorio: no se publica solo.` : 'Fecha prevista quitada.'); await load() }
   }
@@ -65,7 +66,8 @@ export default function CalendarPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('La sesión ha caducado.')
-      const rows = multiPlatformDrafts({ videoAssetId: form.videoId, title: form.title, text: form.text, platforms: form.platforms, plannedFor: form.date ? new Date(`${form.date}T12:00:00`).toISOString() : null }, user.id, form.projectId, () => crypto.randomUUID())
+      if (form.date && !plannedIso(form.date)) throw new Error('La fecha no es válida.')
+      const rows = multiPlatformDrafts({ videoAssetId: form.videoId, title: form.title, text: form.text, platforms: form.platforms, plannedFor: form.date ? plannedIso(form.date) : null }, user.id, form.projectId, () => crypto.randomUUID())
       const { error: err } = await supabase.from('publication_jobs').insert(rows)
       if (err) throw new Error(err.message)
       setNotice(`${rows.length} borrador${rows.length === 1 ? '' : 'es'} creado${rows.length === 1 ? '' : 's'} (${form.platforms.map(p => platformNames[p]).join(', ')}). Revísalos y apruébalos en cada plataforma; nada se ha publicado.`)

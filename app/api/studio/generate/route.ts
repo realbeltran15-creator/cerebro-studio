@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { rateLimited } from '@/lib/security/rate-limit'
+import { heldUsd, holdSpend, releaseSpend } from '@/lib/providers/spend-reservations'
 import { ledgerSpend, recordSpend } from '@/lib/providers/spend-ledger'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { assetKindFor, catalog, evidenceOf, isConfigured, modelById, rightsOf, type GenerationOptions } from '@/lib/providers/catalog'
@@ -66,21 +67,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Falta confirmar el coste estimado antes de generar.' }, { status: 409 })
   }
 
-  // Server-side spending cap (daily and monthly, USD). Checked before anything is sent to a paid provider.
-  if (model.tier === 'paid' && estimateUsd > 0) {
-    const since = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString()
-    const [{ data: spentAssets, error: spendError }, pendingJobs] = await Promise.all([
-      supabase.from('assets').select('id,asset_type,project_id,source_provider,license_status,provenance,created_at').eq('owner_id', user.id).gte('created_at', since).limit(5000),
-      listJobs(supabase, user.id).catch(() => null),
-    ])
-    const ledger = await ledgerSpend(supabase, user.id, since)
-    // Fail closed: if what was spent cannot be read, a paid generation is not sent.
-    if (spendError || pendingJobs === null) return NextResponse.json({ error: 'No se pudo comprobar el gasto acumulado; no se ha enviado nada. Inténtalo de nuevo en un momento.' }, { status: 503 })
-    const status = spendStatus(spentAssets ?? [], pendingJobs.filter(j => j.state === 'pending').map(j => ({ createdAt: j.createdAt, estimateUsd: j.estimateUsd, tier: j.tier })), spendCaps(process.env), new Date(), ledger ?? [])
-    const violation = capViolation(status, estimateUsd)
-    if (violation) return NextResponse.json({ error: violation, spend: status }, { status: 402 })
-  }
-
   const { data: project } = await supabase.from('projects').select('id').eq('id', projectId).eq('owner_id', user.id).maybeSingle()
   if (!project) return NextResponse.json({ error: 'Proyecto no encontrado.' }, { status: 404 })
   let sceneId: string | null = null
@@ -133,11 +119,29 @@ export async function POST(request: Request) {
     estimateUsd, priceConfirmed: model.priceConfirmed, estimateNote: 'Precio de lista estimado; la factura del proveedor es la referencia.',
     ...(thumb ? { purpose: 'thumbnail', concept: thumb.concept, overlayText: thumb.overlayText, style: thumb.style, selected: false } : {}),
   }
+  let holdId: string | null = null
+  // Server-side spending cap (daily and monthly, USD). Checked before anything is sent to a paid provider.
+  if (model.tier === 'paid' && estimateUsd > 0) {
+    const since = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString()
+    const [{ data: spentAssets, error: spendError }, pendingJobs] = await Promise.all([
+      supabase.from('assets').select('id,asset_type,project_id,source_provider,license_status,provenance,created_at').eq('owner_id', user.id).gte('created_at', since).limit(5000),
+      listJobs(supabase, user.id).catch(() => null),
+    ])
+    const ledger = await ledgerSpend(supabase, user.id, since)
+    // Fail closed: if what was spent cannot be read, a paid generation is not sent.
+    if (spendError || pendingJobs === null) return NextResponse.json({ error: 'No se pudo comprobar el gasto acumulado; no se ha enviado nada. Inténtalo de nuevo en un momento.' }, { status: 503 })
+    const status = spendStatus(spentAssets ?? [], pendingJobs.filter(j => j.state === 'pending').map(j => ({ createdAt: j.createdAt, estimateUsd: j.estimateUsd, tier: j.tier })), spendCaps(process.env), new Date(), ledger ?? [])
+    const violation = capViolation(status, estimateUsd, heldUsd(user.id))
+    if (violation) return NextResponse.json({ error: violation, spend: status }, { status: 402 })
+    // Taken with no await since the check: a parallel request now sees this one's amount.
+    holdId = holdSpend(user.id, estimateUsd)
+  }
+
   const requestId = crypto.randomUUID()
   const context = { ownerId: user.id, projectId, requestId }
   // Paid generations are booked in the server-owned ledger before they are sent; if booking fails the generation is not sent.
   if (model.tier === 'paid' && estimateUsd > 0) {
-    const booked = await recordSpend({ ownerId: user.id, requestId, provider: model.provider, model: model.id, tier: model.tier, estimateUsd })
+    const booked = await recordSpend({ ownerId: user.id, requestId, provider: model.provider, model: model.id, tier: model.tier, estimateUsd }).finally(() => { if (holdId) releaseSpend(user.id, holdId) })
     if (booked === 'failed') return NextResponse.json({ error: 'No se pudo registrar el gasto de esta generación; no se ha enviado nada.' }, { status: 503 })
   }
 
