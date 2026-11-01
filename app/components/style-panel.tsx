@@ -85,7 +85,8 @@ export function StylePanel({ composition, kindOf, onApply, refreshKey = 0, sessi
   const openRef = !ref && sessionStart ? { profileId: learnInto, profileName: all.find(p => p.id === learnInto)?.name ?? '', version: all.find(p => p.id === learnInto)?.version ?? 1, appliedAt: '', baseline: sessionStart } : null
   const cmp = ref ?? openRef
   const refProfile = cmp ? all.find(p => p.id === cmp.profileId) ?? null : null
-  const corrections = useMemo(() => (cmp?.baseline && refProfile ? diffMontages(cmp.baseline, composition, refProfile, kindOf) : []), [cmp?.baseline, refProfile, composition, kindOf])
+  const cmpBaseline = cmp?.baseline
+  const corrections = useMemo(() => (cmpBaseline && refProfile ? diffMontages(cmpBaseline, composition, refProfile, kindOf) : []), [cmpBaseline, refProfile, composition, kindOf])
   const learnable = corrections.filter(c => c.patches.length)
   const picked = learnable.filter(c => corrPick[c.id])
 

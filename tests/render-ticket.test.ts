@@ -11,7 +11,7 @@ import { addOverlay, addTrack } from '@/lib/editor/tracks'
 
 const state: { jobs: Record<string, unknown>[]; assets: Record<string, unknown>[]; user: string } = { jobs: [], assets: [], user: 'u1' }
 const chain = (rows: () => Record<string, unknown>[]) => {
-  let f: Array<(r: Record<string, unknown>) => boolean> = []
+  const f: Array<(r: Record<string, unknown>) => boolean> = []
   const q = {
     select: () => q,
     eq: (k: string, v: unknown) => { f.push(r => r[k] === v); return q },
@@ -79,7 +79,8 @@ describe('render ticket', () => {
 describe('material download', () => {
   let server: http.Server, base = ''
   const body = Buffer.alloc(300_000).map((_, i) => i % 251)
-  let requests: string[] = [], cutOnce = true
+  const requests: string[] = []
+  let cutOnce = true
   beforeAll(async () => {
     server = http.createServer((req, res) => {
       const range = /bytes=(\d+)-/.exec(String(req.headers.range ?? ''))

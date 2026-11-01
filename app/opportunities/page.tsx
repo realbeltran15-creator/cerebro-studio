@@ -37,6 +37,7 @@ export default function OpportunitiesPage() {
   const [notice, setNotice] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [comparing, setComparing] = useState(false)
+  const [compareAt, setCompareAt] = useState(0) // time of the comparison, set in the click handler (not during render)
 
   async function load() {
     setLoading(true)
@@ -129,11 +130,11 @@ export default function OpportunitiesPage() {
       {notice && <p className="notice" role="status">{notice}</p>}
       {picked.length > 0 && <div className="pageActions" style={{ marginBottom: 12 }} role="group" aria-label="Comparador">
         <span className="small">{picked.length} seleccionada(s) (máximo {MAX_COMPARE})</span>
-        <button type="button" disabled={picked.length < 2} onClick={() => setComparing(c => !c)}>{comparing ? 'Ocultar comparación' : 'Comparar'}</button>
+        <button type="button" disabled={picked.length < 2} onClick={() => { setCompareAt(Date.now()); setComparing(c => !c) }}>{comparing ? 'Ocultar comparación' : 'Comparar'}</button>
         <button type="button" className="ghost" onClick={() => { setPicked([]); setComparing(false) }}>Quitar selección</button>
       </div>}
       {comparing && picked.length >= 2 && (() => {
-        const chosen = items.filter(i => picked.includes(i.id)); const cmp = compareOpportunities(chosen, Date.now())
+        const chosen = items.filter(i => picked.includes(i.id)); const cmp = compareOpportunities(chosen, compareAt)
         return cmp.error ? <p className="error" role="alert">{cmp.error}</p> : (
           <div style={{ overflowX: 'auto', marginBottom: 16 }} tabIndex={0} aria-label="Tabla comparativa de oportunidades">
             <table className="small" style={{ borderCollapse: 'collapse', minWidth: 520 }}>

@@ -124,7 +124,10 @@ export function BatchTransitionsDialog({ comp, selectedClipIds, selectedTransiti
   const scope: CutScope = kind === 'all' ? { kind } : kind === 'selected' ? { kind, clipIds: selIds } : kind === 'range' ? { kind, from, to } : { kind: 'every', n, from, to }
   const dScope = useDeferredValue(scope), dSettings = useDeferredValue(settings)
   const opts: BatchOptions = { action, settings: dSettings, allowTrim, onFail }
-  const plan = useMemo(() => planBatchTransitions(comp, dScope, opts, kindOf), [comp, JSON.stringify(dScope), JSON.stringify(opts), kindOf]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Stable keys: the plan is recomputed only when the scope/options change by value, not by object identity.
+  const scopeKey = JSON.stringify(dScope), optsKey = JSON.stringify(opts)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dScope/opts are rebuilt every render; scopeKey/optsKey carry their value
+  const plan = useMemo(() => planBatchTransitions(comp, dScope, opts, kindOf), [comp, scopeKey, optsKey, kindOf])
   const lines = describePlan(plan, opts)
   const pending = action === 'apply' && plan.chosen.some(i => { const k = comp.clips[i]; return !!k.visualAssetId && kindOf(k.visualAssetId) === 'video' && !k.sourceDurationMs })
   const num = (v: number, set: (n: number) => void) => (e: React.ChangeEvent<HTMLInputElement>) => set(Math.min(Math.max(1, cuts), Math.max(1, Math.floor(Number(e.target.value) || 1))))
