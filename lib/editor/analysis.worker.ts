@@ -13,6 +13,8 @@ ctx.onmessage = async e => {
   try {
     const result = await analyzeSource(m.source, m.wants, {
       signal: abort.signal,
+      // A worker only sees the 'cancel' message when it yields to its event loop; without this the analysis ran uninterruptibly between I/O waits.
+      yieldEveryMs: 20,
       onProgress: (f, stage) => { const pct = Math.floor(f * 100); if (pct !== lastPct) { lastPct = pct; ctx.postMessage({ type: 'progress', fraction: f, stage }) } },
     })
     ctx.postMessage({ type: 'done', result }, result.waveform ? [result.waveform.peaks.buffer as ArrayBuffer] : [])

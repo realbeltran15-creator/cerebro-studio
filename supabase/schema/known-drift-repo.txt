@@ -1,0 +1,35 @@
+1,3c1,3
+< approvals: id uuid NN, owner_id uuid NN, action_type text NN, entity_type text NN, entity_id text NN, status text NN, risk_summary text, requested_at timestamptz NN, decided_at timestamptz
+< assets: id uuid NN, owner_id uuid NN, project_id uuid, asset_type text NN, storage_path text, source_provider text, source_url text, license_status text NN, provenance jsonb NN, created_at timestamptz NN
+< audit_log: id bigint NN, owner_id uuid, actor_id uuid, action text NN, entity_type text NN, entity_id text, metadata jsonb NN, created_at timestamptz NN
+---
+> approvals: id uuid NN, owner_id uuid NN, project_id uuid, action_type text NN, action_key text NN, status text NN, context jsonb NN, decided_at timestamptz, created_at timestamptz NN
+> assets: id uuid NN, owner_id uuid NN, project_id uuid, kind text NN, storage_path text, metadata jsonb NN, created_at timestamptz NN
+> audit_log: id bigint NN, owner_id uuid NN, action text NN, entity_type text NN, entity_id text, details jsonb NN, created_at timestamptz NN
+7,15c7,14
+< channel_connections: id uuid NN, owner_id uuid NN, provider text NN, external_account_id text, external_account_name text, scopes text[] NN, status text NN, token_ciphertext text, token_metadata jsonb NN, created_at timestamptz NN, updated_at timestamptz NN
+< connector_configs: id uuid NN, owner_id uuid NN, provider text NN, capability text NN, enabled boolean NN, priority integer NN, config jsonb NN, created_at timestamptz NN, updated_at timestamptz NN
+< generation_spend: id bigint NN, owner_id uuid NN, request_id text NN, provider text NN, model text NN, tier text NN, estimate_usd numeric(12,4) NN, created_at timestamptz NN
+< metric_snapshots: id bigint NN, owner_id uuid NN, project_id uuid, platform text NN, external_content_id text NN, metric_date date NN, observed jsonb NN, calculated jsonb NN, created_at timestamptz NN
+< opportunities: id uuid NN, owner_id uuid NN, project_id uuid, source_platform text NN, source_id text, query text, region text, language text, title text NN, status text NN, observed_metrics jsonb NN, calculated_metrics jsonb NN, evidence jsonb NN, confidence numeric, created_at timestamptz NN, updated_at timestamptz NN
+< profiles: id uuid NN, display_name text, created_at timestamptz NN, updated_at timestamptz NN
+< projects: id uuid NN, owner_id uuid NN, name text NN, description text, status text NN, target_platforms text[] NN, created_at timestamptz NN, updated_at timestamptz NN
+< publication_jobs: id uuid NN, owner_id uuid NN, project_id uuid NN, platform text NN, status text NN, scheduled_for timestamptz, approved_at timestamptz, approved_by uuid, idempotency_key text, payload jsonb NN, result jsonb NN, created_at timestamptz NN, updated_at timestamptz NN
+< render_jobs: id uuid NN, owner_id uuid NN, project_id uuid NN, output_format text NN, status text NN, composition jsonb NN, output_asset_id uuid, error text, created_at timestamptz NN, updated_at timestamptz NN
+---
+> channel_connections: id uuid NN, owner_id uuid NN, platform text NN, external_channel_id text, display_name text, scopes text[] NN, status text NN, created_at timestamptz NN, updated_at timestamptz NN
+> connector_configs: id uuid NN, owner_id uuid NN, provider text NN, capability text NN, status text NN, config jsonb NN, created_at timestamptz NN, updated_at timestamptz NN
+> metric_snapshots: id uuid NN, owner_id uuid NN, channel_connection_id uuid, observed_at timestamptz NN, observed_metrics jsonb NN, calculated_metrics jsonb NN
+> opportunities: id uuid NN, owner_id uuid NN, title text NN, source_platform text NN, source_query text, region text, language text, status text NN, confidence numeric, observed_metrics jsonb NN, calculated_metrics jsonb NN, evidence jsonb NN, created_at timestamptz NN, updated_at timestamptz NN
+> profiles: id uuid NN, display_name text, created_at timestamptz NN
+> projects: id uuid NN, owner_id uuid NN, name text NN, description text, status text NN, created_at timestamptz NN, updated_at timestamptz NN
+> publication_jobs: id uuid NN, owner_id uuid NN, project_id uuid, platform text NN, status text NN, idempotency_key text, payload jsonb NN, approved_at timestamptz, published_at timestamptz, created_at timestamptz NN
+> render_jobs: id uuid NN, owner_id uuid NN, project_id uuid NN, status text NN, idempotency_key text, input_manifest jsonb NN, output_manifest jsonb NN, created_at timestamptz NN, updated_at timestamptz NN
+17c16
+< scenes: id uuid NN, owner_id uuid NN, storyboard_id uuid NN, position integer NN, duration_ms integer NN, narration text, visual_prompt text, video_prompt text, ambient_prompt text, metadata jsonb NN, created_at timestamptz NN
+---
+> scenes: id uuid NN, owner_id uuid NN, storyboard_id uuid NN, position integer NN, script text, visual_prompt text, metadata jsonb NN, created_at timestamptz NN
+20c19
+< storyboards: id uuid NN, owner_id uuid NN, project_id uuid NN, title text NN, aspect_ratio text NN, version integer NN, created_at timestamptz NN, updated_at timestamptz NN, script_id uuid
+---
+> storyboards: id uuid NN, owner_id uuid NN, project_id uuid NN, title text, status text NN, metadata jsonb NN, created_at timestamptz NN, updated_at timestamptz NN, script_id uuid

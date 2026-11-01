@@ -1,0 +1,151 @@
+# table|constraint|definition  (structure only; read from pg_constraint on Production, 2026-11-01)
+approvals|approvals_pkey|PRIMARY KEY (id)
+approvals|approvals_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+approvals|approvals_owner_id_action_type_entity_type_entity_id_status_key|UNIQUE (owner_id, action_type, entity_type, entity_id, status)
+approvals|approvals_status_check|CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'expired'::text]))
+assets|assets_pkey|PRIMARY KEY (id)
+assets|assets_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+assets|assets_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+assets|assets_asset_type_check|CHECK (asset_type = ANY (ARRAY['image'::text, 'video'::text, 'audio'::text, 'voice'::text, 'music'::text, 'sfx'::text, 'subtitle'::text, 'thumbnail'::text, 'other'::text]))
+assets|assets_license_status_check|CHECK (license_status = ANY (ARRAY['owned'::text, 'licensed'::text, 'generated'::text, 'public_domain'::text, 'unknown'::text, 'restricted'::text]))
+audit_log|audit_log_pkey|PRIMARY KEY (id)
+audit_log|audit_log_actor_id_fkey|FOREIGN KEY (actor_id) REFERENCES auth.users(id) ON DELETE SET NULL
+audit_log|audit_log_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE SET NULL
+automations|automations_pkey|PRIMARY KEY (id)
+automations|automations_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+automations|automations_config_check|CHECK (jsonb_typeof(config) = 'object'::text)
+automations|automations_kind_check|CHECK (kind = ANY (ARRAY['trend_watch'::text, 'opportunity_refresh'::text, 'shorts_factory'::text]))
+automations|automations_name_check|CHECK (char_length(name) >= 1 AND char_length(name) <= 120)
+automations|automations_schedule_check|CHECK (schedule = ANY (ARRAY['manual'::text, 'daily'::text]))
+automation_runs|automation_runs_pkey|PRIMARY KEY (id)
+automation_runs|automation_runs_automation_id_fkey|FOREIGN KEY (automation_id) REFERENCES public.automations(id) ON DELETE CASCADE
+automation_runs|automation_runs_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+automation_runs|automation_runs_status_check|CHECK (status = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text]))
+automation_runs|automation_runs_trigger_check|CHECK (trigger = ANY (ARRAY['manual'::text, 'schedule'::text]))
+campaigns|campaigns_pkey|PRIMARY KEY (id)
+campaigns|campaigns_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+campaigns|campaigns_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE SET NULL
+campaigns|campaigns_brief_check|CHECK (pg_column_size(brief) < 200000)
+campaigns|campaigns_name_check|CHECK (char_length(name) <= 200)
+campaigns|campaigns_notes_check|CHECK (char_length(notes) <= 4000)
+campaigns|campaigns_status_check|CHECK (status = ANY (ARRAY['borrador'::text, 'lista'::text, 'archivada'::text]))
+channel_connections|channel_connections_pkey|PRIMARY KEY (id)
+channel_connections|channel_connections_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+channel_connections|channel_connections_owner_id_provider_external_account_id_key|UNIQUE (owner_id, provider, external_account_id)
+channel_connections|channel_connections_status_check|CHECK (status = ANY (ARRAY['connected'::text, 'expired'::text, 'revoked'::text, 'error'::text]))
+connector_configs|connector_configs_pkey|PRIMARY KEY (id)
+connector_configs|connector_configs_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+connector_configs|connector_configs_owner_id_provider_capability_key|UNIQUE (owner_id, provider, capability)
+generation_spend|generation_spend_pkey|PRIMARY KEY (id)
+generation_spend|generation_spend_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+generation_spend|generation_spend_owner_id_request_id_key|UNIQUE (owner_id, request_id)
+generation_spend|generation_spend_estimate_usd_check|CHECK (estimate_usd >= (0)::numeric)
+metric_snapshots|metric_snapshots_pkey|PRIMARY KEY (id)
+metric_snapshots|metric_snapshots_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+metric_snapshots|metric_snapshots_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+metric_snapshots|metric_snapshots_owner_id_platform_external_content_id_metr_key|UNIQUE (owner_id, platform, external_content_id, metric_date)
+opportunities|opportunities_pkey|PRIMARY KEY (id)
+opportunities|opportunities_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+opportunities|opportunities_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE SET NULL
+opportunities|opportunities_confidence_check|CHECK (confidence IS NULL OR (confidence >= (0)::numeric AND confidence <= (1)::numeric))
+opportunities|opportunities_status_check|CHECK (status = ANY (ARRAY['discovered'::text, 'research_needed'::text, 'candidate'::text, 'experiment_approved'::text, 'discarded'::text]))
+profiles|profiles_pkey|PRIMARY KEY (id)
+profiles|profiles_id_fkey|FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE
+projects|projects_pkey|PRIMARY KEY (id)
+projects|projects_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+projects|projects_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'research'::text, 'production'::text, 'review'::text, 'ready'::text, 'published'::text, 'archived'::text]))
+publication_jobs|publication_jobs_pkey|PRIMARY KEY (id)
+publication_jobs|publication_jobs_approved_by_fkey|FOREIGN KEY (approved_by) REFERENCES auth.users(id) ON DELETE SET NULL
+publication_jobs|publication_jobs_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+publication_jobs|publication_jobs_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+publication_jobs|publication_jobs_idempotency_key_key|UNIQUE (idempotency_key)
+publication_jobs|publication_jobs_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'awaiting_approval'::text, 'approved'::text, 'queued'::text, 'publishing'::text, 'published'::text, 'failed'::text, 'cancelled'::text]))
+render_jobs|render_jobs_pkey|PRIMARY KEY (id)
+render_jobs|render_jobs_output_asset_id_fkey|FOREIGN KEY (output_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL
+render_jobs|render_jobs_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+render_jobs|render_jobs_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+render_jobs|render_jobs_output_format_check|CHECK (output_format = ANY (ARRAY['16:9'::text, '9:16'::text, '1:1'::text]))
+render_jobs|render_jobs_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'queued'::text, 'rendering'::text, 'completed'::text, 'failed'::text, 'cancelled'::text]))
+research_cache|research_cache_pkey|PRIMARY KEY (id)
+research_cache|research_cache_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+research_cache|research_cache_owner_id_cache_key_key|UNIQUE (owner_id, cache_key)
+research_cache|research_cache_searches_check|CHECK (searches >= 0)
+research_cache|research_cache_units_check|CHECK (units >= 0)
+scenes|scenes_pkey|PRIMARY KEY (id)
+scenes|scenes_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+scenes|scenes_storyboard_id_fkey|FOREIGN KEY (storyboard_id) REFERENCES public.storyboards(id) ON DELETE CASCADE
+scenes|scenes_storyboard_id_position_key|UNIQUE (storyboard_id, "position")
+scenes|scenes_duration_ms_check|CHECK (duration_ms > 0)
+scripts|scripts_pkey|PRIMARY KEY (id)
+scripts|scripts_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+scripts|scripts_parent_id_fkey|FOREIGN KEY (parent_id) REFERENCES public.scripts(id) ON DELETE SET NULL
+scripts|scripts_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+scripts|scripts_source_opportunity_id_fkey|FOREIGN KEY (source_opportunity_id) REFERENCES public.opportunities(id) ON DELETE SET NULL
+scripts|scripts_project_id_version_key|UNIQUE (project_id, version)
+scripts|scripts_sections_check|CHECK (jsonb_typeof(sections) = 'array'::text)
+scripts|scripts_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'review'::text, 'approved'::text, 'archived'::text]))
+scripts|scripts_title_check|CHECK (char_length(title) >= 1 AND char_length(title) <= 200)
+scripts|scripts_version_check|CHECK (version > 0)
+shorts_factory_items|shorts_factory_items_pkey|PRIMARY KEY (id)
+shorts_factory_items|shorts_factory_items_automation_id_fkey|FOREIGN KEY (automation_id) REFERENCES public.automations(id) ON DELETE SET NULL
+shorts_factory_items|shorts_factory_items_opportunity_id_fkey|FOREIGN KEY (opportunity_id) REFERENCES public.opportunities(id) ON DELETE SET NULL
+shorts_factory_items|shorts_factory_items_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+shorts_factory_items|shorts_factory_items_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE SET NULL
+shorts_factory_items|shorts_factory_items_publication_job_id_fkey|FOREIGN KEY (publication_job_id) REFERENCES public.publication_jobs(id) ON DELETE SET NULL
+shorts_factory_items|shorts_factory_items_render_job_id_fkey|FOREIGN KEY (render_job_id) REFERENCES public.render_jobs(id) ON DELETE SET NULL
+shorts_factory_items|shorts_factory_items_owner_id_topic_key_key|UNIQUE (owner_id, topic_key)
+shorts_factory_items|shorts_factory_items_status_check|CHECK (status = ANY (ARRAY['prepared'::text, 'approved'::text, 'published'::text, 'discarded'::text, 'failed'::text]))
+shorts_factory_items|shorts_factory_items_topic_check|CHECK (char_length(topic) >= 1 AND char_length(topic) <= 200)
+storyboards|storyboards_pkey|PRIMARY KEY (id)
+storyboards|storyboards_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+storyboards|storyboards_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+storyboards|storyboards_script_id_fkey|FOREIGN KEY (script_id) REFERENCES public.scripts(id) ON DELETE SET NULL
+trend_snapshots|trend_snapshots_pkey|PRIMARY KEY (id)
+trend_snapshots|trend_snapshots_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+trend_snapshots|trend_snapshots_items_check|CHECK (jsonb_typeof(items) = 'array'::text)
+trend_snapshots|trend_snapshots_platform_check|CHECK (platform = 'youtube'::text)
+trend_snapshots|trend_snapshots_region_check|CHECK (region ~ '^[A-Z]{2}$'::text)
+trend_snapshots|trend_snapshots_source_check|CHECK (source = ANY (ARRAY['radar'::text, 'automation'::text]))
+vi_personas|vi_personas_pkey|PRIMARY KEY (id)
+vi_personas|vi_personas_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_personas|vi_personas_project_id_fkey|FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE
+vi_personas|vi_personas_budget_eur_check|CHECK (budget_eur >= (0)::numeric)
+vi_personas|vi_personas_handle_check|CHECK (handle IS NULL OR handle ~ '^[a-z0-9_.]{2,40}$'::text)
+vi_personas|vi_personas_name_check|CHECK (char_length(name) >= 1 AND char_length(name) <= 120)
+vi_personas|vi_personas_spent_eur_check|CHECK (spent_eur >= (0)::numeric)
+vi_personas|vi_personas_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'identity_review'::text, 'approved'::text, 'archived'::text]))
+vi_generation_jobs|vi_generation_jobs_pkey|PRIMARY KEY (id)
+vi_generation_jobs|vi_generation_jobs_output_asset_id_fkey|FOREIGN KEY (output_asset_id) REFERENCES public.assets(id) ON DELETE SET NULL
+vi_generation_jobs|vi_generation_jobs_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_generation_jobs|vi_generation_jobs_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_generation_jobs|vi_generation_jobs_kind_check|CHECK (kind = ANY (ARRAY['image'::text, 'video'::text, 'voice'::text, 'lipsync'::text, 'upscale'::text]))
+vi_generation_jobs|vi_generation_jobs_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'blocked'::text, 'queued'::text, 'running'::text, 'needs_review'::text, 'approved'::text, 'rejected'::text, 'failed'::text]))
+vi_identity_versions|vi_identity_versions_pkey|PRIMARY KEY (id)
+vi_identity_versions|vi_identity_versions_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_identity_versions|vi_identity_versions_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_identity_versions|vi_identity_versions_persona_id_version_key|UNIQUE (persona_id, version)
+vi_identity_versions|vi_identity_versions_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'approved'::text, 'superseded'::text]))
+vi_identity_versions|vi_identity_versions_version_check|CHECK (version > 0)
+vi_quality_reports|vi_quality_reports_pkey|PRIMARY KEY (id)
+vi_quality_reports|vi_quality_reports_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_quality_reports|vi_quality_reports_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_quality_reports|vi_quality_reports_subject_type_subject_id_key|UNIQUE (subject_type, subject_id)
+vi_quality_reports|vi_quality_reports_overall_check|CHECK (overall = ANY (ARRAY['pending'::text, 'pass'::text, 'fail'::text]))
+vi_quality_reports|vi_quality_reports_subject_type_check|CHECK (subject_type = ANY (ARRAY['identity_version'::text, 'generation_job'::text]))
+vi_references|vi_references_pkey|PRIMARY KEY (id)
+vi_references|vi_references_asset_id_fkey|FOREIGN KEY (asset_id) REFERENCES public.assets(id) ON DELETE CASCADE
+vi_references|vi_references_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_references|vi_references_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_references|vi_references_persona_id_asset_id_category_key|UNIQUE (persona_id, asset_id, category)
+vi_references|vi_references_category_check|CHECK (category = ANY (ARRAY['face_front'::text, 'face_profile'::text, 'face_three_quarter'::text, 'expression'::text, 'body'::text, 'hands'::text, 'teeth'::text, 'hair'::text, 'wardrobe'::text, 'environment'::text, 'voice_sample'::text, 'other'::text]))
+vi_scenes|vi_scenes_pkey|PRIMARY KEY (id)
+vi_scenes|vi_scenes_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_scenes|vi_scenes_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_voice_profiles|vi_voice_profiles_pkey|PRIMARY KEY (id)
+vi_voice_profiles|vi_voice_profiles_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_voice_profiles|vi_voice_profiles_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_voice_profiles|vi_voice_profiles_status_check|CHECK (status = ANY (ARRAY['draft'::text, 'approved'::text]))
+vi_wardrobe|vi_wardrobe_pkey|PRIMARY KEY (id)
+vi_wardrobe|vi_wardrobe_owner_id_fkey|FOREIGN KEY (owner_id) REFERENCES auth.users(id) ON DELETE CASCADE
+vi_wardrobe|vi_wardrobe_persona_id_fkey|FOREIGN KEY (persona_id) REFERENCES public.vi_personas(id) ON DELETE CASCADE
+vi_wardrobe|vi_wardrobe_category_check|CHECK (category = ANY (ARRAY['outfit'::text, 'accessory'::text, 'footwear'::text, 'hair_style'::text, 'makeup'::text]))

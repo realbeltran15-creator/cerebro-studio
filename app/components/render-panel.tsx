@@ -142,6 +142,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     void run(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart])
+
   /** Drive without the Picker: the app's own folder «Cerebro Studio». Works when the browser blocks the Picker's third-party cookies. */
   async function chooseAppDriveFolder() {
     if (!driveCfg) return

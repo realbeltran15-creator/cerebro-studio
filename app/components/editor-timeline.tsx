@@ -78,6 +78,9 @@ export type TimelineProps = {
  * Free items (overlays, audio, texts) move with the pointer, snap to edges/playhead/markers/beats, change track by dragging up or down,
  * and are trimmed from either edge. Main-track clips are sequential: drag to reorder, drag the right edge to change their length.
  */
+/** Same assignment as before, kept outside the component so the React Compiler does not read it as a mutation of render state (it is a DOM side effect inside a pointer handler). */
+function setBodyUserSelect(value: string) { document.body.style.userSelect = value }
+
 export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps) {
   const { comp, pxPerSec, trackScale } = p
   const drag = useRef<Drag | null>(null)
@@ -127,7 +130,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
     if (!content || !scroller) return
     e.preventDefault()
     const prevSelect = document.body.style.userSelect
-    document.body.style.userSelect = 'none'
+    setBodyUserSelect('none')
     ;(document.activeElement as HTMLElement | null)?.blur?.()
     const additive = e.ctrlKey || e.metaKey || e.shiftKey
     const baseSel = latest.current.selection
@@ -170,7 +173,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cancelUp); window.removeEventListener('keydown', key)
       if (raf) cancelAnimationFrame(raf)
       marqueeRun.current = null
-      document.body.style.userSelect = prevSelect
+      setBodyUserSelect(prevSelect)
       setMarquee(null)
       if (cancel) latest.current.onSelect(baseSel)
       else if (!moved && !additive) latest.current.onSelect([])

@@ -1,0 +1,7 @@
+tables 29
+constraints 150
+indexes_total 87
+policies_public 32
+policies_storage 4
+functions 6
+triggers 9

@@ -76,6 +76,7 @@ export async function analyzeSource(src: AnalysisSource, wants: AnalysisWants, o
         if (seconds > 0) opts.onProgress?.(Math.min(1, sample.timestamp / seconds), 'audio')
         await breathe()
       }
+      abort() // a cancel that arrived during the last chunk must not be followed by the (synchronous) beat detection
       if (accN > 0 && wants.rms) rms.push(Math.sqrt(acc / accN))
       if (peaks) out.waveform = peaks.finish()
       if (onsets) out.beats = detectBeats(onsets.finish())

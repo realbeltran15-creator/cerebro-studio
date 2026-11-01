@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# (esquema = baseline_live.sql reconstruido desde la estructura real de Production)
 # PostgreSQL local desechable + PostgREST 12.2.3 REAL (binario oficial, gratis) + cliente @supabase/postgrest-js REAL.
 # JWT firmados por el propio test (NO es Supabase Auth). Sin Storage, sin Realtime. Nunca toca Production. Requiere /tmp/postgrest-12.2.3.
 set -uo pipefail
@@ -10,7 +11,7 @@ cleanup() { [ -n "${PID:-}" ] && kill $PID 2>/dev/null; run "$BIN/pg_ctl -D $DIR
 trap cleanup EXIT
 run "$BIN/initdb -D $DIR/data -A trust >/dev/null" && run "$BIN/pg_ctl -D $DIR/data -o '-p $PORT -k $DIR -c max_connections=200' -l $DIR/log -w start >/dev/null" || exit 2
 P="$BIN/psql -h $DIR -p $PORT -U postgres -X -q -v ON_ERROR_STOP=1 postgres"
-$P -f "$ROOT/supabase/tests/pending_live_shape.sql" >/dev/null || exit 2
+$P -f "$ROOT/supabase/tests/supabase_stub.sql" >/dev/null && $P -f "$ROOT/supabase/schema/baseline_live.sql" >/dev/null 2>&1 || exit 2   # real reconstructed schema, not a hand-made stub
 for f in "$ROOT"/supabase/pending/20261102*[0-9]_*.sql; do case $f in *rollback*) continue;; esac; $P -f "$f" >/dev/null || { echo "falla $f"; exit 2; }; done
 $P -c "create role authenticator noinherit login; grant anon, authenticated, service_role to authenticator; grant usage on schema public to authenticator; grant all on all tables in schema public to service_role; grant all on all sequences in schema public to service_role;
  revoke all on public.transcription_locks from anon, authenticated;" >/dev/null || exit 2
