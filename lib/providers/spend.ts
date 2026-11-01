@@ -8,6 +8,8 @@
  * spend and are not counted; their own balance or allowance guards apply.
  *
  * Caps (USD): GENERATION_DAILY_CAP_USD (default 5) and GENERATION_MONTHLY_CAP_USD (default 25). 0 disables paid generations.
+ * In a Vercel Preview (VERCEL_ENV set and not 'production') the default is 0 — paid generations stay OFF unless the caps are set explicitly — because
+ * Preview deployments carry the same provider keys as Production; Production and local development keep the defaults above.
  * Windows are UTC calendar day and month. Estimates are list prices: the provider's invoice is the reference.
  */
 import { entryOf, isGeneration, type UsageAsset } from './usage'
@@ -22,7 +24,9 @@ function parseCap(raw: string | undefined, fallback: number) {
 }
 
 export function spendCaps(env: Record<string, string | undefined>): SpendCaps {
-  return { dailyUsd: parseCap(env.GENERATION_DAILY_CAP_USD, DEFAULT_CAPS.dailyUsd), monthlyUsd: parseCap(env.GENERATION_MONTHLY_CAP_USD, DEFAULT_CAPS.monthlyUsd) }
+  const previewOff = Boolean(env.VERCEL_ENV) && env.VERCEL_ENV !== 'production'
+  const base = previewOff ? { dailyUsd: 0, monthlyUsd: 0 } : DEFAULT_CAPS
+  return { dailyUsd: parseCap(env.GENERATION_DAILY_CAP_USD, base.dailyUsd), monthlyUsd: parseCap(env.GENERATION_MONTHLY_CAP_USD, base.monthlyUsd) }
 }
 
 export type PendingSpend = { createdAt: string; estimateUsd: number; tier?: string }

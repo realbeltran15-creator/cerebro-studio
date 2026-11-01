@@ -22,6 +22,7 @@ eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "esperado '$3' obtenido '$2'"; }
 
 run "cat > $DIR/base.sql" < "$ROOT/supabase/tests/pending_live_shape.sql"
 $PSQL -v ON_ERROR_STOP=1 -f "$DIR/base.sql" postgres >/dev/null 2>"$DIR/base.err" || { cat "$DIR/base.err"; echo "esquema base falla"; exit 2; }
+$PSQL -v ON_ERROR_STOP=1 -f "$ROOT/supabase/migrations/20261013120000_research_cache.sql" postgres >/dev/null 2>"$DIR/rc.err" && ok "aplica migración real research_cache (base para el endurecimiento)" || bad "research_cache base" "$(head -c 300 $DIR/rc.err)"
 for f in "$ROOT"/supabase/pending/20261102*[0-9]_*.sql; do case $f in *rollback*) continue;; esac
   $PSQL -v ON_ERROR_STOP=1 -f "$f" postgres >/dev/null 2>"$DIR/mig.err" && ok "aplica $(basename $f)" || bad "aplica $(basename $f)" "$(cat $DIR/mig.err)"; done
 sql "insert into auth.users values ('$A'),('$B');
@@ -130,6 +131,11 @@ sql "delete from scripts where id='$SA'" >$DIR/del.err 2>&1
 if grep -q 'violates foreign key' $DIR/del.err; then bad "borrar guion con storyboard" "$(cat $DIR/del.err)"; else eq "borrar guion conserva el storyboard con script_id NULL (FK real = SET NULL)" "$(sql "select count(*) from storyboards where id='$b1' and script_id is null")" 1; fi
 sql "delete from auth.users where id='$B'" >/dev/null
 eq "borrar usuario limpia gasto y proyectos (cascade)" "$(sql "select (select count(*) from generation_spend where owner_id='$B')+(select count(*) from projects where owner_id='$B')")" 0
+
+echo "== endurecimiento search_path (research_*) =="
+eq "las 3 funciones research_* tienen search_path fijo" "$(sql "select count(*) from pg_proc where proname in ('research_quota_day_start','research_reserve','research_lock') and proconfig::text like '%search_path=public, pg_temp%'")" 3
+eq "research_lock sigue funcionando para un usuario (adquiere y rechaza el segundo)" "$(as $A "select research_lock('k-sp',30)::text||','||research_lock('k-sp',30)::text" | head -1)" "true,false"
+eq "research_lock sin sesión sigue devolviendo false" "$(sql "select research_lock('k-sp2',30)")" f
 
 echo "== reversibilidad (rollback) =="
 for f in "$ROOT"/supabase/pending/20261102*.rollback.sql; do $PSQL -v ON_ERROR_STOP=1 -f "$f" postgres >/dev/null 2>"$DIR/rb.err" && ok "rollback $(basename $f)" || bad "rollback $(basename $f)" "$(head -c 200 $DIR/rb.err)"; done

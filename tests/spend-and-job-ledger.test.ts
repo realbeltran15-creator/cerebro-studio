@@ -8,6 +8,12 @@ const paid = (usd: number, at: string) => ({ id: at, asset_type: 'image', projec
 describe('spending caps', () => {
   it('reads caps from the environment with safe defaults; 0 disables paid generations', () => {
     expect(spendCaps({})).toEqual(DEFAULT_CAPS)
+    // Preview fails closed (same provider keys as Production); Production and local keep the defaults; explicit values always win.
+    expect(spendCaps({ VERCEL_ENV: 'preview' })).toEqual({ dailyUsd: 0, monthlyUsd: 0 })
+    expect(spendCaps({ VERCEL_ENV: 'development' })).toEqual({ dailyUsd: 0, monthlyUsd: 0 })
+    expect(spendCaps({ VERCEL_ENV: 'production' })).toEqual(DEFAULT_CAPS)
+    expect(spendCaps({ VERCEL_ENV: 'preview', GENERATION_DAILY_CAP_USD: '2', GENERATION_MONTHLY_CAP_USD: '10' })).toEqual({ dailyUsd: 2, monthlyUsd: 10 })
+    expect(spendCaps({ VERCEL_ENV: 'preview', GENERATION_DAILY_CAP_USD: 'abc' })).toEqual({ dailyUsd: 0, monthlyUsd: 0 })
     expect(spendCaps({ GENERATION_DAILY_CAP_USD: '2', GENERATION_MONTHLY_CAP_USD: '10' })).toEqual({ dailyUsd: 2, monthlyUsd: 10 })
     expect(spendCaps({ GENERATION_DAILY_CAP_USD: 'abc', GENERATION_MONTHLY_CAP_USD: '-1' })).toEqual(DEFAULT_CAPS)
     const off = spendStatus([], [], { dailyUsd: 0, monthlyUsd: 25 }, NOW)
