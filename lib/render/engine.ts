@@ -165,8 +165,19 @@ export async function renderProject(o: RenderOptions) {
       '-profile:v', 'high', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-an', '-f', 'mpegts', tmp], { stdio: ['pipe', 'ignore', 'pipe'] })
     let encErr = ''
     enc.stderr!.on('data', d => { encErr += String(d) })
-    const encDone = new Promise<void>((res, rej) => { enc.on('close', code => (code === 0 ? res() : rej(new Error(`FFmpeg (codificador) terminó con código ${code}: ${encErr.slice(-400)}`)))) })
-    encDone.catch(() => undefined)
+    const encDone = new Promise<void>((res, rej) => {
+      enc.on('error', err => rej(new Error(`No se pudo iniciar FFmpeg: ${err.message}`)))
+      enc.on('close', code => (code === 0 ? res() : rej(new Error(`FFmpeg (codificador) terminó con código ${code}: ${encErr.slice(-400)}`))))
+    })
+    // If the encoder dies early nobody drains its pipe: stdin errors are swallowed here and the failure of encDone is what ends the loop.
+    enc.stdin!.on('error', () => undefined)
+    let encFail: Error | null = null
+    encDone.catch(e => { encFail = e instanceof Error ? e : new Error(String(e)) })
+    const push = async (b: Buffer) => {
+      if (encFail) throw encFail
+      if (!enc.stdin!.write(b)) await Promise.race([new Promise<void>(r => enc.stdin!.once('drain', () => r())), encDone.then(() => undefined)])
+      if (encFail) throw encFail
+    }
     const readers = new Map<string, VideoReader>()
     let prevKey = '', prevBuf: Buffer | null = null
     const t0 = Date.now()
@@ -177,7 +188,7 @@ export async function renderProject(o: RenderOptions) {
         // Nothing changed since the previous frame (a still picture, a held frame): the same pixels again, no drawing and no decoding.
         const key = finger(ops)
         if (key === prevKey && prevBuf) {
-          if (!enc.stdin!.write(prevBuf)) await new Promise<void>(r => enc.stdin!.once('drain', () => r()))
+          await push(prevBuf)
           continue
         }
         const srcs = new Map<VisualOp, DrawSource | null>()
@@ -193,7 +204,7 @@ export async function renderProject(o: RenderOptions) {
         drawOps(g, ops, W, H, op => srcs.get(op) ?? null)
         const buf = canvas.data()
         prevKey = key; prevBuf = Buffer.from(buf)
-        if (!enc.stdin!.write(prevBuf)) await new Promise<void>(r => enc.stdin!.once('drain', () => r()))
+        await push(prevBuf)
         const n = f - s.from + 1
         if (n % 30 === 0) o.onEvent?.({ phase: 'video', doneFrames: doneFrames + n, totalFrames: total, segment: si + 1, segments: segs.length, fps: n / Math.max(0.001, (Date.now() - t0) / 1000) })
       }
@@ -338,8 +349,13 @@ async function mixAudio(p: { c: Composition; o: RenderOptions; kindOf: KindOf; p
   const enc = spawn(p.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'f32le', '-ar', String(SR), '-ac', '2', '-i', '-', '-c:a', 'aac', '-b:a', `${Math.round(exportPlan(c).audioBps / 1000)}k`, '-f', 'ipod', tmp], { stdio: ['pipe', 'ignore', 'pipe'] })
   let err = ''
   enc.stderr!.on('data', d => { err += String(d) })
-  const done = new Promise<void>((res, rej) => enc.on('close', code => (code === 0 ? res() : rej(new Error(`FFmpeg (audio) terminó con código ${code}: ${err.slice(-300)}`)))))
-  done.catch(() => undefined)
+  const done = new Promise<void>((res, rej) => {
+    enc.on('error', e => rej(new Error(`No se pudo iniciar FFmpeg (audio): ${e.message}`)))
+    enc.on('close', code => (code === 0 ? res() : rej(new Error(`FFmpeg (audio) terminó con código ${code}: ${err.slice(-300)}`))))
+  })
+  enc.stdin!.on('error', () => undefined)
+  let failed: Error | null = null
+  done.catch(e => { failed = e instanceof Error ? e : new Error(String(e)) })
   try {
     for (let a = p.fromMs; a < p.toMs; a += AUDIO_CHUNK_MS) {
       if (o.signal?.aborted) throw ABORT()
@@ -388,7 +404,9 @@ async function mixAudio(p: { c: Composition; o: RenderOptions; kindOf: KindOf; p
         }
       }
       for (let i = 0; i < mix.length; i++) { const x = mix[i]; mix[i] = x > 1 ? 1 : x < -1 ? -1 : x }
-      if (!enc.stdin!.write(Buffer.from(mix.buffer))) await new Promise<void>(r => enc.stdin!.once('drain', () => r()))
+      if (failed) throw failed
+      if (!enc.stdin!.write(Buffer.from(mix.buffer))) await Promise.race([new Promise<void>(r => enc.stdin!.once('drain', () => r())), done.then(() => undefined)])
+      if (failed) throw failed
       o.onEvent?.({ phase: 'audio', doneMs: b - p.fromMs, totalMs: p.toMs - p.fromMs })
     }
     enc.stdin!.end(); await done

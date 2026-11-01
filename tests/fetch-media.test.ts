@@ -24,3 +24,29 @@ describe('fetchMediaBlob', () => {
       .rejects.toMatchObject({ kind: 'cancelled' })
   })
 })
+
+describe('fetchMediaBlob: límite real durante el flujo', () => {
+  const stream = (chunks: number, size: number, onPull?: (i: number) => void) => {
+    let i = 0
+    return new ReadableStream<Uint8Array>({ pull(c) { if (i >= chunks) { c.close(); return } onPull?.(i); c.enqueue(new Uint8Array(size)); i++ } })
+  }
+  it('sin Content-Length corta la descarga al superar el máximo y deja de leer', async () => {
+    let pulls = 0
+    const r = new Response(stream(1000, 100, () => { pulls++ }))
+    await expect(fetchMediaBlob('x', { maxBytes: 1000, fetchImpl: (async () => r) as typeof fetch })).rejects.toMatchObject({ kind: 'too_large' })
+    expect(pulls).toBeLessThan(30) // no leyó los 100 KB restantes
+  })
+  it('Content-Length falso (más pequeño que el cuerpo real) no evita el límite', async () => {
+    const r = new Response(stream(50, 100), { headers: { 'content-length': '10' } })
+    await expect(fetchMediaBlob('x', { maxBytes: 1000, fetchImpl: (async () => r) as typeof fetch })).rejects.toMatchObject({ kind: 'too_large' })
+  })
+  it('cancelación a mitad de flujo', async () => {
+    const ac = new AbortController()
+    const r = new Response(stream(100, 10, i => { if (i === 3) ac.abort() }))
+    await expect(fetchMediaBlob('x', { signal: ac.signal, fetchImpl: (async () => r) as typeof fetch })).rejects.toMatchObject({ kind: 'cancelled' })
+  })
+  it('justo en el límite pasa', async () => {
+    const b = await fetchMediaBlob('x', { maxBytes: 1000, fetchImpl: (async () => new Response(stream(10, 100))) as typeof fetch })
+    expect(b.size).toBe(1000)
+  })
+})

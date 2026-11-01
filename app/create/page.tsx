@@ -1,5 +1,6 @@
 'use client'
 
+import { editorHrefForStoryboard } from '@/lib/editor/open-in-editor'
 import Link from 'next/link'
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
@@ -186,7 +187,7 @@ export default function CreatePage() {
   const set = (key: keyof SceneForm) => (e: { target: { value: string } }) => setForm(f => ({ ...f, [key]: key === 'duration' ? Number(e.target.value) : e.target.value }))
 
   return (
-    <StudioShell title="Storyboard y escenas" eyebrow="PRODUCCIÓN" actions={projectId ? <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link> : null}>
+    <StudioShell title="Storyboard y escenas" eyebrow="PRODUCCIÓN" actions={projectId ? <>{selected && scenes.length > 0 && <Link className="buttonLink" href={editorHrefForStoryboard(projectId, selected)}>Abrir en el Editor</Link>}<Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link></> : null}>
       <form className="projectForm" onSubmit={createBoard}>
         <select aria-label="Proyecto" value={projectId} onChange={e => { setProjectId(e.target.value); setSelected(''); setScenes([]) }} required>
           <option value="">Selecciona proyecto</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
