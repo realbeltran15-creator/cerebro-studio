@@ -1,5 +1,6 @@
 'use client'
 
+import { generationJobView, toneClass } from '@/lib/operation-presentation'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { jobStatusLabels } from '@/lib/virtual-influencer/preflight'
 import type { SubjectKind } from '@/lib/virtual-influencer/quality'
@@ -95,7 +96,7 @@ export function ProductionPanel({ persona, jobs, voices, scenes, wardrobe, onCha
     {jobs.length === 0 ? <p className="emptyState">Sin trabajos.</p> : jobs.map(j => <article key={j.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div className="cardHead" style={{ marginBottom: 0 }}>
         <b className="small">{kinds.find(k => k[0] === j.kind)?.[1]} · {j.provider} · identidad {j.identity_version ? `v${j.identity_version}` : '—'}</b>
-        <span className={j.status === 'approved' ? 'pill ok' : ['blocked', 'failed', 'rejected'].includes(j.status) ? 'pill bad' : 'pill warn'}>{jobStatusLabels[j.status] ?? j.status}</span>
+        {(() => { const v = generationJobView(j); return <span className={toneClass(v.tone)} title={v.detail}>{v.label}{(jobStatusLabels[j.status] ?? j.status) !== v.label ? ` · ${v.detail ?? jobStatusLabels[j.status] ?? j.status}` : ''}</span> })()}
       </div>
       {j.prompt && <span className="muted small">{j.prompt.slice(0, 240)}</span>}
       <span className="muted small">Coste estimado {j.estimated_cost_eur ?? '—'} EUR · real {j.cost_reported ? `${j.actual_cost_eur} EUR` : 'no informado por el proveedor'} · {new Date(j.created_at).toLocaleString()}</span>

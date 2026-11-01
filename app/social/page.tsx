@@ -1,5 +1,6 @@
 'use client'
 
+import { publicationView, toneClass } from '@/lib/operation-presentation'
 import Link from 'next/link'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
@@ -254,7 +255,7 @@ export default function SocialPage() {
       const url = typeof j.result?.url === 'string' && j.result.url ? j.result.url : null
       return <div key={j.id} className="listItem" style={{ flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 240 }}>
-          <b>{names[j.platform]}</b> <span className={j.status === 'published' ? 'pill ok' : j.status === 'approved' ? 'pill info' : 'pill'}>{statusLabels[j.status] ?? j.status}</span>
+          <b>{names[j.platform]}</b> {(() => { const v = publicationView(j); return <span className={toneClass(v.tone)} title={v.detail}>{v.label}{v.detail && v.state !== 'verified' ? ` · ${v.detail}` : ''}</span> })()}
           <span className="muted small" style={{ display: 'block' }}>{(j.payload.caption || 'Sin texto').slice(0, 90)} · {new Date(j.created_at).toLocaleString()}</span>
           {typeof j.result?.containerId === 'string' && j.status !== 'published' && <span className="muted small" style={{ display: 'block' }}>Instagram está procesando el vídeo; al pulsar «Publicar» se reanuda.</span>}
           {typeof j.result?.lastError === 'string' && <span className="error small" style={{ display: 'block' }}>Último error: {j.result.lastError}</span>}

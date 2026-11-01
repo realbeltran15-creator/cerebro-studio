@@ -1,5 +1,6 @@
 'use client'
 
+import { shortItemView, toneClass } from '@/lib/operation-presentation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
 import { RenderPanel } from '../components/render-panel'
@@ -34,6 +35,7 @@ export default function ShortsPage() {
   const [composition, setComposition] = useState<Composition | null>(null)
   const [assets, setAssets] = useState<EditorAsset[]>([])
   const [pubStatus, setPubStatus] = useState('')
+  const [pubVideoId, setPubVideoId] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -58,16 +60,18 @@ export default function ShortsPage() {
   const selected = useMemo(() => items.find(i => i.id === selectedId) ?? null, [items, selectedId])
 
   const loadDetail = useCallback(async (item: Item | null) => {
-    setComposition(null); setAssets([]); setPubStatus('')
+    setComposition(null); setAssets([]); setPubStatus(''); setPubVideoId(null)
     if (!item?.project_id) return
     const [job, a, pub] = await Promise.all([
       item.render_job_id ? supabase.from('render_jobs').select('composition').eq('id', item.render_job_id).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from('assets').select('id,asset_type,storage_path,license_status,source_provider,provenance,created_at').eq('project_id', item.project_id).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(100),
-      item.publication_job_id ? supabase.from('publication_jobs').select('status').eq('id', item.publication_job_id).maybeSingle() : Promise.resolve({ data: null }),
+      item.publication_job_id ? supabase.from('publication_jobs').select('status,result').eq('id', item.publication_job_id).maybeSingle() : Promise.resolve({ data: null }),
     ])
     setComposition(parseComposition((job.data as { composition?: unknown } | null)?.composition))
     setAssets((a.data ?? []) as EditorAsset[])
     setPubStatus((pub.data as { status?: string } | null)?.status ?? '')
+    const pr = (pub.data as { result?: { videoId?: unknown } | null } | null)?.result
+    setPubVideoId(typeof pr?.videoId === 'string' && pr.videoId ? pr.videoId : null)
   }, [supabase])
 
   useEffect(() => {
@@ -185,7 +189,7 @@ export default function ShortsPage() {
 
       {selected && <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <section className="panel">
-          <div className="cardHead"><h2>{selected.plan.title ?? selected.topic}</h2>{selected.plan.demo && <span className="pill info">Prueba</span>}<span className="pill">{statusLabel[selected.status] ?? selected.status}</span></div>
+          <div className="cardHead"><h2>{selected.plan.title ?? selected.topic}</h2>{selected.plan.demo && <span className="pill info">Prueba</span>}{(() => { const v = shortItemView(selected, { status: pubStatus, videoId: pubVideoId }); return <span className={toneClass(v.tone)} title={v.detail}>{v.label}{v.detail ? ` · ${v.detail}` : ''}</span> })()}</div>
           <p className="muted small">Tema: {selected.topic} · {selected.theme} · ≈ {selected.plan.seconds ?? '?'} s · {selected.plan.scenes ?? '?'} escenas</p>
           <p className="pill ok" style={{ alignSelf: 'flex-start' }}>Coste de generación: {selected.spend.usd ?? 0} USD · {selected.spend.textCalls ?? 0} llamadas de texto, {selected.spend.imageCalls ?? 0} imágenes, {selected.spend.voiceCalls ?? 0} voz (solo opciones gratuitas)</p>
           {selected.discarded_reason && <p className="warnBox">{selected.discarded_reason}</p>}
