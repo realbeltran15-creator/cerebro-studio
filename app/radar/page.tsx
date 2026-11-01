@@ -16,6 +16,7 @@ export default function RadarPage() {
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState<YouTubeCategory[]>([])
   const [results, setResults] = useState<YouTubeVideoResult[]>([])
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null)
   const [loadedFor, setLoadedFor] = useState<{ region: string; category: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -54,7 +55,7 @@ export default function RadarPage() {
       if (!response.ok) throw new Error(json.error ?? 'No se pudo consultar YouTube.')
       setResults(json.results ?? [])
       setComparison(json.comparison ?? null)
-      setLoadedFor({ region, category })
+      setLoadedFor({ region, category }); setFetchedAt(Date.now())
       void loadHistory(region, category)
     } catch (e) {
       setResults([]); setError(e instanceof Error ? e.message : 'No se pudo consultar YouTube.')
@@ -93,6 +94,7 @@ export default function RadarPage() {
     </section>
 
     {loadedFor && results.length > 0 && <>
+      <p className="muted small" style={{ margin: '0 0 8px' }}>Fuente: YouTube Data API (lista oficial «más populares») · Lectura de {fetchedAt ? new Date(fetchedAt).toLocaleString() : 'ahora'}. Popularidad absoluta = posición en la lista; crecimiento relativo = solo lo que cambia entre dos lecturas guardadas. Confianza: datos observados; las señales calculadas son indicios, no predicciones.</p>
       <h3 className="sectionTitle">Términos recurrentes · {regions.find(r => r[0] === loadedFor.region)?.[1]} · {categoryName(loadedFor.category)}</h3>
       <p className="authNote">Calculado: cuántos de los {results.length} títulos en tendencia mencionan cada término. Es una señal para investigar, no una predicción.</p>
       {terms.length === 0 ? <p className="muted small">Ningún término se repite en dos o más títulos.</p> : (

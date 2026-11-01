@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { StudioShell } from '../components/studio-shell'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import type { OpportunityRow } from '@/lib/types/database'
+import { metricsFreshness, projectDraftFromOpportunity } from '@/lib/opportunity-project'
 import { calculatedSummary, metricSortValue, observedAt, observedSummary, viewsHistory, type MetricSort } from '@/lib/opportunity-metrics'
 
 const statuses: Record<string, string> = {
@@ -51,13 +52,13 @@ export default function OpportunitiesPage() {
     setError(''); setBusyId(o.id)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setBusyId(''); setError('Sesión requerida.'); return }
-    const notes = notesOf(o)
-    const { data, error: e } = await supabase.from('projects').insert({
-      owner_id: user.id, name: o.title, status: 'research', target_platforms: ['youtube'],
-      description: [`Oportunidad (${o.source_platform}${o.query ? ` · ${o.query}` : ''})`, ...notes].join('\n'),
-    }).select('id').single()
+    // Doble clic / otra pestaña: si ya tiene proyecto, se reutiliza en vez de crear un duplicado.
+    const { data: current } = await supabase.from('opportunities').select('project_id').eq('id', o.id).maybeSingle()
+    if (current?.project_id) { setBusyId(''); router.push(`/projects/${current.project_id}`); return }
+    const { data, error: e } = await supabase.from('projects').insert({ owner_id: user.id, ...projectDraftFromOpportunity(o, Date.now()) }).select('id').single()
     if (e) { setBusyId(''); setError(e.message); return }
-    await supabase.from('opportunities').update({ project_id: data.id, status: 'candidate' }).eq('id', o.id)
+    const { error: linkError } = await supabase.from('opportunities').update({ project_id: data.id, status: 'candidate' }).eq('id', o.id)
+    if (linkError) { setBusyId(''); setError(`El proyecto se creó pero no se pudo vincular a la oportunidad (${linkError.message}). Ábrelo desde Proyectos.`); return }
     router.push(`/projects/${data.id}`)
   }
 
@@ -112,7 +113,7 @@ export default function OpportunitiesPage() {
                 <h3>{o.title}</h3>
                 {o.query && <p>Consulta: {o.query}</p>}
                 {notesOf(o).map((n, i) => <p key={i}>Observación: {n}</p>)}
-                {observed.length > 0 && <p className="small"><b>Observado{at ? ` (${new Date(at).toLocaleDateString()})` : ''}:</b> {observed.join(' · ')}</p>}
+                {observed.length > 0 && <p className="small"><b>Observado{at ? ` (${new Date(at).toLocaleDateString()})` : ''}:</b> {observed.join(' · ')}{(() => { const f = metricsFreshness(o.observed_metrics, Date.now()); return f.level === 'stale' ? <span className="error small"> · Desactualizado: hace {f.days} días</span> : null })()}</p>}
                 {calculated.length > 0 && <p className="small muted"><b>Calculado:</b> {calculated.join(' · ')}</p>}
                 {history.length > 1 && <p className="small muted" title="Vistas en cada lectura guardada">Historial de vistas: {history.map(h => `${new Date(h.at).toLocaleDateString()} ${h.views.toLocaleString('es-ES')}`).join(' → ')}</p>}
                 {o.source_id && /^https?:\/\//.test(o.source_id) && <a className="open" href={o.source_id} target="_blank" rel="noopener noreferrer">Fuente original ↗</a>}
