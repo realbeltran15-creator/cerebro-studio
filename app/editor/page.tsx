@@ -185,7 +185,11 @@ export default function EditorPage() {
     try { await save(); setNotice('Montaje guardado.') } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar.') }
   }
 
+  /** Las rutas /api/providers/voice|image|video no existen todavía: las acciones quedan desactivadas (no se pide confirmación de gasto por algo que no puede ejecutarse). */
+const GENERATION_CONNECTED = false
+
   async function generate(clip: Clip, kind: 'voice' | 'image' | 'video') {
+    if (!GENERATION_CONNECTED) { setError('Función pendiente de conexión: la generación desde este editor aún no está conectada a un proveedor. Genera en «Estudio de creación» y añade el resultado desde la Biblioteca.'); return }
     const scene = scenes.find(s => s.id === clip.sceneId)
     const text = kind === 'voice' ? clip.narration?.trim() : (scene?.visual_prompt?.trim() || clip.narration?.trim())
     if (!text) { setError(kind === 'voice' ? 'La escena no tiene narración.' : 'La escena no tiene prompt visual ni narración.'); return }
@@ -331,9 +335,9 @@ export default function EditorPage() {
               </label>
             </div>
             <div className="pageActions">
-              <button type="button" className="ghost" disabled={Boolean(busyClip) || !clip.narration?.trim()} onClick={() => void generate(clip, 'voice')}><Icon name="mic" size={16} />{busyClip === `${clip.sceneId}:voice` ? 'Generando voz…' : 'Generar voz'}</button>
-              <button type="button" className="ghost" disabled={Boolean(busyClip) || !(scene?.visual_prompt?.trim() || clip.narration?.trim())} onClick={() => void generate(clip, 'image')}><Icon name="image" size={16} />{busyClip === `${clip.sceneId}:image` ? 'Generando imagen…' : 'Generar imagen'}</button>
-              <button type="button" className="ghost" disabled={Boolean(busyClip) || !(scene?.visual_prompt?.trim() || clip.narration?.trim())} onClick={() => void generate(clip, 'video')}><Icon name="video" size={16} />{busyClip === `${clip.sceneId}:video` ? 'Generando vídeo…' : 'Generar vídeo (fal.ai)'}</button>
+              <button type="button" className="ghost" disabled={!GENERATION_CONNECTED || Boolean(busyClip) || !clip.narration?.trim()} title={GENERATION_CONNECTED ? undefined : 'Función pendiente de conexión'} onClick={() => void generate(clip, 'voice')}><Icon name="mic" size={16} />{busyClip === `${clip.sceneId}:voice` ? 'Generando voz…' : 'Generar voz'}{GENERATION_CONNECTED ? '' : ' · pendiente de conexión'}</button>
+              <button type="button" className="ghost" disabled={!GENERATION_CONNECTED || Boolean(busyClip) || !(scene?.visual_prompt?.trim() || clip.narration?.trim())} title={GENERATION_CONNECTED ? undefined : 'Función pendiente de conexión'} onClick={() => void generate(clip, 'image')}><Icon name="image" size={16} />{busyClip === `${clip.sceneId}:image` ? 'Generando imagen…' : 'Generar imagen'}{GENERATION_CONNECTED ? '' : ' · pendiente de conexión'}</button>
+              <button type="button" className="ghost" disabled={!GENERATION_CONNECTED || Boolean(busyClip) || !(scene?.visual_prompt?.trim() || clip.narration?.trim())} title={GENERATION_CONNECTED ? undefined : 'Función pendiente de conexión'} onClick={() => void generate(clip, 'video')}><Icon name="video" size={16} />{busyClip === `${clip.sceneId}:video` ? 'Generando vídeo…' : 'Generar vídeo'}{GENERATION_CONNECTED ? '' : ' · pendiente de conexión'}</button>
               <label className="buttonLink ghost" style={{ cursor: 'pointer' }}>
                 <Icon name="upload" size={16} />{busyClip === `${clip.sceneId}:upload` ? 'Subiendo…' : 'Subir imagen o vídeo'}
                 <input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" hidden disabled={Boolean(busyClip)} onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadVisual(clip, f) }} />

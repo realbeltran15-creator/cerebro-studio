@@ -1,5 +1,6 @@
 'use client'
 
+import { exportEnd } from '@/lib/editor/export-outcome'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
@@ -384,6 +385,13 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       // Discard what was being written: a cancelled or failed export leaves no half-written video and no temporary.
       try { if (streamTo && !streamTo.locked) await streamTo.abort() } catch { /* already aborted */ }
       if (tmp && !pendingDriveRef.current) await removeExportTemp(tmp.name).catch(() => undefined)
+      const end = exportEnd(e, controller.signal.aborted, abortReason.current as string | null)
+      if (end.kind === 'cancelled') {
+        // Cancelar es una decisión del usuario, no un error técnico: estado «cancelled», sin mensaje rojo y sin archivo final.
+        if (jobId) await supabase.from('render_jobs').update({ status: 'cancelled', error: end.message, updated_at: new Date().toISOString() }).eq('id', jobId)
+        setStatus(`${end.message} No se ha guardado ningún vídeo.`)
+        return
+      }
       const stage = exportStageOf(e) ?? lastStage
       console.error(`[export ${exportId}] falló en la fase «${stage}»`, e)
       const message = `${e instanceof Error ? e.message : 'El render falló.'} [fase: ${stage} · id ${exportId}]`

@@ -30,9 +30,56 @@ async function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBReq
     } catch { resolve(null) }
   })
 }
-export const saveLocalDraft = (d: LocalDraft) => tx<void>('readwrite', s => s.put(JSON.parse(JSON.stringify(d))))
-export const loadLocalDraft = (jobId: string) => tx<LocalDraft>('readonly', s => s.get(jobId))
-export const clearLocalDraft = (jobId: string) => tx<void>('readwrite', s => s.delete(jobId))
+// ---- Un registro por montaje con un borrador POR PESTAÑA: dos pestañas ya no se pisan ni se borran el borrador entre sí. ----
+export type DraftRecord = { jobId: string; drafts: Record<string, LocalDraft> }
+
+/** Normaliza el formato antiguo (un solo borrador sin pestaña) al nuevo. */
+export function toRecord(raw: unknown, jobId: string): DraftRecord {
+  const r = raw as { drafts?: Record<string, LocalDraft>; composition?: unknown } | null
+  if (r && r.drafts && typeof r.drafts === 'object') return { jobId, drafts: { ...r.drafts } }
+  if (r && r.composition) return { jobId, drafts: { _legacy: raw as LocalDraft } }
+  return { jobId, drafts: {} }
+}
+export const putDraft = (rec: DraftRecord, tab: string, d: LocalDraft): DraftRecord => ({ ...rec, drafts: { ...rec.drafts, [tab]: d } })
+/** Quita el borrador de una pestaña (o todos). */
+export function dropDraft(rec: DraftRecord, tab: string | 'all'): DraftRecord {
+  if (tab === 'all') return { ...rec, drafts: {} }
+  const { [tab]: _removed, ...rest } = rec.drafts; void _removed
+  return { ...rec, drafts: rest }
+}
+/** El borrador más reciente de cualquier pestaña (el de una pestaña cerrada también se puede recuperar). */
+export function newestDraft(rec: DraftRecord): LocalDraft | null {
+  const all = Object.values(rec.drafts)
+  return all.length ? all.reduce((a, b) => (Date.parse(b.savedAt) > Date.parse(a.savedAt) ? b : a)) : null
+}
+
+let tabId: string | null = null
+/** Identificador de esta pestaña: sobrevive a una recarga (sessionStorage) pero no se comparte con otras pestañas. */
+export function currentTabId(): string {
+  if (tabId) return tabId
+  try {
+    tabId = sessionStorage.getItem('cerebro.tab') ?? ''
+    if (!tabId) { tabId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; sessionStorage.setItem('cerebro.tab', tabId) }
+  } catch { tabId = `t-${Math.random().toString(36).slice(2, 10)}` }
+  return tabId
+}
+
+function update(jobId: string, fn: (rec: DraftRecord) => DraftRecord) {
+  return tx<void>('readwrite', s => {
+    const g = s.get(jobId)
+    g.onsuccess = () => {
+      const next = fn(toRecord(g.result, jobId))
+      if (Object.keys(next.drafts).length) s.put(JSON.parse(JSON.stringify(next))); else s.delete(jobId)
+    }
+  })
+}
+export const saveLocalDraft = (d: LocalDraft) => update(d.jobId, rec => putDraft(rec, currentTabId(), d))
+export async function loadLocalDraft(jobId: string): Promise<LocalDraft | null> {
+  const raw = await tx<unknown>('readonly', s => s.get(jobId))
+  return newestDraft(toRecord(raw, jobId))
+}
+/** Por defecto borra solo el borrador de ESTA pestaña. `{ all: true }` = el usuario descarta todas las copias. */
+export const clearLocalDraft = (jobId: string, opts: { all?: boolean } = {}) => update(jobId, rec => dropDraft(rec, opts.all ? 'all' : currentTabId()))
 
 /** Whether a stored draft is worth offering: different from what was loaded. */
 export function draftDiffers(d: LocalDraft | null, loaded: Composition): d is LocalDraft {

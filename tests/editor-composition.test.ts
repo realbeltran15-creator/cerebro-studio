@@ -91,3 +91,14 @@ describe('montage templates', () => {
     expect(t).toMatchObject({ name: 'Mi serie', format: '9:16', transition: 'fade', motion: 'none', hookMs: 2500 })
   })
 })
+
+describe('SRT/VTT con texto de cue con líneas en blanco', () => {
+  it('no deja líneas en blanco dentro de un cue (corromperían el archivo)', async () => {
+    const { cuesToSrt, cuesToVtt } = await import('@/lib/editor/composition')
+    const cues = [{ startMs: 0, endMs: 1000, text: 'uno\n\n  \ndos\r\n' }, { startMs: 1000, endMs: 2000, text: 'tres' }]
+    const srt = cuesToSrt(cues)
+    expect(srt.split('\n\n')).toHaveLength(2)
+    expect(srt).toContain('uno\ndos')
+    expect(cuesToVtt(cues).split('\n\n')).toHaveLength(3)
+  })
+})

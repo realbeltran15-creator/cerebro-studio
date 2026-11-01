@@ -49,6 +49,7 @@ import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, 
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { friendlyDbMessage } from '@/lib/script-integrity'
+import { internalNavTarget, unsavedAtRisk } from '@/lib/editor/nav-guard'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
@@ -602,6 +603,22 @@ export default function ManualEditorPage() {
     setInstruction('')
   }
 
+  // Navegación interna (enlaces del encabezado, etc.): si los cambios no están a salvo en la nube se pregunta: guardar, descartar o quedarse.
+  const [pendingNav, setPendingNav] = useState<string | null>(null)
+  const atRiskRef = useRef(false)
+  atRiskRef.current = unsavedAtRisk({ dirty, autoSave, saveState })
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!atRiskRef.current) return
+      const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (!a) return
+      const dest = internalNavTarget({ href: a.getAttribute('href'), target: a.getAttribute('target'), download: a.hasAttribute('download'), button: e.button, meta: e.metaKey || e.ctrlKey || e.shiftKey || e.altKey, origin: window.location.origin, currentUrl: window.location.href })
+      if (!dest) return
+      e.preventDefault(); e.stopPropagation(); setPendingNav(dest)
+    }
+    document.addEventListener('click', onClick, true)
+    return () => document.removeEventListener('click', onClick, true)
+  }, [])
   useEffect(() => {
     if (!dirty) return
     const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
@@ -927,7 +944,7 @@ export default function ManualEditorPage() {
       <b>Hay cambios sin guardar de este montaje</b> (copia local del {new Date(recovery.savedAt).toLocaleString()}){recovery.baseUpdatedAt !== savedAt ? '. Ojo: el montaje se guardó después desde otro sitio; si recuperas, al guardar se te avisará del conflicto.' : '.'}
       <div className="pageActions" style={{ marginTop: 6 }}>
         <button type="button" className="small" onClick={() => { setHistory(h => (h ? commit(h, recovery.composition) : h)); setDirty(true); setRecovery(null); setNotice('Cambios recuperados. Guarda para conservarlos (Ctrl+Z vuelve a la versión guardada).') }}>Recuperar cambios</button>
-        <button type="button" className="ghost small" onClick={() => { if (job) void clearLocalDraft(job.id); setRecovery(null) }}>Descartar copia</button>
+        <button type="button" className="ghost small" onClick={() => { if (job) void clearLocalDraft(job.id, { all: true }); setRecovery(null) }}>Descartar copia</button>
       </div>
     </div>}
     {missing.length > 0 && <div className="panel warning" role="alert" aria-label="Archivos que faltan" style={{ marginBottom: 12 }}>
@@ -940,6 +957,14 @@ export default function ManualEditorPage() {
         </select>
         <button type="button" className="small" disabled={!relinkTo[m.id]} onClick={() => { const to = relinkTo[m.id]; apply(c => replaceAsset(c, m.id, to)); setNotice('Archivo vuelto a vincular: se mantienen los tiempos, efectos y ajustes.') }}>Volver a vincular</button>
       </li>)}</ul>
+    </div>}
+    {pendingNav && <div className="panel warning" role="alertdialog" aria-label="Cambios sin guardar" style={{ marginBottom: 12 }}>
+      <p style={{ margin: '0 0 8px' }}>Tienes cambios que aún no están guardados en la nube. ¿Qué quieres hacer antes de salir?</p>
+      <div className="pageActions">
+        <button type="button" onClick={() => { const dest = pendingNav; void save().then(() => { setPendingNav(null); window.location.assign(dest) }, () => setPendingNav(null)) }}>Guardar y salir</button>
+        <button type="button" className="ghost" onClick={() => { const dest = pendingNav; setPendingNav(null); window.location.assign(dest) }}>Salir sin guardar</button>
+        <button type="button" className="ghost" onClick={() => setPendingNav(null)}>Permanecer aquí</button>
+      </div>
     </div>}
     {saveState === 'conflict' && <div className="panel warning" role="alert" aria-label="Conflicto al guardar" style={{ marginBottom: 12 }}>
       <b>Este montaje se guardó desde otra pestaña o dispositivo después de abrirlo aquí.</b> <span className="small">Tus cambios no se han perdido: siguen en pantalla y se guardan como punto de recuperación al elegir.</span>

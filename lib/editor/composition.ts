@@ -798,8 +798,10 @@ function stampMs(ms: number, sep: ',' | '.') {
   const t = Math.max(0, Math.round(ms))
   return `${two(t / 3_600_000)}:${two((t % 3_600_000) / 60_000)}:${two((t % 60_000) / 1000)}${sep}${String(t % 1000).padStart(3, '0')}`
 }
-export const cuesToSrt = (cues: CaptionCue[]) => cues.map((q, i) => `${i + 1}\n${stampMs(q.startMs, ',')} --> ${stampMs(q.endMs, ',')}\n${q.text}\n`).join('\n')
-export const cuesToVtt = (cues: CaptionCue[]) => `WEBVTT\n\n${cues.map(q => `${stampMs(q.startMs, '.')} --> ${stampMs(q.endMs, '.')}\n${q.text}\n`).join('\n')}`
+/** Una línea en blanco dentro de un cue termina el cue en SRT/VTT: se colapsa para no corromper el archivo. */
+const cueText = (t: string) => t.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean).join('\n')
+export const cuesToSrt = (cues: CaptionCue[]) => cues.map((q, i) => `${i + 1}\n${stampMs(q.startMs, ',')} --> ${stampMs(q.endMs, ',')}\n${cueText(q.text)}\n`).join('\n')
+export const cuesToVtt = (cues: CaptionCue[]) => `WEBVTT\n\n${cues.map(q => `${stampMs(q.startMs, '.')} --> ${stampMs(q.endMs, '.')}\n${cueText(q.text)}\n`).join('\n')}`
 
 /** Preferred video bitrate for the export quality (still capped by videoBitrateFor's size budget). */
 export const preferredBitrate = (q: ExportSettings['quality'] | undefined) => (q === 'high' ? 5_000_000 : 2_500_000)
