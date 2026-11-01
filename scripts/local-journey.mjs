@@ -1,5 +1,6 @@
 // Local authenticated journey with the REAL @supabase/supabase-js client against: real PostgreSQL schema (reconstructed live baseline + pending),
 // real PostgREST (RLS), SIMULATED Auth and SIMULATED Storage (see local-supabase-lite.mjs for what is and is not real). Synthetic data only.
+// OFFICIAL=1 (scripts/official-stack.sh up): the SAME checks run against the OFFICIAL GoTrue + Storage API through the route gateway instead of the simulator, plus section 6 (official-only checks).
 import { createClient } from '@supabase/supabase-js'
 import { createHmac } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -8,22 +9,22 @@ import os from 'node:os'
 import path from 'node:path'
 import { startLite } from './local-supabase-lite.mjs'
 
-const { PGRST_URL, JWT_SECRET, PGDIR, PGPORT } = process.env, PORT = 54360
+const { PGRST_URL, JWT_SECRET, PGDIR, PGPORT } = process.env, OFFICIAL = process.env.OFFICIAL === '1', PORT = OFFICIAL ? Number(process.env.GATEWAY_PORT || 54321) : 54360
 const sq = sql => execFileSync('psql', ['-h', PGDIR, '-p', PGPORT, '-U', 'postgres', '-X', '-q', '-At', '-c', sql], { encoding: 'utf8' }).trim()
 const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
 const anon = (() => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role: 'anon', iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` })()
-const server = await startLite({ port: PORT, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir: mkdtempSync(path.join(os.tmpdir(), 'lite-storage-')), onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{"name":"synthetic"}')`) })
+const server = OFFICIAL ? { close() {} } : await startLite({ port: PORT, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir: mkdtempSync(path.join(os.tmpdir(), 'lite-storage-')), onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{"name":"synthetic"}')`) })
 const mk = () => createClient(`http://127.0.0.1:${PORT}`, anon, { auth: { persistSession: false, autoRefreshToken: false } })
 let pass = 0, fail = 0
 const t = async (name, fn) => { try { const r = await fn(); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message) } }
 const bytes = Buffer.from(Array.from({ length: 4096 }, (_, i) => (i * 7) % 256))
 
-console.log('== 1. alta, login y sesión (Auth SIMULADO) ==')
+console.log(`== 1. alta, login y sesión (Auth ${OFFICIAL ? 'OFICIAL' : 'SIMULADO'}) ==`)
 const A = mk(), B = mk(), anonC = mk()
 const sa = await A.auth.signUp({ email: 'a@example.test', password: 'synthetic-pass-1' })
 await t('signUp devuelve sesión y usuario', async () => !!sa.data.session?.access_token && !!sa.data.user?.id)
 const uidA = sa.data.user.id
-await t('el disparador crea el perfil del usuario (handle_new_user)', async () => sq(`select display_name from profiles where id='${uidA}'`) === 'synthetic')
+await t('el disparador crea el perfil del usuario (handle_new_user)', async () => sq(`select display_name from profiles where id='${uidA}'`) === (OFFICIAL ? 'a@example.test' : 'synthetic'))
 await t('contraseña incorrecta -> error', async () => (await mk().auth.signInWithPassword({ email: 'a@example.test', password: 'mala-contraseña' })).error != null)
 await A.auth.signOut()
 const si = await A.auth.signInWithPassword({ email: 'a@example.test', password: 'synthetic-pass-1' })
@@ -43,7 +44,7 @@ await t('la segunda llamada es idempotente (mismo storyboard)', async () => (awa
 await t('escenas ordenadas y completas', async () => { const r = await A.from('scenes').select('position,duration_ms').eq('storyboard_id', sb.data).order('position'); return r.data?.length === 2 && r.data[0].position === 1 && r.data[1].duration_ms === 6000 })
 const path1 = `${uidA}/${proj.id}/montaje.mp4`
 const up = await A.storage.from('generated-assets').upload(path1, bytes, { contentType: 'video/mp4' })
-await t('subir el MP4 a Storage (SIMULADO) bajo la carpeta del usuario', async () => !up.error)
+await t('subir el MP4 a Storage bajo la carpeta del usuario', async () => !up.error)
 const asset = (await A.from('assets').insert({ owner_id: uidA, project_id: proj.id, asset_type: 'video', storage_path: path1, license_status: 'generated' }).select().single()).data
 await t('registrar el asset en la biblioteca', async () => !!asset?.id)
 const rj = (await A.from('render_jobs').insert({ owner_id: uidA, project_id: proj.id, output_format: '16:9', status: 'completed', output_asset_id: asset.id, composition: { clips: [] } }).select().single()).data
@@ -82,5 +83,38 @@ console.log('== 5. Borrado en cascada ==')
 await t('borrar el proyecto elimina guion, storyboard, escenas y render jobs', async () => { await A2.from('projects').delete().eq('id', proj.id); return sq(`select (select count(*) from scripts where project_id='${proj.id}')+(select count(*) from storyboards where project_id='${proj.id}')+(select count(*) from scenes where storyboard_id='${sb.data}')+(select count(*) from render_jobs where project_id='${proj.id}')`) === '0' })
 await t('borrar el archivo de Storage', async () => (await A2.storage.from('generated-assets').remove([path1])).data?.length === 1)
 
+if (OFFICIAL) {
+  console.log('== 6. Solo con servicios OFICIALES: sesión, subida reanudable (TUS), límites ==')
+  const G = `http://127.0.0.1:${PORT}`, C = mk()
+  const sc6 = await C.auth.signUp({ email: 'c@example.test', password: 'synthetic-pass-3' }); const uidC = sc6.data.user.id, s6 = sc6.data.session
+  await t('registro duplicado no crea otro usuario con sesión', async () => { const r = await mk().auth.signUp({ email: 'c@example.test', password: 'otra-clave-123456' }); return !r.data.session })
+  await t('recuperación de sesión: setSession con tokens guardados → getUser', async () => { const R = mk(); const r = await R.auth.setSession({ access_token: s6.access_token, refresh_token: s6.refresh_token }); return r.data.user?.id === uidC && (await R.auth.getUser()).data.user?.id === uidC })
+  const rt = s6.refresh_token
+  const R1 = await mk().auth.refreshSession({ refresh_token: rt })
+  await t('renovación de sesión entrega un refresh token nuevo (rotación)', async () => !!R1.data.session && R1.data.session.refresh_token !== rt)
+  await t('cierre de sesión (scope global) revoca los refresh tokens', async () => { const S = mk(); await S.auth.setSession({ access_token: R1.data.session.access_token, refresh_token: R1.data.session.refresh_token }); const o = await S.auth.signOut({ scope: 'global' }); await new Promise(r => setTimeout(r, 11000)); const again = await mk().auth.refreshSession({ refresh_token: R1.data.session.refresh_token }); return !o.error && !!again.error })
+  const L = mk(); const lg = await L.auth.signInWithPassword({ email: 'c@example.test', password: 'synthetic-pass-3' }); const tok = lg.data.session.access_token
+  await t('JWT emitido por Auth oficial lo acepta PostgREST (role=authenticated, sub=uid)', async () => { const pl = JSON.parse(Buffer.from(tok.split('.')[1], 'base64url')); return pl.role === 'authenticated' && pl.sub === uidC })
+  await t('JWT con la firma alterada → 401 en Storage', async () => { const bad = tok.slice(0, -3) + (tok.endsWith('AAA') ? 'BBB' : 'AAA'); const r = await fetch(`${G}/storage/v1/object/generated-assets/${uidC}/x.bin`, { method: 'POST', headers: { authorization: 'Bearer ' + bad, 'content-type': 'application/octet-stream' }, body: bytes }); return r.status === 400 || r.status === 401 || r.status === 403 })
+  const big = Buffer.alloc(6 * 1024 * 1024, 7), nm = `${uidC}/tus/grande.bin`
+  const meta = Object.entries({ bucketName: 'generated-assets', objectName: nm, contentType: 'application/octet-stream', cacheControl: '3600' }).map(([k, v]) => `${k} ${Buffer.from(v).toString('base64')}`).join(',')
+  const H = { authorization: 'Bearer ' + tok, 'tus-resumable': '1.0.0' }
+  const cr = await fetch(`${G}/storage/v1/upload/resumable`, { method: 'POST', headers: { ...H, 'upload-length': String(big.length), 'upload-metadata': meta, 'content-type': 'application/offset+octet-stream' } })
+  const loc = cr.headers.get('location'); const lp = loc ? (loc.startsWith('http') ? new URL(loc).pathname + new URL(loc).search : loc) : null
+  await t('TUS: crear subida reanudable (201 + Location)', async () => cr.status === 201 && !!lp || { status: cr.status, loc })
+  const PART = 5 * 1024 * 1024
+  const p1 = await fetch(`${G}${lp}`, { method: 'PATCH', headers: { ...H, 'upload-offset': '0', 'content-type': 'application/offset+octet-stream' }, body: big.subarray(0, PART) })
+  await t('TUS: primer tramo de 5 MB aceptado', async () => p1.status === 204 && Number(p1.headers.get('upload-offset')) === PART || { status: p1.status, off: p1.headers.get('upload-offset') })
+  const hd = await fetch(`${G}${lp}`, { method: 'HEAD', headers: H })
+  await t('TUS: HEAD informa del desplazamiento para reanudar', async () => Number(hd.headers.get('upload-offset')) === PART || { status: hd.status, off: hd.headers.get('upload-offset') })
+  const p2 = await fetch(`${G}${lp}`, { method: 'PATCH', headers: { ...H, 'upload-offset': String(PART), 'content-type': 'application/offset+octet-stream' }, body: big.subarray(PART) })
+  await t('TUS: se reanuda y completa el archivo', async () => p2.status === 204 && Number(p2.headers.get('upload-offset')) === big.length || { status: p2.status })
+  await t('TUS: el archivo descargado es idéntico byte a byte', async () => { const d = await L.storage.from('generated-assets').download(nm); return !d.error && Buffer.compare(Buffer.from(await d.data.arrayBuffer()), big) === 0 })
+  await t('TUS: otro usuario no puede crear subida en la carpeta de C', async () => { const r = await fetch(`${G}/storage/v1/upload/resumable`, { method: 'POST', headers: { authorization: 'Bearer ' + (await B.auth.getSession()).data.session.access_token, 'tus-resumable': '1.0.0', 'upload-length': '10', 'upload-metadata': meta.replace(/objectName [^,]+/, 'objectName ' + Buffer.from(`${uidC}/tus/robo.bin`).toString('base64')), 'content-type': 'application/offset+octet-stream' } }); return r.status >= 400 || { status: r.status } })
+  await t('límite por archivo (50 MB): una subida mayor se rechaza', async () => { const r = await fetch(`${G}/storage/v1/object/generated-assets/${uidC}/enorme.bin`, { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/octet-stream' }, body: Buffer.alloc(51 * 1024 * 1024, 1) }); return r.status === 413 || r.status === 400 || { status: r.status } })
+  await t('URL firmada manipulada (token alterado) → rechazada', async () => { const su2 = await L.storage.from('generated-assets').createSignedUrl(nm, 60); const u = su2.data.signedUrl; const bad = u.slice(0, -4) + (u.endsWith('abcd') ? 'wxyz' : 'abcd'); const r = await fetch(bad); return !r.ok })
+  await t('URL firmada caducada (1 s) → rechazada', async () => { const su3 = await L.storage.from('generated-assets').createSignedUrl(nm, 1); await new Promise(r => setTimeout(r, 2500)); return !(await fetch(su3.data.signedUrl)).ok })
+  await t('borrado seguro: solo el dueño borra; el archivo desaparece de Storage', async () => { const other = await B.storage.from('generated-assets').remove([nm]); const stillThere = sq(`select count(*) from storage.objects where name='${nm}'`) === '1'; const mine = await L.storage.from('generated-assets').remove([nm]); return stillThere && mine.data?.length === 1 && sq(`select count(*) from storage.objects where name='${nm}'`) === '0' })
+}
 console.log(`\nRESUMEN: ${pass} correctas, ${fail} fallidas`)
 server.close(); process.exit(fail ? 1 : 0)

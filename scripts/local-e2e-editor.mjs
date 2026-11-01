@@ -8,6 +8,7 @@ import { mkdtempSync, readdirSync, statSync, readFileSync, existsSync } from 'no
 import os from 'node:os'
 import path from 'node:path'
 import { startLite } from './local-supabase-lite.mjs'
+import { renameSync, writeFileSync, readFileSync as rfs } from 'node:fs'
 
 const { PGRST_URL, JWT_SECRET, PGDIR, PGPORT, CHROMIUM_PATH } = process.env, LITE = 54380, WEB = 54381
 const MEDIA = process.env.E2E_MEDIA || '/tmp/e2e-media'
@@ -15,9 +16,12 @@ const root = path.resolve(new URL('..', import.meta.url).pathname)
 const sq = sql => execFileSync('psql', ['-h', PGDIR, '-p', PGPORT, '-U', 'postgres', '-X', '-q', '-At', '-c', sql], { encoding: 'utf8' }).trim()
 const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
 const anon = (() => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role: 'anon', iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` })()
+// OFFICIAL=1: Auth/Storage/PostgREST OFICIALES (scripts/test-official-supabase.sh) detrás de la pasarela de rutas; el medio se lee/borra por la API de Storage con la clave de servicio local.
+const OFFICIAL = process.env.OFFICIAL === '1', GW = Number(process.env.GATEWAY_PORT || 54321)
+const jwtFor = role => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role, iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` }
 const storageDir = mkdtempSync(path.join(os.tmpdir(), 'lite-e2e-'))
-const lite = await startLite({ port: LITE, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir, onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{}')`) })
-const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', NEXT_PUBLIC_CEREBRO_BETA: 'private', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
+const lite = OFFICIAL ? { close() {} } : await startLite({ port: LITE, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir, onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{}')`) })
+const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', NEXT_PUBLIC_CEREBRO_BETA: 'private', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${OFFICIAL ? GW : LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
 let pass = 0, fail = 0
 const t = async (name, fn) => { try { const r = await fn(); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message.split('\n').slice(0, 3).join(' | ')) } }
 if (!process.env.SKIP_BUILD) { console.log('next build…'); const b = spawn('npx', ['next', 'build'], { cwd: root, env, stdio: 'ignore' }); const code = await new Promise(r => b.on('exit', r)); if (code) { console.log('FAIL build', code); process.exit(1) } }
@@ -38,7 +42,7 @@ const step = async (name, fn) => { if (S.bail) return; await t(name, async () =>
 const finish = async () => { await browser.close(); web.kill(); lite.close(); console.log(`\nRESUMEN E2E EDITOR: ${pass} correctas, ${fail} fallidas`); process.exit(fail ? 1 : 0) }
 const { ctx, page } = await mkCtx()
 // Alta de la cuenta usando el cliente real (el alta por UI se ejerce aparte); el resto es 100 % interfaz.
-const seed = createClient(`http://127.0.0.1:${LITE}`, anon, { auth: { persistSession: false } })
+const seed = createClient(`http://127.0.0.1:${OFFICIAL ? GW : LITE}`, anon, { auth: { persistSession: false } })
 await seed.auth.signUp({ email: EMAIL, password: PW })
 await seed.auth.signUp({ email: 'otro-e2e@example.test', password: PW })
 
@@ -117,7 +121,12 @@ await step('10 edición: música de fondo + guardar ahora (persistencia del mont
 })
 let exported = null
 const probe = f => JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', f], { encoding: 'utf8' }))
-const findFile = rel => { const out = []; const walk = d => { for (const n of readdirSync(d)) { const f = path.join(d, n); statSync(f).isDirectory() ? walk(f) : f.endsWith(rel) && out.push(f) } }; walk(storageDir); return out[0] }
+const findFileLite = rel => { const out = []; const walk = d => { for (const n of readdirSync(d)) { const f = path.join(d, n); statSync(f).isDirectory() ? walk(f) : f.endsWith(rel) && out.push(f) } }; walk(storageDir); return out[0] }
+const svc = jwtFor('service_role'), sbase = `http://127.0.0.1:${GW}/storage/v1/object`
+const objName = rel => sq(`select name from storage.objects where bucket_id='generated-assets' and name like '%${rel.replace(/'/g, '')}' order by created_at desc limit 1`)
+const findFile = rel => { if (!OFFICIAL) return findFileLite(rel); const name = objName(rel); if (!name) return undefined; const dir = mkdtempSync(path.join(os.tmpdir(), 'off-dl-')); const f = path.join(dir, rel); const r = execFileSync('curl', ['-sf', '-H', `authorization: Bearer ${svc}`, '-o', f, `${sbase}/authenticated/generated-assets/${name}`]); return f }
+const holdMedia = (f, rel) => { if (!OFFICIAL) { renameSync(f, f + '.held'); return } const name = objName(rel); const bytes = rfs(f); execFileSync('curl', ['-sf', '-X', 'DELETE', '-H', `authorization: Bearer ${svc}`, `${sbase}/generated-assets/${name}`]); return { name, bytes } }
+const restoreMedia = (f, held) => { if (!OFFICIAL) { renameSync(f + '.held', f); return } writeFileSync(f, held.bytes); execFileSync('curl', ['-sf', '-X', 'POST', '-H', `authorization: Bearer ${svc}`, '-H', 'content-type: application/octet-stream', '--data-binary', '@' + f, `${sbase}/generated-assets/${held.name}`]) }
 await step('11 exportar MP4 (modo rápido, 480p, 24 fps) a la Biblioteca desde el RenderPanel', async () => {
   await page.getByRole('button', { name: /^Exportar/ }).first().click(); await page.locator('#ed-export').waitFor({ state: 'visible' })
   const pick = async (l, v) => page.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
@@ -183,20 +192,23 @@ await step('17 aislamiento: otro usuario no ve el proyecto, el montaje ni los ar
 await step('18 recuperación: un medio desaparece del almacenamiento → la exportación falla con aviso y se recupera al restaurarlo', async () => {
   const comp = JSON.parse(sq(`select composition::text from render_jobs where status='draft' order by updated_at desc limit 1`))
   const sp = sq(`select storage_path from assets where id='${comp.clips[0].visualAssetId}'`); const f = findFile(sp.split('/').pop()); const hold = f + '.held'
-  const { renameSync } = await import('node:fs'); renameSync(f, hold)
+  const held = holdMedia(f, sp.split('/').pop())
   const before = Number(sq(`select count(*) from render_jobs where status='completed'`))
+  const nBefore18 = Number(sq(`select count(*) from render_jobs where status<>'draft'`)); console.log('   trabajos no-borrador antes de exportar:', nBefore18, sq(`select string_agg(status, ',' order by created_at) from render_jobs where status<>'draft'`))
   await page.goto(base + '/editor/manual?job=' + jobPath()); await settle(page); await page.waitForTimeout(2500)
   await page.getByRole('button', { name: /^Exportar/ }).first().click(); await page.locator('#ed-export').waitFor({ state: 'visible' })
   await page.locator('#ed-export').getByLabel('Resolución', { exact: true }).first().selectOption('480'); await page.locator('#ed-export').getByLabel('Destino', { exact: true }).first().selectOption('library')
   await page.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
   const t0 = Date.now(); let st = ''
-  while (Date.now() - t0 < 120000) { st = sq(`select status from render_jobs where status<>'draft' order by created_at desc limit 1`); const n = Number(sq(`select count(*) from render_jobs where status<>'draft'`)); if (n >= 2 && st !== 'rendering') break; await page.waitForTimeout(1500) }
+  while (Date.now() - t0 < 120000) { const [stq, nq] = sq(`select (select status from render_jobs where status<>'draft' order by created_at desc limit 1)||'|'||(select count(*) from render_jobs where status<>'draft')`).split('|'); st = stq; const n = Number(nq); /* una sola consulta: status y recuento del mismo instante */ if (n > nBefore18 && st !== 'rendering') break; await page.waitForTimeout(1500) }
   const err = sq(`select coalesce(error,'-') from render_jobs where status<>'draft' order by created_at desc limit 1`)
   const completed = Number(sq(`select count(*) from render_jobs where status='completed'`))
   console.log('   con el medio ausente → estado:', st, '| error guardado:', err.slice(0, 140), '| completados:', before, '→', completed, '| errores de página:', page.errors.length)
   const panelTxt = (await page.locator('#ed-export').innerText()).replace(/\n/g, ' / ')
   console.log('   aviso en pantalla:', (/(no se pudo|no están|falló|Error|ya no existe)[^/]{0,160}/i.exec(panelTxt) ?? ['(ninguno visible)'])[0])
-  renameSync(hold, f)
+  if (st !== 'failed') { console.log('   DIAG render_jobs:', sq(`select string_agg(left(id::text,6)||':'||status||':'||to_char(created_at,'HH24:MI:SS.MS')||':'||coalesce(left(error,60),'-'), ' ; ' order by created_at) from render_jobs`)) }
+  if (st !== 'failed') { console.log('   DIAG tiempo de espera:', Math.round((Date.now() - t0) / 1000), 's | errores de página:', JSON.stringify(page.errors).slice(0, 500), '| diálogos:', JSON.stringify(page.dialogs).slice(0, 300), '| peticiones malas:', JSON.stringify((page.bad ?? []).slice(-6)), '| panel:', panelTxt.slice(0, 500)) }
+  restoreMedia(f, held)
   const failedAsReported = st === 'failed' && completed === before && /\[fase: [^·]+· id [0-9a-f]{6}\]/.test(err)
   return failedAsReported || { st, before, completed, err }
 })
