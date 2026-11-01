@@ -1,10 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../../components/studio-shell'
 import { RenderPanel } from '../../components/render-panel'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+import { fetchMediaBlob, MediaFetchError } from '@/lib/editor/fetch-media'
 import { assetLabel, audioDurationMs, signedUrl, type EditorAsset } from '@/lib/editor/client'
 import { detectShots, findSilences, musicBeats } from '@/lib/editor/auto-edit'
 import { frameDifferences, loudness } from '@/lib/editor/analyze'
@@ -36,6 +37,7 @@ export default function StyleEditPage() {
   const [hook, setHook] = useState('')
   const [progress, setProgress] = useState('')
   const [busy, setBusy] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
   const [error, setError] = useState('')
   const [result, setResult] = useState<{ jobId: string; comp: Composition; report: string[] } | null>(null)
 
@@ -92,6 +94,8 @@ export default function StyleEditPage() {
 
   async function build() {
     if (!profile || !order.length) return
+    if (abortRef.current) return
+    const ac = new AbortController(); abortRef.current = ac
     setBusy(true); setError(''); setResult(null)
     try {
       const materials: Material[] = []
@@ -100,7 +104,7 @@ export default function StyleEditPage() {
         if (!a) continue
         if (a.asset_type === 'image') { materials.push({ kind: 'image', assetId: id, label: assetLabel(a) }); continue }
         setProgress(`Analizando ${assetLabel(a)} (${n + 1}/${order.length})…`)
-        const blob = await (await fetch(await signedUrl(id))).blob()
+        const blob = await fetchMediaBlob(await signedUrl(id), { signal: ac.signal, label: assetLabel(a) })
         const needAudio = profile.pacing.removeSilences
         const au = needAudio ? await loudness(blob, 50) : { rms: [] as number[], durationMs: 0 }
         const fr = profile.pacing.cutOnShots ? await frameDifferences(blob, 4, p => setProgress(`Buscando cambios de plano en ${assetLabel(a)}… ${Math.round(p * 100)} %`)) : { diffs: [] as number[], durationMs: 0 }
@@ -112,7 +116,7 @@ export default function StyleEditPage() {
       let musicIn: { assetId: string; durationMs: number; beats?: number[] } | null = null
       if (musicId) {
         setProgress('Midiendo la música…')
-        if (profile.rhythm.syncToMusic) { const b = await (await fetch(await signedUrl(musicId))).blob(); const l = await loudness(b, 50); musicIn = { assetId: musicId, durationMs: l.durationMs, beats: musicBeats(l.rms, 50) } }
+        if (profile.rhythm.syncToMusic) { const b = await fetchMediaBlob(await signedUrl(musicId), { signal: ac.signal, label: 'la música' }); const l = await loudness(b, 50); musicIn = { assetId: musicId, durationMs: l.durationMs, beats: musicBeats(l.rms, 50) } }
         else musicIn = { assetId: musicId, durationMs: await audioDurationMs(musicId).catch(() => 60000) }
       }
       const voiceIn = voiceId ? { assetId: voiceId, durationMs: await audioDurationMs(voiceId).catch(() => 0) } : null
@@ -124,7 +128,7 @@ export default function StyleEditPage() {
       const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user.id, project_id: projectId, output_format: composition.format, status: 'draft', composition }).select('id').single()
       if (e) throw new Error(e.message)
       setResult({ jobId: (data as { id: string }).id, comp: composition, report })
-    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo montar.') } finally { setBusy(false); setProgress('') }
+    } catch (e) { if (e instanceof MediaFetchError && e.kind === 'cancelled') setError('Montaje cancelado. No se ha creado nada.'); else setError(e instanceof Error ? e.message : 'No se pudo montar.') } finally { abortRef.current = null; setBusy(false); setProgress('') }
   }
 
   return <StudioShell title="Editar con mi estilo" eyebrow="POSTPRODUCCIÓN" actions={<><Link className="buttonLink ghost" href="/editor/styles">Mis estilos</Link><Link className="buttonLink ghost" href="/editor/manual">Editor manual</Link></>}>
@@ -154,6 +158,7 @@ export default function StyleEditPage() {
           <label>Voz / narración<select aria-label="Voz" value={voiceId} onChange={e => setVoiceId(e.target.value)}><option value="">— Sin voz</option>{voices.map(a => <option key={a.id} value={a.id}>{assetLabel(a)}</option>)}</select></label>
           <label>Efecto en los cortes<select aria-label="Efecto en los cortes" value={sfxId} onChange={e => setSfxId(e.target.value)}><option value="">— Ninguno</option>{sfx.map(a => <option key={a.id} value={a.id}>{assetLabel(a)}</option>)}</select></label>
         </div>
+        {busy && <button type="button" className="ghost" onClick={() => abortRef.current?.abort()}>Cancelar</button>}
         <button type="button" disabled={busy || !order.length || !profile} onClick={() => void build()}>{busy && progress ? progress : 'Editar automáticamente con mi estilo'}</button>
       </section>
     </div>

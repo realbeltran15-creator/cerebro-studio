@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { rateLimited } from '@/lib/security/rate-limit'
 import { downloadObject, putObject, removeObject } from '@/lib/storage/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { withInflight } from '@/lib/inflight'
 import { routeStt, toSrt, toVtt, transcribe } from '@/lib/providers/transcribe'
 
 export const dynamic = 'force-dynamic'
@@ -27,8 +28,19 @@ export async function POST(request: Request) {
   if (!a?.storage_path || !a.project_id || !['voice', 'video', 'music', 'sfx', 'audio'].includes(a.asset_type)) return NextResponse.json({ error: 'Elige un audio o vídeo del proyecto.' }, { status: 400 })
 
   // One subtitle per source asset: return the existing one instead of paying/consuming quota again.
-  const { data: existing } = await supabase.from('assets').select('id,provenance').eq('owner_id', user.id).eq('asset_type', 'subtitle').eq('provenance->>sourceAssetId', a.id).maybeSingle()
-  if (existing) return NextResponse.json({ asset: existing, duplicate: true })
+  const { data: existing } = await supabase.from('assets').select('id,provenance').eq('owner_id', user.id).eq('asset_type', 'subtitle').eq('provenance->>sourceAssetId', a.id).order('created_at', { ascending: true }).limit(1)
+  const first = Array.isArray(existing) ? existing[0] : existing
+  if (first) return NextResponse.json({ asset: first, duplicate: true })
+
+  const run = await withInflight(`transcribe:${user.id}:${a.id}`, () => transcribeAndSave(supabase, user.id, { ...a, storage_path: a.storage_path!, project_id: a.project_id! }, language))
+  if (run.busy) return NextResponse.json({ error: 'Ya se está transcribiendo este archivo. Espera a que termine.' }, { status: 409 })
+  return run.value
+}
+
+type SourceAsset = { id: string; project_id: string | null; asset_type: string; storage_path: string | null; provenance: Record<string, unknown> | null }
+
+async function transcribeAndSave(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>, userId: string, a: SourceAsset & { storage_path: string; project_id: string }, language: string | undefined) {
+  const user = { id: userId }
 
   let file: Blob
   try { file = await downloadObject(supabase, user.id, a.storage_path) } catch { return NextResponse.json({ error: 'No se pudo leer el archivo.' }, { status: 502 }) }
