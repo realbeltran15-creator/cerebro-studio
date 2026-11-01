@@ -2,6 +2,7 @@
 
 import { parseComposition } from '@/lib/editor/composition'
 import { compositionAssetIds } from '@/lib/editor/client'
+import { fetchAllPages } from '@/lib/fetch-all'
 import Link from 'next/link'
 import { manualEditorHref } from '@/lib/editor/from-assets'
 import { useEffect, useMemo, useState } from 'react'
@@ -104,13 +105,13 @@ export default function LibraryPage() {
   // ---------- Safe deletion ----------
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; check: ReturnType<typeof deletionCheck> } | null>(null)
   async function referencesOf(a: LibraryAsset): Promise<AssetReferences> {
-    const [pubs, renders, jobs] = await Promise.all([
-      supabase.from('publication_jobs').select('id,platform,status,payload').limit(500),
+    // Every row is read (paged): a limit here could hide a montage that uses the file and let it be deleted.
+    const [pubsAll, renders, jobsAll] = await Promise.all([
+      fetchAllPages<{ id: string; platform: string; status: string; payload: Record<string, unknown> | null }>((f, t) => supabase.from('publication_jobs').select('id,platform,status,payload').order('id').range(f, t)),
       supabase.from('render_jobs').select('id').eq('output_asset_id', a.id).limit(20),
-      supabase.from('render_jobs').select('id,project_id,composition').not('composition', 'is', null).limit(1000),
+      fetchAllPages<{ id: string; project_id: string; composition: unknown }>((f, t) => supabase.from('render_jobs').select('id,project_id,composition').not('composition', 'is', null).order('id').range(f, t)),
     ])
-    if (pubs.error) throw new Error(pubs.error.message)
-    if (jobs.error) throw new Error(jobs.error.message)
+    const pubs = { data: pubsAll }, jobs = { data: jobsAll }
     // Montages of any project that use this file (a clip, a layer, a sound): the file is stored once and shared.
     const montages = ((jobs.data ?? []) as Array<{ id: string; project_id: string; composition: unknown }>).flatMap(j => {
       const c = parseComposition(j.composition)

@@ -8,6 +8,7 @@ export function sniffMedia(head: Uint8Array): SniffKind | null {
   if (head.length < 4) return null
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image'                 // JPEG
   if (head[0] === 0x89 && ascii(head, 1, 3) === 'PNG') return 'image'                          // PNG
+  if (ascii(head, 0, 4) === 'GIF8') return 'image'                                              // GIF (stock banks)
   if (ascii(head, 0, 4) === 'RIFF' && head.length >= 12) {
     const t = ascii(head, 8, 4)
     return t === 'WEBP' ? 'image' : t === 'WAVE' ? 'audio' : null

@@ -531,3 +531,12 @@ describe('prepareDailyShort', () => {
     expect((store.items[0] as { plan: { musicMissing: boolean } }).plan.musicMissing).toBe(true)
   })
 })
+
+import { isOneADayConflict } from '@/lib/shorts/factory'
+describe('isOneADayConflict', () => {
+  it('reconoce el índice único del día y no confunde otros fallos', () => {
+    expect(isOneADayConflict('duplicate key value violates unique constraint "shorts_factory_one_per_day"')).toBe(true)
+    expect(isOneADayConflict('code 23505')).toBe(true)
+    expect(isOneADayConflict('connection reset')).toBe(false)
+  })
+})

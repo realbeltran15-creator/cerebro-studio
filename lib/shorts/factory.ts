@@ -70,6 +70,9 @@ const IMAGE_STYLE = 'Fotografía realista vertical 9:16, iluminación cinematogr
 
 export class BudgetError extends Error {}
 
+/** True when a database error is the «one Short per day» unique index (code 23505) firing. */
+export const isOneADayConflict = (message: string) => /shorts_factory_one_per_day|duplicate key value|23505/i.test(message)
+
 /** Free models that reach the minimum quality, or why none does. Pure: availability is computed by the caller. */
 export function chooseFreeModels(cfg: ShortsConfig, models: CatalogModel[], availability: Record<string, Availability>, scenes: number): FreeModels {
   const reasons: string[] = []
@@ -250,6 +253,8 @@ export async function prepareDailyShort(cfg: ShortsConfig, deps: FactoryDeps, op
         return done({ status: 'prepared', itemId: item.id, projectId: project.id, renderJobId: job.id, topic: proposal.topic })
       } catch (e) {
         await deps.store.rollback(projectId).catch(() => undefined)
+        // Another run of the same day won the unique index (one Short per owner and day): not a failure, and what this run created is already undone.
+        if (isOneADayConflict(msg(e))) return done(skip('already_prepared_today', 'Otra ejecución preparó el Short de hoy al mismo tiempo; esta se ha deshecho sin dejar restos.'))
         return done(skip('storage_failed', `No se pudo guardar el Short: ${msg(e)}`))
       }
     } catch (e) {

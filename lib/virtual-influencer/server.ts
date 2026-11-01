@@ -89,20 +89,41 @@ export async function createJob(db: SupabaseClient, ownerId: string, personaId: 
 export type Generate = (job: { id: string; kind: ViJobKind; provider: string; prompt: string; inputs: Record<string, unknown> }) => Promise<GeneratedAsset>
 export type Persist = (asset: GeneratedAsset) => Promise<{ id: string }>
 
+export const STALE_RUNNING_MS = 10 * 60_000
+
+/** Adds `amount` to the persona's spend with optimistic concurrency, so two jobs reserving at once never lose one of the additions. */
+export async function reserveSpend(db: SupabaseClient, ownerId: string, personaId: string, amount: number) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const persona = await loadPersona(db, ownerId, personaId)
+    const { data } = await db.from('vi_personas').update({ spent_eur: Math.round((persona.spent_eur + amount) * 100) / 100, updated_at: new Date().toISOString() }).eq('id', personaId).eq('owner_id', ownerId).eq('spent_eur', persona.spent_eur).select('id')
+    if (data?.length) return
+  }
+  throw new ViError('No se pudo reservar el presupuesto (otra operación lo está modificando). Inténtalo de nuevo.', 409)
+}
+
 /**
  * Runs one queued job with an injected generator (real adapter or a test mock). The estimated cost
  * is reserved against the budget before calling the provider; the job ends in needs_review, never approved.
  */
 export async function dispatchJob(db: SupabaseClient, ownerId: string, jobId: string, generate: Generate, persist: Persist) {
-  const { data } = await db.from('vi_generation_jobs').select('id,persona_id,kind,provider,status,prompt,inputs,estimated_cost_eur').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
-  const job = data as { id: string; persona_id: string; kind: ViJobKind; provider: string; status: string; prompt: string | null; inputs: Record<string, unknown>; estimated_cost_eur: number | null } | null
+  const { data } = await db.from('vi_generation_jobs').select('id,persona_id,kind,provider,status,prompt,inputs,estimated_cost_eur,updated_at').eq('id', jobId).eq('owner_id', ownerId).maybeSingle()
+  const job = data as { id: string; persona_id: string; kind: ViJobKind; provider: string; status: string; prompt: string | null; inputs: Record<string, unknown>; estimated_cost_eur: number | null; updated_at?: string | null } | null
   if (!job) throw new ViError('Trabajo no encontrado.', 404)
+  // A job left «running» by a process that died would block forever. Past the limit it is closed as failed (never re-run: the provider may already have charged).
+  if (job.status === 'running' && job.updated_at && Date.now() - Date.parse(job.updated_at) > STALE_RUNNING_MS) {
+    await db.from('vi_generation_jobs').update({ status: 'failed', error: 'Interrumpido: el trabajo no respondió. Revisa el panel del proveedor antes de crear otro.', updated_at: new Date().toISOString() }).eq('id', jobId).eq('owner_id', ownerId).eq('status', 'running').eq('updated_at', job.updated_at)
+    throw new ViError('El trabajo se había quedado sin respuesta y se ha marcado como fallido. Crea uno nuevo.', 409)
+  }
   // Claim the job atomically so two requests cannot run (and pay for) it twice.
   const { data: claimed } = await db.from('vi_generation_jobs').update({ status: 'running', updated_at: new Date().toISOString() }).eq('id', jobId).eq('owner_id', ownerId).eq('status', 'queued').select('id')
   if (!claimed?.length) throw new ViError('El trabajo no está en cola (ya se ejecutó o está bloqueado).', 409)
-  const persona = await loadPersona(db, ownerId, job.persona_id)
   const reserve = Number(job.estimated_cost_eur ?? 0)
-  if (reserve > 0) await db.from('vi_personas').update({ spent_eur: Math.round((persona.spent_eur + reserve) * 100) / 100, updated_at: new Date().toISOString() }).eq('id', persona.id).eq('owner_id', ownerId)
+  try { if (reserve > 0) await reserveSpend(db, ownerId, job.persona_id, reserve) }
+  catch (e) {
+    // Nothing was sent to the provider: give the job back to the queue.
+    await db.from('vi_generation_jobs').update({ status: 'queued', updated_at: new Date().toISOString() }).eq('id', jobId).eq('owner_id', ownerId).eq('status', 'running')
+    throw e
+  }
   try {
     const asset = await generate({ id: job.id, kind: job.kind, provider: job.provider, prompt: job.prompt ?? '', inputs: job.inputs ?? {} })
     const saved = await persist(asset)

@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { classify, fingerprintKey } from '@/lib/ingest/files'
 import { compositionFromAssets, manualEditorHref, parseAssetIds } from '@/lib/editor/from-assets'
 import { compositionAssetIds } from '@/lib/editor/client'
-import { projectDurationMs } from '@/lib/editor/composition'
+import { parseComposition, projectDurationMs } from '@/lib/editor/composition'
 import { renderProject, type AssetFile } from '@/lib/render/engine'
 import { inspectMedia, sha256File } from '@/lib/qc/media'
 
@@ -74,6 +74,23 @@ d('importar -> material -> montaje -> MP4 -> original', () => {
     expect(derived.provenance.inputs).toEqual(expect.arrayContaining(ids))
     expect(await sha256File(out)).not.toBe(library.get('asset_clip_mp4')!.sha)
   }, 180_000)
+
+  it('cerrar y reabrir: el montaje guardado como JSON se vuelve a leer y produce el mismo vídeo fotograma a fotograma', async () => {
+    const ids = ['asset_clip_mp4', 'asset_foto_png', 'asset_tema_mp3']
+    const comp = compositionFromAssets({ title: 'Reapertura', format: '16:9', assets: ids.map(i => ({ id: i, asset_type: library.get(i)!.asset_type, durationMs: library.get(i)!.durationMs })) })
+    const assets: Record<string, AssetFile> = Object.fromEntries([...library.values()].map(a => [a.id, { path: a.file, kind: (a.asset_type === 'video' ? 'video' : a.asset_type === 'image' ? 'image' : 'audio') as AssetFile['kind'] }]))
+    const stored = JSON.stringify({ composition: comp })               // lo que se guardaría en render_jobs.composition (SIMULADO: sin BD)
+    const reopened = parseComposition(JSON.parse(stored).composition)
+    expect(reopened).not.toBeNull()
+    expect(JSON.stringify(reopened)).toBe(JSON.stringify(parseComposition(comp)))
+    await renderProject({ composition: comp, assets, output: f('a.mp4'), workDir: f('wa'), fps: 10, preset: 'ultrafast' })
+    await renderProject({ composition: reopened!, assets, output: f('b.mp4'), workDir: f('wb'), fps: 10, preset: 'ultrafast' })
+    const md5 = (file: string) => execFileSync('ffmpeg', ['-v', 'error', '-i', file, '-map', '0:v', '-f', 'framemd5', '-']).toString().split('\n').filter(l => l && !l.startsWith('#')).map(l => l.split(',').pop()!.trim())
+    const a = md5(f('a.mp4')), b = md5(f('b.mp4'))
+    expect(a.length).toBeGreaterThan(10)
+    expect(b).toEqual(a)
+    for (const m of library.values()) expect(await sha256File(m.file)).toBe(m.sha) // los originales siguen intactos tras dos exportaciones
+  }, 240_000)
 
   it('un material cuyo archivo desaparece falla con error claro y no deja salida', async () => {
     const comp = compositionFromAssets({ title: 'x', format: '16:9', assets: [{ id: 'gone', asset_type: 'video', durationMs: 3000 }] })

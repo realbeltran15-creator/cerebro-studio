@@ -151,3 +151,30 @@ describe('server flows (in-memory database)', () => {
     await expect(approveIdentityVersion(db, 'u1', 'p1', 'v2')).rejects.toThrow('borrador')
   })
 })
+
+describe('dispatchJob: gasto concurrente y trabajos colgados (doble de BD en memoria)', () => {
+  const persona = (over: Record<string, unknown> = {}) => ({ id: 'p1', owner_id: 'u1', project_id: 'proj', name: 'Nora', status: 'draft', bible: goodBible, current_identity_version: null, budget_eur: 0, spent_eur: 0, ...over })
+  it('dos trabajos de la misma persona reservando a la vez no pierden ninguna suma', async () => {
+    const db = fakeDb({
+      vi_personas: [persona({ budget_eur: 5, spent_eur: 0 })],
+      vi_generation_jobs: [1, 2, 3].map(n => ({ id: `j${n}`, owner_id: 'u1', persona_id: 'p1', kind: 'voice', provider: 'elevenlabs-voice', status: 'queued', prompt: 'x', inputs: {}, estimated_cost_eur: 0.1 })),
+    })
+    const gen = async () => ({ provider: 'mock', mimeType: 'audio/mpeg', uri: 'data:audio/mpeg;base64,AA==' })
+    await Promise.all(['j1', 'j2', 'j3'].map(id => dispatchJob(db, 'u1', id, gen, async () => ({ id: `a-${id}` }))))
+    expect(db.tables.vi_personas[0].spent_eur).toBeCloseTo(0.3, 5)
+  })
+  it('un trabajo «running» abandonado se cierra como fallido y no vuelve a ejecutarse', async () => {
+    const old = new Date(Date.now() - 20 * 60_000).toISOString()
+    const db = fakeDb({ vi_personas: [persona({ budget_eur: 1, spent_eur: 0.02 })], vi_generation_jobs: [{ id: 'j1', owner_id: 'u1', persona_id: 'p1', kind: 'voice', provider: 'elevenlabs-voice', status: 'running', prompt: 'x', inputs: {}, estimated_cost_eur: 0.02, updated_at: old }] })
+    const gen = vi.fn(async () => ({ provider: 'mock', mimeType: 'audio/mpeg', uri: 'data:audio/mpeg;base64,AA==' }))
+    await expect(dispatchJob(db, 'u1', 'j1', gen, async () => ({ id: 'x' }))).rejects.toThrow('sin respuesta')
+    expect(db.tables.vi_generation_jobs[0].status).toBe('failed')
+    expect(gen).not.toHaveBeenCalled()
+    expect(db.tables.vi_personas[0].spent_eur).toBe(0.02)
+  })
+  it('un trabajo «running» reciente NO se toca (puede estar en curso)', async () => {
+    const db = fakeDb({ vi_personas: [persona({ budget_eur: 1 })], vi_generation_jobs: [{ id: 'j1', owner_id: 'u1', persona_id: 'p1', kind: 'voice', provider: 'x', status: 'running', prompt: 'x', inputs: {}, estimated_cost_eur: 0, updated_at: new Date().toISOString() }] })
+    await expect(dispatchJob(db, 'u1', 'j1', async () => { throw new Error('no') }, async () => ({ id: 'x' }))).rejects.toThrow('no está en cola')
+    expect(db.tables.vi_generation_jobs[0].status).toBe('running')
+  })
+})
