@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { automationRunView, generationJobView, publicationView, shortItemView } from '@/lib/operation-presentation'
+import { automationRunView, generationJobView, publicationView, renderJobView, shortItemView } from '@/lib/operation-presentation'
 
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
 
@@ -68,5 +68,19 @@ describe('shortItemView', () => {
     expect(shortItemView({ status: 'published' }, null).state).toBe('uncertain')
     expect(shortItemView({ status: 'discarded' }).state).toBe('cancelled')
     expect(shortItemView({ status: 'failed' }).state).toBe('failed')
+  })
+})
+
+describe('renderJobView', () => {
+  it('completado solo es verificado con archivo guardado', () => {
+    expect(renderJobView({ status: 'completed', output_asset_id: 'a' }).state).toBe('verified')
+    expect(renderJobView({ status: 'completed', output_asset_id: null }).state).toBe('uncertain')
+  })
+  it('interrumpido es incierto; fallo, cancelado, en ejecución y en cola', () => {
+    expect(renderJobView({ status: 'failed', error: 'Interrumpido: la pestaña se cerró o recargó antes de terminar el render.' }).state).toBe('uncertain')
+    expect(renderJobView({ status: 'failed', error: 'ffmpeg falló' }).state).toBe('failed')
+    expect(renderJobView({ status: 'cancelled' }).state).toBe('cancelled')
+    expect(renderJobView({ status: 'rendering' }).state).toBe('running')
+    expect(renderJobView({ status: 'queued' }).state).toBe('prepared')
   })
 })

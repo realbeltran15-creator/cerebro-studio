@@ -60,3 +60,14 @@ export function shortItemView(item: { status: string }, pub?: { status?: string;
   if (item.status === 'published') return view(pub?.videoId ? 'verified' : 'uncertain', pub?.videoId ? 'Subido como privado' : 'Marcado como subido sin identificador del vídeo')
   return view(operationState(item.status))
 }
+
+/**
+ * Render / export job. `completed` is only verified when the output file is stored (output_asset_id); a render that finished
+ * without a stored file (saved to the user's disk, or not checked) is uncertain. An interrupted render is uncertain, not plain failed.
+ */
+export function renderJobView(job: { status: string; output_asset_id?: string | null; error?: string | null }, interruptedMessage = 'interrumpid'): OperationView {
+  if (job.status === 'failed' && (job.error ?? '').toLowerCase().includes(interruptedMessage)) return view('uncertain', 'Render interrumpido: comprueba si el archivo llegó a guardarse.')
+  if (job.status === 'completed') return view(job.output_asset_id ? 'verified' : 'uncertain', job.output_asset_id ? 'Archivo guardado en la Biblioteca' : 'Sin archivo en la Biblioteca: si lo guardaste en tu equipo, comprueba que se abre.')
+  if (job.status === 'queued') return view('prepared', 'En cola: aún no hay un proceso que lo ejecute')
+  return view(operationState(job.status))
+}

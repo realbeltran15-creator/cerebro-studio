@@ -1,5 +1,6 @@
 'use client'
 
+import { renderJobView, toneClass } from '@/lib/operation-presentation'
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StudioShell } from '../components/studio-shell'
@@ -406,7 +407,7 @@ const GENERATION_CONNECTED = false
     {renders.length > 0 && <>
       <h3 className="sectionTitle">Renders del proyecto</h3>
       <div className="grid">{renders.map(r => <article key={r.id}>
-        <small>{statusLabels[r.status] ?? r.status} · {r.output_format}{(() => { const c = parseComposition(r.composition); return c ? ` · ${draftSummary(c)} · ${fmt(totalDurationMs(c))}` : '' })()}</small>
+        <small>{(() => { const v = renderJobView(r); return <span className={toneClass(v.tone)} title={v.detail}>{v.label}</span> })()} · {r.output_format}{(() => { const c = parseComposition(r.composition); return c ? ` · ${draftSummary(c)} · ${fmt(totalDurationMs(c))}` : '' })()}</small>
         {r.url ? <video src={r.url} controls preload="metadata" style={{ width: '100%', borderRadius: 8, marginTop: 6 }} /> : r.error ? <p className="error small">{r.error}</p> : null}
         <p className="muted small">{new Date(r.created_at).toLocaleString()}</p>
       </article>)}</div>
