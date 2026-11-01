@@ -42,3 +42,11 @@ describe('accesibilidad estática', () => {
     expect(bad).toEqual([])
   })
 })
+
+describe('diálogos', () => {
+  it('todo role="dialog" mueve el foco al abrirse o es un panel fijo que ya lo gestiona', () => {
+    const bad: string[] = []
+    for (const { rel, src } of files) if (/role="dialog"/.test(src) && !/useDialogFocus|\.focus\(\)/.test(src)) bad.push(rel)
+    expect(bad).toEqual([])
+  })
+})

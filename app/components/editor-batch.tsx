@@ -1,9 +1,20 @@
 'use client'
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { MAX_TIMELINE_MS, TRANSITIONS, totalDurationMs, type Composition, type Transition, type TransitionAlign } from '@/lib/editor/composition'
 import { ALIGNS, type MediaKindOf } from '@/lib/editor/transition-window'
 import { cutsOf, describePlan, planBatchTransitions, selectedCutClipIds, type BatchOptions, type CutScope, type FailurePolicy, type TransitionSettings } from '@/lib/editor/batch-transitions'
 import { fmt, maxRepeats, planRepeat, type RepeatRequest } from '@/lib/editor/repeat'
+
+/** Al abrir un diálogo el foco entra en él (para que Escape y Tab funcionen con teclado) y al cerrarlo vuelve a donde estaba. */
+function useDialogFocus() {
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    ref.current?.focus()
+    return () => { previous?.focus?.() }
+  }, [])
+  return ref
+}
 
 const shell = { position: 'fixed' as const, right: 12, top: 72, zIndex: 80, width: 'min(560px, calc(100vw - 24px))', maxHeight: 'calc(100vh - 90px)', overflow: 'auto' as const, boxShadow: '0 18px 40px #000a' }
 const MIN = 60_000
@@ -44,6 +55,7 @@ function Strip({ comp, ids, joined }: { comp: Composition; ids: string[]; joined
 }
 
 export function RepeatDialog({ comp, clipId, kindOf, onApply, onClose }: { comp: Composition; clipId: string; kindOf: MediaKindOf; onApply: (next: Composition, message: string, ids: string[]) => void; onClose: () => void }) {
+  const dialogRef = useDialogFocus()
   const clip = comp.clips.find(k => k.id === clipId)
   const [mode, setMode] = useState<'count' | 'target'>('count')
   const [count, setCount] = useState(10)
@@ -60,7 +72,7 @@ export function RepeatDialog({ comp, clipId, kindOf, onApply, onClose }: { comp:
   if (!clip || !plan) return null
   const pending = !!clip.visualAssetId && kindOf(clip.visualAssetId) === 'video' && !clip.sourceDurationMs
   const lines = plan.plan ? describePlan(plan.plan, { action: 'apply', settings }).filter(l => !/duración del proyecto/i.test(l)) : []
-  return <section className="panel" role="dialog" aria-label="Repetir el clip" style={shell} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
+  return <section ref={dialogRef} tabIndex={-1} className="panel" role="dialog" aria-label="Repetir el clip" style={shell} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
     <div className="cardHead" style={{ marginBottom: 6 }}><h3>Repetir el clip</h3><button type="button" className="ghost small" onClick={onClose} aria-label="Cerrar repetir">✕</button></div>
     <p className="small muted">Las repeticiones son clips independientes que usan el mismo archivo (no se copia ningún vídeo), así que cada una se puede editar sola. Ctrl+Z deshace todo de una vez.</p>
     <fieldset className="small" style={{ border: 0, padding: 0, margin: '6px 0' }}>
@@ -99,6 +111,7 @@ export function RepeatDialog({ comp, clipId, kindOf, onApply, onClose }: { comp:
 }
 
 export function BatchTransitionsDialog({ comp, selectedClipIds, selectedTransition, kindOf, onApply, onClose }: { comp: Composition; selectedClipIds: string[]; selectedTransition: string | null; kindOf: MediaKindOf; onApply: (next: Composition, message: string) => void; onClose: () => void }) {
+  const dialogRef = useDialogFocus()
   const cuts = Math.max(0, comp.clips.length - 1)
   const [action, setAction] = useState<'apply' | 'remove'>('apply')
   const [kind, setKind] = useState<CutScope['kind']>('all')
@@ -115,7 +128,7 @@ export function BatchTransitionsDialog({ comp, selectedClipIds, selectedTransiti
   const lines = describePlan(plan, opts)
   const pending = action === 'apply' && plan.chosen.some(i => { const k = comp.clips[i]; return !!k.visualAssetId && kindOf(k.visualAssetId) === 'video' && !k.sourceDurationMs })
   const num = (v: number, set: (n: number) => void) => (e: React.ChangeEvent<HTMLInputElement>) => set(Math.min(Math.max(1, cuts), Math.max(1, Math.floor(Number(e.target.value) || 1))))
-  return <section className="panel" role="dialog" aria-label="Transiciones en lote" style={shell} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
+  return <section ref={dialogRef} tabIndex={-1} className="panel" role="dialog" aria-label="Transiciones en lote" style={shell} onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
     <div className="cardHead" style={{ marginBottom: 6 }}><h3>Transiciones en lote</h3><button type="button" className="ghost small" onClick={onClose} aria-label="Cerrar transiciones en lote">✕</button></div>
     <p className="small muted">Son las mismas transiciones reales entre dos clips (se mezclan fotogramas de los dos vídeos). Después puedes cambiar cualquiera sola. Nada se modifica hasta que confirmes.</p>
     <div className="field-row" style={{ flexWrap: 'wrap' }}>
