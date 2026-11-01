@@ -17,7 +17,7 @@ type Channel = { external_account_id: string; external_account_name: string | nu
 const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload'
 const statusLabels: Record<string, string> = { draft: 'Borrador', awaiting_approval: 'Pendiente de aprobación', approved: 'Aprobado · sin publicar', publishing: 'Publicando…', published: 'Publicado', failed: 'Falló', cancelled: 'Cancelado' }
 const privacyLabels = { private: 'Privado', unlisted: 'No listado', public: 'Público' } as const
-/** ISO → value for <input type="datetime-local"> in the browser's time zone. */
+/** ISO → value for campo datetime-local in the browser's time zone. */
 const toLocalInput = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) }
 const categories = [['27', 'Educación'], ['22', 'Gente y blogs'], ['24', 'Entretenimiento'], ['25', 'Noticias y política'], ['28', 'Ciencia y tecnología'], ['19', 'Viajes y eventos'], ['1', 'Cine y animación']] as const
 

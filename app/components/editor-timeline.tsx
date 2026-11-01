@@ -376,7 +376,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   // Subtitles: the captions the export burns in (clip narration or imported SRT/VTT), shown on their own row; click to go there.
   const cues = comp.subtitles ? compositionCues(comp) : []
   const subtitleRow = cues.length > 0 ? <div role="group" aria-label="Pista de Subtítulos" style={{ position: 'relative', height: 24, marginTop: 6, background: 'var(--bg-2)', borderRadius: 6 }}>
-    {cues.filter(q => onScreen(q.startMs, q.endMs - q.startMs)).slice(0, 2000).map((q, i) => <div key={i} title={`${q.text} · ${secs(q.startMs)}–${secs(q.endMs)} s`} onClick={() => p.onSeek(q.startMs)}
+    {cues.filter(q => onScreen(q.startMs, q.endMs - q.startMs)).slice(0, 2000).map((q, i) => <div key={i} title={`${q.text} · ${secs(q.startMs)}–${secs(q.endMs)} s`} onClick={() => p.onSeek(q.startMs)} role="button" tabIndex={0} aria-label={`Ir al subtítulo: ${q.text}`} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); p.onSeek(q.startMs) } }}
       style={{ position: 'absolute', left: q.startMs / 1000 * pxPerSec, width: Math.max(6, (q.endMs - q.startMs) / 1000 * pxPerSec - 1), top: 2, height: 20, background: '#5b4a8f', borderRadius: 4, color: '#fff', fontSize: 10, padding: '3px 5px', overflow: 'hidden', whiteSpace: 'nowrap', cursor: 'pointer' }}>{q.text}</div>)}
   </div> : null
 

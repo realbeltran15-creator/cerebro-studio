@@ -61,8 +61,8 @@ export default function LoginPage() {
         <h1>{mode === 'signup' ? 'Crear cuenta' : 'Iniciar sesión'}</h1>
         <p className="connectionStatus" role="status">{message}</p>
         <form className="authForm" onSubmit={submit}>
-          <input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Correo electrónico" />
-          <input type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={mode === 'signup' ? 6 : undefined} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" />
+          <input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Correo electrónico" placeholder="Correo electrónico" />
+          <input type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={mode === 'signup' ? 6 : undefined} required value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Contraseña" placeholder="Contraseña" />
           <button disabled={busy}>{busy ? 'Procesando…' : mode === 'signup' ? 'Crear cuenta' : 'Entrar'}</button>
         </form>
         <p className="authNote">{mode === 'signup' ? '¿Ya tienes una cuenta?' : '¿Todavía no tienes una cuenta?'}{' '}

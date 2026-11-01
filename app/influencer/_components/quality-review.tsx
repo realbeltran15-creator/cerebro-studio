@@ -78,7 +78,7 @@ export function QualityReview({ personaId, subjectType, subjectId, kind, mediaUr
           <span className="muted small" style={{ display: 'block' }}>{def.guidance}</span>
           {c.method === 'human' && def.automationNeeds && <span className="muted small" style={{ display: 'block' }}>Automatización pendiente: {def.automationNeeds} (no conectado).</span>}
           {c.note && <span className="small" style={{ display: 'block' }}>{c.note}</span>}
-          {c.method === 'human' && !readOnly && <input className="small" placeholder="Nota de la revisión" value={notes[c.id] ?? ''} onChange={e => setNotes(n => ({ ...n, [c.id]: e.target.value }))} style={{ marginTop: 6, width: '100%' }} />}
+          {c.method === 'human' && !readOnly && <input className="small" aria-label="Nota de la revisión" placeholder="Nota de la revisión" value={notes[c.id] ?? ''} onChange={e => setNotes(n => ({ ...n, [c.id]: e.target.value }))} style={{ marginTop: 6, width: '100%' }} />}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
           <span className={c.status === 'pass' ? 'pill ok' : c.status === 'fail' ? 'pill bad' : 'pill'}>{statusLabel[c.status]}</span>

@@ -44,10 +44,10 @@ export function SavedTab({ items, onChanged }: { items: Opportunity[]; onChanged
     </article>)}</div>
     <h3 className="sectionTitle">Registro manual</h3>
     <form className="marketForm" onSubmit={add}>
-      <input required value={title} onChange={e => setTitle(e.target.value)} placeholder="Oportunidad o tema" />
-      <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Consulta de origen" />
-      <input value={region} onChange={e => setRegion(e.target.value)} placeholder="País, ej. DE (Alemania)" />
-      <input value={language} onChange={e => setLanguage(e.target.value)} placeholder="Idioma, ej. de (alemán)" />
+      <input required value={title} onChange={e => setTitle(e.target.value)} aria-label="Oportunidad o tema" placeholder="Oportunidad o tema" />
+      <input value={query} onChange={e => setQuery(e.target.value)} aria-label="Consulta de origen" placeholder="Consulta de origen" />
+      <input value={region} onChange={e => setRegion(e.target.value)} aria-label="País, ej. DE (Alemania)" placeholder="País, ej. DE (Alemania)" />
+      <input value={language} onChange={e => setLanguage(e.target.value)} aria-label="Idioma, ej. de (alemán)" placeholder="Idioma, ej. de (alemán)" />
       <button disabled={busy}>{busy ? 'Guardando…' : '+ Registrar oportunidad'}</button>
     </form>
     {error && <p className="error" role="alert">{error}</p>}
