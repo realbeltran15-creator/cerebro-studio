@@ -1,4 +1,5 @@
 'use client'
+import { headerMatches } from './sniff'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { mediaDuration, type UploadKind } from '@/lib/media-upload'
 import { classify, contentFingerprint, fingerprintKey, formatBytes } from './files'
@@ -33,6 +34,10 @@ export async function ingestFile(db: SupabaseClient, file: File, o: {
   const c = classify(file.name, file.type)
   if (!c.ok) throw new IngestError(c.reason)
   const kind = o.kind ?? c.kind
+  // The declared type (MIME, extension) is set by whoever uploads; the first bytes say what the file really is.
+  const head = new Uint8Array(await file.slice(0, 32).arrayBuffer())
+  const declared = kind === 'image' ? 'image' : kind === 'video' ? 'video' : 'audio'
+  if (!headerMatches(head, declared)) throw new IngestError(`«${file.name}» no parece un archivo ${declared === 'image' ? 'de imagen' : declared === 'video' ? 'de vídeo' : 'de audio'} válido (el contenido no coincide con su extensión). No se ha subido.`)
   const { data: { session } } = await db.auth.getSession()
   if (!session) throw new IngestError('La sesión ha caducado: vuelve a entrar.')
   o.onStage?.('Comprobando…')

@@ -10,7 +10,7 @@ import { modelById } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
 import { rankModels } from '@/lib/providers/router'
 import { autoPick } from '@/lib/providers/auto-model'
-import { composeThumbnail, DEFAULT_TEXT_STYLE, saveComposedThumbnail, type TextPosition } from '@/lib/thumbnails/compose'
+import { composeThumbnail, DEFAULT_TEXT_STYLE, saveComposedThumbnail, type TextPosition, type ThumbAspect } from '@/lib/thumbnails/compose'
 
 type ModelLite = { id: string; modality: string; label: string; tier: CostTier; quality: number; ready: boolean; creditsExhausted?: boolean; capabilities: string[]; price: string }
 const AUTO = 'auto'
@@ -110,8 +110,10 @@ export default function ThumbnailsPage() {
     setError(''); setNotice(''); setConfirming(true)
   }
 
+  const generating = useRef(false)
   async function confirmGenerate() {
-    if (!chosen) return
+    if (!chosen || generating.current) return
+    generating.current = true
     setConfirming(false); setBusy(true); setNotice('Generando…')
     try {
       const r = await fetch('/api/studio/generate', {
@@ -125,13 +127,14 @@ export default function ThumbnailsPage() {
       await load(projectId)
     } catch (e) {
       if (alive.current) { setNotice(''); setError(e instanceof Error ? e.message : 'No se pudo generar la miniatura.') }
-    } finally { if (alive.current) setBusy(false) }
+    } finally { generating.current = false; if (alive.current) setBusy(false) }
   }
 
   // ---------- Text composed on top (free, exact words) ----------
   const [composing, setComposing] = useState<string | null>(null)
   const [composeText, setComposeText] = useState('')
   const [composePos, setComposePos] = useState<TextPosition>('bottom')
+  const [composeAspect, setComposeAspect] = useState<ThumbAspect>('16:9')
   const [composeBusy, setComposeBusy] = useState(false)
   async function compose(t: Thumb) {
     if (!t.url || !composeText.trim() || !projectId) return
@@ -140,8 +143,8 @@ export default function ThumbnailsPage() {
       const r = await fetch(t.url)
       if (!r.ok) throw new Error('No se pudo leer la imagen original.')
       const style = { ...DEFAULT_TEXT_STYLE, position: composePos }
-      const blob = await composeThumbnail(await r.blob(), composeText.trim(), style)
-      await saveComposedThumbnail(supabase, { projectId, original: t, text: composeText.trim(), style, blob })
+      const blob = await composeThumbnail(await r.blob(), composeText.trim(), style, composeAspect)
+      await saveComposedThumbnail(supabase, { projectId, original: t, text: composeText.trim(), style, aspect: composeAspect, blob })
       setComposing(null); setComposeText('')
       await load(projectId)
     } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo componer la miniatura.') } finally { setComposeBusy(false) }
@@ -213,6 +216,7 @@ export default function ThumbnailsPage() {
           {selected ? <span className="pill ok">Seleccionada</span> : <button type="button" className="ghost" onClick={() => void select(t.id)}>Seleccionar</button>}
           {composing === t.id ? <div className="small" style={{ marginTop: 8 }}>
             <label htmlFor={`ct-${t.id}`}>Texto encima (exacto, gratis)<input id={`ct-${t.id}`} value={composeText} maxLength={40} onChange={e => setComposeText(e.target.value)} placeholder="2–4 palabras" /></label>
+            <label htmlFor={`ca-${t.id}`}>Formato<select id={`ca-${t.id}`} value={composeAspect} onChange={e => setComposeAspect(e.target.value as ThumbAspect)}><option value="16:9">16:9 (YouTube)</option><option value="9:16">9:16 (Shorts/Reels)</option><option value="1:1">1:1 (cuadrado)</option></select></label>
             <label htmlFor={`cp-${t.id}`}>Posición<select id={`cp-${t.id}`} value={composePos} onChange={e => setComposePos(e.target.value as TextPosition)}><option value="bottom">Abajo</option><option value="top">Arriba</option><option value="center">Centro</option></select></label>
             <div className="pageActions"><button type="button" className="small" disabled={composeBusy || !composeText.trim() || !t.url} onClick={() => void compose(t)}>{composeBusy ? 'Componiendo…' : 'Crear copia con texto'}</button><button type="button" className="ghost small" onClick={() => setComposing(null)}>Cancelar</button></div>
           </div> : <button type="button" className="ghost small" style={{ marginLeft: 8 }} onClick={() => { setComposing(t.id); setComposeText(String(t.provenance?.overlayText ?? '')) }}>Añadir texto encima</button>}

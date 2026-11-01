@@ -19,3 +19,22 @@ describe('thumbnail text composed on top', () => {
     expect(t).toBeLessThan(c); expect(c).toBeLessThan(b); expect(b).toBeLessThan(THUMB_H)
   })
 })
+
+import { coverRect, THUMB_SIZES } from '@/lib/thumbnails/compose'
+import { describe as d2, expect as e2, it as i2 } from 'vitest'
+
+d2('coverRect y formatos', () => {
+  i2('cubre el lienzo sin deformar en 16:9, 9:16 y 1:1', () => {
+    for (const [asp, { w, h }] of Object.entries(THUMB_SIZES)) {
+      for (const [sw, sh] of [[1920, 1080], [1080, 1920], [1000, 1000], [4000, 300]]) {
+        const r = coverRect(sw, sh, w, h)
+        e2(r.x).toBeLessThanOrEqual(0.0001); e2(r.y).toBeLessThanOrEqual(0.0001)
+        e2(r.x + r.width).toBeGreaterThanOrEqual(w - 0.001); e2(r.y + r.height).toBeGreaterThanOrEqual(h - 0.001)
+        e2(Math.abs(r.width / r.height - sw / sh)).toBeLessThan(1e-9)
+        void asp
+      }
+    }
+  })
+  i2('rechaza imágenes sin tamaño', () => { e2(() => coverRect(0, 10, 100, 100)).toThrow() })
+  i2('tamaños de salida esperados', () => { e2(THUMB_SIZES['9:16']).toEqual({ w: 720, h: 1280 }) })
+})

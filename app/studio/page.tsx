@@ -310,7 +310,16 @@ export default function StudioPage() {
   const estimate = useMemo(() => modelById(model?.id ?? '')?.estimateUsd({ format, durationSeconds: duration ?? undefined, variants, quality, audio: audioOn, references: refIds.length }) ?? 0,
     [model, format, duration, variants, quality, audioOn, refIds.length])
 
+  const sendingRef = useRef<Set<string>>(new Set())
   async function generate() {
+    if (!model || !projectId || !prompt.trim()) return
+    // Same model + project + prompt already on its way: a second click must not create (and pay) a second generation.
+    const fingerprint = `${projectId}|${model.id}|${prompt.trim()}`
+    if (sendingRef.current.has(fingerprint)) return
+    sendingRef.current.add(fingerprint)
+    try { await generateOnce() } finally { sendingRef.current.delete(fingerprint) }
+  }
+  async function generateOnce() {
     if (!model || !projectId || !prompt.trim()) return
     setConfirming(false); setError(''); setNotice(''); setSuggestion(null)
     const key = crypto.randomUUID()
@@ -324,7 +333,9 @@ export default function StudioPage() {
       referenceAssetIds: model.references && refIds.length ? refIds.slice(0, model.references.max) : undefined, identity: identity.trim() || undefined, needsCommercial: needsCommercial || undefined,
       selection: strategy === 'manual' ? 'manual' : `${strategy}:q${minQuality}`, confirmedEstimateUsd: estimate,
     }
-    const r = await fetch('/api/studio/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    let r: Response
+    try { r = await fetch('/api/studio/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) }
+    catch { setJobs(list => list.map(x => x.key === key ? { ...x, state: 'failed', error: 'Sin conexión con el servidor.' } : x)); setError('Sin conexión con el servidor. No se sabe si la petición llegó: revisa la Biblioteca antes de reintentar para no pagar dos veces.'); return }
     const j = await r.json().catch(() => ({})) as { error?: string; assets?: Asset[]; job?: { token: string; recoverable?: boolean }; recommendation?: Suggestion }
     if (j.recommendation) setSuggestion(j.recommendation)
     if (!r.ok && r.status !== 202) { setJobs(list => list.map(x => x.key === key ? { ...x, state: 'failed', error: j.error ?? 'Error' } : x)); setError(j.error ?? 'No se pudo generar.'); return }

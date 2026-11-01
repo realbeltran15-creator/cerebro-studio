@@ -15,7 +15,7 @@
  *  - Everything is joined without re-encoding.
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs, createWriteStream, existsSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -62,6 +62,8 @@ const ABORT = () => new DOMException('Cancelado', 'AbortError')
 
 export async function renderProject(o: RenderOptions) {
   const started = Date.now()
+  /** Unique per attempt: two renders that share an output or a work folder never write the same temporary file. */
+  const uid = `${process.pid}-${randomBytes(4).toString('hex')}`
   const ffmpeg = o.ffmpeg ?? 'ffmpeg', ffprobe = o.ffprobe ?? 'ffprobe'
   const c = o.composition
   const plan = exportPlan(c)
@@ -158,7 +160,7 @@ export async function renderProject(o: RenderOptions) {
     const s = segs[si]
     if (doneSegs.has(s.hash)) { doneFrames += s.to - s.from; o.onEvent?.({ phase: 'video', doneFrames, totalFrames: total, segment: si + 1, segments: segs.length, fps: 0 }); continue }
     if (o.signal?.aborted) throw ABORT()
-    const tmp = `${segFile(s.hash)}.part`
+    const tmp = `${segFile(s.hash)}.${uid}.part`
     const enc = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${W}x${H}`, '-r', String(fps), '-i', '-',
       '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p', '-c:v', 'libx264', '-preset', o.preset ?? 'veryfast', '-crf', String(o.crf ?? 20),
       '-maxrate', String(plan.wantedBps), '-bufsize', String(plan.wantedBps * 2), '-g', String(fps * 2), '-keyint_min', String(fps * 2), '-sc_threshold', '0', '-bf', '2',
@@ -225,11 +227,13 @@ export async function renderProject(o: RenderOptions) {
 
   // ---- Join without re-encoding.
   o.onEvent?.({ phase: 'mux' })
-  const list = path.join(o.workDir, 'concat.txt')
+  const list = path.join(o.workDir, `concat-${uid}.txt`)
   await fs.writeFile(list, segs.map(s => `file '${segFile(s.hash).replace(/'/g, "'\\''")}'`).join('\n'))
-  const tmpOut = `${path.resolve(o.output)}.part.mp4`
-  await execFileP(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-i', audioFile, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'copy', '-movflags', '+faststart', tmpOut], { maxBuffer: 16 << 20 })
+  const tmpOut = `${path.resolve(o.output)}.${uid}.part.mp4`
+  try {
+    await execFileP(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-i', audioFile, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'copy', '-movflags', '+faststart', tmpOut], { maxBuffer: 16 << 20 })
   await fs.rename(tmpOut, path.resolve(o.output))
+  } catch (e) { await fs.rm(tmpOut, { force: true }).catch(() => undefined); throw e } finally { await fs.rm(list, { force: true }).catch(() => undefined) }
   const seconds = (Date.now() - started) / 1000
   o.onEvent?.({ phase: 'done', output: o.output, seconds })
   return { output: o.output, seconds, width: W, height: H, fps, segments: segs.length, unique: uniqueHashes.length, durationMs: (f1 - f0) * frameMs }
@@ -345,7 +349,7 @@ async function mixAudio(p: { c: Composition; o: RenderOptions; kindOf: KindOf; p
   const windows = voiceWindows(voices)
   const info = new Map<string, Probe | null>()
   for (const v of voices) if (!info.has(v.assetId)) info.set(v.assetId, o.assets[v.assetId] ? await p.probe(v.assetId).catch(() => null) : null)
-  const tmp = `${p.out}.part`
+  const tmp = `${p.out}.${randomBytes(4).toString('hex')}.part`
   const enc = spawn(p.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'f32le', '-ar', String(SR), '-ac', '2', '-i', '-', '-c:a', 'aac', '-b:a', `${Math.round(exportPlan(c).audioBps / 1000)}k`, '-f', 'ipod', tmp], { stdio: ['pipe', 'ignore', 'pipe'] })
   let err = ''
   enc.stderr!.on('data', d => { err += String(d) })

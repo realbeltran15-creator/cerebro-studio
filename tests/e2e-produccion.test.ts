@@ -149,6 +149,26 @@ d('E2E producción local (FFmpeg real)', () => {
     for (const n of [1, 2]) { const qc = await inspectMedia(f(`par${n}.mp4`)); expect(qc.ok).toBe(true) }
   }, 240_000)
 
+  it('Dos exportaciones al MISMO destino y misma carpeta de trabajo: archivo final válido y sin restos', async () => {
+    const comp = buildComp(); const out = f('mismo.mp4'); const work = f('w-mismo')
+    await Promise.all([1, 2].map(() => renderProject({ composition: comp, assets, output: out, workDir: work, fps: 10, preset: 'ultrafast' })))
+    const qc = await inspectMedia(out); expect(qc.ok).toBe(true)
+    if (qc.ok) expect(qc.info.framesDecoded).toBe(qc.info.framesDeclared)
+    const { readdirSync } = await import('node:fs')
+    expect(readdirSync(dir).filter(n => n.startsWith('mismo.mp4.') && n.endsWith('.part.mp4'))).toEqual([])
+  }, 240_000)
+
+  it('Un render fallido o cancelado nunca sustituye un MP4 final válido existente', async () => {
+    const comp = buildComp(); const out = f('valido.mp4')
+    await renderProject({ composition: comp, assets, output: out, workDir: f('w-v1'), fps: 10, preset: 'ultrafast' })
+    const before = readFileSync(out)
+    await expect(renderProject({ composition: comp, assets, output: out, workDir: f('w-v2'), fps: 10, preset: 'ultrafast', ffmpeg: '/bin/false' })).rejects.toThrow()
+    const ac = new AbortController(); ac.abort()
+    await expect(renderProject({ composition: comp, assets, output: out, workDir: f('w-v3'), fps: 10, signal: ac.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(readFileSync(out).equals(before)).toBe(true)
+    const qc = await inspectMedia(out); expect(qc.ok).toBe(true)
+  }, 240_000)
+
   it('Biblioteca (SIMULADA): un render incompleto no figura como terminado', async () => {
     const { incompleteRenderNotice } = await import('@/lib/editor/composition')
     const comp = buildComp(); const incomplete = { ...comp, clips: comp.clips.map((c, i) => (i === 1 ? { ...c, visualAssetId: null } : c)) }
