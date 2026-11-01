@@ -2838,7 +2838,8 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   // Edit one transition on its own: the others must not change.
   const names = async () => Object.fromEntries((await chips().evaluateAll(els => els.map(e => e.getAttribute('aria-label')))).map(n => { const m = /^Transición (.*) entre el clip (\d+) y el/.exec(n); return [m[2], m[1]] }))
   const before = await names()
-  await chips().nth(1).click()
+  // The timeline only draws the cuts on screen (3 here), so edit the FIRST one: the paste target two cuts later must be drawn too.
+  await chips().nth(0).click()
   await page.getByLabel('Tipo de transición').selectOption('wipe')
   await page.waitForTimeout(300)
   const after = await names()
@@ -2849,6 +2850,9 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.getByRole('button', { name: new RegExp(`^Transición .* entre el clip ${wipeAt} y el`) }).click(); await page.keyboard.press('Control+c')
   const nCopy = await page.locator('body').innerText().then(x => x.match(/Transición (copiada|pegada)[^\n]*/g))
   const target = String(Number(wipeAt) + 2)
+  // The cuts are far apart at this zoom: zoom the timeline out so the paste target (two cuts later) is drawn.
+  await page.getByLabel(/^Zoom horizontal/).evaluate(el => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(el, '20'); el.dispatchEvent(new Event('input', { bubbles: true })) })
+  await page.waitForTimeout(300)
   await page.getByRole('button', { name: new RegExp(`^Transición .* entre el clip ${target} y el`) }).click(); await page.keyboard.press('Control+v'); await page.waitForTimeout(300)
   const pasted = await names()
   check('copy / paste: Ctrl+C then Ctrl+V gives another cut the same transition, the cuts in between are untouched', /Cortinilla|Barrido/i.test(pasted[target]) && !/Cortinilla|Barrido/i.test(pasted[String(Number(wipeAt) + 1)]), { pasted, nCopy, wipeAt, target })
