@@ -35,7 +35,10 @@ import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
 import { makeRoomForTransition } from '@/lib/editor/transition-room'
-import { RepeatDialog, BatchTransitionsDialog } from '../../components/editor-batch'
+import dynamic from 'next/dynamic'
+// Solo se abren al pedirlos: no hace falta descargarlos al entrar en el editor.
+const RepeatDialog = dynamic(() => import('../../components/editor-batch').then(m => m.RepeatDialog))
+const BatchTransitionsDialog = dynamic(() => import('../../components/editor-batch').then(m => m.BatchTransitionsDialog))
 import { zoomAfterWheel, wheelDelta, scrollForAnchor, sliderAnchor, clampZoom } from '@/lib/editor/timeline-zoom'
 import { ALIGNS, alignOf, transitionHandles, transitionPatch, transitionWindow } from '@/lib/editor/transition-window'
 import { BLENDS } from '@/lib/editor/motion'
