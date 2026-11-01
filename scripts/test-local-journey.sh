@@ -4,7 +4,7 @@
 set -uo pipefail
 BIN=$(ls -d /usr/lib/postgresql/*/bin | tail -1); ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PGRST=${POSTGREST_BIN:-/tmp/postgrest-12.2.3}; [ -x "$PGRST" ] || { echo "falta el binario PostgREST ($PGRST)"; exit 2; }
-DIR=$(mktemp -d /tmp/pgjourney.XXXXXX); chown postgres "$DIR"; chmod 755 "$DIR"; PORT=54362; HTTP=54363; SECRET=test-only-secret-$(head -c 24 /dev/urandom | base64 | tr -dc a-z0-9)-xxxxxxxxxxxxxxxx
+DIR=$(mktemp -d /tmp/pgjourney.XXXXXX); chown postgres "$DIR"; chmod 755 "$DIR"; PORT=54362; HTTP=54363; SECRET=${JOURNEY_SECRET:-test-only-secret-$(head -c 24 /dev/urandom | base64 | tr -dc a-z0-9)-xxxxxxxxxxxxxxxx}
 run() { su postgres -s /bin/bash -c "$*"; }
 cleanup() { [ -n "${PID:-}" ] && kill $PID 2>/dev/null; run "$BIN/pg_ctl -D $DIR/data stop -m immediate >/dev/null 2>&1 || true"; rm -rf "$DIR"; }
 trap cleanup EXIT

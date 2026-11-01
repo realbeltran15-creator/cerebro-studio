@@ -65,7 +65,7 @@ export class EditorPlayer {
   private raf = 0
   private drawQueued = false
   private destroyed = false
-  private exporting: { onFrame?: (t: number) => void; onStall?: (stalled: boolean) => void; done: () => void } | null = null
+  private exporting: { onFrame?: (t: number, workMs: number) => void; onStall?: (stalled: boolean) => void; done: () => void } | null = null
   private videos = new Map<string, Slot>()
   /** Reversed clips: no <video> can play backwards, so their pictures come from windows decoded with WebCodecs (reverse-frames.ts). */
   private revs = new Map<string, { assetId: string; forward: boolean; rr: ReverseFrameReader | null; durationSec: number; failed: boolean; lastUsed: number }>()
@@ -163,7 +163,7 @@ export class EditorPlayer {
    * Plays the whole montage once from the start at normal speed, for recording. Resolves at the end (or when aborted).
    * While a clip is still loading the clock stops and `onStall(true)` lets the recorder pause, so the file never skips or desyncs.
    */
-  async playForExport(opts: { onFrame?: (t: number) => void; onStall?: (stalled: boolean) => void; signal?: AbortSignal }) {
+  async playForExport(opts: { onFrame?: (t: number, workMs: number) => void; onStall?: (stalled: boolean) => void; signal?: AbortSignal }) {
     if (!this.comp) return
     this.rate = 1; this.loopRange = null
     this.seek(0)
@@ -210,6 +210,7 @@ export class EditorPlayer {
 
   private tick = () => {
     if (!this.playing || this.destroyed || !this.comp) return
+    const tickStart = performance.now()
     let t = this.clock()
     const end = this.loopRange && !this.exporting ? this.loopRange.endMs : this.durationMs
     if (t >= end) {
@@ -248,7 +249,7 @@ export class EditorPlayer {
     if (!this.waiting) {
       this.syncAudio(t)
       this.draw(ops)
-      this.exporting?.onFrame?.(t)
+      this.exporting?.onFrame?.(t, performance.now() - tickStart)
     }
     this.init.onTime?.(t)
     this.evict()

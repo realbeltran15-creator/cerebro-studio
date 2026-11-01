@@ -23,9 +23,10 @@
     "test:ticket": "node scripts/ticket-test.mjs",
     "queue:simulate": "node scripts/queue-simulate.mjs",
     "test:queue-sql": "bash scripts/test-job-queue-sql.sh",
-    "test:schema": "bash scripts/test-schema-drift.sh baseline && bash scripts/test-pending-on-baseline.sh",
+    "test:schema": "bash scripts/check-baseline-clean.sh && bash scripts/test-schema-drift.sh baseline && bash scripts/test-pending-on-baseline.sh",
     "test:journey": "bash scripts/test-local-journey.sh",
-    "test:journey:ui": "JOURNEY_SCRIPT=local-ui-smoke.mjs bash scripts/test-local-journey.sh"
+    "test:journey:ui": "JOURNEY_SCRIPT=local-ui-smoke.mjs bash scripts/test-local-journey.sh",
+    "test:e2e:editor": "JOURNEY_SCRIPT=local-e2e-editor.mjs bash scripts/test-local-journey.sh"
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "1.61.3",

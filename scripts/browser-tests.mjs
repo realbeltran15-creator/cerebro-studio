@@ -1834,7 +1834,14 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   for (const which of ['fast', 'realtime']) {
     const r = await page.evaluate(w => window.runVerify(w), which)
     check(`verify (${which}): the preview shows each layer where expected (main video, overlay video, photos)`, r.preview.every((c, i) => !want[i] || near(c, want[i], 70)), r.preview)
-    check(`verify (${which}): the export shows the same picture as the preview at the same instants (also mid-transition)`, r.exported.every((c, i) => near(c, r.preview[i], 60)), { exported: r.exported, preview: r.preview })
+    // The fast export is exact by construction: always strict. The real-time export follows the wall clock, so on a computer that cannot keep up it
+    // may differ from the preview; the contract is then «equal, OR the meter reported that it could not keep up» (never silently different).
+    const same = r.exported.every((c, i) => near(c, r.preview[i], 60))
+    if (which === 'fast') check('verify (fast): the export shows the same picture as the preview at the same instants (also mid-transition)', same, { exported: r.exported, preview: r.preview })
+    else {
+      check('verify (realtime): the export shows the same picture as the preview, or the fidelity meter says it could not keep up (never silently different)', same || r.quality?.degraded === true, { exported: r.exported, preview: r.preview, quality: r.quality })
+      if (!same) console.log('  note: real-time export differed from the preview and was flagged degraded:', JSON.stringify(r.quality))
+    }
     check(`verify (${which}): length and size are the project's (13 s, 1280×720)`, (r.duration === null || Math.abs(r.duration - 13) < 0.6) && r.size[0] === 1280 && r.size[1] === 720, [r.duration, r.size, r.mime])
     const a = r.audio
     check(`verify (${which}): both music tracks, voice, effect and the two videos' sound are in the export, each in its place`, a.music1_before_voice > 0.01 && a.voice > 0.01 && a.voice_after < a.voice * 0.1 && a.music2 > 0.01 && a.music2_before < a.music2 * 0.1 && a.sfx > 0.01 && a.sfx_before < a.sfx * 0.1 && a.video_main > 0.005 && a.video_main_after < a.video_main * 0.2 && a.video_overlay > 0.005 && a.video_overlay_before < a.video_overlay * 0.2, a)

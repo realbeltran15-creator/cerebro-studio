@@ -11,6 +11,7 @@ import http from 'http'
 import os from 'os'
 import path from 'path'
 const root = path.resolve(new URL('..', import.meta.url).pathname), dir = path.join(root, 'tests/browser')
+const THROTTLE = Number(process.env.THROTTLE ?? 1)
 const N = Number(process.argv[2] ?? 10), LOAD = Number(process.argv[3] ?? 0), MODE = process.argv[4] ?? 'realtime'
 const chrome = process.env.CHROMIUM_PATH || (() => { const b = '/opt/pw-browsers'; const d = existsSync(b) && readdirSync(b).find(n => /^chromium-\d+/.test(n)); return d && path.join(b, d, 'chrome-linux/chrome') })()
 const code = (await build({ entryPoints: [path.join(dir, 'verify-project.harness.ts')], bundle: true, write: false, format: 'iife', jsx: 'automatic', logLevel: 'error', define: { 'process.env.NODE_ENV': '"development"' }, alias: { '@': root } })).outputFiles[0].text
@@ -21,15 +22,17 @@ process.on('exit', () => burners.forEach(b => b.kill()))
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(1))
 const browser = await chromium.launch({ executablePath: chrome, args: ['--autoplay-policy=no-user-gesture-required'] })
 const near = (a, b, tol = 60) => a.every((v, i) => Math.abs(v - b[i]) <= tol)
-let ok = 0; const bad = [], ms = []
+const works = []; let ok = 0, silent = 0, flaggedButEqual = 0; const bad = [], ms = []
 for (let i = 1; i <= N; i++) {
   const page = await browser.newPage(); await page.goto('http://127.0.0.1:8817/'); await page.waitForFunction(() => typeof window.runVerify === 'function')
   // SEQ=1 reproduces the order used inside the suite: playback check, then the fast export, then the real-time export on the SAME page.
   if (process.env.SEQ) { await page.evaluate(() => window.runPlayback()); await page.evaluate(() => window.runVerify('fast')) }
+  const cdp = THROTTLE > 1 ? await page.context().newCDPSession(page) : null
+  if (cdp) await cdp.send('Emulation.setCPUThrottlingRate', { rate: THROTTLE })
   const t = Date.now(), r = await page.evaluate(w => window.runVerify(w), MODE); ms.push(Date.now() - t); await page.close()
   const diffs = r.exported.map((c, k) => near(c, r.preview[k]) ? null : k).filter(k => k !== null)
-  diffs.length ? bad.push(`#${i}: instants ${diffs.join(',')} (load ${os.loadavg()[0].toFixed(1)})`) : ok++
+  if (diffs.length) { bad.push(`#${i}: instants ${diffs.join(',')} flagged=${r.quality?.degraded === true} lateFrames=${r.quality?.lateFrames} maxGap=${r.quality?.maxGapMs} maxWork=${r.quality?.maxWorkMs} slow=${r.quality?.slowFrames}`); if (!r.quality?.degraded && MODE === 'realtime') silent++ } else { ok++; if (r.quality?.degraded) flaggedButEqual++; works.push(`${r.quality?.maxWorkMs}/${r.quality?.slowFrames}`) }
 }
 burners.forEach(b => b.kill()); await browser.close(); server.close()
-console.log('RESULT ' + JSON.stringify({ mode: MODE, iterations: N, loadWorkers: LOAD, cpus: os.cpus().length, ok, fail: N - ok, medianMs: [...ms].sort((a, b) => a - b)[Math.floor(N / 2)], bad }))
+console.log('RESULT ' + JSON.stringify({ mode: MODE, iterations: N, loadWorkers: LOAD, cpuThrottle: THROTTLE, cpus: os.cpus().length, ok, fail: N - ok, silentMismatches: silent, okRunsMaxWorkSlow: works, flaggedButEqual, medianMs: [...ms].sort((a, b) => a - b)[Math.floor(N / 2)], bad }))
 process.exit(0)

@@ -137,7 +137,7 @@ window.runVerify = async (which) => {
   const urls = blobResolver(m)
   const canvas = document.createElement('canvas')
   const t0 = performance.now()
-  let res: { blob: Blob | null; mimeType: string | null; durationMs: number }
+  let res: { blob: Blob | null; mimeType: string | null; durationMs: number; quality?: import('@/lib/editor/frame-quality').FrameQuality }
   try {
     res = which === 'fast'
       ? await fastExport({ composition: project(), resolveUrl: urls.resolve, kindOf, canvas })
@@ -146,7 +146,7 @@ window.runVerify = async (which) => {
   const seconds = (performance.now() - t0) / 1000
   const frames = await framesOf(res.blob!)
   const audio = await audioOf(res.blob!)
-  return { preview, exported: frames.out, duration: frames.duration, size: frames.size, mime: res.mimeType, seconds, audio }
+  return { preview, exported: frames.out, duration: frames.duration, size: frames.size, mime: res.mimeType, seconds, audio, quality: res.quality ?? null }
 }
 
 window.runPlayback = async () => {

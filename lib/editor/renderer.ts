@@ -3,6 +3,7 @@
  * the canvas and the mix with MediaRecorder into MP4 (WebM where the browser cannot record MP4). What the preview shows is what is exported.
  * Runs in real time: the tab must stay visible. When a clip is still loading the recording pauses instead of skipping.
  */
+import { createFrameQuality, type FrameQuality } from './frame-quality'
 import { exportPlan, projectDurationMs, type Composition } from './composition'
 import { EditorPlayer, blobResolver } from './player'
 import type { KindOf } from './scene'
@@ -25,7 +26,7 @@ export type RenderOptions = {
   signal?: AbortSignal
 }
 
-export type RenderResult = { blob: Blob | null; mimeType: string | null; durationMs: number }
+export type RenderResult = { blob: Blob | null; mimeType: string | null; durationMs: number; /** Real-time recordings only: how many frames were drawn on time (see frame-quality.ts). */ quality?: FrameQuality }
 
 export function recordingSupported() {
   return typeof MediaRecorder !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function'
@@ -60,6 +61,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
   let recorder: MediaRecorder | null = null
   let videoTrack: CanvasCaptureMediaStreamTrack | null = null
   const chunks: Blob[] = []
+  const quality = createFrameQuality(30)
   const mimeType = record ? pickMimeType() : null
   try {
     if (record) {
@@ -77,7 +79,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
     recorder?.start(1000)
     await player.playForExport({
       signal,
-      onFrame: t => { videoTrack?.requestFrame(); onProgress?.(t, total) },
+      onFrame: (t, workMs) => { videoTrack?.requestFrame(); quality.push(t, workMs); onProgress?.(t, total) },
       onStall: stalled => { if (!recorder) return; if (stalled && recorder.state === 'recording') recorder.pause(); else if (!stalled && recorder.state === 'paused') recorder.resume() },
     })
     if (failure && !signal?.aborted) throw new Error(failure)
@@ -89,7 +91,7 @@ export async function renderComposition(opts: RenderOptions): Promise<RenderResu
       blob = signal?.aborted ? null : await ensureWebmDuration(new Blob(chunks, { type: (recorder.mimeType || mimeType || 'video/webm').split(';')[0] }), total)
     }
     onProgress?.(total, total)
-    return { blob, mimeType: recorder?.mimeType || mimeType, durationMs: total }
+    return { blob, mimeType: recorder?.mimeType || mimeType, durationMs: total, ...(record ? { quality: quality.summary() } : {}) }
   } finally {
     if (recorder && recorder.state !== 'inactive') try { recorder.stop() } catch { /* already stopped */ }
     player.destroy()

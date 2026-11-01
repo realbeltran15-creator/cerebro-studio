@@ -11,6 +11,7 @@ import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { transcodeConfigFromEnv, transcodeToCompatibleMp4 } from '@/lib/editor/transcode'
 import { nativeSupport, transcodeWithWebCodecs, type NativeSupport } from '@/lib/editor/webcodecs-transcode'
 import { pickMimeType, recordingSupported, renderComposition } from '@/lib/editor/renderer'
+import { fidelityWarning } from '@/lib/editor/frame-quality'
 import { exportStageOf, fastExport, fastExportSupported, FastExportUnsupported, type ExportStage } from '@/lib/editor/fast-export'
 import { checkingSink, headOfComposition } from '@/lib/editor/export-selftest'
 import { browserFreeBytes, createExportTemp, exportFootprint, fileNameFor, folderSaveSupported, pickSaveFile, removeExportTemp, spaceAdvice, startStorageProbe, tempStorageSupported, type DriveMode, type ExportWhere } from '@/lib/editor/export-destination'
@@ -68,6 +69,8 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const [error, setError] = useState('')
   // What the export guard noticed (tab hidden, progress stopped…), shown under the status.
   const [notice, setNotice] = useState('')
+  /** Set when a real-time recording could not draw every frame on time (measured, not guessed). Cleared at the start of each export. */
+  const [fidelity, setFidelity] = useState('')
   const [download, setDownload] = useState<{ url: string; name: string } | null>(null)
   // The last saved render, kept so it can be converted to an Instagram-ready MP4 without rendering again.
   const [saved, setSaved] = useState<{ blob: Blob; assetId: string; mimeType: string } | null>(null)
@@ -239,10 +242,10 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     abortReason.current = 'user'
     let jobId: string | null = null
     let guard: ExportGuard | null = null
-    const exportId = Math.random().toString(36).slice(2, 8)
+    const exportId = Array.from(crypto.getRandomValues(new Uint8Array(3)), b => b.toString(16).padStart(2, '0')).join('')
     let lastStage: ExportStage = 'preparar'
     let lastLive = '', lastLog = 0
-    setNotice('')
+    setNotice(''); setFidelity('')
     try {
       if (record) await beforeRender?.()
       // Media is streamed from signed URLs while it records (nothing is downloaded up front, so long montages fit in memory).
@@ -314,6 +317,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
           result = await realtime()
         }
       } else result = await realtime()
+      if (record) setFidelity(fidelityWarning(result.quality))
       if (controller.signal.aborted) {
         const reason = (abortReason.current as string) === 'unmount' ? 'Cancelado: se salió del editor antes de terminar el render.' : 'Cancelado por el usuario.'
         if (jobId) await supabase.from('render_jobs').update({ status: 'cancelled', error: reason, updated_at: new Date().toISOString() }).eq('id', jobId)
@@ -508,6 +512,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
       </select></label>}
       <span className="small muted" aria-label="Estimación">{width}×{height} · {plan.fps} fps · {(plan.videoBps / 1e6).toLocaleString('es-ES', { maximumFractionDigits: 1 })} Mbit/s · ~{Math.max(0.1, Math.round(plan.estimatedBytes / 1048576 * 10) / 10)} MB</span>
     </div>}
+    {!previewOnly && (exp.mode ?? 'fast') === 'realtime' && <p className="muted small">El modo tiempo real graba lo que se ve mientras se reproduce: si el equipo va justo, la imagen puede ir a saltos y diferir de la vista previa (se mide y se avisa al terminar). El modo rápido dibuja fotograma a fotograma y es exacto.</p>}
     {!previewOnly && (exp.mode ?? 'fast') === 'realtime' && plan.fps !== 30 && <p className="warnBox small">En tiempo real las imágenes por segundo las marca la pantalla (normalmente 60), no este ajuste: usa el modo rápido para fijarlas.</p>}
     {!previewOnly && (exp.resolution === '1440' || exp.resolution === '2160') && (exp.mode ?? 'fast') === 'realtime' && <p className="warnBox small">En tiempo real, 2K y 4K pueden ir a saltos en equipos modestos: usa el modo rápido.</p>}
     {!previewOnly && (where === 'folder' || where === 'drive' || where === 'dropbox') && <div className="field-row" style={{ alignItems: 'center' }} aria-label="Destino elegido">
@@ -532,6 +537,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     {transfer !== null && <label className="small muted" style={{ display: 'block' }}>Enviado a Drive: {Math.round(transfer / 104857.6) / 10} MB {mode === 'idle' ? '(completo)' : `(~${Math.min(99, Math.round(transfer / Math.max(1, plan.estimatedBytes) * 100))} % del total estimado)`}<progress value={mode === 'idle' ? 1 : Math.min(0.99, transfer / Math.max(1, plan.estimatedBytes))} max={1} style={{ width: '100%' }} aria-label="Progreso de transferencia" /></label>}
     {status && <p className="muted small" role="status">{status}</p>}
     {measured && <p className="small" role="status" aria-label="Medición de esta exportación">{measured}</p>}
+    {fidelity && <p className="warnBox small" role="alert" aria-label="Fidelidad de la exportación en tiempo real">{fidelity}</p>}
     {notice && <p className="small" role="status" aria-label="Aviso de la exportación" style={{ color: '#ffd23f' }}>{notice}</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {issues.length > 0 && <ul className="warnList">{issues.map((i, k) => <li key={k}>{i.message}</li>)}</ul>}
