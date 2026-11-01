@@ -12,6 +12,8 @@ declare
   v_board uuid;
 begin
   if auth.uid() is null then raise exception 'not_authenticated' using errcode = '28000'; end if;
+  -- Serializa llamadas concurrentes sobre el MISMO guion (la prueba con 10 sesiones paralelas creó 2 storyboards sin este bloqueo).
+  perform pg_advisory_xact_lock(hashtextextended('storyboard_from_script:' || p_script_id::text, 0));
   select * into v_script from public.scripts where id = p_script_id and owner_id = auth.uid();
   if not found then raise exception 'script_not_found' using errcode = 'P0002'; end if;
 

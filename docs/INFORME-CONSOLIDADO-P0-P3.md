@@ -46,7 +46,7 @@ Leyenda de evidencia: **[U]** test unitario/lógica · **[F]** FFmpeg real en el
 - Defecto real encontrado y corregido: Shorts mostraba el aviso/error de la acción dos veces (y lo anunciaba dos veces a lectores de pantalla).
 
 ## 7. Migraciones SQL propuestas y NO aplicadas (sin probar contra la base real)
-`supabase/pending/`: `storyboard_from_script_rpc`, `scenes_concurrency_and_reorder`, `subtitle_unique_per_source`, `transcription_locks`, `reserve_generation_spend` (cada una con su rollback). Además `supabase/migrations/20261018120000_server_owned_security.sql` figura como «PREPARED, NOT APPLIED» en su cabecera: comprobar su estado real antes de asumir nada. Orden de despliegue de esa migración: primero el código con la clave de servicio, después el SQL.
+`supabase/pending/`: `storyboard_from_script_rpc`, `scenes_concurrency_and_reorder`, `subtitle_unique_per_source`, `transcription_locks`, `reserve_generation_spend` (cada una con su rollback). CORRECCIÓN (consulta de solo lectura, 2026-11-01): `20261018120000_server_owned_security.sql` figura como «NOT APPLIED» en su cabecera, pero en la base real YA existen `generation_spend` y sus políticas (lectura solo propia), es decir, está aplicada (total o parcialmente; la cabecera está desactualizada). No se ha modificado nada en Production.
 
 ## 8. Funciones que podrían generar gasto
 `/api/studio/generate` (proveedores de pago; con tope y reserva en memoria), trabajos del influencer virtual (reserva optimista en BD de la app, no atómica entre instancias), Shorts «modo Veo/Flow» por instrucción. En el Preview sin sesión no son alcanzables (405/redirección). Gasto actual comprobado: 0 €.
@@ -61,3 +61,12 @@ YouTube (borrador → aprobación → subida privada), Instagram (Reels) y TikTo
 
 ## 11. Propuesta de beta mínima (sin proveedores de pago)
 Crear proyecto → guion → storyboard → editor manual → exportar MP4 local → Biblioteca → recuperar/reabrir. Con generación de pago, colas y publicación **desactivadas**. No declarar la beta lista hasta: (a) diagnosticar los 4 puntos de §6, (b) que Jesús pase el guion `guion-prueba-manual-recorrido.md` con su sesión en el Preview, (c) decidir/aplicar (con autorización) las migraciones P0 en una rama de pruebas de Supabase.
+
+
+## Bloque B — riesgo abierto: exportación en tiempo real vs vista previa
+Discrepancia intermitente observada, NO reproducida en la suite final (704 OK / 0 fallos en Chromium con Supabase simulado). Se mantiene como riesgo abierto (P2) hasta medirla en un navegador real con sesión real; la rama WebM solo tiene pruebas unitarias y la conversión local a MP4 no se ha ejecutado.
+
+## Bloques C/D — PostgreSQL local (NO Supabase real)
+`scripts/test-pending-sql.sh` (+ `supabase/tests/pending_live_shape.sql`, forma de tablas leída en solo lectura): 50 pruebas, 50 pasan, 0 fallan. Cubre reserva de gasto (20 sesiones paralelas → exactamente el tope; duplicados; permisos revocados; RLS), bloqueos de transcripción (12 workers → 1 ganador; caducidad; permisos), índice único de subtítulos (10 inserts paralelos → 1), storyboard desde guion (idempotencia, reanudación, aislamiento entre usuarios), reorden atómico (permutaciones, rechazos, 12 concurrentes sin duplicados ni deadlocks), borrados en cascada/SET NULL (FK real verificada) y los 5 rollbacks.
+Hallazgo real: la primera versión de `create_storyboard_from_script` creaba 2 storyboards y 4 escenas con 10 llamadas simultáneas; se corrigió con `pg_advisory_xact_lock` por guion y ahora da 1 y 2.
+Límites: stubs de `auth.uid()` y roles; no valida PostgREST, Auth, Storage ni Realtime. Nada se ha aplicado en Supabase.
