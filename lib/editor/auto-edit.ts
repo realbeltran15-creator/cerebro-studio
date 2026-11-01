@@ -26,7 +26,9 @@ export const defaultAutoEdit: AutoEditOptions = { removeSilences: true, silenceT
 
 /** Silent intervals (ms) from RMS windows of `windowMs`. Threshold is relative to the loudest window. */
 export function findSilences(rms: number[], windowMs: number, threshold: number, minSilenceMs: number): Interval[] {
-  const peak = Math.max(1e-6, ...rms)
+  // Bucle en vez de Math.max(...rms): el spread revienta la pila con ~200.000 ventanas (horas de metraje).
+  let peak = 1e-6
+  for (const v of rms) if (v > peak) peak = v
   const out: Interval[] = []
   let start = -1
   rms.forEach((v, i) => {

@@ -158,7 +158,7 @@ export default function AutoEditPage() {
       <p className="muted small">Para montar varios vídeos, imágenes, música y voz con uno de tus estilos usa <Link className="open" href={`/editor/style?project=${projectId}`}>Editar con mi estilo</Link>.</p>
       <div className="pageActions">
         <button type="button" disabled={!videoId || busy} onClick={() => void analyze()}>{busy && progress ? progress : 'Analizar vídeo'}</button>{busy && canCancel && <button type="button" className="ghost" onClick={() => running.current?.cancel()}>Cancelar análisis</button>}
-        {plan && <button type="button" disabled={busy || !plan.segments.length} onClick={() => void create()}>Crear montaje ({plan.clips} clips)</button>}
+        {plan && <button type="button" disabled={busy || !plan.segments.length || Boolean(created)} onClick={() => void create()}>{created ? 'Montaje creado' : `Crear montaje (${plan.clips} clips)`}</button>}
       </div>
       {plan && <p className="small">Duración {secs(analysis!.durationMs)} → <b>{secs(plan.kept)}</b> · {plan.silences.length} silencios quitados ({secs(plan.removed)}) · {plan.shots.length} cambios de plano · {plan.clips} clips{analysis!.rms.length === 0 ? ' · el vídeo no tiene audio: no se quitan silencios' : ''}</p>}
     </section>

@@ -31,3 +31,13 @@ describe('automatic edit', () => {
     expect(c.subtitles).toBe(true)
   })
 })
+
+describe('findSilences con metraje muy largo', () => {
+  it('no revienta la pila con 300.000 ventanas (≈4 h a 50 ms)', async () => {
+    const { findSilences } = await import('@/lib/editor/auto-edit')
+    const rms = new Array(300_000).fill(0.5); rms[10] = 0
+    for (let i = 20; i < 40; i++) rms[i] = 0
+    expect(() => findSilences(rms, 50, 0.06, 600)).not.toThrow()
+    expect(findSilences(rms, 50, 0.06, 600).length).toBe(1)
+  })
+})

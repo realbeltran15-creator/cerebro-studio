@@ -48,6 +48,7 @@ import { extractProfile } from '@/lib/editor/profile'
 import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import type { EditorPlayer } from '@/lib/editor/player'
+import { friendlyDbMessage } from '@/lib/script-integrity'
 import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
@@ -67,6 +68,7 @@ export default function ManualEditorPage() {
   const selection: ItemRef | null = sel.length ? sel[sel.length - 1] : null
   const setSelection = useCallback((r: ItemRef | null) => setSel(r ? [r] : []), [])
   const clipboard = useRef<Clipboard | null>(null)
+  const copying = useRef(false)
   const [copiedAnim, setCopiedAnim] = useState<{ target: 'clip' | 'layer'; keys: AnimKey[] } | null>(null)
   // The selected transition: the cut after this clip (selecting a clip or anything else clears it).
   const [selTr, setSelTrState] = useState<string | null>(null)
@@ -392,7 +394,7 @@ export default function ManualEditorPage() {
       let q = supabase.from('render_jobs').update({ composition: snapshot, output_format: snapshot.format, updated_at: new Date().toISOString() }).eq('id', job.id)
       if (!opts.force) q = q.eq('updated_at', savedAtRef.current)
       const { data, error: e } = await q.select('updated_at')
-      if (e) throw new Error(e.message)
+      if (e) throw new Error(friendlyDbMessage(e, 'Error de la base de datos; tus cambios siguen en pantalla'))
       if (!data?.length) throw new SaveConflictError()
       const at = (data[0] as { updated_at: string }).updated_at
       savedAtRef.current = at; setSavedAt(at)
@@ -452,9 +454,11 @@ export default function ManualEditorPage() {
     await writeVersion(mine, 'conflict')
     if (how === 'mine') { try { await save({ force: true, reason: 'manual' }); setNotice('Tu versión ha sustituido a la otra (la otra sigue en «Puntos de recuperación» si se guardó desde aquí).') } catch { /* state shows it */ } return }
     if (how === 'copy') {
+      if (copying.current) return
+      copying.current = true
       const { data: { user } } = await supabase.auth.getUser()
       const { data, error: e } = await supabase.from('render_jobs').insert({ owner_id: user?.id, project_id: job.project_id, output_format: mine.format, status: 'draft', composition: { ...mine, title: `${mine.title || 'Montaje'} (copia)` } }).select('id').single()
-      if (e || !data) { setError(e?.message ?? 'No se pudo crear la copia.'); return }
+      if (e || !data) { copying.current = false; setError(friendlyDbMessage(e, 'No se pudo crear la copia.')); return }
       window.location.href = `/editor/manual?job=${(data as { id: string }).id}`
       return
     }
@@ -601,15 +605,18 @@ export default function ManualEditorPage() {
 
   // Thumbnails of the images used on the timeline (signed URLs, fetched once per asset).
   const imageIds = useMemo(() => [...new Set([...(history?.present.clips ?? []).map(c => c.visualAssetId), ...assets.filter(a => a.asset_type !== 'video' && visualTypes.includes(a.asset_type)).slice(0, 60).map(a => a.id)].filter((id): id is string => Boolean(id) && assets.find(a => a.id === id)?.asset_type !== 'video'))].sort().join(','), [history, assets])
+  const thumbsTried = useRef<Set<string>>(new Set())
   useEffect(() => {
-    const missing = imageIds ? imageIds.split(',').filter(id => !thumbs[id]) : []
+    // Cada id se pide UNA vez: si el archivo ya no existe (404) no se reintenta en bucle con cada respuesta.
+    const missing = imageIds ? imageIds.split(',').filter(id => !thumbs[id] && !thumbsTried.current.has(id)) : []
     if (!missing.length) return
+    missing.forEach(id => thumbsTried.current.add(id))
     let alive = true
     void Promise.all(missing.map(async id => {
       const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' })
       const j = await r.json().catch(() => ({})) as { url?: string }
       return [id, j.url ?? ''] as const
-    })).then(pairs => { if (alive) setThumbs(t => ({ ...t, ...Object.fromEntries(pairs.filter(([, u]) => u)) })) })
+    })).then(pairs => { const found = pairs.filter(([, u]) => u); if (alive && found.length) setThumbs(t => ({ ...t, ...Object.fromEntries(found) })) })
     return () => { alive = false }
   }, [imageIds, thumbs])
 
