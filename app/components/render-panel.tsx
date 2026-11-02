@@ -2,7 +2,7 @@
 
 import { exportEnd } from '@/lib/editor/export-outcome'
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { compositionCues, compositionIssues, incompleteRenderNotice, cuesToSrt, cuesToVtt, EXPORT_AUDIO_KBPS, EXPORT_FPS, exportPlan, LIBRARY_MAX_BYTES, totalDurationMs, projectDurationMs, type Composition, type ExportAudioKbps, type ExportFps, type ExportResolution, type ExportSettings } from '@/lib/editor/composition'
 import { downloadText } from '@/lib/library'
@@ -136,6 +136,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   useEffect(() => () => { if (download) URL.revokeObjectURL(download.url) }, [download])
 
   const autoStarted = useRef(false)
+  const runRef = useRef<((record: boolean) => Promise<void>) | null>(null)
+  const pendingDriveRef = useRef(false)
+  const setPendingDriveFlag = (v: boolean) => { pendingDriveRef.current = v }
   const issues = compositionIssues(composition)
   const blocking = issues.some(i => i.blocking)
   const total = totalDurationMs(composition)
@@ -143,7 +146,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   useEffect(() => {
     if (!autoStart || previewOnly || autoStarted.current || blocking || composition.clips.length === 0 || (exportNeedsRecorder() && !recordingSupported())) return
     autoStarted.current = true
-    void run(true)
+    void runRef.current?.(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart])
 
@@ -414,19 +417,20 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     }
   }
 
-  const pendingDriveRef = useRef(false)
-  useEffect(() => { pendingDriveRef.current = !!pendingDrive }, [pendingDrive])
+  // `run` is declared above this point; the autostart effect (declared earlier) reaches it through this ref. Layout effects run before passive ones, so it is set before the first autostart.
+  useLayoutEffect(() => { runRef.current = run })
+  useEffect(() => { setPendingDriveFlag(!!pendingDrive) }, [pendingDrive])
   const streamed = (r: { blob: Blob | null }) => r.blob === null
 
   /** Uploads the rendered file to the chosen Drive folder. On failure the temporary file is kept so the upload can be retried without rendering again. */
   async function sendToDrive(file: Blob, t: { temp: string; name: string; mime: string; folderId: string; folderName: string }, token: string, signal?: AbortSignal, tick?: () => void) {
-    setMode('saving'); setDriveBusy(true); setPendingDrive(null); pendingDriveRef.current = false
+    setMode('saving'); setDriveBusy(true); setPendingDrive(null); setPendingDriveFlag(false)
     try {
       const r = await uploadToDrive(file, { name: t.name, mimeType: t.mime, token, folderId: t.folderId, signal, onProgress: (sent, total) => { tick?.(); setStatus(`Subiendo a Google Drive… ${Math.round(sent / total * 100)} % (${Math.round(sent / 1048576)} de ${Math.round(total / 1048576)} MB)`) } })
       if (t.temp) await removeExportTemp(t.temp)
       setStatus(`Subido a Google Drive: «${r.name}» en la carpeta «${t.folderName}» (${Math.round(r.size / 1048576 * 10) / 10} MB). ${t.temp ? 'El archivo temporal de este equipo se ha borrado.' : ''}`)
     } catch (e) {
-      if (t.temp) { pendingDriveRef.current = true; setPendingDrive(t) }
+      if (t.temp) { setPendingDriveFlag(true); setPendingDrive(t) }
       throw new Error(`${e instanceof Error ? e.message : 'No se pudo subir a Drive.'} ${t.temp ? 'El vídeo ya está renderizado y guardado como temporal: pulsa «Reintentar subida a Drive».' : ''}`)
     } finally { setDriveBusy(false) }
   }

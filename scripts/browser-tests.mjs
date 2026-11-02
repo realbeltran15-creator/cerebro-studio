@@ -42,6 +42,12 @@ function serve(port, scripts) {
 }
 
 const failures = []
+// Suites: «main» (default; everything the beta includes: fast export and all UI/data features), «lab» (real-time export, wall-clock dependent; the mode is
+// disabled in the beta but its tests are kept and reported separately), «all» (both). npm run test:browser · test:browser:lab · test:browser:all
+const SUITE = process.env.BROWSER_SUITE || 'main'
+if (!['main', 'lab', 'all'].includes(SUITE)) { console.error('BROWSER_SUITE must be main, lab or all'); process.exit(2) }
+const MAIN = SUITE !== 'lab', LAB = SUITE !== 'main'
+console.log(`suite: ${SUITE}`)
 const check = (name, ok, detail) => { console.log(`${ok ? '✓' : '✗'} ${name}${ok ? '' : ` — ${JSON.stringify(detail)}`}`); if (!ok) failures.push(name) }
 // Editor workspace: open a collapsible property group / a tool tab the way a user does (one click on its header or tab).
 async function openSection(page, title) {
@@ -58,7 +64,7 @@ const toolTab = (page, name) => page.getByRole('tablist', { name: 'Herramientas'
 const browser = await chromium.launch({ executablePath: chrome, args: ['--autoplay-policy=no-user-gesture-required'] })
 
 // 1. Renderer: image + video montage with trims, cut, mute, crop, text, subtitles and audio.
-{
+if (LAB) {
   const server = serve(8791, { 'r.js': await bundle(path.join(dir, 'renderer-video.harness.ts')) })
   const page = await browser.newPage()
   await page.goto('http://127.0.0.1:8791/')
@@ -80,7 +86,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 2. Manual editor UI driven like a user, saving and rendering through mocked Supabase.
-{
+if (MAIN) {
   const server = serve(8792, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
   const errors = []
@@ -169,7 +175,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 2b. Manual editor, new tools: real waveforms and beats, cuts on the beat, effects on the cuts, SRT/VTT, a reference video, comparison and a long montage.
-{
+if (MAIN) {
   const server = serve(8810, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'manual-editor-pro.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 }, acceptDownloads: true })
   const errors = []
@@ -270,7 +276,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 2c. The real analysis worker on 10 minutes of audio: correct results, a responsive page meanwhile, and cancellation that works.
-{
+if (MAIN) {
   const worker = (await build({ entryPoints: [path.join(root, 'lib/editor/analysis.worker.ts')], bundle: true, write: false, format: 'iife', logLevel: 'error', alias: { '@': root } })).outputFiles[0].text
   const server = serve(8811, { 'worker.js': worker, 'h.js': await bundle(path.join(dir, 'analysis-worker.harness.ts')) })
   const page = await browser.newPage()
@@ -285,7 +291,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // Thumbnail text composed on top: real canvas, 1280×720 JPEG, text where asked, too-long text refused.
-{
+if (MAIN) {
   const server = serve(8787, { 'q.js': await bundle(path.join(dir, 'thumbnail-compose.harness.ts')) })
   const page = await browser.newPage()
   await page.goto('http://127.0.0.1:8787/')
@@ -297,7 +303,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 3. Virtual Influencer Studio: automated quality measurements on real media.
-{
+if (MAIN) {
   const server = serve(8788, { 'q.js': await bundle(path.join(dir, 'influencer-quality.harness.ts')) })
   const page = await browser.newPage()
   await page.goto('http://127.0.0.1:8788/')
@@ -312,7 +318,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 3. Creation Studio: model availability, scene prefill, cost confirmation, queued job → preview.
-{
+if (MAIN) {
   const server = serve(8793, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'studio.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
   const errors = []
@@ -386,7 +392,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 3b. Short desde referencia: analysis → plan → storyboard → free-only batch that stops at the first refusal.
-{
+if (MAIN) {
   const server = serve(8795, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'recreate.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } })
   const errors = []
@@ -415,7 +421,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 4. Mobile: the Studio fits a 390 px phone without horizontal scrolling and keeps the main action reachable.
-{
+if (MAIN) {
   const server = serve(8794, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'studio.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
   await page.goto('http://127.0.0.1:8794/studio?project=p1')
@@ -430,7 +436,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 5. Mobile smoke: every client page mounts at 390 px with the seeded mock database, shows no horizontal overflow and throws no page errors.
-{
+if (MAIN) {
   const pages = [
     ['/', 'app/page', '/'], ['/projects', 'app/projects/page', '/projects'], ['/projects/[id]', 'app/projects/[id]/page', '/projects/p1', { id: 'p1' }],
     ['/opportunities', 'app/opportunities/page', '/opportunities'], ['/market-intelligence', 'app/market-intelligence/page', '/market-intelligence'],
@@ -466,7 +472,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 6. Mobile: the manual editor with a populated project (timeline, tracks, inspector) fits a 390 px phone and passes axe.
-{
+if (MAIN) {
   const server = serve(8796, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true })
   const errors = []
@@ -485,7 +491,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 7. Mobile with awkward, populated data (long titles, long unbroken URLs, many rows): no overflow, no errors, axe clean.
-{
+if (MAIN) {
   const populated = [['/opportunities', 'app/opportunities/page', '/opportunities'], ['/library', 'app/library/page', '/library'], ['/projects', 'app/projects/page', '/projects'],
     ['/projects/[id]', 'app/projects/[id]/page', '/projects/p1', { id: 'p1' }], ['/studio', 'app/studio/page', '/studio?project=p1'], ['/thumbnails', 'app/thumbnails/page', '/thumbnails?project=p1'], ['/youtube', 'app/youtube/page', '/youtube?project=p1']]
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
@@ -511,7 +517,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 8. Repurpose with a real saved edit: suggestion, hook draft, packaging draft and platform limits through the UI.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/repurpose/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const longSeed = `;(() => { const db = window.__DB; const seg = (start, end, text) => ({ start, end, text });
     db.assets.push({ id: 'sub-as1', owner_id: 'u1', project_id: 'p1', asset_type: 'subtitle', storage_path: null, source_provider: 'groq', source_url: null, license_status: 'owned', created_at: '2026-09-30T00:00:00Z',
@@ -560,7 +566,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 9. Analytics learning panel: outperformers, retention and honesty labels from seeded YouTube metrics.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/analytics/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8')
   const server = serve(8799, { 'setup.js': setup, 'app.js': code })
@@ -578,7 +584,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 10. Real conversion VP9/Opus -> H.264/AAC MP4 with ffmpeg.wasm (core served from node_modules only for this test).
-{
+if (MAIN) {
   const files = {
     '/core/ffmpeg-core.js': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', 'text/javascript'],
     '/core/ffmpeg-core.wasm': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', 'application/wasm'],
@@ -622,7 +628,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 11. The editor's render panel end to end: render -> not Instagram-ready -> convert to H.264/AAC -> derived asset with lineage.
-{
+if (MAIN) {
   const files = {
     '/core/ffmpeg-core.js': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', 'text/javascript'],
     '/core/ffmpeg-core.wasm': ['node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', 'application/wasm'],
@@ -671,7 +677,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 5. TopMediai import: its API is sold apart from the subscriptions, so files are imported by hand and the licence follows the confirmed plan.
-{
+if (MAIN) {
   const server = serve(8794, { 'app.js': await bundle(path.join(dir, 'topmediai.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   const errors = []
@@ -700,7 +706,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 6. Google Flow import: no public Flow API, so the user picks files; nothing is stored until «Importar», and the follow-up is automatic.
-{
+if (MAIN) {
   const server = serve(8795, { 'setup.js': readFileSync(path.join(dir, 'flow.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'flow.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': 'undefined', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': 'undefined' }) })
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   const errors = []
@@ -733,7 +739,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 7. Shorts factory approval screen: evidence, auto-render on open, approval → private upload with synthetic content declared.
-{
+if (MAIN) {
   const server = serve(8797, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'seed.js': readFileSync(path.join(dir, 'shorts.seed.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'shorts.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': 'undefined' }) })
   const page = await browser.newPage({ viewport: { width: 1300, height: 1100 } })
   const errors = []
@@ -779,7 +785,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 8. Manual editor reachable from the main menu: pick a saved edit or start an empty one, with separate tracks.
-{
+if (MAIN) {
   const server = serve(8798, { 'setup.js': readFileSync(path.join(dir, 'manual-picker.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': 'undefined' }) })
   const page = await browser.newPage({ viewport: { width: 1300, height: 1000 } })
   const errors = []
@@ -808,7 +814,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 
 // 9. Investigación: filters are a DRAFT until the one button; that button applies AND runs the search with its cost shown; hidden results are explained.
 // The YouTube-backed API routes are MOCKED here (tests/browser/research-fixtures.mjs): no quota is spent; this proves the screen, not the live integration.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/market-intelligence/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   const server = serve(8799, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
@@ -1092,7 +1098,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 10. Campañas: answer the nine questions partially, get a strategy, change budget/platforms without starting again, save, reload, export. No ad API is touched.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/campaigns/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   // Before migration 20261015120000 the `campaigns` table does not exist: the page must keep working from this browser only.
@@ -1191,7 +1197,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 
 // 10b. Campañas with the `campaigns` table: legacy browser campaigns are uploaded with uuid ids, account campaigns appear here,
 // edits are saved to the account and deleting removes the row. Uses the in-memory mock database; nothing leaves the machine.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/campaigns/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const remote = { id: '11111111-1111-4111-8111-111111111111', owner_id: 'u1', name: 'Remota', status: 'lista', brief: { name: 'Remota', totalBudget: 300 }, notes: '', project_id: null, created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-02T00:00:00.000Z' }
   const server = serve(8801, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + `\nwindow.__DB.campaigns = [${JSON.stringify(remote)}]`, 'app.js': code })
@@ -1224,7 +1230,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 12. YouTube channel: a new authorization is not saved until the owner confirms the exact channel (name + ID) shown by the server.
-{
+if (MAIN) {
   const CH = 'UC1234567890abcdefghijKL'
   const seed = `\nwindow.__DB.channel_connections = [{ id: 'cc-old', owner_id: 'u1', provider: 'youtube', external_account_id: 'UColdoldoldoldoldoldold1', external_account_name: 'Canal antiguo', status: 'expired', scopes: [], updated_at: '2026-10-09T00:00:00Z' }]`
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/connectors/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
@@ -1255,7 +1261,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 13. Biblioteca: own tags and collections are saved in the owner's settings row; filters by tag, automatic tag and collection.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/library/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const setup = readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\n;' + readFileSync(path.join(dir, 'populated.seed.js'), 'utf8')
   const server = serve(8803, { 'setup.js': setup, 'app.js': code })
@@ -1285,7 +1291,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 14. Calendario editorial: drafts on several platforms from one video in one step; a draft gets a planned date and shows on its day.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/calendar/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const seed = `\nwindow.__DB.assets.push({ id: 'vid1', owner_id: 'u1', project_id: 'p1', asset_type: 'video', storage_path: 'u1/p1/v.mp4', license_status: 'generated', provenance: { title: 'Vídeo horizontal', format: '16:9' }, created_at: '2026-10-01T00:00:00Z' }); window.__DB.publication_jobs = []`
   const server = serve(8804, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + seed, 'app.js': code })
@@ -1313,7 +1319,7 @@ const browser = await chromium.launch({ executablePath: chrome, args: ['--autopl
 }
 
 // 15. Flujos de producción: states come from the project's rows; the montage review is an explicit approval that is saved; a cost limit warns.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/workflows/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const seed = `
 window.__DB.scripts = [{ id: 's1', owner_id: 'u1', project_id: 'p1', status: 'approved', source_opportunity_id: null, idea: 'Historia real' }]
@@ -1346,11 +1352,12 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
 }
 
 // 16. Transitions draw the next clip during the last fadeMs of the outgoing one (real canvas render in Chromium).
-{
+if (MAIN || LAB) {
   const server = serve(8806, { 'r.js': await bundle(path.join(dir, 'renderer-motion.harness.ts')) })
   const page = await browser.newPage()
   await page.goto('http://127.0.0.1:8806/')
   await page.addScriptTag({ url: '/r.js' })
+  if (MAIN) {
   const red = c => c[0] > 60 && c[2] < 40 && c[1] < 40, blue = c => c[2] > 200 && c[0] < 60
   const wipe = await page.evaluate(() => window.runMotion('wipe'))
   check('motion: wipe reveals the next clip from the left halfway through', red(wipe.before) && blue(wipe.left) && red(wipe.right) && blue(wipe.after), wipe)
@@ -1361,17 +1368,20 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
   const cam = await page.evaluate(() => window.runCamera())
   check('motion: a pan right starts on the left of the image and ends on the right', red(cam.start) && blue(cam.end), cam)
   check('motion: a coloured title on the text track shows only during its own time', cam.title > 500 && cam.titleGone === 0, cam)
+  }
+  if (LAB) { // the audio mix is exported through the real-time recorder
   const plain = await page.evaluate(() => window.runMix(undefined))
   check('audio: a volume automation point silences the music from 2 s while the voice continues', plain.music[0] > 0.03 && plain.music[1] < plain.music[0] * 0.1 && plain.voice[1] > 0.03, plain)
   const solo = await page.evaluate(() => window.runMix({ music: { gain: 1, muted: false, solo: true } }))
   check('audio: solo on the music track silences the voice track in the export', solo.voice[0] < solo.music[0] * 0.1 && solo.music[0] > 0.03, solo)
   const low = await page.evaluate(() => window.runMix({ voice: { gain: 0.25, muted: false, solo: false } }))
   check('audio: the voice track level scales the voice only', low.voice[0] < plain.voice[0] * 0.4 && low.music[0] > plain.music[0] * 0.7, { low, plain })
+  }
   await page.close(); server.close()
 }
 
 // 17. Mis estilos: create from a template, edit a parameter, see the change before saving, save as a new version and restore the old one.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/editor/styles/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const server = serve(8807, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8'), 'app.js': code })
   const page = await browser.newPage({ viewport: { width: 1300, height: 1200 } })
@@ -1401,7 +1411,7 @@ window.__DB.assets.push({ id: 'ren1', owner_id: 'u1', project_id: 'p1', asset_ty
 }
 
 // 18. Editar con mi estilo: my materials + a style → a draft montage that follows the style, ready for the manual editor.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/editor/style/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const seed = `
 window.__DB.render_jobs = []
@@ -1427,7 +1437,7 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
 }
 
 // 19. Edición por instrucciones y fragmentos: written instructions run real timeline operations; a marked fragment scopes them.
-{
+if (MAIN) {
   const server = serve(8812, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
   const errors = []
@@ -1522,7 +1532,7 @@ for (const [id, t] of [['ia', 'Amanecer'], ['ib', 'Bosque'], ['ic', 'Cueva']]) w
 }
 
 // 20. Plantillas de montaje: a saved structure filled with other files becomes a new draft with the same tracks and timing.
-{
+if (MAIN) {
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/editor/templates/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`)
   const tpl = { kind: 'montage_template', id: 'tpl-1', name: 'Mi Short', createdAt: '2026-10-21T00:00:00Z', slots: [{ key: 'slot:visual-1', kind: 'visual', label: 'Visual 1', uses: 2, sourceType: 'image', needsMs: 3000 }, { key: 'slot:music-1', kind: 'music', label: 'Música 1', uses: 1, sourceType: 'music', needsMs: 6000 }],
     composition: { version: 1, storyboardId: 's', title: 'Mi Short', format: '9:16', fadeMs: 300, clips: [{ id: 'a', sceneId: 'a', position: 1, durationMs: 3000, visualAssetId: 'slot:visual-1', transition: 'wipe' }, { id: 'b', sceneId: 'b', position: 2, durationMs: 3000, visualAssetId: 'slot:visual-1' }], audioClips: [{ id: 'm', assetId: 'slot:music-1', kind: 'music', linkedClipId: null, offsetMs: 0, startMs: 0, trimInMs: 0, durationMs: 6000, volume: 0.4, muted: false }], textClips: [{ id: 't', content: 'HOLA', startMs: 0, durationMs: 2000, position: 'center', sizePct: 9 }] } }
@@ -1548,7 +1558,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 }
 
 // 21. Añadir materiales: original file, resumable upload (6 MB chunks) that survives a dropped connection, duplicates, size limit, shortcut code.
-{
+if (MAIN) {
   const SB = 'http://127.0.0.1:8814/sb'
   const code = await bundle(null, `import { createRoot } from 'react-dom/client'\nimport Page from '@/app/add/page'\ncreateRoot(document.getElementById('root')).render(<Page />)`, { 'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(SB), 'process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY': '"pk-test"', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID': '""', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY': '""', 'process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID': '""' })
   const server = serve(8814, { 'setup.js': readFileSync(path.join(dir, 'studio.setup.js'), 'utf8') + '\nwindow.__DB.assets = []', 'app.js': code })
@@ -1615,7 +1625,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 }
 
 // 22. Reproductor del editor: a 90-minute montage, jump to 45:00, play, pause, back 10 s, frame steps, loop, speed, Space without scrolling.
-{
+if (MAIN) {
   const server = serve(8815, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'player.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   const errors = []
@@ -1703,7 +1713,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 }
 
 // 23. Multipista y visor: overlay tracks, drag & drop, moving/resizing on the viewer, keyframes, groups, copy/paste, split, lock, hide, mute, rename, markers, save and reopen.
-{
+if (MAIN) {
   const server = serve(8816, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'multitrack.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } })
   const errors = []
@@ -1819,7 +1829,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 24. Verificación integral: a project with two videos at once, photos, two music tracks, a voice, an effect, a title, subtitles,
 //     transitions and volume automation. The preview and both exports must show the same pictures and carry the same sounds.
-{
+if (MAIN || LAB) {
   const server = serve(8817, { 'v.js': await bundle(path.join(dir, 'verify-project.harness.ts')) })
   const page = await browser.newPage()
   const errors = []
@@ -1830,8 +1840,8 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   const want = [[200, 30, 30], [0, 200, 0], [0, 200, 0], [200, 0, 200], [200, 0, 200], [224, 208, 32], [224, 208, 32], null, null, null, null]
   const near = (a, b, tol = 60) => a.every((v, i) => Math.abs(v - b[i]) <= tol)
   const pb = await page.evaluate(() => window.runPlayback())
-  check('verify: playback from 0:09.5 advances in real time and −10 s goes back', pb.after > 10_600 && pb.after < 11_800 && Math.abs(pb.back - Math.max(0, pb.after - 10_000)) < 5, pb)
-  for (const which of ['fast', 'realtime']) {
+  if (MAIN) check('verify: playback from 0:09.5 advances in real time and −10 s goes back', pb.after > 10_600 && pb.after < 11_800 && Math.abs(pb.back - Math.max(0, pb.after - 10_000)) < 5, pb)
+  for (const which of [MAIN && 'fast', LAB && 'realtime'].filter(Boolean)) {
     const r = await page.evaluate(w => window.runVerify(w), which)
     check(`verify (${which}): the preview shows each layer where expected (main video, overlay video, photos)`, r.preview.every((c, i) => !want[i] || near(c, want[i], 70)), r.preview)
     // The fast export is exact by construction: always strict. The real-time export follows the wall clock, so on a computer that cannot keep up it
@@ -1854,7 +1864,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 25. The verification project in the real editor: play, pause, jump, Space, save, reopen and export (fast), and the exported file
 //     matches what the viewer showed at the same instant.
-{
+if (MAIN) {
   const server = serve(8818, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -1908,7 +1918,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 // 26. Persistencia completa: edit everything (by hand and by instruction), autosave, reload, close the browser and open it again
 //     (a fresh session with nothing in the browser), every property identical; undo after a reload; recovery points; a conflict
 //     between sessions; change a transition, save, export and compare with the preview.
-{
+if (MAIN) {
   const server = serve(8819, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const errors = []
   const open = async (ctx, keep) => {
@@ -2038,7 +2048,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 27. Transiciones y animaciones de verdad: type, direction, curve, copy/paste, favourites in the account, ready-made movements on
 //     a photo, everything kept after closing the browser, and the export matching the viewer mid-transition.
-{
+if (MAIN) {
   const server = serve(8820, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const errors = []
   const open = async (ctx, keep) => {
@@ -2119,7 +2129,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 // 28. Espacio de trabajo: barra lateral (expandida, compacta, oculta), grupos desplegables, propiedades según la selección, paneles
 //     redimensionables y ocultables, pestañas, modos, búsqueda de herramientas y diseño recordado; con la hoja de estilos real,
 //     en escritorio, tableta y móvil. La reproducción, la línea de tiempo y el guardado siguen funcionando.
-{
+if (MAIN) {
   const css = readFileSync(path.join(root, 'app/globals.css'), 'utf8').replace(/@import url\([^)]*\);?/g, '')
   const server = serve(8828, { 'app.css': css, 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } })
@@ -2266,6 +2276,11 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
   await page.keyboard.press('Control+k')
   check('search: Ctrl+K focuses «Buscar herramienta»', await page.evaluate(() => document.activeElement?.id) === 'tool-search')
   await page.keyboard.press('Escape')
+  // Regression (P5.0): a blur schedules «close the list in 150 ms»; refocusing and typing before it fires must not be closed by that stale timer.
+  await page.locator('#tool-search').click(); await page.locator('.playerTime').click() // real focus, then a real blur → the 150 ms close timer is armed
+  await page.keyboard.press('Control+k'); await page.keyboard.type('trans'); await page.waitForTimeout(400)
+  check('search: refocusing within 150 ms of a blur keeps the result list open (no stale close timer)', (await page.getByRole('option').count()) > 0, await page.getByRole('option').count())
+  await page.keyboard.press('Escape')
   if (await expanded('Transición') === 'true') await page.locator('button.edSectionHead', { hasText: 'Transición' }).click()
   const wasClosed = await expanded('Transición') === 'false'
   await search('Transición')
@@ -2335,7 +2350,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 29. Transiciones como objetos de la línea de tiempo: seleccionar, cambiar tipo y duración, dirección, alargar arrastrando el borde,
 //     copiar y pegar, mover a otro corte, quitar, deshacer, favorita en la cuenta, ver sin exportar, guardar y reabrir.
-{
+if (MAIN) {
   const server = serve(8829, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -2440,7 +2455,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 30. Miniaturas reales en los clips de vídeo: fotogramas de un vídeo con tres escenas, tantos como caben según el zoom,
 //     que siguen al recorte del clip.
-{
+if (MAIN) {
   const server = serve(8830, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'scenes.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -2475,7 +2490,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 31. Igualar imagen: dos fotos con distinta luz; igualar con la primera y con la segunda como referencia, intensidad, antes/después,
 //     guardar y exportar (el vídeo exportado conserva la corrección).
-{
+if (MAIN) {
   const server = serve(8831, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'match.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true })
   const errors = []
@@ -2534,7 +2549,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 32. Guardado a prueba de pérdidas: un arrastre cuya liberación se pierde ya no bloquea el guardado automático ni deshace después lo
 //     editado; quitar elementos deja antes un punto de recuperación con lo quitado; aviso visible si los cambios no llegan a la nube.
-{
+if (MAIN) {
   const server = serve(8832, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 950 } })
   const errors = []
@@ -2584,7 +2599,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 33. Exportación protegida: mientras exporta, la pestaña tiene un Web Lock, pide confirmar antes de
 //     cerrarla, avisa si se oculta y cuánto estuvo oculta; al terminar lo suelta todo. El archivo exportado se analiza con ffprobe.
-{
+if (MAIN) {
   const server = serve(8833, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'verify-ui.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -2628,7 +2643,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 }
 
 // 34. Montaje en bucle automático desde la Biblioteca: música + escenas + minutos → montaje normal listo para el editor.
-{
+if (MAIN) {
   const server = serve(8834, { 'setup.js': readFileSync(path.join(dir, 'manual-picker.setup.js'), 'utf8') + '\n' + readFileSync(path.join(dir, 'loop-picker.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx'), undefined, { 'process.env.NEXT_PUBLIC_FFMPEG_CORE_BASE_URL': 'undefined' }) })
   const page = await browser.newPage({ viewport: { width: 1300, height: 1400 } })
   const errors = []
@@ -2667,7 +2682,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 35. Transiciones entre dos clips: el icono está en la unión (no dentro de ningún clip), la banda muestra el solape real, ambos clips quedan
 //     marcados al seleccionarla, y Propiedades enseña los participantes, la alineación, el material que falta y «Restablecer».
-{
+if (MAIN) {
   const server = serve(8836, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -2737,7 +2752,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 36. Zoom de la línea de tiempo con Alt + rueda: mismo estado que el deslizador «Zoom», anclado al cursor, sin tocar la página ni la altura.
 //     Con tres vídeos seguidos y dos transiciones.
-{
+if (MAIN) {
   const server = serve(8837, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -2809,7 +2824,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 37. Repetición masiva y transiciones en lote: 200 repeticiones de un vídeo corto, transición en todos los cortes (o solo en algunos), edición
 //     de una transición suelta, Ctrl+C / Ctrl+V, un solo Ctrl+Z, objetivo de 90 minutos, zoom y desplazamiento con 300 clips, y guardado pequeño.
-{
+if (MAIN) {
   const server = serve(8838, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
   const errors = []
@@ -2916,7 +2931,7 @@ window.__DB.assets.push({ id: 'mus9', owner_id: 'u1', project_id: 'p1', asset_ty
 
 // 38. Rendimiento con montajes de 5 horas: 620 clips de 29 s y 3000 clips de 5 s, todos con disolvencia. Se abre, se hace zoom, se recorre, se selecciona
 //     un clip del final, se cambia una transición suelta y se guarda; sin bloqueos largos ni memoria desmesurada.
-{
+if (MAIN) {
   const server = serve(8839, { 'setup.js': readFileSync(path.join(dir, 'manual-editor.setup.js'), 'utf8'), 'app.js': await bundle(path.join(dir, 'manual-editor.entry.tsx')) })
   for (const [job, label, maxOpenMs] of [['job6', '620 clips (5 h)', 15000], ['job7', '3000 clips (5 h)', 30000]]) {
     const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })

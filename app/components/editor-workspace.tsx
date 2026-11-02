@@ -125,13 +125,15 @@ export function ToolSearch({ entries }: { entries: ToolEntry[] }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null } }
   const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
   const hits = q.trim() ? entries.filter(e => fold(`${e.label} ${e.words}`).includes(fold(q.trim()))).slice(0, 8) : []
-  const pick = (e: ToolEntry) => { e.go(); setQ(''); setOpen(false) }
+  const pick = (e: ToolEntry) => { cancelClose(); e.go(); setQ(''); setOpen(false) }
   return <div className="toolSearch" role="search">
     <input type="search" aria-label="Buscar herramienta" placeholder="Buscar herramienta… (Ctrl+K)" value={q} id="tool-search"
       role="combobox" aria-expanded={open && hits.length > 0} aria-controls="tool-search-list" aria-autocomplete="list"
-      onChange={e => { setQ(e.target.value); setOpen(true); setActive(0) }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+      onChange={e => { cancelClose(); setQ(e.target.value); setOpen(true); setActive(0) }} onFocus={() => { cancelClose(); setOpen(true) }} onBlur={() => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 150) }}
       onKeyDown={e => {
         if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, hits.length - 1)) }
         if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)) }
