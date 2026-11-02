@@ -79,7 +79,7 @@ Cambios pendientes de aplicar: las 7 de `supabase/pending/` (sin cambios). **Un 
 
 ## 8. Commits pendientes
 
-Local, sin publicar: los 19 commits previos más los de P4.9 y P5.0 (ver `git log origin/fase1-seguridad..HEAD`). `origin/fase1-seguridad` no se ha tocado. Importante: el proyecto de Vercel despliega **automáticamente cada push** de esa rama (hay despliegues de Preview de todos los commits anteriores), con las variables que hoy comparte con Production; por eso el push no debe hacerse a esa rama hasta tener el entorno aislado (§9).
+Local, sin publicar: **21 commits** (18 hasta P4.8 + 2 de P4.9 + 1 de P5.0; ver `git log origin/fase1-seguridad..HEAD`). `origin/fase1-seguridad` no se ha tocado. Importante: el proyecto de Vercel despliega **automáticamente cada push** de esa rama (hay despliegues de Preview de todos los commits anteriores), con las variables que hoy comparte con Production; por eso el push no debe hacerse a esa rama hasta tener el entorno aislado (§9).
 
 ## 9. Requisitos exactos para desplegar (nada de esto está hecho)
 
