@@ -47,9 +47,13 @@ SQL
   # Privilegios por defecto que Supabase crea en cada proyecto nuevo (el esquema de la app depende de ellos; NO forman parte del baseline)
   psqc "alter default privileges for role postgres in schema public grant all on tables to postgres, anon, authenticated, service_role; alter default privileges for role postgres in schema public grant all on sequences to postgres, anon, authenticated, service_role; alter default privileges for role postgres in schema public grant all on functions to postgres, anon, authenticated, service_role;" || return 1
   # Esquema de la aplicación SOBRE los esquemas auth/storage reales (sin el stub)
-  psq -f "$ROOT/supabase/schema/baseline_live.sql" >/dev/null || { echo BASELINE_FAIL; return 1; }
-  for f in $(ls "$ROOT"/supabase/pending/*.sql | grep -v rollback | sort); do psq -f "$f" >/dev/null 2>"$D/err.txt" || { echo "PENDING_FAIL $f"; head -3 "$D/err.txt"; return 1; }; done
-  psqc "create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();" || return 1
+  if [ -n "${SCHEMA_BUNDLE:-}" ]; then # el fichero único que se pegará en el proyecto de la beta: se valida aquí tal cual
+    psq -f "$SCHEMA_BUNDLE" >/dev/null 2>"$D/err.txt" || { echo BUNDLE_FAIL; grep -v NOTICE "$D/err.txt" | head -3; return 1; }
+  else
+    psq -f "$ROOT/supabase/schema/baseline_live.sql" >/dev/null || { echo BASELINE_FAIL; return 1; }
+    for f in $(ls "$ROOT"/supabase/pending/*.sql | grep -v rollback | sort); do psq -f "$f" >/dev/null 2>"$D/err.txt" || { echo "PENDING_FAIL $f"; head -3 "$D/err.txt"; return 1; }; done
+    psqc "create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();" || return 1
+  fi
   (PGRST_DB_URI="postgres://authenticator:x@127.0.0.1:$PG/postgres" PGRST_DB_SCHEMAS=public PGRST_DB_ANON_ROLE=anon PGRST_JWT_SECRET="$SECRET" PGRST_SERVER_PORT=3000 PGRST_DB_POOL=30 nohup "$PGRST" >"$D/pgrst.log" 2>&1 &)
   wait_http http://127.0.0.1:3000/ 40 || { echo REST_FAIL; return 1; }
   (cd "$ROOT" && GATEWAY_PORT=$GW exec node scripts/official-supabase-gateway.mjs) >"$D/gw.log" 2>&1 </dev/null & wait_http "http://127.0.0.1:$GW/auth/v1/health" 20 || { echo GATEWAY_FAIL; return 1; }

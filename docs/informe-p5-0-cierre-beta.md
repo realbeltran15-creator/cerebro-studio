@@ -15,7 +15,7 @@ La beta (alcance cerrado, exportación solo rápida, guardas de configuración) 
    - Modificación de `pendingDriveRef` desde `sendToDrive` → la escritura pasa por un ayudante declarado antes del efecto que la lee (mismos valores en los mismos puntos).
    En P4.6 y P4.9 reordenar efectos desplazaba o subía los errores; esta vez se evitó reordenar y se usó una indirección mínima. Cambio de **2 líneas de lógica + 3 de declaración** en `render-panel.tsx`.
 4. **Migraciones ausentes** (§5).
-5. **Comprobación previa al despliegue** (`npm run predeploy:check`, §6) y `vercel.beta.json` (sin cron).
+5. **Comprobación previa al despliegue** (`npm run predeploy:check`, §6) y, en la rama `beta-privada`, un `vercel.json` sin cron (ver `docs/beta-privada-publicacion.md`).
 6. **Hallazgo propio corregido en P4.9** (carrera del test del paso 18 del E2E; ver informe P4.9).
 
 ## 3. Carrera de repintado del Editor (investigada con evidencia)
@@ -30,12 +30,12 @@ Síntoma (1 ejecución de 3 de Chromium en P4.9): `TimeoutError` al pulsar la op
 | Sin secretos | `predeploy:check` escanea los ficheros versionados (claves `sk-`, AWS, JWT literales, claves privadas, tokens GitHub/Slack/Supabase) y los `.env` versionados: **0 hallazgos** (único falso positivo: el vector de prueba público de AWS `…EXAMPLE` en `tests/storage.test.ts`, admitido con una regla exacta, no por archivo) |
 | Sin llamadas de pago | Claves de pago prohibidas en el plan de variables; API de proveedores cerrada por alcance de beta (404 `blocked:'beta'`) |
 | Sin publicaciones | Solo 4 rutas de API abiertas (lectura/propio); `predeploy:check` rechaza si se abre una ruta de publicación, OAuth, cola, webhook o generación |
-| Sin automatizaciones | **Hallazgo:** `vercel.json` define un cron diario (`/api/cron/automations`, 07:00). Solo se ejecuta en despliegues de Production y la ruta está cerrada en la beta, pero la comprobación **rechaza** `vercel.json` y exige desplegar con `--local-config vercel.beta.json` (sin crons). `vercel.json` no se ha modificado |
+| Sin automatizaciones | **Hallazgo:** `vercel.json` define un cron diario (`/api/cron/automations`, 07:00). Solo se ejecuta en despliegues de Production y la ruta está cerrada en la beta, pero la comprobación **rechaza** `vercel.json` y exige un `vercel.json` sin crons. En P5.0 no se modificó; la rama local `beta-privada` lo reemplaza por uno sin cron (la integración Git de Vercel solo lee `vercel.json`, así que un fichero alternativo no bastaba) |
 | Sin claves privilegiadas | Prohibidas por la guarda de arranque y por el plan de variables |
 | Sin migraciones automáticas sobre remotos | `predeploy:check` verifica que ningún script de instalación/compilación/arranque, ni la CI, ni `buildCommand` ejecuten migraciones |
 | Falla cerrado | Sin `--env`, con fichero inexistente, con `vercel.json` actual, sin `NEXT_PUBLIC_CEREBRO_BETA=private` o ante cualquier excepción → exit 1. 7 pruebas Vitest nuevas (incluida la comprobación de que **no imprime los valores** de secretos) |
 
-Uso: `node scripts/predeploy-check.mjs --env <fichero con las variables planeadas> --vercel-config vercel.beta.json`. No lee Vercel ni Supabase.
+Uso: `node scripts/predeploy-check.mjs --env <fichero con las variables planeadas> --vercel-config vercel.json`. No lee Vercel ni Supabase.
 
 ## 5. Migraciones (tres presentes en Production y ausentes del repo)
 
@@ -85,7 +85,7 @@ Local, sin publicar: **21 commits** (18 hasta P4.8 + 2 de P4.9 + 1 de P5.0; ver 
 
 1. **Supabase independiente** (gratuito): un proyecto nuevo (el cupo gratuito parece agotado: lo confirma Jesús en el panel; no verificado). Cargar `baseline_live.sql` + 7 pendientes en orden + disparador `on_auth_user_created`; activar Auth correo/contraseña, bucket privado `generated-assets` con las 4 políticas, subida reanudable y límite ≥ 50 MB.
 2. **Vercel aislado**: crear un **proyecto Vercel nuevo** (plan gratuito) en lugar de tocar las variables del actual, para no compartir nada con Production. Variables: solo `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (del proyecto nuevo) y `NEXT_PUBLIC_CEREBRO_BETA=private`. Ninguna clave de pago ni privilegiada.
-3. **Rama nueva** (p. ej. `beta-privada`) para el push; desplegar con `--local-config vercel.beta.json`.
+3. **Rama nueva** (p. ej. `beta-privada`) para el push; su `vercel.json` ya no tiene cron.
 4. Ejecutar `predeploy:check` con el fichero de variables planeadas (debe dar APTO 7/7) y, tras el despliegue, repetir `npm run test:e2e:editor` apuntando al Preview con datos sintéticos.
 5. Beta con lista cerrada de usuarios.
 

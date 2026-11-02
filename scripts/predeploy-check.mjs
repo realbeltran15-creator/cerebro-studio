@@ -1,5 +1,5 @@
 // Comprobación previa al despliegue de la beta. FALLA CERRADO: cualquier duda = exit 1. No imprime valores de secretos (solo nombres y ubicaciones).
-//   node scripts/predeploy-check.mjs --env <fichero con las variables planeadas> [--vercel-config vercel.beta.json]
+//   node scripts/predeploy-check.mjs --env <fichero con las variables planeadas> [--vercel-config <otro vercel.json>]
 // No lee Vercel ni Supabase, no ejecuta migraciones, no hace red. Solo lee el repositorio y el fichero indicado.
 import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
@@ -30,7 +30,8 @@ guard('variables planeadas del despliegue', () => {
 guard('configuración de Vercel sin crons ni comandos de migración', () => {
   const f = path.resolve(root, arg('--vercel-config') || 'vercel.json'); const p = []
   const j = JSON.parse(readFileSync(f, 'utf8'))
-  if (j.crons && j.crons.length) p.push(`${path.basename(f)} define ${j.crons.length} cron(s) (${j.crons.map(c => c.path).join(', ')}): despliega la beta con --vercel-config vercel.beta.json (sin crons)`)
+  if (j.crons && j.crons.length) p.push(`${path.basename(f)} define ${j.crons.length} cron(s) (${j.crons.map(c => c.path).join(', ')}): la beta no puede tener crons; en la rama beta-privada el vercel.json no los define`)
+  if (!j.ignoreCommand || !/beta-privada/.test(j.ignoreCommand)) p.push('falta ignoreCommand que limite las construcciones a la rama beta-privada (sin él, cualquier rama que llegue al proyecto se desplegaría)')
   for (const k of ['buildCommand', 'installCommand', 'devCommand']) if (j[k] && /migrat|db\s+(push|reset)|psql/i.test(j[k])) p.push(`${k} ejecuta migraciones`)
   return p
 })
