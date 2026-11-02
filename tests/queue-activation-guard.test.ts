@@ -7,9 +7,12 @@ const walk = (d: string): string[] => readdirSync(d).flatMap(f => { const p = jo
 const src = (p: string) => readFileSync(p, 'utf8')
 
 describe('proteccion frente a activaciones accidentales (4B.3)', () => {
-  it('vercel.json no cambio respecto a la base 0497f75 (cron intacto)', () => {
-    const base = execFileSync('git', ['show', '0497f75:vercel.json'], { encoding: 'utf8' })
-    expect(src('vercel.json')).toBe(base)
+  it('vercel.json de la beta: sin cron y solo compila la rama beta-privada (la base 0497f75 tenia el cron)', () => {
+    const j = JSON.parse(src('vercel.json'))
+    expect(j.crons).toBeUndefined()
+    expect(j.ignoreCommand).toMatch(/beta-privada/)
+    const base = JSON.parse(execFileSync('git', ['show', '0497f75:vercel.json'], { encoding: 'utf8' }))
+    expect(base.crons?.length).toBeGreaterThan(0) // el cron solo existe en la rama original; aqui se retira a proposito
   })
   it('las rutas y el panel de cola no importan ejecutor, simulacion ni proveedores', () => {
     for (const f of [...walk('app/api/queue'), 'app/queue/page.tsx', 'lib/queue/api.ts', 'lib/queue/server.ts']) {
