@@ -1,5 +1,6 @@
 'use client'
 
+import { betaScopeOn } from '@/lib/beta-scope'
 import { parseComposition } from '@/lib/editor/composition'
 import { compositionAssetIds } from '@/lib/editor/client'
 import { fetchAllPages } from '@/lib/fetch-all'
@@ -191,7 +192,7 @@ export default function LibraryPage() {
   }
 
   return (
-    <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<><button type="button" className="small" onClick={() => setUploading(u => !u)}><Icon name="upload" size={14} />Subir archivo</button><Link className="buttonLink" href="/add">Añadir materiales (móvil, Drive, iPhone)</Link><Link className="buttonLink ghost" href="/usage">Costes y créditos</Link></>}>
+    <StudioShell title="Biblioteca" eyebrow="ASSETS" actions={<><button type="button" className="small" onClick={() => setUploading(u => !u)}><Icon name="upload" size={14} />Subir archivo</button>{!betaScopeOn() && <Link className="buttonLink" href="/add">Añadir materiales (móvil, Drive, iPhone)</Link>}{!betaScopeOn() && <Link className="buttonLink ghost" href="/usage">Costes y créditos</Link>}</>}>
       <StorageUsage />
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}

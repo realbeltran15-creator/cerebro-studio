@@ -1,5 +1,6 @@
 'use client'
 
+import { betaScopeOn } from '@/lib/beta-scope'
 import { renderJobView, toneClass } from '@/lib/operation-presentation'
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -238,7 +239,7 @@ const GENERATION_CONNECTED = false
   const voices = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type)), [assets])
   const music = useMemo(() => assets.filter(a => musicTypes.includes(a.asset_type)), [assets])
 
-  return <StudioShell title="Editor" eyebrow="POSTPRODUCCIÓN" actions={<><Link className="buttonLink" href={`/editor/auto${projectId ? `?project=${projectId}` : ''}`}>Montaje automático</Link>{projectId && <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link>}</>}>
+  return <StudioShell title="Editor" eyebrow="POSTPRODUCCIÓN" actions={<>{!betaScopeOn() && <Link className="buttonLink" href={`/editor/auto${projectId ? `?project=${projectId}` : ''}`}>Montaje automático</Link>}{projectId && <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link>}</>}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
 

@@ -6,7 +6,7 @@ import { StudioShell } from './components/studio-shell'
 import { Icon } from './components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { moduleStateLabels, studioModules } from '@/lib/module-status'
-import { inBetaScope } from '@/lib/beta-scope'
+import { betaScopeOn, inBetaScope } from '@/lib/beta-scope'
 import { formatDuration } from '@/lib/scripts'
 import { overviewIndex, projectProgress, projectStatusLabel, type ProgressInput } from '@/lib/progress'
 
@@ -58,7 +58,7 @@ export default function Home() {
         const since = new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10)
         const [p, c, m] = await Promise.all([
           supabase.from('projects').select('id,name,status,target_platforms,updated_at').order('updated_at', { ascending: false }).limit(4),
-          supabase.from('channel_connections').select('provider,status,external_account_name'),
+          betaScopeOn() ? Promise.resolve({ data: [] as Channel[], error: null }) : supabase.from('channel_connections').select('provider,status,external_account_name'),
           supabase.from('metric_snapshots').select('observed,metric_date').gte('metric_date', since).like('external_content_id', 'channel:%'),
         ])
         if (p.error) throw p.error
@@ -132,7 +132,7 @@ export default function Home() {
         <p>Investiga, escribe, produce y distribuye desde un solo estudio. Nada se publica ni se paga sin tu aprobación.</p>
         <div className="heroActions">
           <Link className="buttonLink" href="/projects?new=1">Crear vídeo <Icon name="arrow" size={16} /></Link>
-          <Link className="buttonLink ghost" href="/market-intelligence"><Icon name="search" size={16} /> Investigar un tema</Link>
+          {!betaScopeOn() && <Link className="buttonLink ghost" href="/market-intelligence"><Icon name="search" size={16} /> Investigar un tema</Link>}
         </div>
       </section>
 
@@ -156,7 +156,7 @@ export default function Home() {
             {latest && <Link href={`/projects/${latest.id}`}>{latest.name} <Icon name="arrow" size={14} /></Link>}
           </div>
           <ol className="stepper" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {flow.map(([t, d], i) => (
+            {(betaScopeOn() ? flow.slice(0, 4).map(([t, d]) => [t, t === 'Medios' ? 'Importa tus vídeos, imágenes y audio' : d] as const) : flow).map(([t, d], i) => (
               <li key={t} className={`step ${latest ? (i < currentIndex ? 'done' : i === currentIndex ? 'current' : '') : i === 0 ? 'current' : ''}`}>
                 <i>{latest && i < currentIndex ? <Icon name="check" size={16} /> : i + 1}</i><b>{t}</b><span>{d}</span>
               </li>
@@ -164,7 +164,7 @@ export default function Home() {
           </ol>
         </section>
 
-        <section className="panel">
+        {!betaScopeOn() && (<section className="panel">
           <div className="cardHead"><h2>Rendimiento reciente</h2><span className="pill">Últimos 28 días</span></div>
           <div className="kpis">
             <div className="kpi"><Icon name="eye" /><b>{views ?? '—'}</b><span>Visualizaciones</span></div>
@@ -174,7 +174,7 @@ export default function Home() {
           <p className="muted small" style={{ marginTop: 10 }}>
             {!loaded ? 'Cargando…' : snapshots.length ? `Datos observados · ${snapshots.length} registro(s).` : 'Sin datos observados todavía. Aparecerán al conectar YouTube Analytics; no se muestran cifras inventadas.'}
           </p>
-        </section>
+        </section>)}
       </div>
 
       <div className="dashRow b">
@@ -204,7 +204,7 @@ export default function Home() {
           )}
         </section>
 
-        <section className="panel">
+        {!betaScopeOn() && (<section className="panel">
           <div className="cardHead"><h2>Publicación multicanal</h2><Link href="/connectors">Conexiones <Icon name="arrow" size={14} /></Link></div>
           <div className="channelList">
             {channels.map(ch => {
@@ -219,10 +219,10 @@ export default function Home() {
               )
             })}
           </div>
-        </section>
+        </section>)}
       </div>
 
-      <div className="bottomRow">
+      {!betaScopeOn() && (<div className="bottomRow">
         <section className="panel promo">
           <span className="bigIcon"><Icon name="link" /></span>
           <div><h3>Proveedores de IA</h3><p>Imagen, vídeo, voz, música y texto con varios proveedores; gratis primero sin bajar la calidad. Consulta qué está activo.</p></div>
@@ -233,7 +233,7 @@ export default function Home() {
           <div><h3>Automatizaciones</h3><p>Vigilancia de tendencias y actualización de oportunidades con historial. Nunca publican ni gastan sin tu aprobación.</p></div>
           <Link className="buttonLink ghost small" href="/automations">Abrir</Link>
         </section>
-      </div>
+      </div>)}
       <footer className="muted small" style={{ marginTop: 28, display: 'flex', gap: 14, flexWrap: 'wrap' }}><span>Cerebro Studio</span><Link href="/legal/privacidad">Privacidad / Privacy</Link><Link href="/legal/terminos">Términos / Terms</Link><Link href="/legal/eliminar-datos">Eliminar datos / Data deletion</Link></footer>
     </StudioShell>
   )

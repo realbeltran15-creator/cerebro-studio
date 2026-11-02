@@ -6,6 +6,7 @@ import { StudioShell } from '../components/studio-shell'
 import { Icon } from '../components/studio-icon'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { deleteAsset, uploadProjectMedia, type LicenseStatus } from '@/lib/media-upload'
+import { betaScopeOn } from '@/lib/beta-scope'
 import { QuickGenerate } from '../components/quick-generate'
 import { StockBrowser } from '../components/stock-browser'
 import { TopMediaiImport } from '../components/topmediai-import'
@@ -66,7 +67,7 @@ export default function AudioPage() {
   // Scenes of the project so generated or imported audio can be linked to a scene (Editor shows it first).
   const [scenes, setScenes] = useState<Scene[]>([])
   const [sceneId, setSceneId] = useState('')
-  const [tab, setTab] = useState<Tab>('generate')
+  const [tab, setTab] = useState<Tab>(betaScopeOn() ? 'upload' : 'generate')
   useEffect(() => {
     if (!projectId) return
     void (async () => {
@@ -126,7 +127,7 @@ export default function AudioPage() {
         </label>
       </div>
       <nav className="segTabs" aria-label="Cómo conseguir audio" style={{ marginBottom: 0 }}>
-        {([['generate', 'Generar con IA', 'bolt'], ['free', 'Bancos gratuitos', 'search'], ['topmediai', 'Importar de TopMediai', 'music'], ['upload', 'Subir con licencia', 'upload']] as const).map(([k, l, i]) =>
+        {([['generate', 'Generar con IA', 'bolt'], ['free', 'Bancos gratuitos', 'search'], ['topmediai', 'Importar de TopMediai', 'music'], ['upload', 'Subir con licencia', 'upload']] as const).filter(([k]) => !betaScopeOn() || k === 'upload').map(([k, l, i]) =>
           <button key={k} type="button" className={tab === k ? 'seg active' : 'seg'} aria-pressed={tab === k} onClick={() => setTab(k)}><Icon name={i} size={16} />{l}</button>)}
       </nav>
       {tab === 'generate' && <QuickGenerate modalities={['music', 'sfx', 'ambient']} projectId={projectId} sceneId={sceneId || null} defaultPrompt={scenePrompt} onGenerated={afterNew} />}
@@ -172,7 +173,7 @@ export default function AudioPage() {
           <label htmlFor="audio-source">Enlace de origen<input id="audio-source" type="url" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="Página de la licencia o de la pista" /></label>
           <label htmlFor="audio-notes">Condiciones de la licencia<input id="audio-notes" value={notes} onChange={e => setNotes(e.target.value)} maxLength={1000} placeholder="Ej.: licencia estándar YouTube, atribución requerida…" /></label>
         </div>
-        <p className="muted small">Máximo 50 MB para música y 20 MB para efectos. Solo sube audio que puedas usar: la licencia queda registrada junto al archivo para revisarla antes de publicar. Para generar música, efectos o ambientes usa la pestaña Generar.</p>
+        <p className="muted small">Máximo 50 MB para música y 20 MB para efectos. Solo sube audio que puedas usar: la licencia queda registrada junto al archivo para revisarla antes de publicar.{!betaScopeOn() && ' Para generar música, efectos o ambientes usa la pestaña Generar.'}</p>
         <div><button disabled={busy || !file || !projectId}><Icon name="plus" size={16} />{busy ? 'Subiendo…' : 'Añadir al proyecto'}</button></div>
       </form>}
     </section>
