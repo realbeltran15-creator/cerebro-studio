@@ -12,7 +12,7 @@ const OUT = process.env.AUDIT_OUT || '/tmp/audit'; mkdirSync(OUT, { recursive: t
 const root = path.resolve(new URL('..', import.meta.url).pathname)
 const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
 const anon = (() => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role: 'anon', iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` })()
-const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', NEXT_PUBLIC_CEREBRO_BETA: 'private', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${GW}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
+const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', ...(process.env.AUDIT_ALL === '1' ? {} : { NEXT_PUBLIC_CEREBRO_BETA: 'private' }), NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${GW}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
 if (!process.env.SKIP_BUILD) { const b = spawn('npx', ['next', 'build'], { cwd: root, env, stdio: 'ignore' }); if ((await new Promise(r => b.on('exit', r))) !== 0) { console.log('FAIL build'); process.exit(1) } }
 const web = spawn('npx', ['next', 'start', '-p', String(WEB)], { cwd: root, env, stdio: 'ignore', detached: true })
 process.on('exit', () => { try { process.kill(-web.pid) } catch {} })
@@ -27,7 +27,8 @@ page.on('response', r => { if (r.status() >= 400 && !/favicon/.test(r.url())) ba
 await page.goto(base + '/login'); await page.getByLabel('Correo electrónico').fill(EMAIL); await page.locator('input[type=password]').fill(PW)
 await page.getByRole('button', { name: 'Entrar', exact: true }).click(); await page.waitForURL(u => !/\/login/.test(u.pathname), { timeout: 20000 })
 out(true, 'login por la interfaz')
-const PAGES = ['/', '/projects', '/scripts', '/create', '/library', '/audio', '/storage', '/editor', '/editor/manual']
+const ALL = process.env.AUDIT_ALL === '1' // todos los módulos (beta apagada; sin claves de proveedores: nada puede gastar)
+const PAGES = ALL ? (process.env.AUDIT_PAGES || '').split(',').filter(Boolean) : ['/', '/projects', '/scripts', '/create', '/library', '/audio', '/storage', '/editor', '/editor/manual']
 const allLinks = new Map()
 for (const p of PAGES) {
   bad = []; await page.setViewportSize({ width: 1440, height: 900 })
@@ -38,6 +39,7 @@ for (const p of PAGES) {
   out(!/\/login/.test(page.url()) && !/fuera-de-alcance/.test(page.url()), `${p}: carga sin redirigir (${page.url().replace(base, '')})`)
   out(info.h1.length > 0, `${p}: tiene título principal (${info.h1.slice(0, 40)})`)
   out(info.text > 30, `${p}: tiene contenido (${info.text} caracteres)`)
+  out(!/Application error|Unhandled Runtime Error|Internal Server Error|This page couldn.t load/i.test(await page.locator('body').innerText()), `${p}: sin pantalla de error de la aplicación`)
   out(bad.length === 0, `${p}: sin errores de consola ni respuestas ≥400${bad.length ? ' -> ' + bad.slice(0, 3).join(' | ') : ''}`)
   for (const l of info.links) allLinks.set(l, (allLinks.get(l) || new Set()).add(p))
   await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(300)
