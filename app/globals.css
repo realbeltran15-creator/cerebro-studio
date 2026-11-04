@@ -91,7 +91,8 @@ input,select,textarea{width:100%;background:var(--bg-2);color:var(--text);border
 textarea{resize:vertical;min-height:84px;line-height:1.55}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:13px;font-weight:500}
-.field-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.field-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:12px}
+.field-row>label,.field-row>div{min-width:0}
 .error{color:var(--bad);background:#ff6b7a14;border:1px solid #ff6b7a44;border-radius:10px;padding:10px 12px}
 .notice,.research-feedback{color:#bfe9d4;background:#2fd18b14;border:1px solid #2fd18b44;border-radius:10px;padding:10px 12px}
 .warnBox{color:#ffe3a6;background:#f5b93b12;border:1px solid #f5b93b44;border-radius:10px;padding:10px 12px}
@@ -524,7 +525,7 @@ textarea.viText{width:100%;min-height:70px}
 .tokenBox{display:block;word-break:break-all;padding:8px;border-radius:8px;background:var(--panel-2);font-size:14px;user-select:all}
 .addSteps{margin:8px 0 0 18px;display:flex;flex-direction:column;gap:6px}
 .addSteps code{word-break:break-all}
-@media (max-width:720px){.addSources{grid-template-columns:1fr}.addSource{min-height:84px}}
+@media (max-width:720px){.addSources{grid-template-columns:minmax(0,1fr)}.addSource{min-height:84px}}
 /* Editor player */
 .playerPanel{display:flex;flex-direction:column;gap:8px;padding:10px}
 .playerStage{position:relative;width:100%;max-height:62vh;margin:0 auto;background:#000;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
@@ -698,3 +699,6 @@ button.tlTransition.on{background:#b49cff;color:#10142a;border-color:#fff;box-sh
   .playerVolume{width:44px}
   .playerJump input{width:60px!important}
 }
+
+/* Móvil: los botones largos parten línea en vez de desbordar la pantalla (regresión probada a 375 y 390 px en scripts/local-usability-audit.mjs) */
+@media (max-width:720px){button,.buttonLink{white-space:normal;max-width:100%;text-align:center}}

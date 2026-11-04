@@ -44,8 +44,11 @@ for (const p of PAGES) {
   for (const l of info.links) allLinks.set(l, (allLinks.get(l) || new Set()).add(p))
   await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(300)
   await page.screenshot({ path: `${OUT}/${slug}-mobile.png`, fullPage: true })
-  const ov = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
-  out(ov <= 2, `${p}: sin desbordamiento horizontal en móvil (${ov}px)`)
+  for (const w of [375, 390]) { // regresión de desbordamiento horizontal en móvil
+    await page.setViewportSize({ width: w, height: 844 }); await page.waitForTimeout(250)
+    const ov = await page.evaluate(() => { const W = window.innerWidth, bad = []; for (const e of document.querySelectorAll('body *')) { const r = e.getBoundingClientRect(); if (r.width && r.right > W + 2 && !e.closest('[aria-hidden=true]')) bad.push(`${e.tagName.toLowerCase()}:${Math.round(r.right - W)}:${(e.innerText || "").slice(0, 40).replace(/\n/g, " ")}:ws=${getComputedStyle(e).whiteSpace}`) } return { px: document.documentElement.scrollWidth - W, bad: bad.slice(0, 4) } })
+    out(ov.px <= 2, `${p}: sin desbordamiento horizontal a ${w} px (${ov.px}px)${ov.px > 2 ? ' ' + ov.bad.join(' ') : ''}`)
+  }
 }
 // Ningún enlace interno visible puede llevar a una página cerrada
 const dead = []
