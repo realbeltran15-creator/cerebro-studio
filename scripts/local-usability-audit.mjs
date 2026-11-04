@@ -22,6 +22,7 @@ await createClient(`http://127.0.0.1:${GW}`, anon, { auth: { persistSession: fal
 const browser = await chromium.launch({ executablePath: CHROMIUM_PATH })
 let fail = 0; const out = (ok, m) => { if (!ok) fail++; console.log(`${ok ? 'PASS' : 'FAIL'} ${m}`) }
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } }); const page = await ctx.newPage()
+const pageErrs = []; page.on('pageerror', e => pageErrs.push(String(e).slice(0, 100)))
 let bad = []; page.on('console', m => { if (m.type() === 'error' && !/ERR_TUNNEL_CONNECTION_FAILED|status of 40[34]/.test(m.text())) bad.push('console: ' + m.text().slice(0, 140)) }); page.on('pageerror', e => bad.push('pageerror: ' + String(e).slice(0, 140)))
 page.on('response', r => { if (r.status() >= 400 && !/favicon/.test(r.url())) bad.push(`${r.status()} ${r.url().slice(0, 110)}`) })
 await page.goto(base + '/login'); await page.getByLabel('Correo electrónico').fill(EMAIL); await page.locator('input[type=password]').fill(PW)
@@ -49,6 +50,37 @@ for (const p of PAGES) {
     const ov = await page.evaluate(() => { const W = window.innerWidth, bad = []; for (const e of document.querySelectorAll('body *')) { const r = e.getBoundingClientRect(); if (r.width && r.right > W + 2 && !e.closest('[aria-hidden=true]')) bad.push(`${e.tagName.toLowerCase()}:${Math.round(r.right - W)}:${(e.innerText || "").slice(0, 40).replace(/\n/g, " ")}:ws=${getComputedStyle(e).whiteSpace}`) } return { px: document.documentElement.scrollWidth - W, bad: bad.slice(0, 4) } })
     out(ov.px <= 2, `${p}: sin desbordamiento horizontal a ${w} px (${ov.px}px)${ov.px > 2 ? ' ' + ov.bad.join(' ') : ''}`)
   }
+}
+
+// PROBE=1: sonda interactiva (solo botones seguros): cuenta botones, desactivados, pulsa los no destructivos y registra errores de página / pantallas de error.
+if (process.env.PROBE === '1') {
+  const DANGER = /eliminar|borrar|desconectar|revocar|cerrar sesión|salir|publicar|programar|enviar|pagar|comprar|generar|crear con ia|conectar|autorizar|cobrar|delete|remove|logout/i
+  const report = []
+  await page.setViewportSize({ width: 1440, height: 900 })
+  for (const p of PAGES) {
+    const row = { page: p, buttons: 0, disabled: 0, clicked: 0, silent: [], errors: [] }
+    await page.goto(base + p); await page.waitForLoadState('networkidle').catch(() => {}); await page.waitForTimeout(500)
+    const labels = await page.evaluate(() => [...document.querySelectorAll('main button, main [role=button]')].map(b => ({ t: (b.innerText || b.getAttribute('aria-label') || '').trim().slice(0, 50), d: b.disabled || b.getAttribute('aria-disabled') === 'true' })))
+    row.buttons = labels.length; row.disabled = labels.filter(l => l.d).length
+    const seen = new Set()
+    for (const l of labels) {
+      if (l.d || !l.t || DANGER.test(l.t) || seen.has(l.t) || row.clicked >= 12) continue
+      seen.add(l.t); const errs0 = pageErrs.length
+      const before = await page.evaluate(() => document.querySelector('main')?.innerHTML.length || 0)
+      const loc = page.locator('main button, main [role=button]').filter({ hasText: l.t }).first()
+      if (!(await loc.count())) continue
+      try { await loc.click({ timeout: 2500 }); row.clicked++ } catch { continue }
+      await page.waitForTimeout(400)
+      const after = await page.evaluate(() => document.querySelector('main')?.innerHTML.length || 0)
+      const url = page.url().replace(base, '')
+      if (pageErrs.length > errs0) row.errors.push(`${l.t}: ${pageErrs.slice(errs0).join(' | ').slice(0, 120)}`)
+      else if (before === after && url === p && !(await page.evaluate(() => !!document.querySelector('[role=dialog],[role=alert],.toast,.error,.notice,[aria-live]:not(:empty)')))) row.silent.push(l.t)
+      if (url !== p) { await page.goto(base + p); await page.waitForLoadState('networkidle').catch(() => {}); await page.waitForTimeout(300) }
+    }
+    report.push(row)
+    out(row.errors.length === 0, `sonda ${p}: ${row.buttons} botones, ${row.disabled} desactivados, ${row.clicked} pulsados, ${row.silent.length} sin efecto visible${row.errors.length ? ' ERRORES ' + row.errors.join(' ; ') : ''}`)
+  }
+  const { writeFileSync } = await import('node:fs'); writeFileSync(`${OUT}/probe.json`, JSON.stringify(report, null, 1))
 }
 // Ningún enlace interno visible puede llevar a una página cerrada
 const dead = []
