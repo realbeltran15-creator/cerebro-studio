@@ -354,3 +354,22 @@ export function setSpeedRamp(c: Composition, clipId: string, endSpeed: number | 
     return { ...k, ramp: Math.min(Math.max(endSpeed, 0.1), 8) }
   }) }
 }
+
+export type RangeCheck = { ok: true; durationMs: number } | { ok: false; error: string }
+/** Validates the part of a source video the person wants to insert: it must lie inside the file and last at least one clip minimum. */
+export function checkClipRange(inMs: number, outMs: number, sourceMs: number | null): RangeCheck {
+  if (![inMs, outMs].every(Number.isFinite)) return { ok: false, error: 'Escribe el inicio y el final en segundos.' }
+  if (inMs < 0) return { ok: false, error: 'El inicio no puede ser negativo.' }
+  if (outMs <= inMs) return { ok: false, error: 'El final debe ser posterior al inicio.' }
+  if (sourceMs && outMs > sourceMs + 50) return { ok: false, error: `El final supera la duración del vídeo (${(sourceMs / 1000).toFixed(1)} s).` }
+  if (outMs - inMs < MIN_CLIP_MS) return { ok: false, error: `El tramo debe durar al menos ${MIN_CLIP_MS / 1000} s.` }
+  return { ok: true, durationMs: Math.round(outMs - inMs) }
+}
+
+/** Inserts the part [inMs, outMs) of a video as one clip (or several when longer than the clip maximum), already trimmed. */
+export function addVideoRange(c: Composition, assetId: string, inMs: number, outMs: number, index = c.clips.length): Composition {
+  const before = c.clips.length
+  const out = addVideo(c, assetId, outMs - inMs, index)
+  const added = out.clips.length - before
+  return { ...out, clips: out.clips.map((k, i) => (i >= index && i < index + added ? { ...k, trimInMs: (k.trimInMs ?? 0) + Math.round(inMs) } : k)) }
+}

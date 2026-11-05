@@ -10,8 +10,8 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/client'
 import { CAPTION_POSITIONS, FILTER_PRESETS, tracksOf, type CaptionPosition, audioStartMs, envelopeBreakpoints, type TrackMeta, TRACK_LABELS, type AudioClip as AudioClipT, type TrackKind, type TrackState, CAMERA_MOVES, CAPTION_STYLES, clipStarts, type CameraKind, type CaptionStyle, TEXT_ANIMATIONS, TEXT_FONTS, type TextAnimation, type TextFont, type TextClip, type TextOverlay, TRANSITIONS, type Transition, parseComposition, projectDurationMs, totalDurationMs, MAX_CLIP_MS, MIN_CLIP_MS, type AudioClip, type Clip, type Composition, type OutputFormat, type OverlayClip } from '@/lib/editor/composition'
 import { normalizedVolume } from '../../../lib/editor/audio-level'
 import { rollEdit, slideClip, slipClip, splitEditJL } from '../../../lib/editor/precision'
-import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, makeBounceLoop, setReverse, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History, freezeFrame, setSpeedRamp } from '@/lib/editor/timeline'
-import { assetLabel, audioDurationMs, videoDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
+import { addEnvelopePoint, envelopePointAt, moveEnvelopePoint, addVideo, addVideoRange, checkClipRange, setLevelBetween, addAudioClip, addClip, addTextClip, commit, deleteAudioClip, deleteClip, deleteTextClip, duplicateClip, duplicateTextClip, makeBounceLoop, setReverse, historyOf, moveAudioClip, moveClip, redo, setSpeed, splitClip, toManual, trimStart, undo, updateAudioClip, updateClip, updateTextClip, type History, freezeFrame, setSpeedRamp } from '@/lib/editor/timeline'
+import { assetLabel, audioDurationMs, isExportedVideo, signedUrl, videoDurationMs, musicTypes, visualTypes, voiceTypes, type EditorAsset } from '@/lib/editor/client'
 import { SaveConflictError } from '@/lib/editor/jobs'
 import { StylePanel } from '../../components/style-panel'
 import { MontageTemplatePanel } from '../../components/montage-template-panel'
@@ -150,6 +150,9 @@ export default function ManualEditorPage() {
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [addAsset, setAddAsset] = useState('')
+  const [showExported, setShowExported] = useState(false)
+  const [addIn, setAddIn] = useState(''), [addOut, setAddOut] = useState('')
+  const [addSrc, setAddSrc] = useState<{ id: string; ms: number | null; url: string | null } | null>(null)
   const [addAudio, setAddAudio] = useState('')
   const [addAudioKind, setAddAudioKind] = useState<AudioClip['kind']>('music')
   const [splitAt, setSplitAt] = useState('')
@@ -698,7 +701,18 @@ export default function ManualEditorPage() {
     setNotice(`${items.length} archivo(s) importados (${items.filter(i => i.duplicate).length} ya estaban en tu Biblioteca) y añadidos a la línea de tiempo. Guarda el montaje para conservar los cambios.`)
   }, [job, supabase, apply]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const visuals = useMemo(() => assets.filter(a => visualTypes.includes(a.asset_type)), [assets])
+  const visuals = useMemo(() => assets.filter(a => visualTypes.includes(a.asset_type) && (showExported || !isExportedVideo(a))), [assets, showExported])
+  const addIsVideo = Boolean(addAsset) && assets.find(a => a.id === addAsset)?.asset_type === 'video'
+  useEffect(() => {
+    setAddIn(''); setAddOut(''); setAddSrc(null)
+    if (!addAsset || !addIsVideo) return
+    let live = true
+    void Promise.all([videoDurationMs(addAsset).catch(() => 0), signedUrl(addAsset).catch(() => null)]).then(([ms, url]) => { if (live) setAddSrc({ id: addAsset, ms: ms || null, url }) })
+    return () => { live = false }
+  }, [addAsset, addIsVideo])
+  const rangeIn = addIn.trim() === '' ? 0 : Number(addIn) * 1000, rangeOut = addOut.trim() === '' ? (addSrc?.ms ?? NaN) : Number(addOut) * 1000
+  const rangeCheck = addIsVideo && addSrc && (addSrc.ms || addIn.trim() !== '' || addOut.trim() !== '') ? checkClipRange(rangeIn, rangeOut, addSrc.ms) : null
+  const rangeCustom = addIn.trim() !== '' || addOut.trim() !== ''
   const audios = useMemo(() => assets.filter(a => voiceTypes.includes(a.asset_type) || musicTypes.includes(a.asset_type)), [assets])
   const typeOf = (id: string | null) => (id ? assets.find(a => a.id === id)?.asset_type ?? 'image' : 'none')
   const label = (id: string | null) => { const a = id ? assets.find(x => x.id === id) : undefined; return a ? assetLabel(a) : 'Sin visual' }
@@ -1057,6 +1071,7 @@ export default function ManualEditorPage() {
         <ToolTabs panels={{
           materials: <>
             <div className="cardHead" style={{ marginBottom: 6 }}><h3>Materiales</h3><span className="muted small">{assets.length}</span></div>
+            <button type="button" onClick={() => (document.getElementById('ic-files') as HTMLInputElement | null)?.click()} aria-label="Importar y añadir al montaje" title="Elige archivos de tu equipo: se guardan en la Biblioteca del proyecto y se añaden a la línea de tiempo">⬆ Importar y añadir</button>
             <div className="pageActions" role="tablist" aria-label="Tipo de material">
               <button type="button" role="tab" aria-selected={matTab === 'visual'} className={matTab === 'visual' ? 'small' : 'ghost small'} onClick={() => setMatTab('visual')}>Vídeo e imagen</button>
               <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Música y sonidos</button>
@@ -1080,10 +1095,24 @@ export default function ManualEditorPage() {
             </div>
             {importLicense === 'licensed' && <label htmlFor="mi-notes">Licencia o enlace de origen<input id="mi-notes" value={importNotes} onChange={e => setImportNotes(e.target.value)} maxLength={500} /></label>}
             {busy === 'import' && <span className="muted small" role="status">Importando…</span>}
+            <label className="pill small"><input type="checkbox" checked={showExported} onChange={e => setShowExported(e.target.checked)} /> Incluir mis vídeos exportados</label>
             <label>Clip de imagen o vídeo
-              <select value={addAsset} onChange={e => setAddAsset(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{visuals.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
+              <select value={addAsset} onChange={e => setAddAsset(e.target.value)}><option value="">— Elegir de la Biblioteca</option>
+                {visuals.some(a => a.asset_type === 'video' && !isExportedVideo(a)) && <optgroup label="Vídeos importados">{visuals.filter(a => a.asset_type === 'video' && !isExportedVideo(a)).map(a => <option key={a.id} value={a.id}>[video] {assetLabel(a)}</option>)}</optgroup>}
+                {visuals.some(a => a.asset_type !== 'video') && <optgroup label="Imágenes">{visuals.filter(a => a.asset_type !== 'video').map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</optgroup>}
+                {visuals.some(isExportedVideo) && <optgroup label="Vídeos exportados (reutilizar)">{visuals.filter(isExportedVideo).map(a => <option key={a.id} value={a.id}>[video exportado] {assetLabel(a)}</option>)}</optgroup>}
+              </select>
             </label>
-            <button type="button" className="ghost" disabled={!addAsset} onClick={() => void (async () => { const at = selClip ? comp.clips.findIndex(c => c.id === selClip.id) + 1 : comp.clips.length; const id = addAsset; setAddAsset(''); if (typeOf(id) === 'video') { const ms = await audioDurationMs(id).catch(() => 5000) || 5000; apply(c => addVideo(c, id, ms, at)) } else apply(c => addClip(c, id, 5000, at)) })()}>Añadir clip {selClip ? 'tras el seleccionado' : 'al final'}</button>
+            {addIsVideo && <fieldset className="panel" style={{ background: 'transparent' }} aria-label="Tramo del vídeo que se añade">
+              <legend className="small">Tramo que se añade{addSrc?.ms ? ` (el vídeo dura ${(addSrc.ms / 1000).toFixed(1)} s)` : ''}</legend>
+              {addSrc?.url && <video key={addSrc.url} src={addSrc.url} controls preload="metadata" style={{ maxWidth: '100%', maxHeight: 160 }} aria-label="Vista previa del vídeo elegido" />}
+              <div className="field-row">
+                <label>Inicio (s)<input type="number" min={0} step={0.1} value={addIn} placeholder="0" onChange={e => setAddIn(e.target.value)} aria-label="Inicio del tramo (s)" /></label>
+                <label>Final (s)<input type="number" min={0} step={0.1} value={addOut} placeholder={addSrc?.ms ? (addSrc.ms / 1000).toFixed(1) : ''} onChange={e => setAddOut(e.target.value)} aria-label="Final del tramo (s)" /></label>
+              </div>
+              {rangeCheck && (rangeCheck.ok ? <p className="small" role="status">Duración resultante: {(rangeCheck.durationMs / 1000).toFixed(1)} s{rangeCustom ? ' (tramo recortado)' : ' (vídeo completo)'}. Podrás cambiar el recorte después en el editor.</p> : <p className="error small" role="alert">{rangeCheck.error}</p>)}
+            </fieldset>}
+            <button type="button" className="ghost" disabled={!addAsset || Boolean(rangeCheck && !rangeCheck.ok)} onClick={() => void (async () => { const at = selClip ? comp.clips.findIndex(c => c.id === selClip.id) + 1 : comp.clips.length; const id = addAsset; const inMs = rangeIn, outMs = rangeOut, custom = rangeCustom && rangeCheck?.ok; setAddAsset(''); if (typeOf(id) === 'video') { if (custom) apply(c => addVideoRange(c, id, inMs, outMs, at)); else { const ms = await audioDurationMs(id).catch(() => 5000) || 5000; apply(c => addVideo(c, id, ms, at)) } } else apply(c => addClip(c, id, 5000, at)) })()}>Añadir clip {selClip ? 'tras el seleccionado' : 'al final'}</button>
             <label>Audio
               <select value={addAudio} onChange={e => setAddAudio(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{audios.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
             </label>

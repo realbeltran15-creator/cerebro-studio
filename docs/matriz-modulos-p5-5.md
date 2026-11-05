@@ -74,3 +74,6 @@ Flujo completo verificado (material importado → plantilla → editor + música
 
 ## P5.13 — Accesibilidad y trazabilidad de subtítulos
 - Origen por subtítulo (auto/corregido/manual/importado) con revisión; axe y teclado limpios; fix móvil «Nuevo proyecto». Ver `docs/informe-p5-13-accesibilidad-usabilidad.md`.
+
+## P5.15 — Experiencia de edición
+- Biblioteca sin exportados por defecto, recorte al añadir, «Importar y añadir», subtítulos del visor verificados en 9:16, botón Conectar de Instagram/TikTok siempre visible (M37, M38). Ver `docs/informe-p5-15-experiencia-editor.md`.

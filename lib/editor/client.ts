@@ -202,3 +202,7 @@ export async function saveDerivedVideo(supabase: SupabaseClient, input: {
   }
   return asset as { id: string }
 }
+
+/** A video that Cerebro Studio itself exported (a render or a Short), as opposed to a clip the person imported. */
+export const isExportedVideo = (a: Pick<EditorAsset, 'asset_type' | 'source_provider' | 'provenance'>) =>
+  a.asset_type === 'video' && (a.source_provider === 'browser-render' || a.provenance?.purpose === 'render' || a.provenance?.purpose === 'short')

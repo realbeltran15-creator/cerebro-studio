@@ -196,8 +196,10 @@ export default function SocialPage() {
             <p className="small">Cuenta: <b>{c.external_account_name ?? 'conectada'}</b><br /><span className="muted">ID: <code>{c.external_account_id}</code></span></p>
             {!c.scopes.includes(publishScope[p]) && <p className="error small">Falta el permiso de publicación ({publishScope[p]}). Vuelve a conectar.</p>}
             <div className="pageActions"><a className="button ghost" href={`/api/oauth/${p}/start`}>Cambiar de cuenta</a><button type="button" className="ghost" disabled={busy === p} onClick={() => void disconnect(p)}>Desconectar</button></div>
-          </> : s?.configured ? <a className="button" href={`/api/oauth/${p}/start`}>Conectar {names[p]}</a>
-            : <p className="muted small">Falta configurar en el servidor: {s?.env.join(', ') ?? '…'}. {p === 'instagram' ? 'Requiere app de Meta con «Instagram API with Instagram Login» y cuenta profesional.' : 'Requiere app de TikTok for Developers con Login Kit y Content Posting API.'}</p>}
+          </> : <>
+            <div className="pageActions"><a className="button" href={`/api/oauth/${p}/start`}>Conectar {names[p]}</a></div>
+            {!s?.configured && <p className="muted small">Este servidor aún no tiene las credenciales de la app ({s?.env.join(', ') ?? '…'}), así que al pulsar te lo indicará sin conectar nada. {p === 'instagram' ? 'Hace falta una app de Meta con «Instagram API with Instagram Login» y una cuenta profesional.' : 'Hace falta una app de TikTok for Developers con Login Kit y Content Posting API.'}</p>}
+          </>}
         </section>
       })}
     </div>

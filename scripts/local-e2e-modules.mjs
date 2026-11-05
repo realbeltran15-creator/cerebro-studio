@@ -645,7 +645,7 @@ await step('M32 vídeo: cerrar sesión y volver a entrar recupera el montaje con
   const c3 = await mkCtx(); await login(c3.page, EMAIL, PW); FLOW.page = c3.page; FLOW.ctx = c3.ctx
   const P = c3.page
   await P.goto(base + `/editor/manual?job=${FLOW.job2}`); await settle(P); await P.waitForTimeout(2500)
-  const clipsOk = (await P.locator('main').innerText()).includes('Montaje con clip importado')
+  const clipsOk = (await P.locator('[title*="Clip sintético"]').count()) >= 2
   const sign = await P.evaluate(async id => { const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' }); const j = await r.json().catch(() => ({})); if (!j.url) return String(r.status); const m = await fetch(j.url); return `${m.status} ${m.headers.get('content-type')} ${(await m.blob()).size}` }, FLOW.outId2)
   console.log('   montaje en el editor:', clipsOk, '· MP4 por URL firmada:', sign)
   const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
@@ -843,10 +843,72 @@ await step('M36 VÍDEO 3 (P5.14): proyecto vertical 9:16 desde cero con clip + i
   execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
   const white = (t, band) => { const b = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', f, '-frames:v', '1', '-vf', band, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer', maxBuffer: 1 << 26 }); let c = 0; for (let i = 0; i < b.length; i += 3) if (b[i] > 235 && b[i + 1] > 235 && b[i + 2] > 235) c++; return c }
   const bottom = 'crop=iw:ih*0.4:0:ih*0.6', top = 'crop=iw:ih*0.4:0:0', edge = 'crop=iw*0.03:ih:0:0'
+  FLOW.job3 = job; FLOW.mp4v = f
   const w1 = white(1.5, bottom), w2 = white(4.0, bottom), gap = white(2.75, bottom), wTop = white(1.5, top) + white(4.0, top)
   console.log('   MP4 vertical:', JSON.stringify({ dur, v: v && [v.codec_name, v.width, v.height], a: a && a.codec_name }), '· texto blanco abajo en 1,5 s:', w1, '· 4,0 s:', w2, '· entre subtítulos (2,75 s):', gap, '· arriba:', wTop)
   console.log(`   USABILIDAD vídeo 3: ${((Date.now() - T0) / 1000).toFixed(0)} s medidos en total (render ${renderS.toFixed(0)} s), ${clicks} acciones de interfaz, sin tocar BD ni scripts`)
   if (!v || !a || !(v.height > v.width)) throw new Error('MP4 no vertical o sin audio')
   return w1 > 150 && w2 > 150 && gap < w1 / 4 && wTop < 20
+})
+await step('M37 P5.15: Biblioteca sin exportados por defecto, recorte al añadir, Importar y añadir visible y subtítulos en el visor (9:16) acordes al MP4', async () => {
+  const P = FLOW.page
+  await P.goto(base + '/editor/manual'); await settle(P); await P.waitForTimeout(1200)
+  await P.locator('#mp-project').selectOption({ label: PROJ }); await P.locator('#mp-title').fill('Montaje P515'); await P.locator('#mp-format').selectOption('16:9')
+  await P.getByRole('button', { name: 'Crear montaje vacío' }).click(); await P.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(P); await P.waitForTimeout(2500)
+  const job = new URL(P.url()).searchParams.get('job')
+  await P.getByText('Materiales', { exact: true }).first().click(); await P.waitForTimeout(400)
+  await P.locator('summary', { hasText: 'Importar o añadir' }).first().click(); await P.waitForTimeout(300)
+  const sel = P.locator('label', { hasText: 'Clip de imagen o vídeo' }).locator('select')
+  const optsOf = async () => (await sel.locator('option').allInnerTexts()).map(x => x.trim())
+  const o1 = await optsOf(); console.log('   opciones sin exportados:', o1.length, '· exportados visibles:', o1.some(x => /exportado/.test(x)))
+  if (o1.some(x => /exportado|Montaje|Vertical con/.test(x))) throw new Error('los MP4 exportados aparecen mezclados por defecto')
+  if (!o1.some(x => /Clip sint/.test(x))) throw new Error('falta el clip importado')
+  await P.getByLabel('Incluir mis vídeos exportados').check(); await P.waitForTimeout(300)
+  const o2 = await optsOf(); console.log('   con exportados:', o2.length, '· grupo:', await sel.locator('optgroup').evaluateAll(g => g.map(x => x.label)))
+  if (!o2.some(x => /exportado/.test(x))) throw new Error('el vídeo exportado no se puede reutilizar al pedirlo')
+  await P.getByLabel('Incluir mis vídeos exportados').uncheck()
+  // recorte al añadir con validación
+  await sel.selectOption({ label: o1.find(x => /Clip sint/.test(x)) }); await P.waitForTimeout(1500)
+  await P.getByLabel('Inicio del tramo (s)').fill('3'); await P.getByLabel('Final del tramo (s)').fill('2'); await P.waitForTimeout(200)
+  const err = await P.getByRole('alert').filter({ hasText: 'posterior' }).count(); const dis = await P.getByRole('button', { name: /^Añadir clip/ }).isDisabled()
+  console.log('   intervalo inválido → aviso:', err, '· botón desactivado:', dis); if (!err || !dis) throw new Error('no valida el intervalo')
+  await P.getByLabel('Final del tramo (s)').fill('5.5'); await P.waitForTimeout(200)
+  const info = await P.locator('[role=status]', { hasText: 'Duración resultante' }).innerText(); console.log('   ', info)
+  await P.getByRole('button', { name: /^Añadir clip/ }).click(); await P.waitForTimeout(800)
+  // Importar y añadir: botón visible, sin abrir paneles
+  const png = path.join(MEDIA, 'nueva-p515.png'); execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xdd8800:s=320x180', '-frames:v', '1', png])
+  const imports0 = Number(sq(`select count(*) from assets where asset_type='image'`))
+  const [chooser] = await Promise.all([P.waitForEvent('filechooser', { timeout: 8000 }), P.getByRole('button', { name: 'Importar y añadir al montaje' }).click()])
+  await chooser.setFiles(png); await P.waitForTimeout(6000)
+  await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`))
+  console.log('   montaje:', comp.clips.map(k => `${k.durationMs}@${k.trimInMs ?? 0}`).join(' | '), '· imágenes en BD:', imports0, '→', sq(`select count(*) from assets where asset_type='image'`))
+  if (comp.clips.length !== 2 || comp.clips[0].durationMs !== 2500 || comp.clips[0].trimInMs !== 3000) throw new Error('el recorte al añadir no se aplicó: ' + JSON.stringify(comp.clips.map(k => [k.durationMs, k.trimInMs])))
+  // subtítulos en el visor del montaje vertical de M36 frente al MP4 exportado
+  await P.goto(base + `/editor/manual?job=${FLOW.job3}`); await settle(P); await P.waitForTimeout(3500)
+  const cv = P.locator('canvas.playerCanvas'); const grab = async (key, n) => { await P.locator('h1').first().click().catch(() => {}); await P.keyboard.press('Home'); for (let i = 0; i < n; i++) { await P.keyboard.press('Shift+ArrowRight') } ; await P.waitForTimeout(900); const f = path.join(MEDIA, `visor-${key}.png`); writeFileSync(f, await cv.screenshot()); return f }
+  const stat = (file, vf) => { const b = execFileSync('ffmpeg', ['-v', 'error', ...(vf.ss != null ? ['-ss', String(vf.ss)] : []), '-i', file, '-frames:v', '1', '-vf', 'scale=240:-1,crop=iw:ih*0.4:0:ih*0.6', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer', maxBuffer: 1 << 26 }); let c = 0, sy = 0; const w = 240, h = Math.floor(b.length / 3 / w); for (let i = 0; i < b.length; i += 3) if (b[i] > 235 && b[i + 1] > 235 && b[i + 2] > 235) { c++; sy += Math.floor(i / 3 / w) / h } return { c, y: c ? sy / c : null } }
+  const v0 = stat(await grab('0', 0), {}), v1 = stat(await grab('1', 1), {}), v4 = stat(await grab('4', 4), {})
+  const m1 = stat(FLOW.mp4v, { ss: 1 }), m4 = stat(FLOW.mp4v, { ss: 4 })
+  console.log('   visor (blanco abajo): 0 s →', v0.c, '· 1 s →', v1.c, '· 4 s →', v4.c, '| MP4: 1 s →', m1.c, '· 4 s →', m4.c, '· posición vertical visor/MP4 (1 s):', v1.y?.toFixed(2), '/', m1.y?.toFixed(2))
+  return v0.c < 30 && v1.c > 40 && v4.c > 40 && m1.c > 40 && Math.abs((v1.y ?? 9) - (m1.y ?? 0)) < 0.12
+})
+await step('M38 conexiones sociales: botón Conectar de Instagram siempre visible y aviso claro si faltan credenciales (sin llamadas externas)', async () => {
+  const P = FLOW.page
+  await P.goto(base + '/social'); await settle(P); await P.waitForTimeout(1500)
+  const btn = P.getByRole('link', { name: /Conectar Instagram/ })
+  const vis = await btn.isVisible().catch(() => false), tt = await P.getByRole('link', { name: /Conectar TikTok/ }).isVisible().catch(() => false)
+  console.log('   botón Instagram visible:', vis, '· TikTok:', tt)
+  if (!vis || !tt) throw new Error('falta el botón Conectar')
+  await btn.click(); await P.waitForTimeout(4000); console.log('   URL tras pulsar:', P.url(), '·', (await P.locator('body').innerText()).slice(0, 200).replace(/\n/g, ' / ')); await settle(P)
+  const msg = (await P.locator('main').innerText()).replace(/\s+/g, ' ')
+  const note = /Instagram[^.]*no está configurado en el servidor/.test(msg)
+  console.log('   tras pulsar:', P.url().replace(/^https?:\/\/[^/]+/, ''), '· aviso de credenciales:', note)
+  await P.goto(base + '/connectors'); await settle(P); await P.waitForTimeout(1500)
+  const yt = (await P.locator('main').innerText()).replace(/\s+/g, ' ')
+  const ytState = /todavía no está activada en este servidor/.test(yt) ? 'sin credenciales de Google en este servidor (explicado en pantalla)' : /Conectar canal/.test(yt) ? 'botón Conectar canal visible' : 'estado no reconocido'
+  console.log('   YouTube:', ytState)
+  const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
+  return note && ytState !== 'estado no reconocido'
 })
 await finish()
