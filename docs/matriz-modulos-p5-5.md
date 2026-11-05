@@ -53,3 +53,6 @@ Los 8 módulos «solo carga» (Plantillas, Editar con mi estilo, Montaje automá
 
 ## Actualización P5.7
 Miniaturas pasa a **parcial operativo** (texto exacto sobre imagen propia, local y gratis). Plantillas añade defensa de compatibilidad. Ver `docs/informe-p5-7-desbloqueo-gratuito.md`.
+
+## Actualización P5.8
+Miniaturas verificada (formatos, resolución, persistencia, imagen propia). Pexels preparado y apagado. Cuotas oficiales verificadas (ver `docs/informe-p5-8-integraciones-gratuitas.md`). Intermitencia registrada en Chromium laboratorio.

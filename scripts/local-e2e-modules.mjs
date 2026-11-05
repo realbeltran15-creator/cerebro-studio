@@ -399,6 +399,23 @@ await step('M24 Miniaturas: texto sobre una imagen propia, 100 % local y gratis'
   if (Number(after) !== Number(before) + 1) throw new Error('no se creó la miniatura compuesta')
   await page.reload(); await settle(page); await page.locator('#thumb-project').selectOption({ label: PROJ }); await page.waitForTimeout(2000)
   if (!(await page.locator('main').innerText()).includes('MI TEXTO')) throw new Error('no persiste tras recargar')
+  // formatos y resolución reales de los ficheros guardados
+  for (const [asp, w, h] of [['9:16', 720, 1280], ['1:1', 1080, 1080]]) {
+    await page.locator('select[id^="ca-"]').first().selectOption(asp).catch(async () => {
+      await page.getByRole('button', { name: 'Añadir texto encima' }).first().click(); await page.locator('input[id^="ct-"]').first().fill('FORMATO ' + asp); await page.locator('select[id^="ca-"]').first().selectOption(asp)
+    })
+    if (!(await page.locator('input[id^="ct-"]').count())) { await page.getByRole('button', { name: 'Añadir texto encima' }).first().click() }
+    await page.locator('input[id^="ct-"]').first().fill('FORMATO ' + asp); await page.locator('select[id^="ca-"]').first().selectOption(asp)
+    await page.getByRole('button', { name: 'Crear copia con texto' }).click(); await page.waitForTimeout(4000)
+    await page.reload(); await settle(page); await page.locator('#thumb-project').selectOption({ label: PROJ }); await page.waitForTimeout(2500)
+  }
+  const dims = await page.evaluate(async () => {
+    const out = []
+    for (const img of Array.from(document.querySelectorAll('main article img'))) { const r = await fetch(img.src); const b = await r.blob(); const bm = await createImageBitmap(b); out.push(`${b.type} ${bm.width}x${bm.height}`) }
+    return out
+  })
+  console.log('   ficheros:', dims.join(' | '))
+  for (const want of ['image/jpeg 1280x720', 'image/jpeg 720x1280', 'image/jpeg 1080x1080']) if (!dims.includes(want)) throw new Error('falta ' + want)
   const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
   return true
 })
