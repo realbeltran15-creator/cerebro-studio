@@ -14,6 +14,7 @@ import { modelById } from '@/lib/providers/catalog'
 import { tierLabels, type CostTier } from '@/lib/providers/directory'
 import { deletionCheck, describeAsset, downloadText, LIBRARY_PAGE, originOf, type AssetReferences, type LibraryAsset } from '@/lib/library'
 import { addTag, allTags, autoTags, createCollection, deleteCollection, EMPTY_ORG, forgetAsset, loadOrg, relatedAssets, removeTag, saveOrg, toggleInCollection, type LibraryOrg } from '@/lib/library-org'
+import { StockBrowser } from '../components/stock-browser'
 import { deleteAsset, uploadKindFor, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Project = { id: string; name: string }
@@ -65,6 +66,14 @@ export default function LibraryPage() {
       setProjects((p.data ?? []) as Project[]); setScenes((s.data ?? []) as Scene[])
     })()
   }, [supabase])
+  const [stockOpen, setStockOpen] = useState(false)
+  const [stockKind, setStockKind] = useState<'image' | 'video'>('image')
+  const [stockProject, setStockProject] = useState('')
+  async function afterStockImport(id: string) {
+    const { data } = await supabase.from('assets').select(COLS).eq('id', id).maybeSingle()
+    if (data) { setAssets(list => list.some(a => a.id === id) ? list : [data as LibraryAsset, ...list]); setSelected(data as LibraryAsset) }
+    setNotice('Material importado a la Biblioteca con su licencia y autor.')
+  }
   async function loadMore() {
     setLoadingMore(true)
     const { data, error: e } = await supabase.from('assets').select(COLS).order('created_at', { ascending: false }).range(assets.length, assets.length + LIBRARY_PAGE - 1)
@@ -196,6 +205,16 @@ export default function LibraryPage() {
       <StorageUsage />
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
+      <p style={{ margin: '0 0 10px' }}><button type="button" className="ghost small" aria-expanded={stockOpen} onClick={() => setStockOpen(o => !o)}>{stockOpen ? 'Cerrar bancos gratuitos' : 'Buscar fotos y vídeos gratuitos'}</button></p>
+      {stockOpen && (
+        <section className="panel" aria-label="Bancos gratuitos" style={{ marginBottom: 14 }}>
+          <div className="field-row">
+            <label htmlFor="stock-project">Proyecto de destino<select id="stock-project" value={stockProject} onChange={e => setStockProject(e.target.value)}><option value="">Elige…</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            <label htmlFor="stock-kind">Tipo<select id="stock-kind" value={stockKind} onChange={e => setStockKind(e.target.value as 'image' | 'video')}><option value="image">Fotos</option><option value="video">Vídeos</option></select></label>
+          </div>
+          <StockBrowser key={stockKind} kind={stockKind} projectId={stockProject} onImported={id => void afterStockImport(id)} />
+        </section>
+      )}
       {uploading && (
         <section className="panel" aria-label="Subir archivo" style={{ marginBottom: 14 }}>
           <div className="field-row">

@@ -62,6 +62,7 @@ export const ROUTE_POLICY: Record<string, RoutePolicy> = {
   'social/tiktok/creator': b('privileged'),
   'stock/import': ok('bancos de recursos gratuitos (Pexels/Pixabay/Freesound); sin coste'),
   'stock/search': ok('bancos de recursos gratuitos; sin coste'),
+  'stock/fixture/[name]': ok('imágenes sintéticas de prueba; 404 salvo CEREBRO_STOCK_FIXTURE=1 y nunca en la beta privada'),
   'storage/cleanup': b('destructive'),
   'storage/multipart': ok('subida a R2 (no configurado en Preview) con rutas del propio usuario'),
   'storage/object': b('destructive'),

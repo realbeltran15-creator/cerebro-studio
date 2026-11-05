@@ -56,3 +56,6 @@ Miniaturas pasa a **parcial operativo** (texto exacto sobre imagen propia, local
 
 ## Actualización P5.8
 Miniaturas verificada (formatos, resolución, persistencia, imagen propia). Pexels preparado y apagado. Cuotas oficiales verificadas (ver `docs/informe-p5-8-integraciones-gratuitas.md`). Intermitencia registrada en Chromium laboratorio.
+
+## Actualización P5.9
+Biblioteca incorpora el buscador de bancos gratuitos (Pexels/Pixabay/Freesound) con importación idempotente, licencia y autor; protegido con contador local y caché; apagado sin clave. Ver `docs/informe-p5-9-banco-materiales.md`.

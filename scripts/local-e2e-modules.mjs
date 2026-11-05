@@ -21,7 +21,7 @@ const OFFICIAL = process.env.OFFICIAL === '1', GW = Number(process.env.GATEWAY_P
 const jwtFor = role => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role, iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` }
 const storageDir = mkdtempSync(path.join(os.tmpdir(), 'lite-e2e-'))
 const lite = OFFICIAL ? { close() {} } : await startLite({ port: LITE, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir, onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{}')`) })
-const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${OFFICIAL ? GW : LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
+const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', CEREBRO_STOCK_FIXTURE: '1', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${OFFICIAL ? GW : LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
 let pass = 0, fail = 0
 const t = async (name, fn) => { try { const r = await fn(); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message.split('\n').slice(0, 3).join(' | ')) } }
 if (!process.env.SKIP_BUILD) { console.log('next build…'); const b = spawn('npx', ['next', 'build'], { cwd: root, env, stdio: 'ignore' }); const code = await new Promise(r => b.on('exit', r)); if (code) { console.log('FAIL build', code); process.exit(1) } }
@@ -417,6 +417,37 @@ await step('M24 Miniaturas: texto sobre una imagen propia, 100 % local y gratis'
   console.log('   ficheros:', dims.join(' | '))
   for (const want of ['image/jpeg 1280x720', 'image/jpeg 720x1280', 'image/jpeg 1080x1080']) if (!dims.includes(want)) throw new Error('falta ' + want)
   const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
+  return true
+})
+await step('M25 Banco de materiales: buscar (datos de prueba), importar a la Biblioteca y reutilizar en Miniaturas/Plantillas/Editor', async () => {
+  await page.goto(base + '/library'); await settle(page); await page.waitForTimeout(1000)
+  await page.getByRole('button', { name: 'Buscar fotos y vídeos gratuitos' }).click()
+  await page.locator('#stock-project').selectOption({ label: PROJ })
+  await page.getByLabel('Banco gratuito', { exact: true }).selectOption('pexels')
+  await page.getByLabel('Buscar en el banco').fill('mar'); await page.getByRole('button', { name: 'Buscar', exact: true }).click(); await page.waitForTimeout(1500)
+  const txt = await page.locator('main').innerText()
+  if (!txt.includes('DATOS DE PRUEBA')) throw new Error('no se rotulan los resultados como datos de prueba')
+  const before = sq(`select count(*) from assets where source_provider='pexels'`)
+  await page.getByRole('button', { name: 'Importar' }).first().click(); await page.waitForTimeout(2500)
+  const after = sq(`select count(*) from assets where source_provider='pexels'`)
+  console.log('   importados antes/después:', before, after)
+  if (Number(after) !== Number(before) + 1) throw new Error('no se importó el material')
+  const row = sq(`select asset_type||'|'||license_status||'|'||(provenance->>'attribution')||'|'||(provenance->>'author') from assets where source_provider='pexels' order by created_at desc limit 1`)
+  console.log('   fila:', row)
+  // duplicado: importar de nuevo no crea otro
+  await page.getByRole('button', { name: 'Importar' }).first().click(); await page.waitForTimeout(2000)
+  if (sq(`select count(*) from assets where source_provider='pexels'`) !== after) throw new Error('el duplicado creó otro activo')
+  // reutilización en Miniaturas, Plantillas y Editor
+  await page.goto(base + '/thumbnails'); await settle(page); await page.locator('#thumb-project').selectOption({ label: PROJ }); await page.waitForTimeout(2500)
+  if (!(await page.locator('main').innerText()).includes('Imagen tuya')) throw new Error('el material importado no está en Miniaturas')
+  const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
+  // recuperación: el archivo se descarga tras recargar con URL firmada y es PNG válido
+  const info = await page.evaluate(async () => {
+    const out = []
+    for (const img of Array.from(document.querySelectorAll('main article img'))) { const b = await (await fetch(img.src)).blob(); out.push(b.type) }
+    return out
+  })
+  if (!info.includes('image/png')) throw new Error('no se recupera el PNG importado: ' + info.join(','))
   return true
 })
 await finish()

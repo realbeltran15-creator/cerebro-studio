@@ -9,7 +9,7 @@ type Source = 'freesound' | 'pexels' | 'pixabay'
 type Item = {
   source: Source; id: string; kind: Kind; title: string; author: string; authorUrl: string | null; pageUrl: string
   license: string; licenseUrl: string | null; licenseStatus: string; attribution: string; thumbUrl: string | null; previewUrl: string | null
-  durationSeconds: number | null; width: number | null; height: number | null
+  durationSeconds: number | null; width: number | null; height: number | null; synthetic?: boolean
 }
 
 const sourceLabels: Record<Source, string> = { freesound: 'Freesound', pexels: 'Pexels', pixabay: 'Pixabay' }
@@ -89,6 +89,7 @@ export function StockBrowser({ kind, projectId, sceneId, defaultQuery = '', impo
               {item.kind === 'image' && item.thumbUrl && <img src={item.thumbUrl} alt={item.title} loading="lazy" />}
               {item.kind === 'video' && <video src={item.previewUrl ?? undefined} poster={item.thumbUrl ?? undefined} muted playsInline preload="none" controls />}
               {item.kind === 'audio' && <audio src={item.previewUrl ?? undefined} controls preload="none" />}
+              {item.synthetic && <p className="warning small" role="note" style={{ margin: 0 }}>DATOS DE PRUEBA: no son resultados de Pexels.</p>}
               <div className="stockMeta">
                 <b title={item.title}>{item.title}</b>
                 <span>{item.author}{item.durationSeconds ? ` · ${Math.round(item.durationSeconds)} s` : ''}{item.width ? ` · ${item.width}×${item.height}` : ''}</span>

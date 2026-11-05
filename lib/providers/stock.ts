@@ -5,10 +5,15 @@
  * Pexels / Pixabay: free API keys; files are copied (Pixabay forbids permanent hotlinking).
  */
 
+import { FIXTURE_COLORS, FIXTURE_NOTICE, stockFixtureOn } from './stock-fixture'
+import { PexelsLedger, PexelsLimit } from '../stock/pexels'
+
 export type StockSource = 'freesound' | 'pexels' | 'pixabay'
 export type StockKind = 'image' | 'video' | 'audio'
 
 export type StockItem = {
+  /** True only for local test data (never real provider results). */
+  synthetic?: boolean
   source: StockSource
   id: string
   kind: StockKind
@@ -36,7 +41,7 @@ const keys = {
   pexels: () => process.env.PEXELS_API_KEY?.trim() ?? '',
   pixabay: () => process.env.PIXABAY_API_KEY?.trim() ?? '',
 }
-export const stockConfigured = (s: StockSource) => Boolean(keys[s]())
+export const stockConfigured = (s: StockSource) => Boolean(keys[s]()) || (s === 'pexels' && stockFixtureOn())
 export const stockKinds: Record<StockSource, StockKind[]> = { freesound: ['audio'], pexels: ['image', 'video'], pixabay: ['image', 'video'] }
 
 /** Hosts files may be downloaded from, per source. */
@@ -45,8 +50,9 @@ const downloadHosts: Record<StockSource, RegExp> = {
   pexels: /(^|\.)pexels\.com$/,
   pixabay: /(^|\.)pixabay\.com$/,
 }
-export function allowedDownload(source: StockSource, url: string) {
+export function allowedDownload(source: StockSource, url: string, origin?: string) {
   try {
+    if (stockFixtureOn() && origin && url.startsWith(`${origin}/api/stock/fixture/`)) return true
     const u = new URL(url)
     if (u.protocol !== 'https:' || u.username || u.password) return false
     if (downloadHosts[source].test(u.hostname)) return true
@@ -55,10 +61,20 @@ export function allowedDownload(source: StockSource, url: string) {
   } catch { return false }
 }
 
+/** Local request counter + 5-minute memory cache for identical searches: keeps the free quotas safe. */
+const pexelsLedger = new PexelsLedger()
+const searchCache = new Map<string, { at: number; value: unknown }>()
+export function resetStockCachesForTests() { searchCache.clear() }
 async function getJson(url: string, headers: Record<string, string> = {}) {
+  const isPexels = new URL(url).hostname.endsWith('pexels.com')
+  const hit = searchCache.get(url); if (hit && Date.now() - hit.at < 300_000) return hit.value as Record<string, unknown>
+  if (isPexels) pexelsLedger.reserve()
   const r = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(20000) })
+  if (r.status === 429 && isPexels) throw new PexelsLimit('hour')
   if (!r.ok) throw new Error(`Banco de medios respondió ${r.status}.`)
-  return r.json() as Promise<Record<string, unknown>>
+  const value = await r.json() as Record<string, unknown>
+  searchCache.set(url, { at: Date.now(), value })
+  return value
 }
 
 // ---------- Freesound ----------
@@ -175,6 +191,7 @@ export async function searchStock(source: StockSource, kind: StockKind, q: strin
   if (!stockKinds[source].includes(kind)) throw new Error('Ese banco no ofrece ese tipo de archivo.')
   const query = q.trim().slice(0, 200)
   if (!query) return []
+  if (source === 'pexels' && stockFixtureOn() && !process.env.PEXELS_API_KEY?.trim()) return fixtureSearch(kind)
   if (source === 'freesound') return freesoundSearch(query, opts)
   if (source === 'pexels') return pexelsSearch(query, kind, opts.orientation)
   return pixabaySearch(query, kind, opts.orientation)
@@ -182,7 +199,18 @@ export async function searchStock(source: StockSource, kind: StockKind, q: strin
 
 export async function getStockItem(source: StockSource, kind: StockKind, id: string) {
   if (!stockConfigured(source)) throw new Error('Banco de medios no configurado.')
+  if (source === 'pexels' && stockFixtureOn() && !process.env.PEXELS_API_KEY?.trim()) { const f = fixtureSearch(kind).find(x => x.id === id); if (!f) throw new Error('No encontrado.'); return f }
   if (source === 'freesound') return freesoundGet(id)
   if (source === 'pexels') return pexelsGet(id, kind)
   return pixabayGet(id, kind)
+}
+
+// ---------- Local test data (clearly labelled, never real) ----------
+function fixtureSearch(kind: StockKind): StockItem[] {
+  if (kind !== 'image') return []
+  return Object.keys(FIXTURE_COLORS).map((id, i) => ({
+    synthetic: true, source: 'pexels' as const, id, kind: 'image' as const, title: `[PRUEBA] Imagen sintética ${i + 1}`, author: 'Datos de prueba', authorUrl: null, pageUrl: 'https://www.pexels.com',
+    license: 'Datos de prueba (no es Pexels)', licenseUrl: null, licenseStatus: 'licensed' as const, attribution: FIXTURE_NOTICE,
+    thumbUrl: `/api/stock/fixture/${id}.png`, previewUrl: `/api/stock/fixture/${id}.png`, downloadUrl: `fixture:${id}`, mimeType: 'image/png', durationSeconds: null, width: 640, height: 360,
+  }))
 }
