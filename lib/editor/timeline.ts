@@ -58,7 +58,7 @@ export function setDuration(c: Composition, clipId: string, durationMs: number) 
 /** Cues inside [fromMs, toMs) of a clip, re-timed so fromMs becomes 0. Used when a clip with transcript cues is trimmed or split. */
 export function sliceCues(cues: Clip['cues'], fromMs: number, toMs: number): Clip['cues'] {
   if (!cues) return undefined
-  return cues.filter(q => q.endMs > fromMs && q.startMs < toMs).map(q => ({ text: q.text, startMs: Math.max(q.startMs, fromMs) - fromMs, endMs: Math.min(q.endMs, toMs) - fromMs }))
+  return cues.filter(q => q.endMs > fromMs && q.startMs < toMs).map(q => ({ ...q, startMs: Math.max(q.startMs, fromMs) - fromMs, endMs: Math.min(q.endMs, toMs) - fromMs }))
 }
 
 /**

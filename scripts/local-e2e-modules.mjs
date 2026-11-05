@@ -764,4 +764,43 @@ await step('M34 subtítulos: pegar transcripción sin tiempos (estimada), editar
   execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
   return withSubs > 200 && without < 20
 })
+await step('M35 subtítulos: origen de cada subtítulo (automático / corregido / manual), teclado, axe y móvil', async () => {
+  const P = FLOW.page
+  await P.goto(base + `/editor/manual?job=${FLOW.job2}`); await settle(P); await P.waitForTimeout(2500)
+  await P.getByText('Textos', { exact: true }).first().click(); await P.waitForTimeout(500)
+  const panel = P.locator('section.panel[aria-label="Subtítulos"]'); await panel.scrollIntoViewIfNeeded().catch(() => {})
+  const f = path.join(MEDIA, 'dos.auto.srt'); writeFileSync(f, '1\n00:00:00,000 --> 00:00:00,700\nprimero auto\n\n2\n00:00:00,800 --> 00:00:01,400\nsegundo auto\n')
+  await panel.locator('input[type=file]').setInputFiles(f); await P.waitForTimeout(400)
+  await panel.getByRole('button', { name: 'Colocar en el montaje' }).click(); await P.waitForTimeout(800)
+  const st = async () => (await panel.locator('[role=status]').first().innerText()).replace(/\s+/g, ' ')
+  const s0 = await st(); console.log('   estado inicial:', s0)
+  if (!/2 subtítulos automáticos SIN revisar/.test(s0)) throw new Error('los automáticos no constan como sin revisar')
+  // corregir uno: el otro sigue sin revisar (el archivo no cuenta como revisado)
+  await panel.getByLabel('Texto del subtítulo 1').fill('Primero corregido'); await P.waitForTimeout(300)
+  const s1 = await st(); console.log('   tras corregir uno:', s1)
+  if (!/1 subtítulos automáticos SIN revisar/.test(s1) || !/1 revisados o corregidos/.test(s1)) throw new Error('corregir un subtítulo no debe dar por revisado el archivo')
+  // teclado: Revisado → Inicio → Fin → Texto → Quitar, sin ratón
+  await panel.getByLabel('Marcar el subtítulo 2 como revisado').focus()
+  const seq = []; for (let i = 0; i < 5; i++) { await P.keyboard.press('Tab'); seq.push(await P.evaluate(() => document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName)) }
+  console.log('   orden de Tab:', JSON.stringify(seq))
+  if (seq[0] !== 'Inicio del subtítulo 2' || seq[1] !== 'Fin del subtítulo 2' || seq[2] !== 'Texto del subtítulo 2' || seq[3] !== 'Quitar el subtítulo 2') throw new Error('orden de foco inesperado')
+  await panel.getByLabel('Marcar el subtítulo 2 como revisado').focus(); await P.keyboard.press('Enter'); await P.waitForTimeout(300)
+  const s2 = await st(); console.log('   tras revisar con teclado:', s2)
+  if (!/Todos los subtítulos automáticos están revisados/.test(s2)) throw new Error('Revisado por teclado no funcionó')
+  // guardar y recuperar: el origen persiste
+  await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500); await P.reload(); await settle(P); await P.waitForTimeout(2500)
+  await P.getByText('Textos', { exact: true }).first().click(); await P.waitForTimeout(500)
+  const rows = await P.locator('section.panel[aria-label="Subtítulos"] table[aria-label="Lista de subtítulos"] tbody tr td:nth-child(2)').allInnerTexts()
+  console.log('   orígenes tras recargar:', JSON.stringify(rows.map(r => r.replace(/\s+/g, ' ').trim())))
+  if (!rows.slice(0, 2).every(r => /Automático, revisado\/corregido/.test(r))) throw new Error('el origen no persiste')
+  // axe en escritorio y en móvil, y sin desbordamiento horizontal
+  const axeSrc = (await import('node:fs')).readFileSync('node_modules/axe-core/axe.min.js', 'utf8')
+  const axe = async () => { await P.addScriptTag({ content: axeSrc }); return P.evaluate(async () => (await window.axe.run(document, { runOnly: ['wcag2a', 'wcag2aa'] })).violations.filter(v => !['document-title', 'html-has-lang'].includes(v.id)).map(v => v.id + ':' + v.nodes.length + ' ' + v.nodes.map(n => n.html.slice(0, 160)).join(' | '))) }
+  const vd = await axe(); console.log('   axe escritorio:', JSON.stringify(vd))
+  await P.setViewportSize({ width: 390, height: 844 }); await P.waitForTimeout(600)
+  const over = await P.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  const vm = await axe(); console.log('   axe móvil:', JSON.stringify(vm), '· desbordamiento horizontal:', over)
+  await P.setViewportSize({ width: 1280, height: 800 })
+  return vd.length === 0 && vm.length === 0 && over <= 1
+})
 await finish()

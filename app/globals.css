@@ -362,7 +362,7 @@ article p{color:var(--muted);font-size:14px;margin-top:6px}
   .brandText small{display:none}
   .topSearch{display:none}
   .topbar{gap:10px;padding:0 16px}
-  .topbar .buttonLink.primary span{display:none}
+  .topbar .buttonLink.primary span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
   .topbar .buttonLink.primary{padding:9px}
   .sidebar{position:fixed;left:0;top:var(--topbar);bottom:0;height:auto;width:min(84vw,300px);z-index:40;transform:translateX(-102%);transition:transform .2s ease}
   .sidebar.open{transform:none}

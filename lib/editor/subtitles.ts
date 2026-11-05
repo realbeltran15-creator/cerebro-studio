@@ -1,4 +1,4 @@
-import { clipCaptions, clipStarts, type CaptionCue, type Clip, type Composition, cuesToSrt, cuesToVtt } from './composition'
+import { clipCaptions, clipStarts, type CaptionCue, type CueOrigin, type Clip, type Composition, cuesToSrt, cuesToVtt } from './composition'
 
 /**
  * Subtitles: reading SRT and WebVTT files, putting their cues on the clips (timed captions replace the evenly spread narration), editing
@@ -59,7 +59,7 @@ export type ApplyCuesResult = { composition: Composition; assigned: number; outs
  * Puts timeline cues on the clips they overlap, re-timed to each clip's start (a cue crossing a cut is split in two so each half shows on its clip).
  * `shiftMs` moves the whole file (a positive value makes the captions appear later), for files that start at another point than the montage.
  */
-export function applyCuesToComposition(input: Composition, cues: CaptionCue[], opts: { shiftMs?: number; /** Default true: clips that get no cue lose their old narration text, so the file is the only source of captions. */ replace?: boolean } = {}): ApplyCuesResult {
+export function applyCuesToComposition(input: Composition, cues: CaptionCue[], opts: { shiftMs?: number; /** Where these captions come from; kept on every cue through edits, saves and recoveries. */ origin?: CueOrigin; /** Default true: clips that get no cue lose their old narration text, so the file is the only source of captions. */ replace?: boolean } = {}): ApplyCuesResult {
   const shift = Math.round(opts.shiftMs ?? 0), starts = clipStarts(input)
   const total = input.clips.reduce((t, k) => t + k.durationMs, 0)
   const per = new Map<string, NonNullable<Clip['cues']>>()
@@ -72,7 +72,7 @@ export function applyCuesToComposition(input: Composition, cues: CaptionCue[], o
       if (q.endMs <= s || q.startMs >= e) return
       const a = Math.max(q.startMs, s) - s, b = Math.min(q.endMs, e) - s
       if (b - a < 40) return
-      const list = per.get(k.id) ?? []; list.push({ startMs: a, endMs: b, text: q.text }); per.set(k.id, list); used = true
+      const list = per.get(k.id) ?? []; list.push({ startMs: a, endMs: b, text: q.text, ...(opts.origin ? { origin: opts.origin } : {}) }); per.set(k.id, list); used = true
     })
     if (used) assigned++
   }
@@ -97,7 +97,7 @@ export function editCue(input: Composition, ref: CueRef, patch: Partial<CaptionC
   return { ...c, clips: c.clips.map(k => {
     if (k.id !== ref.clipId || !k.cues?.[ref.index]) return k
     const cur = k.cues[ref.index]
-    const next = { text: (patch.text ?? cur.text).slice(0, MAX_CUE_CHARS), startMs: Math.max(0, Math.round(patch.startMs ?? cur.startMs)), endMs: Math.min(k.durationMs, Math.round(patch.endMs ?? cur.endMs)) }
+    const next = { text: (patch.text ?? cur.text).slice(0, MAX_CUE_CHARS), startMs: Math.max(0, Math.round(patch.startMs ?? cur.startMs)), endMs: Math.min(k.durationMs, Math.round(patch.endMs ?? cur.endMs)), ...(cur.origin ? { origin: cur.origin === 'auto' ? 'auto-edited' as const : cur.origin } : {}) }
     if (!next.text.trim() || next.endMs - next.startMs < 100) return k
     const cues = k.cues.map((q, i) => (i === ref.index ? next : q)).sort((x, y) => x.startMs - y.startMs)
     return { ...k, cues }
@@ -110,9 +110,9 @@ export function deleteCue(input: Composition, ref: CueRef): Composition {
 }
 
 /** Every caption with the clip it belongs to and its absolute time, in order: what the subtitle list shows. */
-export function captionList(c: Composition): Array<CueRef & CaptionCue & { clipIndex: number; relStartMs: number; relEndMs: number }> {
+export function captionList(c: Composition): Array<CueRef & CaptionCue & { origin?: CueOrigin; clipIndex: number; relStartMs: number; relEndMs: number }> {
   const starts = clipStarts(c)
-  return c.clips.flatMap((k, ci) => clipCaptions(k).map((q, index) => ({ clipId: k.id, index, clipIndex: ci, relStartMs: Math.round(q.startMs), relEndMs: Math.round(q.endMs), startMs: Math.round(starts[ci] + q.startMs), endMs: Math.round(starts[ci] + q.endMs), text: q.text })))
+  return c.clips.flatMap((k, ci) => clipCaptions(k).map((q, index) => ({ clipId: k.id, index, clipIndex: ci, relStartMs: Math.round(q.startMs), relEndMs: Math.round(q.endMs), startMs: Math.round(starts[ci] + q.startMs), endMs: Math.round(starts[ci] + q.endMs), text: q.text, ...(k.cues?.[index]?.origin ? { origin: k.cues[index].origin } : {}) })))
 }
 
 export const exportSubtitles = (c: Composition, format: 'srt' | 'vtt') => { const cues = captionList(c).map(({ startMs, endMs, text }) => ({ startMs, endMs, text })); return format === 'srt' ? cuesToSrt(cues) : cuesToVtt(cues) }
@@ -153,3 +153,17 @@ export function estimateCuesFromText(input: string, totalMs: number, maxWords = 
 export const AUTO_SUBTITLE_SUFFIX = '.auto.srt'
 export const AUTO_SUBTITLE_NOTICE = 'Subtítulos GENERADOS AUTOMÁTICAMENTE en tu equipo (sin enviar el audio a ningún servicio). Pueden tener errores: revísalos y corrígelos antes de exportar.'
 export const isAutoSubtitleFile = (name: string) => name.toLowerCase().endsWith(AUTO_SUBTITLE_SUFFIX)
+
+export const ORIGIN_LABEL: Record<CueOrigin, string> = { auto: 'Automático, sin revisar', 'auto-edited': 'Automático, revisado/corregido', manual: 'Manual', imported: 'Importado de SRT/VTT' }
+
+/** Counts per origin («none» = older projects or text spread from the narration). An .auto.srt is only «reviewed» when no cue is left in `auto`. */
+export function originSummary(c: Composition): Record<CueOrigin | 'none', number> {
+  const out = { auto: 0, 'auto-edited': 0, manual: 0, imported: 0, none: 0 }
+  for (const k of c.clips) for (const q of k.cues ?? []) out[q.origin ?? 'none']++
+  return out
+}
+
+/** The person checked this automatic caption (even without changing it): it stops counting as «sin revisar». */
+export function markCueReviewed(input: Composition, ref: CueRef): Composition {
+  return { ...input, clips: input.clips.map(k => (k.id === ref.clipId && k.cues?.[ref.index]?.origin === 'auto' ? { ...k, cues: k.cues.map((q, i) => (i === ref.index ? { ...q, origin: 'auto-edited' as const } : q)) } : k)) }
+}

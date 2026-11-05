@@ -71,3 +71,6 @@ Flujo completo verificado (material importado → plantilla → editor + música
 
 ## P5.12 — Transcripción local
 - `scripts/transcribe-local.mjs` (ffmpeg + whisper.cpp → `.auto.srt`), desactivado sin motor/modelo; rótulo «automáticos» en el panel. Calidad real sin medir (modelos no descargables en el entorno). Ver `docs/informe-p5-12-transcripcion-local.md`.
+
+## P5.13 — Accesibilidad y trazabilidad de subtítulos
+- Origen por subtítulo (auto/corregido/manual/importado) con revisión; axe y teclado limpios; fix móvil «Nuevo proyecto». Ver `docs/informe-p5-13-accesibilidad-usabilidad.md`.

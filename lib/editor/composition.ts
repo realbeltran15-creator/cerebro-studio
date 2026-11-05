@@ -168,7 +168,7 @@ export type Clip = {
   transition?: Transition
   text?: TextOverlay | null
   /** Timed captions relative to the clip start (e.g. from a transcript). When present they replace the evenly spread narration. */
-  cues?: Array<{ startMs: number; endMs: number; text: string }>
+  cues?: Array<{ startMs: number; endMs: number; text: string; origin?: CueOrigin }>
   /** Playback speed of a video clip (0.25–4). The clip consumes durationMs × speed of its source. */
   speed?: number
   /** Video only: plays its stretch of the source backwards (non-destructive property of this clip; other clips of the same file are not affected). */
@@ -745,12 +745,16 @@ export function toShort(source: Composition, sourceJobId: string, sceneIds: stri
  * Splits narration into caption chunks spread evenly across the clip.
  * Timing is proportional to word count: an approximation, not forced alignment.
  */
+/** Where a caption came from: machine transcription, machine transcription a person has since corrected, typed by hand, or read from an SRT/VTT file. Absent on older projects. */
+export type CueOrigin = 'auto' | 'auto-edited' | 'manual' | 'imported'
+export const isCueOrigin = (v: unknown): v is CueOrigin => v === 'auto' || v === 'auto-edited' || v === 'manual' || v === 'imported'
+
 /** Valid, ordered cues inside [0, durationMs]; at most 400 per clip. */
 function parseCues(raw: unknown[], durationMs: number) {
   return raw.flatMap(q => {
-    const c = q as { startMs?: unknown; endMs?: unknown; text?: unknown }
+    const c = q as { startMs?: unknown; endMs?: unknown; text?: unknown; origin?: unknown }
     const start = Math.max(0, Math.round(Number(c.startMs))), end = Math.min(durationMs, Math.round(Number(c.endMs)))
-    return typeof c.text === 'string' && c.text.trim() && Number.isFinite(start) && Number.isFinite(end) && end > start ? [{ startMs: start, endMs: end, text: c.text.trim().slice(0, 300) }] : []
+    return typeof c.text === 'string' && c.text.trim() && Number.isFinite(start) && Number.isFinite(end) && end > start ? [{ startMs: start, endMs: end, text: c.text.trim().slice(0, 300), ...(isCueOrigin(c.origin) ? { origin: c.origin } : {}) }] : []
   }).sort((a, b) => a.startMs - b.startMs).slice(0, 400)
 }
 

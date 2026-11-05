@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { clipStarts, totalDurationMs, type Composition } from '@/lib/editor/composition'
-import { applyCuesToComposition, captionList, deleteCue, editCue, estimateCuesFromText, exportSubtitles, isAutoSubtitleFile, AUTO_SUBTITLE_NOTICE, parseSubtitles, type ParsedSubtitles } from '@/lib/editor/subtitles'
+import { applyCuesToComposition, captionList, deleteCue, editCue, estimateCuesFromText, exportSubtitles, isAutoSubtitleFile, AUTO_SUBTITLE_NOTICE, markCueReviewed, ORIGIN_LABEL, originSummary, parseSubtitles, type ParsedSubtitles } from '@/lib/editor/subtitles'
 import { downloadText } from '@/lib/library'
 
 const MAX_FILE = 2 * 1024 * 1024
@@ -18,6 +18,7 @@ export function EditorSubtitlesPanel({ comp, apply, onNotice }: { comp: Composit
   const [shown, setShown] = useState(PAGE)
   const list = useMemo(() => (comp.subtitles ? captionList(comp) : []), [comp])
   const starts = useMemo(() => clipStarts(comp), [comp])
+  const origins = useMemo(() => originSummary(comp), [comp])
 
   const [pasted, setPasted] = useState('')
   function estimate() {
@@ -38,7 +39,7 @@ export function EditorSubtitlesPanel({ comp, apply, onNotice }: { comp: Composit
   }
   function place() {
     if (!parsed) return
-    const r = applyCuesToComposition(comp, parsed.cues, { shiftMs: Math.round(shift * 1000), replace })
+    const r = applyCuesToComposition(comp, parsed.cues, { shiftMs: Math.round(shift * 1000), replace, origin: isAutoSubtitleFile(parsed.name) ? 'auto' : parsed.name.startsWith('Transcripción pegada') ? 'manual' : 'imported' })
     if (!r.assigned) { setError(r.warnings.join(' ') || 'No se pudo colocar ningún subtítulo.'); return }
     apply(() => r.composition)
     onNotice(`${r.assigned} subtítulos de «${parsed.name}» colocados en ${r.clipsWithCues} clips. ${r.warnings.join(' ')} Puedes deshacerlo.`)
@@ -70,10 +71,12 @@ export function EditorSubtitlesPanel({ comp, apply, onNotice }: { comp: Composit
 
     {!comp.subtitles && <p className="muted small">Los subtítulos están desactivados en este montaje (casilla «Subtítulos» de Montaje). Al colocar un archivo se activan.</p>}
     {list.length > 0 && <>
+      {(origins.auto + origins['auto-edited']) > 0 && <p className="small" role="status">{origins.auto > 0 ? `${origins.auto} subtítulos automáticos SIN revisar` : 'Todos los subtítulos automáticos están revisados'}{origins['auto-edited'] > 0 ? ` · ${origins['auto-edited']} revisados o corregidos` : ''}.</p>}
       <div className="tableScroll"><table className="dataTable" aria-label="Lista de subtítulos">
-        <thead><tr><th>#</th><th>Inicio (s)</th><th>Fin (s)</th><th>Texto</th><th /></tr></thead>
+        <thead><tr><th>#</th><th>Origen</th><th>Inicio (s)</th><th>Fin (s)</th><th>Texto</th><th /></tr></thead>
         <tbody>{list.slice(0, shown).map((q, i) => { const s0 = starts[q.clipIndex]; return <tr key={`${q.clipId}-${q.index}`}>
           <td>{i + 1}</td>
+          <td className="small">{q.origin ? ORIGIN_LABEL[q.origin] : '—'}{q.origin === 'auto' && <> <button type="button" className="ghost" aria-label={`Marcar el subtítulo ${i + 1} como revisado`} onClick={() => apply(c => markCueReviewed(c, q))}>Revisado</button></>}</td>
           <td><input type="number" step={0.05} min={0} style={{ width: 84 }} aria-label={`Inicio del subtítulo ${i + 1}`} value={sec(q.startMs)} onChange={e => apply(c => editCue(c, q, { startMs: Number(e.target.value) * 1000 - s0 }))} /></td>
           <td><input type="number" step={0.05} min={0} style={{ width: 84 }} aria-label={`Fin del subtítulo ${i + 1}`} value={sec(q.endMs)} onChange={e => apply(c => editCue(c, q, { endMs: Number(e.target.value) * 1000 - s0 }))} /></td>
           <td><input style={{ width: '100%', minWidth: 220 }} maxLength={300} aria-label={`Texto del subtítulo ${i + 1}`} value={q.text} onChange={e => apply(c => editCue(c, q, { text: e.target.value }))} /></td>
