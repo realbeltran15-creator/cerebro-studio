@@ -46,3 +46,7 @@ Hechos verificados: la organización es plan Free con 2 proyectos activos (Cereb
 2. **Beta local expuesta con un túnel gratuito** desde una máquina con Linux/WSL y ≥2 GB libres (el PC de Jesús tiene 3,6 GB y no tiene WSL2: justo). Sin cuentas de pago; exposición controlada por la lista de testers.
 3. **Liberar un cupo Free**: decisión de Jesús (pausar gamemur o pasar un proyecto a plan de pago). Cero cambios de código, pero afecta a otro proyecto: descartada salvo decisión suya.
 No recomendadas por coste de migración: Appwrite, PocketBase, Neon+Auth propio (reescritura de Auth, Storage y RLS).
+
+
+## Actualización P5.6
+Los 8 módulos «solo carga» (Plantillas, Editar con mi estilo, Montaje automático, Repurpose, Workflows, Calendario, Costes, Campañas) quedan **operativos** en local con datos sintéticos. Detalle en `docs/informe-p5-6-funcionalidad.md`.

@@ -330,4 +330,59 @@ await step('M20 Calendario: cambiar y quitar la fecha prevista de un borrador pe
   const t = await page.locator('main').innerText(); console.log('   movidos:', moved, '· con fecha tras quitar 1:', left, '· estados:', st, '· sin fecha ahora:', t.match(/Sin fecha \(\d+\)/)?.[0])
   return Number(moved) >= 1 && Number(left) === 1 && st === 'draft' && /Sin fecha \(1\)/.test(t)
 })
+
+await step('M21 Costes: cálculos con generaciones FICTICIAS, filtros de periodo y proyecto, sin llamadas facturables', async () => {
+  const own = sq(`select owner_id from projects limit 1`); const pj = sq(`select id from projects where name='${PROJ}'`); const pj2 = sq(`select id from projects where name='Proyecto con render fallido'`)
+  const ins = (proj, days, prov) => sq(`insert into assets(owner_id, project_id, asset_type, license_status, source_provider, provenance, created_at) values ('${own}','${proj}','image','generated','ficticio','${JSON.stringify(prov).replace(/'/g, "''")}', now() - interval '${days} days')`)
+  ins(pj, 2, { providerName: 'ProveedorFalso', catalogModel: 'modelo-a', costTier: 'paid', estimateUsd: 0.25 })
+  ins(pj, 3, { providerName: 'ProveedorFalso', catalogModel: 'modelo-a', costTier: 'paid', estimateUsd: 0.25 })
+  ins(pj2, 5, { providerName: 'ProveedorFalso', catalogModel: 'modelo-b', costTier: 'paid', estimateUsd: 0.10 })
+  ins(pj, 6, { providerName: 'OtroFalso', catalogModel: 'modelo-gratis', costTier: 'free_allowance', estimateUsd: 0 })
+  ins(pj, 60, { providerName: 'ProveedorFalso', catalogModel: 'modelo-a', costTier: 'paid', estimateUsd: 0.40 })   // fuera de 30 días, dentro de 90
+  ins(pj, 200, { providerName: 'ProveedorFalso', catalogModel: 'modelo-a', costTier: 'paid', estimateUsd: 1.00 })  // solo en «Todo»
+  const val = async () => { await page.waitForTimeout(500); const t = await page.locator('main').innerText(); const g = (l) => (t.match(new RegExp(`${l}\\n(\\$?[\\d.,]+|—)`)) || [])[1]; return { gen: g('Generaciones'), free: g('Gratis / cupo gratuito'), cost: g('Coste estimado \\(de pago\\)') } }
+  await page.goto(base + '/usage'); await settle(page); await page.waitForTimeout(1200)
+  const r30 = await val(); await page.locator('#u-range').selectOption('90'); const r90 = await val(); await page.locator('#u-range').selectOption('all'); const rAll = await val()
+  await page.locator('#u-range').selectOption('30'); await page.locator('#u-project').selectOption({ label: 'Proyecto con render fallido' }); const rP = await val()
+  console.log('   30 d:', JSON.stringify(r30), '· 90 d:', JSON.stringify(r90), '· todo:', JSON.stringify(rAll), '· solo proyecto 2 (30 d):', JSON.stringify(rP))
+  await page.reload(); await settle(page); await page.waitForTimeout(800)
+  const rows = await page.locator('main').innerText(); console.log('   tabla:', /ProveedorFalso/.test(rows), /modelo-a/.test(rows), '· hosts externos:', extNow().join(',') || '(ninguno)')
+  return r30.gen === '4' && r30.free === '1' && r30.cost === '$0.60' && r90.gen === '5' && r90.cost === '$1.00' && rAll.gen === '6' && rAll.cost === '$2.00' && rP.gen === '1' && rP.cost === '$0.10' && extNow().length === 0
+})
+
+
+
+await step('M22 Campañas: rellenar el brief con datos ficticios y revisar estrategia, presupuesto e informe', async () => {
+  await page.goto(base + '/campaigns'); await settle(page); await page.waitForTimeout(1000)
+  await page.getByRole('button', { name: '+ Nueva campaña' }).first().click(); await page.waitForTimeout(800)
+  const f = () => page.locator('main select, main input, main textarea')
+  await f().nth(2).fill('Campaña E2E ficticia'); await f().nth(3).selectOption({ label: 'Canal de Shorts / vídeo vertical' }); await f().nth(4).selectOption({ label: 'Proyecto E2E Editor' })
+  await f().nth(5).selectOption({ label: 'Un canal' }); await f().nth(6).fill('Canal de prueba'); await f().nth(8).selectOption({ label: 'Suscriptores / seguidores' })
+  await f().nth(9).fill('18'); await f().nth(10).fill('34'); await f().nth(11).fill('música, estudio'); await f().nth(12).fill('Estudiantes que necesitan concentrarse')
+  await f().nth(13).selectOption('EUR'); await f().nth(14).fill('300'); await f().nth(15).fill('20'); await f().nth(16).fill('30'); await f().nth(17).fill('2026-12-01')
+  await f().nth(18).selectOption({ label: 'Suscriptores' }); await f().nth(19).fill('500'); await page.waitForTimeout(800)
+  const head = (await page.locator('main').innerText()).match(/\d de 9 preguntas respondidas/)?.[0]; console.log('   progreso:', head)
+  console.log('   BOTONES>>', (await page.locator('main button, main [role=tab]').allInnerTexts()).map(x=>x.trim()).filter(Boolean).join(' | ').slice(0,900))
+  for (const tab of ['Estrategia', 'Presupuesto y calendario', 'Resultados y reglas', 'Informe']) {
+    await page.locator('main button', { hasText: tab }).first().click(); await page.waitForTimeout(700)
+    const t = await page.locator('main').innerText(); console.log(`   TAB ${tab}>>`, t.slice(t.indexOf(tab === 'Informe' ? 'Informe' : 'Brief') + 5).replace(/\n+/g, ' / ').slice(0, 1500))
+  }
+  return true
+})
+await step('M23 Campañas: persistencia tras recargar, duplicar, eliminar y sin llamadas externas', async () => {
+  await page.reload(); await settle(page); await page.waitForTimeout(1500)
+  const sel = page.locator('main select').first()
+  const opts = await sel.locator('option').allInnerTexts(); console.log('   opciones:', opts.join(' | '))
+  if (!opts.some(o => o.includes('Campaña E2E ficticia'))) throw new Error('la campaña no persiste tras recargar')
+  await sel.selectOption({ label: opts.find(o => o.includes('Campaña E2E ficticia')) }); await page.waitForTimeout(500)
+  if (!(await page.locator('main').innerText()).includes('7 de 9')) throw new Error('el brief no se restauró')
+  await page.getByRole('button', { name: 'Duplicar' }).click(); await page.waitForTimeout(800)
+  const o2 = await page.locator('main select').first().locator('option').allInnerTexts(); console.log('   tras duplicar:', o2.join(' | '))
+  if (o2.length !== opts.length + 1) throw new Error('duplicar no añadió una campaña')
+  await page.getByRole('button', { name: 'Eliminar' }).click(); await page.waitForTimeout(800)
+  const o3 = await page.locator('main select').first().locator('option').allInnerTexts(); console.log('   tras eliminar:', o3.join(' | '))
+  if (o3.length !== opts.length) throw new Error('eliminar no quitó la copia')
+  const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
+  return true
+})
 await finish()
