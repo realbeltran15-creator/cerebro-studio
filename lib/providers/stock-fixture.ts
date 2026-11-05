@@ -23,4 +23,7 @@ export function fixturePng(id: string) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }
 
+import { FIXTURE_VIDEO_BASE64 } from './stock-fixture-video'
+export const FIXTURE_VIDEO_ID = 'video-1'
+export const fixtureMp4 = () => Buffer.from(FIXTURE_VIDEO_BASE64, 'base64')
 export const FIXTURE_NOTICE = 'DATOS DE PRUEBA: no son resultados de Pexels.'

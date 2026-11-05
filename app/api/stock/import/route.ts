@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   try {
     const item = await getStockItem(source, kind, id)
     const origin = new URL(request.url).origin
-    if (item.synthetic && item.downloadUrl.startsWith('fixture:')) item.downloadUrl = `${origin}/api/stock/fixture/${item.downloadUrl.slice(8)}.png`
+    if (item.synthetic && item.downloadUrl.startsWith('fixture:')) item.downloadUrl = `${origin}/api/stock/fixture/${item.downloadUrl.slice(8)}.${item.kind === 'video' ? 'mp4' : 'png'}`
     if (!allowedDownload(source, item.downloadUrl, item.synthetic ? origin : undefined)) return NextResponse.json({ error: 'Origen del archivo no permitido.' }, { status: 400 })
     const assetKind = kind === 'audio' ? (body?.as === 'music' ? 'music' : 'sfx') : kind
     const { asset, duplicate } = await persistImportedAsset({

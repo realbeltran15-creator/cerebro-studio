@@ -116,3 +116,35 @@ export function captionList(c: Composition): Array<CueRef & CaptionCue & { clipI
 }
 
 export const exportSubtitles = (c: Composition, format: 'srt' | 'vtt') => { const cues = captionList(c).map(({ startMs, endMs, text }) => ({ startMs, endMs, text })); return format === 'srt' ? cuesToSrt(cues) : cuesToVtt(cues) }
+
+export const ESTIMATED_TIMING_WARNING = 'Tiempos ESTIMADOS: el texto no traía marcas de tiempo, así que se repartieron por longitud sobre la duración del montaje. No son tiempos detectados: ajústalos a la voz real.'
+
+/**
+ * Turns a pasted transcript WITHOUT timestamps into cues spread over `totalMs` in proportion to each chunk's length.
+ * Sentences are kept whole when they are short and cut into chunks of at most `maxWords` words when long. Pure and deterministic.
+ * The result is clearly flagged as estimated (a warning the UI shows) because nothing here is detected from the audio.
+ */
+export function estimateCuesFromText(input: string, totalMs: number, maxWords = 10): ParsedSubtitles {
+  const text = input.replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim()
+  const warnings = [ESTIMATED_TIMING_WARNING]
+  if (!text || !(totalMs > 0)) return { format: 'srt', cues: [], warnings: ['No hay texto que repartir o el montaje no tiene duración.'] }
+  const sentences = text.split(/(?<=[.!?…])\s+|\n+/).map(s => s.trim()).filter(Boolean)
+  const chunks: string[] = []
+  for (const s of sentences) {
+    const words = s.split(/\s+/)
+    if (words.length <= maxWords) { chunks.push(s); continue }
+    const parts = Math.ceil(words.length / maxWords), size = Math.ceil(words.length / parts)
+    for (let i = 0; i < words.length; i += size) chunks.push(words.slice(i, i + size).join(' '))
+  }
+  let kept = chunks.map(t => t.slice(0, MAX_CUE_CHARS))
+  if (kept.length > MAX_CUES) { warnings.push(`El texto tiene demasiados fragmentos: se usaron los primeros ${MAX_CUES}.`); kept = kept.slice(0, MAX_CUES) }
+  const weight = kept.map(t => Math.max(8, t.length)), sum = weight.reduce((a, b) => a + b, 0)
+  const cues: CaptionCue[] = []
+  let at = 0
+  kept.forEach((t, i) => {
+    const end = i === kept.length - 1 ? totalMs : Math.min(totalMs, at + Math.round(totalMs * weight[i] / sum))
+    if (end > at) cues.push({ startMs: at, endMs: end, text: t })
+    at = end
+  })
+  return { format: 'srt', cues, warnings }
+}

@@ -5,7 +5,7 @@
  * Pexels / Pixabay: free API keys; files are copied (Pixabay forbids permanent hotlinking).
  */
 
-import { FIXTURE_COLORS, FIXTURE_NOTICE, stockFixtureOn } from './stock-fixture'
+import { FIXTURE_COLORS, FIXTURE_NOTICE, FIXTURE_VIDEO_ID, stockFixtureOn } from './stock-fixture'
 import { PexelsLedger, PexelsLimit } from '../stock/pexels'
 
 export type StockSource = 'freesound' | 'pexels' | 'pixabay'
@@ -207,6 +207,11 @@ export async function getStockItem(source: StockSource, kind: StockKind, id: str
 
 // ---------- Local test data (clearly labelled, never real) ----------
 function fixtureSearch(kind: StockKind): StockItem[] {
+  if (kind === 'video') return [{
+    synthetic: true, source: 'pexels' as const, id: FIXTURE_VIDEO_ID, kind: 'video' as const, title: '[PRUEBA] Clip sintético azul con tono (6 s)', author: 'Datos de prueba', authorUrl: null, pageUrl: 'https://www.pexels.com',
+    license: 'Datos de prueba (no es Pexels)', licenseUrl: null, licenseStatus: 'licensed' as const, attribution: FIXTURE_NOTICE,
+    thumbUrl: null, previewUrl: `/api/stock/fixture/${FIXTURE_VIDEO_ID}.mp4`, downloadUrl: `fixture:${FIXTURE_VIDEO_ID}`, mimeType: 'video/mp4', durationSeconds: 6, width: 640, height: 360,
+  }]
   if (kind !== 'image') return []
   return Object.keys(FIXTURE_COLORS).map((id, i) => ({
     synthetic: true, source: 'pexels' as const, id, kind: 'image' as const, title: `[PRUEBA] Imagen sintética ${i + 1}`, author: 'Datos de prueba', authorUrl: null, pageUrl: 'https://www.pexels.com',

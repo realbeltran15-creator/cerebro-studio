@@ -570,4 +570,190 @@ await step('M29 idempotencia y concurrencia: 6 importaciones simultáneas no dup
   if (codes.some(c => c !== 200 && c !== 201) || created !== 1) throw new Error('las importaciones simultáneas no son idempotentes: ' + codes.join(','))
   return n1 === 1 && o1 === o0 && inOther === '1' && cross === '0'
 })
+
+// ---------- P5.11: flujo con VÍDEO importado (no se sustituye por imagen estática) ----------
+await step('M30 vídeo: buscar e importar el clip sintético a la Biblioteca (con su audio)', async () => {
+  const P = FLOW.page
+  await P.goto(base + '/library'); await settle(P); await P.waitForTimeout(1000)
+  await P.getByRole('button', { name: 'Buscar fotos y vídeos gratuitos' }).click()
+  await P.locator('#stock-project').selectOption({ label: PROJ }); await P.locator('#stock-kind').selectOption('video'); await P.waitForTimeout(500)
+  await P.getByLabel('Banco gratuito', { exact: true }).selectOption('pexels')
+  await P.getByLabel('Buscar en el banco').fill('azul'); await P.getByRole('button', { name: 'Buscar', exact: true }).click(); await P.waitForTimeout(1500)
+  if (!(await P.locator('main').innerText()).includes('DATOS DE PRUEBA')) throw new Error('el clip no se rotula como dato de prueba')
+  const n0 = Number(sq(`select count(*) from assets where source_provider='pexels' and asset_type='video'`))
+  await P.getByRole('button', { name: 'Importar' }).first().click(); await P.waitForTimeout(3000)
+  const n1 = Number(sq(`select count(*) from assets where source_provider='pexels' and asset_type='video'`)); console.log('   vídeos importados:', n0, '→', n1)
+  if (n1 !== n0 + 1) throw new Error('el vídeo no se importó')
+  FLOW.vid = sq(`select id from assets where source_provider='pexels' and asset_type='video' order by created_at desc limit 1`)
+  const f = download(sq(`select storage_path from assets where id='${FLOW.vid}'`).split('/').pop()); const j = probe(f)
+  console.log('   fichero importado:', j.streams.map(x => x.codec_name + (x.width ? ' ' + x.width + 'x' + x.height : '')).join(' + '), Number(j.format.duration).toFixed(1) + ' s')
+  return j.streams.some(x => x.codec_name === 'h264') && j.streams.some(x => x.codec_type === 'audio')
+})
+await step('M31 vídeo: plantilla con clip + imagen + clip, recortar y dividir en el editor, música, exportar y verificar', async () => {
+  const P = FLOW.page
+  await P.goto(base + '/editor/templates'); await settle(P); await P.waitForTimeout(1000)
+  await P.getByRole('button', { name: /Plantilla P510/ }).click(); await P.waitForTimeout(600)
+  await P.getByLabel('Proyecto', { exact: true }).selectOption({ label: PROJ }); await P.waitForTimeout(1500)
+  await P.getByLabel('Título del montaje').fill('Montaje con clip importado')
+  const choose = async (n, kind) => { const sel = P.getByLabel(`Archivo para Visual ${n}`); const opts = await sel.locator('option').allInnerTexts(); const o = opts.find(t => t.startsWith(`[${kind}]`) && t.includes('PRUEBA')); if (!o) throw new Error(`no hay ${kind} importado para el hueco ${n}: ` + opts.join('|')); await sel.selectOption({ label: o }) }
+  await choose(1, 'video'); await choose(2, 'image'); await choose(3, 'video')
+  await P.getByRole('button', { name: 'Crear montaje con esta plantilla' }).click(); await settle(P); await P.waitForTimeout(1500)
+  await P.getByRole('link', { name: /Abrir en el editor manual/ }).click(); await P.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(P); await P.waitForTimeout(2500)
+  const job = new URL(P.url()).searchParams.get('job'); FLOW.job2 = job
+  const c0 = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`)); console.log('   plantilla → clips:', c0.clips.map(c => c.durationMs).join(','))
+  // recortar: el primer clip empieza en el segundo 2 del vídeo y dura 3 s; dividirlo a 1,5 s
+  await P.locator('[title*="Clip sintético"]').first().click(); await P.waitForTimeout(500)
+  await P.getByLabel('Inicio en el vídeo (s)').first().fill('2'); await P.waitForTimeout(300)
+  await P.getByLabel('Duración (s)', { exact: true }).first().fill('3'); await P.waitForTimeout(300)
+  await P.getByLabel('Dividir en (s desde el inicio del clip)').first().fill('1.5'); await P.getByRole('button', { name: 'Dividir', exact: true }).first().click(); await P.waitForTimeout(600)
+  // música local
+  await P.locator('h1').first().click().catch(() => {}); await P.keyboard.press('Escape'); await P.waitForTimeout(400)
+  await P.getByRole('button', { name: /Música y sonidos/ }).first().click().catch(() => {}); await P.waitForTimeout(500)
+  const musSel = P.locator('select').filter({ has: P.locator('option', { hasText: 'Sin música' }) }).first()
+  if (await musSel.count()) { const mopts2 = await musSel.locator('option').allInnerTexts(); const mo = mopts2.find(t => /tono/i.test(t)); if (!mo) throw new Error('no hay música: ' + mopts2.join('|')); await musSel.selectOption({ label: mo }); await P.waitForTimeout(500) }
+  else console.log('   la plantilla ya traía música:', Boolean(c0.musicAssetId), '· audios:', (c0.audioClips ?? []).length)
+  await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`))
+  const types = comp.clips.map(c => sq(`select asset_type from assets where id='${c.visualAssetId}'`))
+  console.log('   editado → clips:', comp.clips.map((c, i) => `${types[i]}:${c.durationMs}@${c.trimInMs ?? 0}`).join(' | '), '· música:', Boolean(comp.musicAssetId), '· audios:', (comp.audioClips ?? []).length)
+  if (!(comp.musicAssetId || (comp.audioClips ?? []).length)) throw new Error('el montaje no tiene audio local')
+  if (comp.clips.length !== 4 || types.join() !== 'video,video,image,video') throw new Error('estructura inesperada tras recortar y dividir')
+  if (!(comp.clips[0].trimInMs >= 2000)) throw new Error('el recorte no se guardó')
+  const total = comp.clips.reduce((a, c) => a + c.durationMs, 0) / 1000
+  await P.getByRole('button', { name: /^Exportar/ }).first().click(); await P.locator('#ed-export').waitFor({ state: 'visible' })
+  const pick = async (l, v) => P.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+  await P.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
+  const t0 = Date.now(); let st = ''
+  while (Date.now() - t0 < 270000) { st = sq(`select status from render_jobs where status<>'draft' and composition->>'title'='Montaje con clip importado' order by created_at desc limit 1`); if (st === 'completed' || st === 'failed') break; await P.waitForTimeout(2000) }
+  if (st !== 'completed') throw new Error('render: ' + (st || 'sin job') + ' ' + sq(`select coalesce(error,'-') from render_jobs where status<>'draft' order by created_at desc limit 1`))
+  const o = sq(`select a.id||'|'||a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Montaje con clip importado' order by r.created_at desc limit 1`).split('|'); FLOW.outId2 = o[0]
+  const f = download(o[1].split('/').pop()); const j = probe(f), v = j.streams.find(x => x.codec_type === 'video'), a = j.streams.find(x => x.codec_type === 'audio'), dur = Number(j.format.duration)
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  const frame = t => [...execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', f, '-frames:v', '1', '-vf', 'scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer' })]
+  const imgStart = (comp.clips[0].durationMs + comp.clips[1].durationMs) / 1000
+  const fv = frame(0.9), fi = frame(imgStart + 1.5)
+  const mean = Number((/mean_volume: (-?[\d.]+) dB/.exec(spawnSync('ffmpeg', ['-i', f, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' }).stderr) || [])[1])
+  console.log('   MP4:', JSON.stringify({ dur, esperada: total, v: v && [v.codec_name, v.width, v.height], a: a && a.codec_name, meanDb: mean, frameClip: fv, frameImagen: fi }))
+  if (!v || !a || Math.abs(dur - total) > 1.5 || !(mean > -50)) throw new Error('MP4 incorrecto')
+  if (!(fv[2] > 60 && fv[2] > fv[0] * 1.8)) throw new Error('el primer tramo no es el clip de vídeo (azul): ' + fv)
+  if (!(fi[1] > 130 && fi[1] > fi[0] + 50)) throw new Error('el tramo de imagen no es la imagen importada (verde): ' + fi)
+  return true
+})
+await step('M32 vídeo: cerrar sesión y volver a entrar recupera el montaje con clip y su MP4', async () => {
+  await (FLOW.ctx.ctx ?? FLOW.ctx).close()
+  const c3 = await mkCtx(); await login(c3.page, EMAIL, PW); FLOW.page = c3.page; FLOW.ctx = c3.ctx
+  const P = c3.page
+  await P.goto(base + `/editor/manual?job=${FLOW.job2}`); await settle(P); await P.waitForTimeout(2500)
+  const clipsOk = (await P.locator('main').innerText()).includes('Montaje con clip importado')
+  const sign = await P.evaluate(async id => { const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' }); const j = await r.json().catch(() => ({})); if (!j.url) return String(r.status); const m = await fetch(j.url); return `${m.status} ${m.headers.get('content-type')} ${(await m.blob()).size}` }, FLOW.outId2)
+  console.log('   montaje en el editor:', clipsOk, '· MP4 por URL firmada:', sign)
+  const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
+  return clipsOk && sign.startsWith('200 video/mp4')
+})
+
+// ---------- P5.11: auditoría de seguridad ampliada ----------
+await step('M33 seguridad: barrido de las 64 rutas API sin sesión (ni 5xx ni datos) y rutas abiertas de la beta con dos usuarios', async () => {
+  const { readdirSync, statSync } = await import('node:fs')
+  const routes = []; const walk = d => { for (const n of readdirSync(d)) { const f = path.join(d, n); if (statSync(f).isDirectory()) walk(f); else if (n === 'route.ts') routes.push(path.relative(path.join(root, 'app'), path.dirname(f))) } }; walk(path.join(root, 'app/api'))
+  const uuid = '00000000-0000-4000-8000-000000000000'
+  const urlOf = r => '/' + r.replace(/\[\.\.\.[^\]]+\]/g, 'x').replace(/\[[^\]]+\]/g, uuid)
+  const bad = [], notConf = []; const tally = {}
+  for (const r of routes) for (const m of ['GET', 'POST', 'DELETE']) {
+    let res; try { res = await fetch(base + urlOf(r), { method: m, headers: { 'Content-Type': 'application/json' }, body: m === 'GET' ? undefined : '{}', redirect: 'manual', signal: AbortSignal.timeout(20000) }) } catch (e) { bad.push(`${m} ${r}: sin respuesta (${e.message})`); continue }
+    const body = (await res.text()).slice(0, 600); tally[res.status] = (tally[res.status] ?? 0) + 1
+    if (res.status === 503 && /not configured|no activad|falta la clave|no está configurad|no configurad/i.test(body)) notConf.push(`${m} ${r}`)
+    else if (res.status >= 500) bad.push(`${m} ${r}: ${res.status} ${body.slice(0, 120)}`)
+    else if (res.status >= 200 && res.status < 300 && !/^(api\/(providers\/status|ios\/|meta\/|oauth\/|cron\/))/.test(r) && !/"configured"|"sources"|"models"|"items"|"ok"/.test(body)) bad.push(`${m} ${r}: ${res.status} sin sesión → ${body.slice(0, 120)}`)
+    if (/owner_id|service_role|sk-[A-Za-z0-9]{10}|eyJ[A-Za-z0-9_-]{20}/.test(body)) bad.push(`${m} ${r}: posible filtración → ${body.slice(0, 120)}`)
+  }
+  console.log('   desactivadas por falta de configuración (503 esperado):', notConf.join(', ')); console.log('   rutas:', routes.length, '· estados sin sesión:', JSON.stringify(tally)); if (bad.length) console.log('   HALLAZGOS:\n     ' + bad.join('\n     '))
+  if (bad.length) throw new Error(bad.length + ' hallazgos de barrido')
+  // las 4 rutas abiertas en la beta, con dos usuarios reales
+  const projA = sq(`select id from projects where name='${PROJ}' limit 1`), ownerA = sq(`select owner_id from projects where id='${projA}'`)
+  const cb = await mkCtx(); await login(cb.page, OTHER, PW)
+  const b = createClient(`http://127.0.0.1:${GW}`, anon, { auth: { persistSession: false } }); const { data: sess } = await b.auth.signInWithPassword({ email: OTHER, password: PW })
+  const api = (m, u, body) => cb.page.evaluate(async ([m, u, body]) => { const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: (await r.text()).slice(0, 500) } }, [m, u, body])
+  const up = await api('POST', '/api/storage/upload-url', { projectId: projA, folder: 'uploads', ext: 'png', contentType: 'image/png', size: 100 })
+  const upLib = await api('POST', '/api/storage/upload-url', { projectId: 'library', folder: 'uploads', ext: 'png', contentType: 'image/png', size: 100 })
+  const usageB = await api('GET', '/api/storage/usage'), st = await api('GET', '/api/providers/status')
+  console.log('   B → upload-url en proyecto de A:', up.status, '· en su biblioteca:', upLib.status, '· usage:', usageB.status, '· providers/status:', st.status)
+  if (up.status !== 404 || up.body.includes(projA) || up.body.includes(ownerA)) throw new Error('B obtuvo una subida en el proyecto de A')
+  if (upLib.status !== 200 || !upLib.body.includes(sess.user.id) || upLib.body.includes(ownerA)) throw new Error('la subida de B no está en su propia carpeta')
+  if (usageB.body.includes(ownerA)) throw new Error('usage filtra datos de A')
+  if (/key|secret|token|sk-/i.test(st.body.replace(/"configured"|"hasKey"/g, '')) && /sk-|eyJ/.test(st.body)) throw new Error('providers/status filtra claves')
+  // RLS/Storage directo: B no puede escribir en la carpeta de A ni crear activos en proyectos de A
+  const upFile = await b.storage.from('generated-assets').upload(`${ownerA}/${projA}/uploads/intruso.png`, new Uint8Array([137, 80, 78, 71]), { contentType: 'image/png' })
+  const before = sq(`select count(*) from assets where project_id='${projA}'`)
+  const ins = await b.from('assets').insert({ owner_id: sess.user.id, project_id: projA, asset_type: 'image', storage_path: `${sess.user.id}/x.png`, license_status: 'owned' }).select('id')
+  const ins2 = await b.from('assets').insert({ owner_id: ownerA, project_id: projA, asset_type: 'image', storage_path: `${ownerA}/x.png`, license_status: 'owned' }).select('id')
+  const after = sq(`select count(*) from assets where project_id='${projA}'`)
+  const rj = await b.from('render_jobs').insert({ owner_id: sess.user.id, project_id: projA, output_format: '16:9', status: 'draft', composition: {} }).select('id')
+  const jobsA = sq(`select count(*) from render_jobs where project_id='${projA}' and owner_id='${sess.user.id}'`)
+  console.log('   B escribe en storage de A:', upFile.error ? 'rechazado' : 'PERMITIDO', '· inserta activo en proyecto de A:', ins.error ? 'rechazado' : 'PERMITIDO', '· como A:', ins2.error ? 'rechazado' : 'PERMITIDO', '· render_job en proyecto de A:', rj.error ? 'rechazado' : 'PERMITIDO', jobsA)
+  await cb.ctx.close()
+  if (!upFile.error) throw new Error('B escribió un archivo en la carpeta de A')
+  if (ins2.error === null) throw new Error('B creó un activo con owner_id de A')
+  const vulnerable = !ins.error || after !== before || !rj.error || jobsA !== '0'
+  if (process.env.PROPOSAL_OWNERSHIP === '1') { if (vulnerable) throw new Error('con la propuesta aplicada B sigue escribiendo en proyectos de A') ; console.log('   con la propuesta de propiedad de proyecto: B rechazado en activos y render_jobs') }
+  else if (vulnerable) console.log('   HALLAZGO CONFIRMADO (esquema actual): un usuario puede crear filas propias que apuntan al proyecto de otro; corrección en supabase/proposed/20261105130000_project_ownership_check.sql (ejecutar con PROPOSAL_OWNERSHIP=1 y SCHEMA_BUNDLE)')
+  return true
+})
+
+// ---------- P5.11: subtítulos sin IA (texto pegado, SRT, edición, exportación, grabado en el MP4) ----------
+await step('M34 subtítulos: pegar transcripción sin tiempos (estimada), editar, exportar SRT, importar SRT y grabarlos en el MP4', async () => {
+  const P = FLOW.page
+  await P.goto(base + `/editor/manual?job=${FLOW.job2}`); await settle(P); await P.waitForTimeout(2500)
+  await P.getByText('Textos', { exact: true }).first().click(); await P.waitForTimeout(500)
+  const panel = P.locator('section.panel[aria-label="Subtítulos"]'); await panel.scrollIntoViewIfNeeded().catch(() => {})
+  // 1) transcripción pegada, sin tiempos → estimación claramente rotulada
+  await panel.locator('summary', { hasText: 'Pegar una transcripción' }).click()
+  await panel.getByLabel('Transcripción pegada').fill('Una ciudad que nunca duerme. Cada noche miles de luces se encienden a la vez y nadie sabe por qué. ¿Y tú, qué harías?')
+  await panel.getByRole('button', { name: 'Repartir con tiempos estimados' }).click(); await P.waitForTimeout(400)
+  if (!/Tiempos ESTIMADOS/.test(await panel.innerText())) throw new Error('no se avisa de que los tiempos son estimados')
+  await panel.getByRole('button', { name: 'Colocar en el montaje' }).click(); await P.waitForTimeout(800)
+  const rows = await panel.locator('table[aria-label="Lista de subtítulos"] tbody tr').count(); console.log('   subtítulos colocados:', rows)
+  if (rows < 3) throw new Error('no se colocaron los subtítulos')
+  // 2) editar texto y tiempo de uno, guardar y recuperar
+  await panel.getByLabel('Texto del subtítulo 1').fill('Una ciudad que jamás duerme.'); await P.waitForTimeout(300)
+  await panel.getByLabel('Fin del subtítulo 1').fill('1.2'); await P.waitForTimeout(300)
+  await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
+  await P.reload(); await settle(P); await P.waitForTimeout(2500)
+  await P.getByText('Textos', { exact: true }).first().click(); await P.waitForTimeout(500)
+  const panel2 = P.locator('section.panel[aria-label="Subtítulos"]')
+  const t1 = await panel2.getByLabel('Texto del subtítulo 1').inputValue(), e1 = await panel2.getByLabel('Fin del subtítulo 1').inputValue()
+  console.log('   tras recargar:', t1, '· fin', e1); if (t1 !== 'Una ciudad que jamás duerme.' || Number(e1) !== 1.2) throw new Error('la edición no persiste')
+  // 3) exportar SRT y comprobarlo
+  const [dl] = await Promise.all([P.waitForEvent('download'), panel2.getByRole('button', { name: 'Descargar .srt' }).click()])
+  const srtFile = path.join(MEDIA, 'exportado.srt'); await dl.saveAs(srtFile); const srt = rfs(srtFile, 'utf8')
+  console.log('   SRT:', JSON.stringify(srt.slice(0, 110)))
+  if (!/1\n00:00:00,000 --> 00:00:01,200\nUna ciudad que jamás duerme\./.test(srt.replace(/\r/g, ''))) throw new Error('el SRT exportado no refleja la edición')
+  // 4) importar un SRT con tiempos reales: se respetan
+  const mine = path.join(MEDIA, 'mio.srt'); writeFileSync(mine, '1\n00:00:01,000 --> 00:00:03,000\nPrimer subtítulo real\n\n2\n00:00:04,000 --> 00:00:06,500\nSegundo subtítulo real\n')
+  await panel2.locator('input[type=file]').setInputFiles(mine); await P.waitForTimeout(600)
+  if (/Tiempos ESTIMADOS/.test(await panel2.innerText())) throw new Error('un SRT con tiempos se marcó como estimado')
+  await panel2.getByRole('button', { name: 'Colocar en el montaje' }).click(); await P.waitForTimeout(800)
+  const s2 = await panel2.getByLabel('Inicio del subtítulo 1').inputValue(), x2 = await panel2.getByLabel('Texto del subtítulo 2').inputValue()
+  console.log('   SRT importado → inicio 1:', s2, '· texto 2:', x2, '· todos:', JSON.stringify(await panel2.locator('textarea,input[aria-label^="Texto del subt"]').evaluateAll(a=>a.map(x=>x.value)))); if (Number(s2) !== 1 || !/Primer subtítulo real/.test(x2)) throw new Error('el SRT importado no conserva sus tiempos')
+  await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
+  // 5) grabado en el MP4 (subtítulos activados) frente al MP4 anterior sin ellos
+  await P.getByRole('button', { name: /^Exportar/ }).first().click(); await P.locator('#ed-export').waitFor({ state: 'visible' })
+  const pick = async (l, v) => P.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+  const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`))
+  const failed0 = sq(`select count(*) from render_jobs where status='failed'`)
+  await P.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
+  const t0 = Date.now(); let n = renders0
+  while (Date.now() - t0 < 270000) { n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > renders0 || sq(`select count(*) from render_jobs where status='failed'`) !== failed0) break; await P.waitForTimeout(2000) }
+  if (n <= renders0) throw new Error('el render con subtítulos no terminó: ' + sq(`select coalesce(error,'-') from render_jobs where status='failed' limit 1`))
+  const o = sq(`select a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' order by r.created_at desc limit 1`)
+  const f = download(o.split('/').pop())
+  const old = download(sq(`select a.storage_path from assets a where a.id='${FLOW.outId2}'`).split('/').pop())
+  const whiteIn = (file, t) => { const b = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', file, '-frames:v', '1', '-vf', 'crop=iw:ih*0.35:0:ih*0.65', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer', maxBuffer: 1 << 26 }); let w = 0; for (let i = 0; i < b.length; i += 3) if (b[i] > 235 && b[i + 1] > 235 && b[i + 2] > 235) w++; return w }
+  const withSubs = whiteIn(f, 1.8), without = whiteIn(old, 1.8)
+  console.log('   píxeles de texto blanco abajo, con subtítulos:', withSubs, '· MP4 anterior sin subtítulos:', without)
+  const j = probe(f); if (!j.streams.some(x => x.codec_type === 'video')) throw new Error('MP4 sin vídeo')
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  return withSubs > 200 && without < 20
+})
 await finish()

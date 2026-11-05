@@ -22,7 +22,7 @@ export async function persistGeneratedAsset(context:ProviderContext,kind:'image'
 }
 
 /** Stores a file imported from a free media bank, keeping license, author and source. Idempotent per (source, id). */
-export async function persistImportedAsset(input: {
+async function persistImportedAssetOnce(input: {
   ownerId: string; projectId: string; kind: 'image' | 'video' | 'music' | 'sfx'; source: string; externalId: string
   downloadUrl: string; mimeType: string; licenseStatus: 'public_domain' | 'licensed' | 'restricted'; sourceUrl: string
   provenance: Record<string, unknown>
@@ -48,5 +48,21 @@ export async function persistImportedAsset(input: {
   }
   const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:input.projectId,asset_type:input.kind,storage_path:storagePath,source_provider:input.source,source_url:input.sourceUrl,license_status:input.licenseStatus,provenance:{...input.provenance,externalId:external,mimeType:mime,importedAt:new Date().toISOString(),bytes:bytes.byteLength,cost:{amount:0,currency:'USD',reported:true},costTier:'free'}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').single()
   if(error){await removeObject(supabase,user.id,storagePath).catch(()=>undefined);throw new Error(`No se pudo registrar el archivo: ${error.message}`)}
+  // Reconcile a race between instances: keep the OLDEST record for this (project, item); a later one removes itself and reports a duplicate.
+  // The stored file is shared by path, so it is NOT removed here.
+  const{data:same}=await supabase.from('assets').select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').eq('owner_id',user.id).eq('project_id',input.projectId).eq('provenance->>externalId',external).order('created_at',{ascending:true}).order('id',{ascending:true})
+  const first=same?.[0]
+  if(first&&data&&first.id!==(data as{id:string}).id){await supabase.from('assets').delete().eq('id',(data as{id:string}).id).eq('owner_id',user.id);return{asset:first,duplicate:true}}
   return{asset:data,duplicate:false}
+}
+
+const inflightImports=new Map<string,Promise<Awaited<ReturnType<typeof persistImportedAssetOnce>>>>()
+/** Same-instance guard: simultaneous requests for one item share a single import and the others report a duplicate. */
+export async function persistImportedAsset(input: Parameters<typeof persistImportedAssetOnce>[0]) {
+  const key=`${input.ownerId}:${input.projectId}:${input.source}:${input.externalId}`
+  const running=inflightImports.get(key)
+  if(running){const r=await running;return{asset:r.asset,duplicate:true}}
+  const p=persistImportedAssetOnce(input)
+  inflightImports.set(key,p)
+  try{return await p}finally{inflightImports.delete(key)}
 }

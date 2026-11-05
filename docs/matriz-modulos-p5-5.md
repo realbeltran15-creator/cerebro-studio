@@ -62,3 +62,9 @@ Biblioteca incorpora el buscador de bancos gratuitos (Pexels/Pixabay/Freesound) 
 
 ## Actualización P5.10
 Flujo completo verificado (material importado → plantilla → editor + música → MP4 con audio → reentrada), aislamiento entre dos usuarios en importación/lectura/modificación/borrado, y defecto de concurrencia en importaciones corregido. Ver `docs/informe-p5-10-flujo-completo.md`.
+
+## P5.11 — Vídeo importado, seguridad y subtítulos
+- Vídeo importado (fixture) → plantilla → Editor → MP4 con audio verificado (M30–M32).
+- API/RLS: barrido de 64 rutas + A/B en las 4 rutas abiertas (M33); política de propiedad de proyecto propuesta y probada.
+- Subtítulos sin IA: transcripción pegada (tiempos estimados y rotulados), SRT importar/exportar, edición, grabado en MP4 (M34).
+- Detalle: `docs/informe-p5-11-video-seguridad-subtitulos.md`.

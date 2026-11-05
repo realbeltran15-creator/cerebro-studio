@@ -1,8 +1,8 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { clipStarts, type Composition } from '@/lib/editor/composition'
-import { applyCuesToComposition, captionList, deleteCue, editCue, exportSubtitles, parseSubtitles, type ParsedSubtitles } from '@/lib/editor/subtitles'
+import { clipStarts, totalDurationMs, type Composition } from '@/lib/editor/composition'
+import { applyCuesToComposition, captionList, deleteCue, editCue, estimateCuesFromText, exportSubtitles, parseSubtitles, type ParsedSubtitles } from '@/lib/editor/subtitles'
 import { downloadText } from '@/lib/library'
 
 const MAX_FILE = 2 * 1024 * 1024
@@ -19,6 +19,13 @@ export function EditorSubtitlesPanel({ comp, apply, onNotice }: { comp: Composit
   const list = useMemo(() => (comp.subtitles ? captionList(comp) : []), [comp])
   const starts = useMemo(() => clipStarts(comp), [comp])
 
+  const [pasted, setPasted] = useState('')
+  function estimate() {
+    setError(''); setParsed(null)
+    const p = estimateCuesFromText(pasted, totalDurationMs(comp))
+    if (!p.cues.length) { setError(p.warnings.join(' ')); return }
+    setParsed({ ...p, name: 'Transcripción pegada (tiempos estimados)' })
+  }
   async function onFile(file: File | undefined) {
     setError(''); setParsed(null)
     if (!file) return
@@ -42,6 +49,11 @@ export function EditorSubtitlesPanel({ comp, apply, onNotice }: { comp: Composit
   return <section className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }} aria-label="Subtítulos">
     <div className="cardHead" style={{ marginBottom: 0 }}><h3>Subtítulos (SRT y VTT)</h3><span className="pill">{list.length} subtítulos</span></div>
     <label>Importar un archivo .srt o .vtt<input type="file" accept=".srt,.vtt,text/vtt,application/x-subrip,text/plain" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; void onFile(f) }} /></label>
+    <details>
+      <summary className="small">Pegar una transcripción sin tiempos</summary>
+      <label>Texto de la transcripción<textarea rows={5} value={pasted} onChange={e => setPasted(e.target.value)} aria-label="Transcripción pegada" placeholder="Pega aquí el texto. Si no tiene marcas de tiempo, se repartirá de forma ESTIMADA sobre la duración del montaje y podrás ajustarlo." /></label>
+      <div className="pageActions"><button type="button" className="ghost" disabled={!pasted.trim()} onClick={estimate}>Repartir con tiempos estimados</button></div>
+    </details>
     {error && <p className="error" role="alert">{error}</p>}
     {parsed && <div className="panel" style={{ background: 'transparent' }}>
       <p className="small"><b>{parsed.name}</b>: {parsed.cues.length} subtítulos ({parsed.format.toUpperCase()}), de {sec(parsed.cues[0].startMs)} s a {sec(parsed.cues[parsed.cues.length - 1].endMs)} s. El montaje dura {sec(clipStarts(comp).at(-1)! + (comp.clips.at(-1)?.durationMs ?? 0))} s.</p>

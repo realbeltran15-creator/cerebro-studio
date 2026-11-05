@@ -28,7 +28,7 @@
     "test:queue-sql": "bash scripts/test-job-queue-sql.sh",
     "test:schema": "bash scripts/check-baseline-clean.sh && bash scripts/test-schema-drift.sh baseline && bash scripts/test-pending-on-baseline.sh && bash scripts/test-recovered-on-baseline.sh",
     "test:audit:beta": "JOURNEY_SCRIPT=local-usability-audit.mjs bash scripts/test-official-supabase.sh",
-    "test:proposals": "bash scripts/test-channel-connections-proposal.sh",
+    "test:proposals": "bash scripts/test-channel-connections-proposal.sh && bash scripts/test-project-ownership-proposal.sh",
     "test:e2e:modules": "JOURNEY_SCRIPT=local-e2e-modules.mjs bash scripts/test-official-supabase.sh",
     "test:official": "bash scripts/test-official-supabase.sh",
     "test:journey": "bash scripts/test-local-journey.sh",
