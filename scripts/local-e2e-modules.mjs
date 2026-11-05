@@ -23,7 +23,7 @@ const storageDir = mkdtempSync(path.join(os.tmpdir(), 'lite-e2e-'))
 const lite = OFFICIAL ? { close() {} } : await startLite({ port: LITE, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir, onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{}')`) })
 const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', CEREBRO_STOCK_FIXTURE: '1', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${OFFICIAL ? GW : LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
 let pass = 0, fail = 0
-const t = async (name, fn) => { try { const r = await fn(); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message.split('\n').slice(0, 3).join(' | ')) } }
+const t = async (name, fn) => { const T0 = Date.now(); try { const r = await fn(); console.log('   ⏱ ' + name.split(' ')[0] + ': ' + ((Date.now() - T0) / 1000).toFixed(1) + ' s medidos'); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message.split('\n').slice(0, 3).join(' | ')) } }
 if (!process.env.SKIP_BUILD) { console.log('next build…'); const b = spawn('npx', ['next', 'build'], { cwd: root, env, stdio: 'ignore' }); const code = await new Promise(r => b.on('exit', r)); if (code) { console.log('FAIL build', code); process.exit(1) } }
 const web = spawn('npx', ['next', 'start', '-p', String(WEB)], { cwd: root, env, stdio: 'ignore', detached: true })
 process.on('exit', () => { try { process.kill(-web.pid) } catch {} })
@@ -802,5 +802,51 @@ await step('M35 subtítulos: origen de cada subtítulo (automático / corregido 
   const vm = await axe(); console.log('   axe móvil:', JSON.stringify(vm), '· desbordamiento horizontal:', over)
   await P.setViewportSize({ width: 1280, height: 800 })
   return vd.length === 0 && vm.length === 0 && over <= 1
+})
+await step('M36 VÍDEO 3 (P5.14): proyecto vertical 9:16 desde cero con clip + imagen + música, SRT, edición, MP4 con subtítulos visibles y sincronizados', async () => {
+  const P = FLOW.page, T0 = Date.now(); let clicks = 0
+  const click = async loc => { clicks++; await loc.click() }
+  await P.goto(base + '/editor/manual'); await settle(P); await P.waitForTimeout(1200)
+  console.log('   URL:', P.url(), '·', (await P.locator('main').innerText()).slice(0, 160).replace(/\n/g, ' / ')); await P.locator('#mp-project').selectOption({ label: PROJ }); await P.locator('#mp-title').fill('Vertical con subtítulos P514'); await P.locator('#mp-format').selectOption('9:16'); clicks += 3
+  await click(P.getByRole('button', { name: 'Crear montaje vacío' })); await P.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(P); await P.waitForTimeout(2500)
+  const job = new URL(P.url()).searchParams.get('job')
+  await P.getByText('Materiales', { exact: true }).first().click(); await P.waitForTimeout(500); clicks++
+  const sm = P.locator('summary', { hasText: 'Importar o añadir' }); if (!(await sm.first().isVisible().catch(() => false))) { await P.screenshot({ path: '/tmp/m36.png' }); console.log('   DEBUG botones:', JSON.stringify((await P.locator('button').allInnerTexts()).map(x => x.trim()).filter(Boolean).slice(0, 60)), '· summaries:', await sm.count(), '· URL', P.url()) }
+  await click(sm.first()); await P.waitForTimeout(300)
+  const addVisual = async kind => { const sel = P.locator('label', { hasText: 'Clip de imagen o vídeo' }).locator('select'); const opts = await sel.locator('option').allInnerTexts(); const o = opts.find(x => x.startsWith(`[${kind}]`) && (kind === 'video' ? /Clip sint/.test(x) : /PRUEBA|prueba/.test(x))); if (!o) throw new Error('no hay ' + kind + ' en la Biblioteca: ' + opts.join('|')); await sel.selectOption({ label: o }); clicks++; await click(P.getByRole('button', { name: /^Añadir clip/ })); await P.waitForTimeout(1200) }
+  await addVisual('video'); await addVisual('image')
+  const asel = P.locator('select').filter({ has: P.locator('option', { hasText: /^\[(music|sfx|voice)\]/ }) }).first(); const aopts = await asel.locator('option').allInnerTexts(); const ao = aopts.find(x => /tono|music/i.test(x)); if (!ao) throw new Error('sin audio: ' + aopts.join('|'))
+  await asel.selectOption({ label: ao }); clicks++; await P.locator('label', { hasText: /^Pista/ }).locator('select').first().selectOption('music'); clicks++
+  await click(P.getByRole('button', { name: /^Añadir (al inicio|en el cabezal)/ })); await P.waitForTimeout(1500)
+  const srt = path.join(MEDIA, 'vertical.srt'); writeFileSync(srt, '1\n00:00:00,500 --> 00:00:02,500\nHola desde el vertical\n\n2\n00:00:03,000 --> 00:00:05,000\nSegundo subtítulo largo para comprobar que cabe en pantalla\n')
+  await click(P.getByText('Textos', { exact: true }).first()); await P.waitForTimeout(500)
+  const panel = P.locator('section.panel[aria-label="Subtítulos"]'); await panel.scrollIntoViewIfNeeded().catch(() => {})
+  await panel.locator('input[type=file]').setInputFiles(srt); clicks++; await P.waitForTimeout(400)
+  await click(panel.getByRole('button', { name: 'Colocar en el montaje' })); await P.waitForTimeout(800)
+  await panel.getByLabel('Texto del subtítulo 1').fill('Hola desde el vertical (editado)'); clicks++
+  await click(P.getByRole('button', { name: 'Guardar ahora' })); await P.waitForTimeout(2500)
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`))
+  console.log('   montaje:', comp.format, comp.clips.length, 'clips ·', (comp.clips.reduce((a, c) => a + c.durationMs, 0) / 1000).toFixed(1), 's · música:', Boolean(comp.musicAssetId) || (comp.audioClips ?? []).length > 0, '· subtítulos:', comp.subtitles)
+  if (comp.format !== '9:16' || comp.clips.length !== 2 || !comp.subtitles) throw new Error('montaje vertical incompleto')
+  // vista previa: ¿se ve el subtítulo en el visor al colocar el cabezal dentro del primero? (se registra, no se exige)
+  await P.getByRole('button', { name: /^Exportar/ }).first().click(); await P.locator('#ed-export').waitFor({ state: 'visible' }); clicks += 2
+  const pick = async (l, v) => P.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24'); clicks += 3
+  const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), failed0 = sq(`select count(*) from render_jobs where status='failed'`)
+  await click(P.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }))
+  const tr = Date.now(); let n = renders0
+  while (Date.now() - tr < 270000) { n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > renders0 || sq(`select count(*) from render_jobs where status='failed'`) !== failed0) break; await P.waitForTimeout(2000) }
+  if (n <= renders0) throw new Error('el render vertical no terminó: ' + sq(`select coalesce(error,'-') from render_jobs where status='failed' order by created_at desc limit 1`))
+  const renderS = (Date.now() - tr) / 1000
+  const o = sq(`select a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Vertical con subtítulos P514' order by r.created_at desc limit 1`) || sq(`select 'JOB-NO-COMPLETADO|'||string_agg(id||':'||status||':'||coalesce(composition->>'title','-'),',') from render_jobs where updated_at > now() - interval '20 minutes'`)
+  const f = download(o.split('/').pop()); const j = probe(f), v = j.streams.find(x => x.codec_type === 'video'), a = j.streams.find(x => x.codec_type === 'audio'), dur = Number(j.format.duration)
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  const white = (t, band) => { const b = execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', f, '-frames:v', '1', '-vf', band, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer', maxBuffer: 1 << 26 }); let c = 0; for (let i = 0; i < b.length; i += 3) if (b[i] > 235 && b[i + 1] > 235 && b[i + 2] > 235) c++; return c }
+  const bottom = 'crop=iw:ih*0.4:0:ih*0.6', top = 'crop=iw:ih*0.4:0:0', edge = 'crop=iw*0.03:ih:0:0'
+  const w1 = white(1.5, bottom), w2 = white(4.0, bottom), gap = white(2.75, bottom), wTop = white(1.5, top) + white(4.0, top)
+  console.log('   MP4 vertical:', JSON.stringify({ dur, v: v && [v.codec_name, v.width, v.height], a: a && a.codec_name }), '· texto blanco abajo en 1,5 s:', w1, '· 4,0 s:', w2, '· entre subtítulos (2,75 s):', gap, '· arriba:', wTop)
+  console.log(`   USABILIDAD vídeo 3: ${((Date.now() - T0) / 1000).toFixed(0)} s medidos en total (render ${renderS.toFixed(0)} s), ${clicks} acciones de interfaz, sin tocar BD ni scripts`)
+  if (!v || !a || !(v.height > v.width)) throw new Error('MP4 no vertical o sin audio')
+  return w1 > 150 && w2 > 150 && gap < w1 / 4 && wTop < 20
 })
 await finish()
