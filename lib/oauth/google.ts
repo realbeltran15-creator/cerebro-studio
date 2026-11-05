@@ -31,8 +31,9 @@ const clientSecret = () => process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim() ?? ''
 
 export const googleOAuthConfigured = () => Boolean(clientId() && clientSecret() && tokenEncryptionConfigured())
 
+import { oauthOrigin } from './origin'
 export function redirectUri(origin: string) {
-  return `${origin}/api/oauth/youtube/callback`
+  return `${oauthOrigin(origin)}/api/oauth/youtube/callback`
 }
 
 export function authUrl(origin: string, state: string, scopeSet: ScopeSet) {

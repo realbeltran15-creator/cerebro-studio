@@ -197,7 +197,7 @@ export default function SocialPage() {
             {!c.scopes.includes(publishScope[p]) && <p className="error small">Falta el permiso de publicación ({publishScope[p]}). Vuelve a conectar.</p>}
             <div className="pageActions"><a className="button ghost" href={`/api/oauth/${p}/start`}>Cambiar de cuenta</a><button type="button" className="ghost" disabled={busy === p} onClick={() => void disconnect(p)}>Desconectar</button></div>
           </> : <>
-            <div className="pageActions"><a className="button" href={`/api/oauth/${p}/start`}>Conectar {names[p]}</a></div>
+            <div className="pageActions"><a className="button" href={`/api/oauth/${p}/start`}>Conectar {names[p]}</a><a className="button ghost" href={`/api/oauth/${p}/start?scope=read`}>Solo lectura (sin publicar)</a></div>
             {!s?.configured && <p className="muted small">Este servidor aún no tiene las credenciales de la app ({s?.env.join(', ') ?? '…'}), así que al pulsar te lo indicará sin conectar nada. {p === 'instagram' ? 'Hace falta una app de Meta con «Instagram API with Instagram Login» y una cuenta profesional.' : 'Hace falta una app de TikTok for Developers con Login Kit y Content Posting API.'}</p>}
           </>}
         </section>

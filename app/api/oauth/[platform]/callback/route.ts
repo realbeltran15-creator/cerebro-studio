@@ -17,7 +17,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ plat
   if (!socialPlatforms.includes(platform as SocialPlatform)) return NextResponse.redirect(new URL('/social', url.origin))
   const p = platform as SocialPlatform
   const back = (status: string) => {
-    const res = NextResponse.redirect(new URL(`/social?${p}=${status}`, url.origin))
+    const res = new NextResponse(null, { status: 307, headers: { Location: `/social?${p}=${status}` } })
     res.cookies.set(`${p}_oauth_state`, '', { path: `/api/oauth/${p}`, maxAge: 0 })
     return res
   }
@@ -25,7 +25,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ plat
   if (url.searchParams.get('error')) return back('denied')
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.redirect(new URL('/login', url.origin))
+  if (!user) return new NextResponse(null, { status: 307, headers: { Location: '/login' } })
   const [nonce, uid] = ((await cookies()).get(`${p}_oauth_state`)?.value ?? '').split('.')
   const state = url.searchParams.get('state') ?? ''
   // Instagram may append "#_" to the code; it is not part of the code.

@@ -18,6 +18,12 @@ export const SOCIAL_SCOPES: Record<SocialPlatform, string[]> = {
   instagram: ['instagram_business_basic', 'instagram_business_content_publish'],
   tiktok: ['user.info.basic', 'video.publish'],
 }
+/** Least privilege: «read» only identifies the account; «publish» adds the permission to publish (every publication still needs the owner's approval). */
+export type SocialScopeSet = 'read' | 'publish'
+export const SOCIAL_SCOPE_SETS: Record<SocialPlatform, Record<SocialScopeSet, string[]>> = {
+  instagram: { read: ['instagram_business_basic'], publish: SOCIAL_SCOPES.instagram },
+  tiktok: { read: ['user.info.basic'], publish: SOCIAL_SCOPES.tiktok },
+}
 
 const env = {
   instagram: { id: () => process.env.INSTAGRAM_APP_ID?.trim() ?? '', secret: () => process.env.INSTAGRAM_APP_SECRET?.trim() ?? '' },
@@ -26,17 +32,19 @@ const env = {
 export const socialEnv: Record<SocialPlatform, string[]> = { instagram: ['INSTAGRAM_APP_ID', 'INSTAGRAM_APP_SECRET'], tiktok: ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'] }
 export const socialConfigured = (p: SocialPlatform) => Boolean(env[p].id() && env[p].secret() && tokenEncryptionConfigured())
 
-export const redirectUri = (origin: string, p: SocialPlatform) => `${origin}/api/oauth/${p}/callback`
+import { oauthOrigin } from './origin'
+export const redirectUri = (origin: string, p: SocialPlatform) => `${oauthOrigin(origin)}/api/oauth/${p}/callback`
 
-export function socialAuthUrl(p: SocialPlatform, origin: string, state: string) {
+export function socialAuthUrl(p: SocialPlatform, origin: string, state: string, set: SocialScopeSet = 'publish') {
+  const scopes = SOCIAL_SCOPE_SETS[p][set]
   if (p === 'instagram') {
     const u = new URL('https://www.instagram.com/oauth/authorize')
     // force_reauth: Instagram asks for the account again instead of silently reusing the one logged in, so the owner can pick another.
-    u.search = new URLSearchParams({ client_id: env.instagram.id(), redirect_uri: redirectUri(origin, p), response_type: 'code', scope: SOCIAL_SCOPES.instagram.join(','), state, force_reauth: 'true' }).toString()
+    u.search = new URLSearchParams({ client_id: env.instagram.id(), redirect_uri: redirectUri(origin, p), response_type: 'code', scope: scopes.join(','), state, force_reauth: 'true' }).toString()
     return u.toString()
   }
   const u = new URL('https://www.tiktok.com/v2/auth/authorize/')
-  u.search = new URLSearchParams({ client_key: env.tiktok.id(), redirect_uri: redirectUri(origin, p), response_type: 'code', scope: SOCIAL_SCOPES.tiktok.join(','), state }).toString()
+  u.search = new URLSearchParams({ client_key: env.tiktok.id(), redirect_uri: redirectUri(origin, p), response_type: 'code', scope: scopes.join(','), state }).toString()
   return u.toString()
 }
 

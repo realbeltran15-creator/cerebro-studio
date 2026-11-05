@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { randomBytes } from 'node:crypto'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
-import { socialAuthUrl, socialConfigured, socialPlatforms, type SocialPlatform } from '@/lib/oauth/social'
+import { socialAuthUrl, socialConfigured, socialPlatforms, type SocialPlatform, type SocialScopeSet } from '@/lib/oauth/social'
 import { previewBlock } from '@/lib/security/preview-guard'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +21,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ plat
   if (!user) return stay('/login')
   if (!socialConfigured(p)) return stay(`/social?${p}=not_configured`)
   const nonce = randomBytes(24).toString('base64url')
-  const response = NextResponse.redirect(socialAuthUrl(p, url.origin, nonce))
+  const set: SocialScopeSet = url.searchParams.get('scope') === 'read' ? 'read' : 'publish'
+  const response = NextResponse.redirect(socialAuthUrl(p, url.origin, nonce, set))
   response.cookies.set(`${p}_oauth_state`, `${nonce}.${user.id}`, { httpOnly: true, secure: true, sameSite: 'lax', path: `/api/oauth/${p}`, maxAge: 600 })
   return response
 }

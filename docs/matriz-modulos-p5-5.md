@@ -77,3 +77,6 @@ Flujo completo verificado (material importado → plantilla → editor + música
 
 ## P5.15 — Experiencia de edición
 - Biblioteca sin exportados por defecto, recorte al añadir, «Importar y añadir», subtítulos del visor verificados en 9:16, botón Conectar de Instagram/TikTok siempre visible (M37, M38). Ver `docs/informe-p5-15-experiencia-editor.md`.
+
+## P5.16 — Conexiones oficiales
+- Guías Google/Meta con requisitos oficiales, auditoría OAuth (origen fijado con `CEREBRO_OAUTH_ORIGIN`, scopes de solo lectura para Instagram/TikTok). Ver `docs/informe-p5-16-conexiones-y-prueba.md`.
