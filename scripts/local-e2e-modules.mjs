@@ -140,6 +140,9 @@ await step('M6 la plantilla aparece en /editor/templates tras recargar', async (
   return /Plantilla E2E/.test(await page.locator('main').innerText())
 })
 
+// Medios sintéticos extra (se generan si faltan): raw.mp4 = 4 s rojo con tono + 3 s negro SIN audio + 5 s azul con tono; long.mp4 = 100 s con patrón y tono.
+if (!existsSync(path.join(MEDIA, 'raw.mp4'))) execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=640x360:r=24:d=4', '-f', 'lavfi', '-i', 'color=c=black:s=640x360:r=24:d=3', '-f', 'lavfi', '-i', 'color=c=blue:s=640x360:r=24:d=5', '-f', 'lavfi', '-i', 'sine=f=440:d=4', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono:d=3', '-f', 'lavfi', '-i', 'sine=f=660:d=5', '-filter_complex', '[0:v][1:v][2:v]concat=n=3:v=1:a=0[v];[3:a][4:a][5:a]concat=n=3:v=0:a=1[a]', '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(MEDIA, 'raw.mp4')])
+if (!existsSync(path.join(MEDIA, 'long.mp4'))) execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=24:d=100', '-f', 'lavfi', '-i', 'sine=f=330:d=100', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(MEDIA, 'long.mp4')])
 const jobsDrafts = () => Number(sq(`select count(*) from render_jobs where status='draft'`))
 await step('M7 crear un montaje desde la plantilla con otros archivos (misma estructura) y que aparezca en el editor manual', async () => {
   const before = jobsDrafts()
@@ -198,5 +201,72 @@ await step('M11 subir un vídeo en bruto con silencio y cambios de plano; el an�
   console.log('   url:', page.url(), '· borradores', before, '→', jobsDrafts(), '· clips', comp.clips.length, '· total ms', total, '· formato', comp.format)
   const silencios = /([1-9]\d*) silencios? quitados?/.test(res) || /[1-9] silencios/.test(res)
   return jobsDrafts() === before + 1 && total < 11000 && total > 6000 && silencios || { res, total }
+})
+
+
+await step('M12 Repurpose: de un montaje horizontal a una versión vertical 9:16 (Shorts) con escenas elegidas', async () => {
+  await page.goto(base + '/repurpose'); await settle(page); await page.waitForTimeout(1000)
+  const src = page.getByLabel('Montaje de origen'); const opts = await src.locator('option').allInnerTexts()
+  await src.selectOption({ label: opts.find(t => t.includes('Montaje con mi estilo')) }); await page.waitForTimeout(800)
+  await page.getByRole('button', { name: 'Sugerir para YouTube Shorts' }).click(); await page.waitForTimeout(500)
+  const sel = (await page.locator('main').innerText()).match(/Seleccionado: [^\n]+/)?.[0]; console.log('   ', sel)
+  await page.getByRole('button', { name: 'Preparar versión vertical 9:16' }).click(); await page.waitForTimeout(1200)
+  const t = await page.locator('main').innerText(); console.log('   tras preparar:', t.slice(t.indexOf('Preparar versión vertical') + 25, t.indexOf('Preparar versión vertical') + 900).replace(/\n/g, ' / '))
+  console.log('   botones:', (await page.locator('main button').allInnerTexts()).map(s => s.trim()).filter(Boolean).join(' | '))
+  return true
+})
+
+await step('M13 Repurpose: reencuadre elegido, render vertical a MP4 y comprobación con FFprobe', async () => {
+  const sl = page.locator('main input[type=range]'); const n = await sl.count(); console.log('   deslizadores de encuadre:', n)
+  if (n) await sl.first().fill('0.15')
+  const done0 = Number(sq(`select count(*) from render_jobs where status='completed'`))
+  const ex = page.locator('main').getByRole('button', { name: 'Renderizar y guardar' }); await ex.first().click()
+  const t0 = Date.now(); let st = ''
+  while (Date.now() - t0 < 270000) { st = sq(`select status from render_jobs where status<>'draft' order by created_at desc limit 1`); if (Number(sq(`select count(*) from render_jobs where status='completed'`)) > done0 || st === 'failed') break; await page.waitForTimeout(2000) }
+  console.log('   estado:', st, `en ${Math.round((Date.now() - t0) / 1000)} s`, '· error:', sq(`select coalesce(error,'-') from render_jobs order by created_at desc limit 1`))
+  const row = sq(`select r.output_format||'|'||a.storage_path||'|'||(r.composition->'clips'->0->>'focusX') from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' order by r.updated_at desc limit 1`)
+  console.log('   job:', row); const [fmt, sp, fx] = row.split('|')
+  const f = download(sp.split('/').pop()); const j = probe(f), v = j.streams.find(x => x.codec_type === 'video'); const dur = Number(j.format.duration)
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  console.log('   ffprobe:', JSON.stringify({ dur, v: [v.codec_name, v.width, v.height] }))
+  return fmt === '9:16' && v.height > v.width && Math.abs(dur - 27) < 1.5 && Number(fx) < 0.3
+})
+
+await step('M14 Repurpose desde un vídeo largo: transcripción sintética → momentos propuestos → borradores 9:16', async () => {
+  await page.goto(base + '/library'); await settle(page)
+  if (!(await page.locator('#up-file').count())) { await page.getByRole('button', { name: 'Subir archivo' }).first().click(); await page.locator('#up-file').waitFor() }
+  await page.locator('#up-file').setInputFiles(path.join(MEDIA, 'long.mp4')); await page.locator('#up-kind').selectOption('video')
+  await page.locator('#up-project').selectOption({ label: PROJ }); const ti = page.locator('#up-title'); if (await ti.count()) await ti.fill('long.mp4')
+  const lic = page.locator('#up-license'); if (await lic.count()) await lic.selectOption('owned')
+  await page.getByRole('button', { name: 'Subir', exact: true }).click(); await settle(page); await page.waitForTimeout(3000)
+  const vid = sq(`select id from assets where provenance->>'title'='long.mp4' limit 1`); const owner = sq(`select owner_id from assets where id='${vid}'`); const proj = sq(`select project_id from assets where id='${vid}'`)
+  // TRANSCRIPCIÓN SINTÉTICA sembrada en BD (la transcripción real exige Groq/Cloudflare, servicio externo que no se llama aquí)
+  const phrases = ['Nadie sabe por qué esto pasa en realidad.', 'La razón es más simple de lo que imaginas.', 'Primero hay que entender el error más común.', 'Cuando lo haces mal, el resultado empeora siempre.', 'Hay tres pasos que cambian todo el proceso.', 'El mejor truco es medir antes de decidir.', 'Con 20 minutos al día se nota la diferencia.', 'Y eso es lo que casi nadie te cuenta nunca.']
+  const segs = Array.from({ length: 20 }, (_, i) => ({ start: i * 5, end: i * 5 + 4.6, text: phrases[i % phrases.length] }))
+  const prov = JSON.stringify({ title: 'long.mp4 (transcripción sintética)', sourceAssetId: vid, segments: segs }).replace(/'/g, "''")
+  sq(`insert into assets(owner_id, project_id, asset_type, license_status, provenance) values ('${owner}','${proj}','subtitle','owned','${prov}')`)
+  await page.goto(base + '/repurpose'); await settle(page); await page.waitForTimeout(1200)
+  await page.locator('#lv-video').selectOption({ label: 'long.mp4' }); await page.locator('#lv-len').selectOption('20-58'); await page.locator('#lv-count').selectOption('5'); await page.waitForTimeout(600)
+  const items = await page.locator('ol[aria-label="Momentos propuestos"] li').count(); console.log('   momentos propuestos:', items)
+  const reasons = await page.locator('ol[aria-label="Momentos propuestos"] li').first().innerText(); console.log('   primer momento:', reasons.replace(/\n/g, ' / ').slice(0, 260))
+  const before = jobsDrafts()
+  await page.getByRole('button', { name: 'Elegir todos' }).click(); await page.getByRole('button', { name: /^Crear \d+ Short/ }).click(); await page.waitForTimeout(2500)
+  const made = jobsDrafts() - before; console.log('   borradores creados:', made)
+  const rows = sq(`select (select count(*) from jsonb_array_elements(composition->'clips')) ||':'|| output_format from render_jobs where status='draft' order by created_at desc limit ${made}`).split('\n')
+  console.log('   (clips:formato):', rows.join(' '))
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where status='draft' order by created_at desc limit 1`))
+  const c0 = comp.clips[0]; console.log('   primer clip: trimInMs', c0.trimInMs, 'durationMs', c0.durationMs, 'claves:', Object.keys(comp).join(','))
+  return items >= 1 && made === items && rows.every(r => r.endsWith(':9:16')) && comp.clips.every(c => c.durationMs >= 15000 && c.durationMs <= 58500)
+})
+
+await step('M15 aislamiento: otro usuario no ve borradores, materiales ni transcripciones, y no puede modificarlos', async () => {
+  const other = createClient(`http://127.0.0.1:${GW}`, anon, { auth: { persistSession: false } })
+  const { error: le } = await other.auth.signInWithPassword({ email: 'otro-e2e@example.test', password: PW }); if (le) return { le: le.message }
+  const jobs = await other.from('render_jobs').select('id'); const assets = await other.from('assets').select('id')
+  const target = sq(`select id from render_jobs where status='draft' limit 1`)
+  const upd = await other.from('render_jobs').update({ status: 'failed' }).eq('id', target).select('id'); const del = await other.from('render_jobs').delete().eq('id', target).select('id')
+  const still = sq(`select status from render_jobs where id='${target}'`)
+  console.log('   ve render_jobs:', jobs.data?.length, '· assets:', assets.data?.length, '· update afectó:', upd.data?.length, '· delete afectó:', del.data?.length, '· estado intacto:', still)
+  return jobs.data?.length === 0 && assets.data?.length === 0 && !upd.data?.length && !del.data?.length && still === 'draft'
 })
 await finish()
