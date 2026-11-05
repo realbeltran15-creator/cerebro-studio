@@ -38,7 +38,8 @@ const signup = async (p, email, pw) => { await p.goto(base + '/login'); await p.
 const EMAIL = 'editor-e2e@example.test', PW = 'synthetic-pass-e2e', PROJ = 'Proyecto E2E Editor'
 const S = { bail: false }
 const jobPath = () => sq(`select id from render_jobs where status='draft' order by updated_at desc limit 1`)
-const step = async (name, fn) => { if (S.bail) return; await t(name, async () => { try { const r = await fn(); if (r !== true) S.bail = true; return r } catch (e) { S.bail = true; throw e } }) }
+const ONLY = process.env.E2E_ONLY ? process.env.E2E_ONLY.split(',') : null // p. ej. E2E_ONLY=1,2,3,4,5,M25,M30,M36,M39: ejecuta solo esos pasos (iteración rápida)
+const step = async (name, fn) => { if (S.bail) return; if (ONLY && !ONLY.includes(name.split(' ')[0])) { console.log('SKIP ', name.slice(0, 60)); return }; await t(name, async () => { try { const r = await fn(); if (r !== true) S.bail = true; return r } catch (e) { S.bail = true; throw e } }) }
 const finish = async () => { await browser.close(); web.kill(); lite.close(); console.log(`\nRESUMEN E2E MÓDULOS: ${pass} correctas, ${fail} fallidas`); process.exit(fail ? 1 : 0) }
 const { ctx, page } = await mkCtx()
 // Alta de la cuenta usando el cliente real (el alta por UI se ejerce aparte); el resto es 100 % interfaz.
@@ -572,6 +573,13 @@ await step('M29 idempotencia y concurrencia: 6 importaciones simultáneas no dup
 })
 
 // ---------- P5.11: flujo con VÍDEO importado (no se sustituye por imagen estática) ----------
+if (!S.bail && !FLOW.page) { const c0 = await mkCtx(); await login(c0.page, EMAIL, PW); FLOW.page = c0.page; FLOW.ctx = c0.ctx
+  // E2E_ONLY: se saltó M26 → se siembra la música «tono.wav» importándola desde el editor
+  const P0 = FLOW.page; if (!existsSync(path.join(MEDIA, 'tono.wav'))) execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=523:d=40', path.join(MEDIA, 'tono.wav')])
+  await P0.goto(base + '/editor/manual'); await settle(P0); await P0.waitForTimeout(1200); await P0.locator('#mp-project').selectOption({ label: PROJ }); await P0.locator('#mp-title').fill('Semilla audio'); await P0.locator('#mp-format').selectOption('16:9')
+  await P0.getByRole('button', { name: 'Crear montaje vacío' }).click(); await P0.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(P0); await P0.waitForTimeout(2500)
+  await P0.getByText('Materiales', { exact: true }).first().click(); await P0.waitForTimeout(400); await P0.locator('summary', { hasText: 'Importar o añadir' }).first().click(); await P0.waitForTimeout(300)
+  await P0.locator('#ic-files').setInputFiles(path.join(MEDIA, 'tono.wav')); await P0.waitForTimeout(6000) } // sesión propia si se saltaron M26/M27
 await step('M30 vídeo: buscar e importar el clip sintético a la Biblioteca (con su audio)', async () => {
   const P = FLOW.page
   await P.goto(base + '/library'); await settle(P); await P.waitForTimeout(1000)
@@ -911,10 +919,10 @@ await step('M38 conexiones sociales: botón Conectar de Instagram siempre visibl
   const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
   return note && ytState !== 'estado no reconocido'
 })
-await step('M39 P5.19: fundido de entrada y salida del sonido propio de un clip de vídeo (UI → viewer → MP4 medido)', async () => {
+await step('M39 P5.19/P5.20: fundido y automatización de volumen del sonido propio de un clip de vídeo (UI → persistencia → MP4 medido)', async () => {
   const P = FLOW.page
   await P.goto(base + '/editor/manual'); await settle(P); await P.waitForTimeout(1200)
-  await P.locator('#mp-project').selectOption({ label: PROJ }); await P.locator('#mp-title').fill('Fundido sonido P519'); await P.locator('#mp-format').selectOption('16:9')
+  await P.locator('#mp-project').selectOption({ label: PROJ }); await P.locator('#mp-title').fill('Automatización sonido P520'); await P.locator('#mp-format').selectOption('16:9')
   await P.getByRole('button', { name: 'Crear montaje vacío' }).click(); await P.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(P); await P.waitForTimeout(2500)
   const job = new URL(P.url()).searchParams.get('job')
   await P.getByText('Materiales', { exact: true }).first().click(); await P.waitForTimeout(400)
@@ -922,16 +930,23 @@ await step('M39 P5.19: fundido de entrada y salida del sonido propio de un clip 
   const sel = P.locator('label', { hasText: 'Clip de imagen o vídeo' }).locator('select'); const opts = await sel.locator('option').allInnerTexts()
   const o = opts.find(x => x.startsWith('[video]') && /Clip sint/.test(x)); if (!o) throw new Error('sin clip de vídeo')
   await sel.selectOption({ label: o }); await P.getByRole('button', { name: /^Añadir clip/ }).click(); await P.waitForTimeout(1500)
-  await P.locator('[title*="Clip sintético"]').first().click(); await P.waitForTimeout(500)
-  await P.getByLabel('Entrada gradual del sonido (s)').fill('1.5'); await P.getByLabel('Salida gradual del sonido (s)').fill('1.5'); await P.waitForTimeout(500)
+  const openAuto = async () => { await P.locator('[title*="Clip sintético"]').first().click(); await P.waitForTimeout(500); const d = P.locator('details[data-tool="sound-fade"]'); if (!(await d.evaluate(x => x.open))) await d.locator('summary').click(); await P.waitForTimeout(300) }
+  await openAuto()
+  // fundido de entrada 1 s + puntos: (0 s, 100 %) · (2 s, 100 %) · (6 s, 10 %)  → baja linealmente de 2 s a 6 s
+  await P.getByLabel('Entrada gradual (s)').fill('1')
+  const add = P.getByRole('button', { name: 'Añadir punto en el cabezal' })
+  await add.click(); await P.getByLabel('Tiempo del punto 1').fill('6'); await P.getByLabel('Nivel del punto 1').fill('10')
+  await add.click(); await P.getByLabel('Tiempo del punto 1').fill('2')
+  await add.click(); await P.waitForTimeout(400)
+  const times = await P.locator('input[aria-label^="Tiempo del punto"]').evaluateAll(l => l.map(x => x.value)), levels = await P.locator('input[aria-label^="Nivel del punto"]').evaluateAll(l => l.map(x => x.value))
+  console.log('   puntos en pantalla (s / %):', JSON.stringify(times), JSON.stringify(levels))
   await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
   const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`)); const k = comp.clips[0]
-  console.log('   guardado:', JSON.stringify({ dur: k.durationMs, fi: k.audioFadeInMs, fo: k.audioFadeOutMs }))
-  if (k.audioFadeInMs !== 1500 || k.audioFadeOutMs !== 1500) throw new Error('los fundidos no se guardaron')
-  await P.reload(); await settle(P); await P.waitForTimeout(2500)
-  await P.locator('[title*="Clip sintético"]').first().click(); await P.waitForTimeout(500)
-  const back = [await P.getByLabel('Entrada gradual del sonido (s)').inputValue(), await P.getByLabel('Salida gradual del sonido (s)').inputValue()]
-  console.log('   tras recargar:', back.join(' / ')); if (back[0] !== '1.5' || back[1] !== '1.5') throw new Error('no persisten tras recargar')
+  console.log('   guardado:', JSON.stringify({ dur: k.durationMs, fi: k.audioFadeInMs, env: k.volumeEnvelope }))
+  if (k.audioFadeInMs !== 1000 || !k.volumeEnvelope || k.volumeEnvelope.length !== 3) throw new Error('la automatización no se guardó')
+  if (JSON.stringify(k.volumeEnvelope.map(p => p.atMs)) !== '[0,2000,6000]' || JSON.stringify(k.volumeEnvelope.map(p => p.gain)) !== '[1,1,0.1]') throw new Error('puntos inesperados')
+  await P.reload(); await settle(P); await P.waitForTimeout(2500); await openAuto()
+  const back = await P.locator('input[aria-label^="Tiempo del punto"]').evaluateAll(l => l.map(x => x.value)); console.log('   tras recargar:', JSON.stringify(back)); if (back.length !== 3) throw new Error('no persisten tras recargar')
   await P.getByRole('button', { name: /^Exportar/ }).first().click(); await P.locator('#ed-export').waitFor({ state: 'visible' })
   const pick = async (l, v) => P.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
   await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
@@ -940,12 +955,79 @@ await step('M39 P5.19: fundido de entrada y salida del sonido propio de un clip 
   const tr = Date.now(); let n = renders0
   while (Date.now() - tr < 270000) { n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > renders0 || sq(`select count(*) from render_jobs where status='failed'`) !== failed0) break; await P.waitForTimeout(2000) }
   if (n <= renders0) throw new Error('el render no terminó: ' + sq(`select coalesce(error,'-') from render_jobs where status='failed' order by created_at desc limit 1`))
-  const rel = sq(`select a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Fundido sonido P519' order by r.created_at desc limit 1`)
+  const rel = sq(`select a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Automatización sonido P520' order by r.created_at desc limit 1`)
   const f = download(rel.split('/').pop()); const j = probe(f), dur = Number(j.format.duration)
   execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
   const rms = (ss, t) => { const e = spawnSync('ffmpeg', ['-v', 'info', '-ss', String(ss), '-t', String(t), '-i', f, '-af', 'astats=metadata=0', '-f', 'null', '-'], { encoding: 'utf8' }).stderr; const m = [...e.matchAll(/RMS level dB: (-?[\d.]+|-inf)/g)].map(x => x[1]); const v = m[m.length - 1]; return v === '-inf' ? -120 : Number(v) }
-  const a0 = rms(0, 0.25), mid = rms(Math.max(1.8, dur / 2 - 0.3), 0.6), a1 = rms(Math.max(0, dur - 0.3), 0.25)
-  console.log('   MP4:', dur.toFixed(2), 's · nivel RMS inicio / centro / final (dB):', a0, mid, a1)
-  return a0 < mid - 12 && a1 < mid - 12 && mid > -45
+  const r0 = rms(0, 0.2), loud = rms(1.3, 0.6), mid = rms(3.8, 0.4), end = rms(5.5, 0.4)
+  console.log('   MP4:', dur.toFixed(2), 's · RMS (dB) 0 s:', r0, '· 1,3 s (pleno):', loud, '· 4 s (≈55 %):', mid, '· 5,7 s (≈15 %):', end, '· esperado respecto al pleno: ≈-5 dB y ≈-16 dB')
+  return r0 < loud - 12 && mid < loud - 2 && mid > loud - 10 && end < loud - 11 && loud > -45
+})
+await step('M40 P5.20: plantilla vertical 9:16 (guardar → rellenar con otros archivos → ajustar duración → audio y subtítulos → MP4), con métricas de calidad y memoria', async () => {
+  const P = FLOW.page, T0 = Date.now()
+  await P.goto(base + `/editor/manual?job=${FLOW.job3}`); await settle(P); await P.waitForTimeout(2500)
+  await P.getByText('IA', { exact: true }).first().click(); await P.waitForTimeout(500)
+  await P.getByLabel('Nombre de la plantilla').fill('Plantilla vertical P520'); await P.getByRole('button', { name: 'Guardar como plantilla' }).click(); await P.waitForTimeout(1500)
+  if (!/Plantilla «Plantilla vertical P520» guardada/.test(await P.locator('main').innerText())) throw new Error('no se guardó la plantilla')
+  const orig = JSON.parse(sq(`select composition::text from render_jobs where id='${FLOW.job3}'`))
+  await P.goto(base + '/editor/templates'); await settle(P); await P.waitForTimeout(1000)
+  await P.getByRole('button', { name: /Plantilla vertical P520/ }).click(); await P.waitForTimeout(600)
+  await P.getByLabel('Proyecto', { exact: true }).selectOption({ label: PROJ }); await P.waitForTimeout(1500)
+  await P.getByLabel('Título del montaje').fill('Vertical desde plantilla P520')
+  const slotOpts = async n => (await P.getByLabel(`Archivo para Visual ${n}`).locator('option').allInnerTexts()).map(x => x.trim())
+  const o1 = await slotOpts(1), o2 = await slotOpts(2)
+  const nv = o1.find(x => x.startsWith('[video]') && /clip-a/.test(x)), ni = o2.find(x => x.startsWith('[image]') && /still/.test(x))
+  if (!nv || !ni) throw new Error('faltan archivos de sustitución: ' + o1.join('|') + ' // ' + o2.join('|'))
+  await P.getByLabel('Archivo para Visual 1').selectOption({ label: nv }); await P.getByLabel('Archivo para Visual 2').selectOption({ label: ni })
+  // huecos de audio (música/voz/efectos): se rellenan con el primer archivo que se ofrezca, como haría una persona
+  const others = await P.locator('select[aria-label^="Archivo para "]:not([aria-label^="Archivo para Visual"])').evaluateAll(l => l.map(x => ({ label: x.getAttribute('aria-label'), opts: [...x.options].map(o => o.text.trim()).filter(t => t && !t.startsWith('—')) })))
+  for (const sl of others) if (sl.opts.length) await P.getByLabel(sl.label, { exact: true }).selectOption({ label: sl.opts[0] })
+  console.log('   huecos de audio rellenados:', JSON.stringify(others.map(x => [x.label, x.opts[0] ?? null])), '· en la original:', (orig.audioClips ?? []).length, 'clips de audio, música:', Boolean(orig.musicAssetId))
+  await P.getByRole('button', { name: 'Crear montaje con esta plantilla' }).click(); await settle(P); await P.waitForTimeout(1500)
+  const job = sq(`select id from render_jobs where composition->>'title'='Vertical desde plantilla P520' order by created_at desc limit 1`)
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`))
+  const nm = comp.clips.map(c => sq(`select coalesce(provenance->>'title',storage_path) from assets where id='${c.visualAssetId}'`))
+  console.log('   plantilla →', comp.format, comp.clips.length, 'clips:', nm.join(' | '), '· duraciones', comp.clips.map(c => c.durationMs).join(','), '· subtítulos:', comp.subtitles, '· audio:', (comp.audioClips ?? []).length, 'clips +', Boolean(comp.musicAssetId), '· cues:', comp.clips.map(c => (c.cues ?? []).length).join(','), '· freezedetect: una imagen fija es un tramo estático esperado')
+  if (comp.format !== '9:16' || comp.clips.length !== orig.clips.length) throw new Error('estructura distinta de la plantilla')
+  if (!/clip-a/.test(nm[0]) || !/still/.test(nm[1])) throw new Error('los archivos sustituidos no están en el montaje')
+  // navegador NUEVO y aislado para medir la memoria de una exportación sin el resto del E2E (solo hay una página abierta)
+  const pidsOf = () => execFileSync('bash', ['-c', "ps -eo pid,args | awk '/chrome/ && !/awk/ {print $1}'"], { encoding: 'utf8' }).split('\n').filter(Boolean)
+  const before = new Set(pidsOf()); const bx = await chromium.launch({ executablePath: CHROMIUM_PATH }); const cx = await bx.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true }); const PX = await cx.newPage(); await login(PX, EMAIL, PW)
+  await PX.goto(base + `/editor/manual?job=${job}`); await settle(PX); await PX.waitForTimeout(2500)
+  await PX.getByRole('button', { name: /^Exportar/ }).first().click(); await PX.locator('#ed-export').waitFor({ state: 'visible' })
+  const pick = async (l, v) => PX.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+  const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), failed0 = sq(`select count(*) from render_jobs where status='failed'`)
+  await PX.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
+  const chromeMb = () => { try { const mine = new Set(pidsOf().filter(x => !before.has(x))); return Math.round(execFileSync('ps', ['-eo', 'pid,rss'], { encoding: 'utf8' }).split('\n').map(l => l.trim().split(/\s+/)).filter(x => mine.has(x[0])).reduce((t, x) => t + Number(x[1]), 0) / 1024) } catch { return 0 } }
+  let peak = chromeMb(), heap = 0; const tr = Date.now(); let n = renders0
+  while (Date.now() - tr < 270000) {
+    peak = Math.max(peak, chromeMb()); heap = Math.max(heap, await PX.evaluate(() => (performance.memory ? performance.memory.usedJSHeapSize / 1048576 : 0)).catch(() => 0))
+    n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > renders0 || sq(`select count(*) from render_jobs where status='failed'`) !== failed0) break; await PX.waitForTimeout(500)
+  }
+  if (n <= renders0) throw new Error('el render no terminó: ' + sq(`select coalesce(error,'-') from render_jobs where status='failed' order by created_at desc limit 1`))
+  const renderS = (Date.now() - tr) / 1000; const idleMb = chromeMb(); await bx.close()
+  const rel = sq(`select a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Vertical desde plantilla P520' order by r.created_at desc limit 1`)
+  const f = download(rel.split('/').pop()); const j = probe(f), v = j.streams.find(x => x.codec_type === 'video'), a = j.streams.find(x => x.codec_type === 'audio'), dur = Number(j.format.duration)
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  const expectMs = comp.clips.reduce((x, c) => x + c.durationMs, 0)
+  const mean = (file, ss, w) => { const b = execFileSync('ffmpeg', ['-v', 'error', ...(ss != null ? ['-ss', String(ss)] : []), '-i', file, '-frames:v', '1', '-vf', w || 'scale=16:16', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer', maxBuffer: 1 << 24 }); let r = 0, g = 0, bl = 0; const px = b.length / 3; for (let i = 0; i < b.length; i += 3) { r += b[i]; g += b[i + 1]; bl += b[i + 2] } return [r / px, g / px, bl / px].map(Math.round) }
+  const dist = (p, q) => Math.round(Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]))
+  const c1 = comp.clips[0], c2 = comp.clips[1], t1 = (c1.durationMs / 1000) / 2, t2 = c1.durationMs / 1000 + (c2.durationMs / 1000) / 2
+  const srcVid = download(sq(`select storage_path from assets where id='${c1.visualAssetId}'`).split('/').pop()), srcImg = download(sq(`select storage_path from assets where id='${c2.visualAssetId}'`).split('/').pop())
+  const exp1 = mean(srcVid, ((c1.trimInMs ?? 0) / 1000) + t1 * (c1.speed ?? 1)), exp2 = mean(srcImg, null)
+  const got1 = mean(f, t1), got2 = mean(f, t2), oldV = [0, 0, 255], oldI = [0, 255, 0]
+  console.log('   color medio: vídeo nuevo esperado', exp1, 'en MP4', got1, '(Δ', dist(exp1, got1) + ') · imagen nueva esperada', exp2, 'en MP4', got2, '(Δ', dist(exp2, got2) + ')')
+  // métricas de calidad
+  const nb = Number(v.nb_frames), expFrames = Math.round(dur * 24), br = Math.round(Number(j.format.bit_rate) / 1000)
+  const vd = Number(v.duration), ad = Number(a?.duration), startDiff = Math.abs(Number(v.start_time || 0) - Number(a?.start_time || 0))
+  const dup = (() => { const e = spawnSync('ffmpeg', ['-v', 'info', '-i', f, '-vf', 'mpdecimate', '-f', 'null', '-'], { encoding: 'utf8' }).stderr; const m = [...e.matchAll(/frame=\s*(\d+)/g)].map(x => Number(x[1])); return m.length ? m[m.length - 1] : -1 })()
+  const frz = (spawnSync('ffmpeg', ['-v', 'info', '-i', f, '-vf', 'freezedetect=n=-60dB:d=0.5', '-an', '-f', 'null', '-'], { encoding: 'utf8' }).stderr.match(/freeze_start/g) || []).length
+  let ssim = '—'
+  try { const ref = path.join(MEDIA, 'ref-still.png'); execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', srcImg, '-vf', `scale=${v.width}:${v.height}:force_original_aspect_ratio=increase,crop=${v.width}:${v.height}`, '-frames:v', '1', ref]); const fr = path.join(MEDIA, 'frame-still.png'); execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', String(t2), '-i', f, '-frames:v', '1', fr]); const e = spawnSync('ffmpeg', ['-i', fr, '-i', ref, '-lavfi', 'ssim', '-f', 'null', '-'], { encoding: 'utf8' }).stderr; ssim = (e.match(/All:([\d.]+)/) || [])[1] || '—' } catch (e) { ssim = 'n/d' }
+  const rmsA = (() => { const e = spawnSync('ffmpeg', ['-v', 'info', '-i', f, '-af', 'astats=metadata=0', '-f', 'null', '-'], { encoding: 'utf8' }).stderr; const m = [...e.matchAll(/RMS level dB: (-?[\d.]+|-inf)/g)].map(x => x[1]); return m.length ? m[m.length - 1] : 'n/d' })()
+  console.log('   MP4:', JSON.stringify({ res: v && v.width + 'x' + v.height, v: v && v.codec_name, a: a && a.codec_name, dur: dur.toFixed(2), esperada: (expectMs / 1000).toFixed(2), kbps: br, fotogramas: nb, esperados: expFrames, descartados_mpdecimate: nb - dup, congelados: frz, difInicioAV_s: startDiff.toFixed(3), difDuracionAV_s: (vd - ad).toFixed(3), rmsAudio_dB: rmsA, ssim_vs_imagen_original: ssim }))
+  console.log('   RENDIMIENTO: render', renderS.toFixed(1), 's · navegador NUEVO con una sola página (Chromium sin GPU): pico de memoria de todos sus procesos', peak, 'MB · al terminar', idleMb, 'MB · pico del heap JS de la página', Math.round(heap), 'MB · paso completo', ((Date.now() - T0) / 1000).toFixed(0), 's. Nota: ssim solo informativo (la imagen tiene movimiento de cámara y recorte)')
+  return Boolean(v && a && v.width < v.height) && dist(exp1, got1) < 60 && dist(exp2, got2) < 60 && (dist(exp1, oldV) > 80 || dist(got1, oldV) > 80) && dist(got2, oldI) > 80 && Math.abs(dur - expectMs / 1000) < 0.6 && Math.abs(nb - expFrames) <= 2 && Math.abs(vd - ad) < 0.3 && startDiff < 0.1 && frz <= 1 && (comp.audioClips ?? []).length + (comp.musicAssetId ? 1 : 0) === (orig.audioClips ?? []).length + (orig.musicAssetId ? 1 : 0) && comp.subtitles === true && comp.clips.some(c => (c.cues ?? []).length > 0)
 })
 await finish()

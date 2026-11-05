@@ -77,7 +77,19 @@ export function trimStart(c: Composition, clipId: string, deltaMs: number): Comp
   const applied = trimIn - (clip.trimInMs ?? 0)
   const duration = clampDur(clip.durationMs - applied)
   const realApplied = clip.durationMs - duration
-  return updateClip(c, clipId, { trimInMs: (clip.trimInMs ?? 0) + realApplied, durationMs: duration, ...(clip.cues ? { cues: sliceCues(clip.cues, realApplied, clip.durationMs) } : {}) })
+  const env = clip.volumeEnvelope
+  return updateClip(c, clipId, { trimInMs: (clip.trimInMs ?? 0) + realApplied, durationMs: duration, ...(clip.cues ? { cues: sliceCues(clip.cues, realApplied, clip.durationMs) } : {}),
+    ...(env?.length ? { volumeEnvelope: [{ atMs: 0, gain: envelopeAt({ durationMs: clip.durationMs, envelope: env }, realApplied) }, ...env.filter(p => p.atMs > realApplied).map(p => ({ atMs: p.atMs - realApplied, gain: p.gain }))] } : {}) })
+}
+
+/** A clip's own volume points and fades after it is cut in two at `at` ms: each half keeps its own end fade, the cut itself is not faded, and the level continues across it. */
+function splitSound(clip: Clip, at: number): { first: Partial<Clip>; second: Partial<Clip> } {
+  const env = clip.volumeEnvelope ?? []
+  const base = { durationMs: clip.durationMs, envelope: env.length ? env : undefined }
+  const level = env.length ? envelopeAt(base, at) : 1
+  const first: Partial<Clip> = { audioFadeOutMs: undefined, ...(env.length ? { volumeEnvelope: [...env.filter(p => p.atMs < at), { atMs: at, gain: level }] } : {}) }
+  const second: Partial<Clip> = { audioFadeInMs: undefined, ...(env.length ? { volumeEnvelope: [{ atMs: 0, gain: level }, ...env.filter(p => p.atMs > at).map(p => ({ atMs: p.atMs - at, gain: p.gain }))] } : {}) }
+  return { first, second }
 }
 
 /** Splits a clip at `atMs` (relative to its start). Both halves must be at least the minimum clip length. */
@@ -87,7 +99,8 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
   const clip = c.clips[i]
   if (atMs < MIN_CLIP_MS || clip.durationMs - atMs < MIN_CLIP_MS) return c
   const [k1, k2] = splitKeyframes(clip.keyframes, { zoom: clip.zoom ?? 1, focusX: clip.focusX ?? 0.5, focusY: clip.focusY ?? 0.5, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 }, Math.round(atMs))
-  const first: Clip = { ...clip, durationMs: Math.round(atMs), transition: 'cut', transitionMs: undefined, transitionOpts: undefined, ...(k1 ? { keyframes: k1 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
+  const snd = splitSound(clip, Math.round(atMs))
+  const first: Clip = { ...clip, ...snd.first, durationMs: Math.round(atMs), transition: 'cut', transitionMs: undefined, transitionOpts: undefined, ...(k1 ? { keyframes: k1 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, 0, Math.round(atMs)) } : {}) }
   // Reversed clips read the file backwards: the part that comes FIRST in time is the part of the source window nearest its end.
   const s = clip.speed ?? 1, cut = Math.round(atMs)
   if (clip.reverse) { first.trimInMs = Math.round((clip.trimInMs ?? 0) + (clip.durationMs - cut) * s) }
@@ -97,7 +110,7 @@ export function splitClip(c: Composition, clipId: string, atMs: number): Composi
     first.ramp = mid
     ;(first as Clip).speed = s
   }
-  const second: Clip = { ...clip, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: clip.reverse || clip.freeze ? (clip.trimInMs ?? 0) : (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
+  const second: Clip = { ...clip, ...snd.second, id: newId('clip'), durationMs: clip.durationMs - Math.round(atMs), trimInMs: clip.reverse || clip.freeze ? (clip.trimInMs ?? 0) : (clip.trimInMs ?? 0) + Math.round(atMs * (clip.speed ?? 1)), voiceAssetId: null, narration: null, text: clip.text ?? null, ...(k2 ? { keyframes: k2 } : {}), ...(clip.cues ? { cues: sliceCues(clip.cues, Math.round(atMs), clip.durationMs) } : {}) }
   if (clip.ramp !== undefined && !clip.reverse) { second.speed = s + (clip.ramp - s) * (cut / clip.durationMs); second.trimInMs = Math.round(sourceAt(clip, cut)) }
   const clips = [...c.clips]
   clips.splice(i, 1, first, second)

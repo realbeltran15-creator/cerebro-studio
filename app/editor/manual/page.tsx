@@ -1220,7 +1220,12 @@ export default function ManualEditorPage() {
           onChange={p => apply(c => updateOverlay(c, selOverlay.id, p))} apply={apply}
           onDelete={() => { apply(c => deleteItems(c, [{ kind: 'overlay', id: selOverlay.id }])); setSel([]) }}
           onDuplicate={() => { const r = duplicateItems(comp, [{ kind: 'overlay', id: selOverlay.id }]); apply(() => r.composition); setSel(r.refs) }} />}
-        {selClip && <ClipInspector animation={(() => {
+        {selClip && <ClipInspector soundAutomation={(() => {
+          const adapted = { durationMs: selClip.durationMs, envelope: selClip.volumeEnvelope, fadeInMs: selClip.audioFadeInMs, fadeOutMs: selClip.audioFadeOutMs } as unknown as AudioClipT
+          const idx = comp.clips.findIndex(k => k.id === selClip.id)
+          return <AutomationEditor video a={adapted} startMs={starts[idx] ?? 0} playheadMs={playheadMs} range={range}
+            onChange={p => apply(c => updateClip(c, selClip.id, { ...('envelope' in p ? { volumeEnvelope: p.envelope?.length ? p.envelope : undefined } : {}), ...('fadeInMs' in p ? { audioFadeInMs: p.fadeInMs || undefined } : {}), ...('fadeOutMs' in p ? { audioFadeOutMs: p.fadeOutMs || undefined } : {}) }))} />
+        })()} animation={(() => {
             const i = comp.clips.findIndex(k => k.id === selClip.id)
             const local = Math.min(Math.max(playheadMs - starts[i], 0), selClip.durationMs)
             const cur = frameValuesAt({ zoom: selClip.zoom ?? 1, focusX: selClip.focusX ?? 0.5, focusY: selClip.focusY ?? 0.5, rotation: selClip.rotation ?? 0, opacity: selClip.opacity ?? 1 }, selClip.keyframes, local)
@@ -1391,10 +1396,11 @@ function PrecisionRow({ onPrecision, onFreeze, isVideo }: { onFreeze: () => void
   )
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onPrecision, onFreeze, onRamp, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
+function ClipInspector({ soundAutomation, clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onPrecision, onFreeze, onRamp, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
   transitionTools?: React.ReactNode
   transitionDuration?: React.ReactNode
   animation?: React.ReactNode
+  soundAutomation?: React.ReactNode
   clip: Clip; isVideo: boolean; visuals: EditorAsset[]; splitAt: string; setSplitAt: (v: string) => void; /** First beat of the music inside this clip that leaves both halves ≥ 1 s (ms from the clip start), or null. */ nextBeatMs: number | null
   onChange: (p: Partial<Clip>) => void; onSpeed: (v: number) => void; onReverse: () => void; onPrecision: (kind: 'slip' | 'roll' | 'slide' | 'J' | 'L', ms: number) => void; onFreeze: () => void; onRamp: (endSpeed: number | null) => void; onBounce: (cycles: number) => void; onTrim: (deltaMs: number) => void; onSplit: (ms: number) => void; onDuplicate: () => void; onRepeat?: () => void; onDelete: () => void; onMove: (dir: -1 | 1) => void
 }) {
@@ -1434,10 +1440,10 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         <label>Volumen del vídeo ({Math.round((clip.volume ?? 1) * 100)}%)<input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
         <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
       </div>}
-      {isVideo && <div className="field-row" data-tool="sound-fade">
-        <label>Entrada gradual del sonido (s)<input type="number" min={0} max={secs(clip.durationMs)} step={0.1} value={secs(clip.audioFadeInMs ?? 0)} onChange={e => onChange({ audioFadeInMs: Math.max(0, Math.min(clip.durationMs, Math.round(Number(e.target.value) * 1000) || 0)) || undefined })} /></label>
-        <label>Salida gradual del sonido (s)<input type="number" min={0} max={secs(clip.durationMs)} step={0.1} value={secs(clip.audioFadeOutMs ?? 0)} onChange={e => onChange({ audioFadeOutMs: Math.max(0, Math.min(clip.durationMs, Math.round(Number(e.target.value) * 1000) || 0)) || undefined })} /></label>
-      </div>}
+      {isVideo && soundAutomation && <details className="small" data-tool="sound-fade" open={Boolean(clip.volumeEnvelope?.length || clip.audioFadeInMs || clip.audioFadeOutMs)}>
+        <summary>Automatización y fundidos del sonido</summary>
+        {soundAutomation}
+      </details>}
       <div className="field-row" style={{ alignItems: 'end' }}>
         <label>Dividir en (s desde el inicio del clip)<input type="number" min={1} step={0.1} value={splitAt} onChange={e => setSplitAt(e.target.value)} placeholder={`1 – ${secs(clip.durationMs - MIN_CLIP_MS)}`} /></label>
         <button type="button" className="ghost" disabled={!canSplit} onClick={() => onSplit(splitMs)}>Dividir</button>
@@ -1595,7 +1601,7 @@ function MixerStrip({ comp, onChange }: { comp: Composition; onChange: (mix: Non
   </section>
 }
 
-function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: AudioClipT; startMs: number; playheadMs: number; range: Range | null; onChange: (p: Partial<AudioClipT>) => void }) {
+function AutomationEditor({ a, startMs, playheadMs, range, onChange, video }: { video?: boolean; a: AudioClipT; startMs: number; playheadMs: number; range: Range | null; onChange: (p: Partial<AudioClipT>) => void }) {
   const pts = a.envelope ?? []
   const rel = Math.min(Math.max(playheadMs - startMs, 0), a.durationMs)
   const setPt = (i: number, p: Partial<{ atMs: number; gain: number }>) => onChange({ envelope: pts.map((x, n) => (n === i ? { ...x, ...p } : x)).sort((x, y) => x.atMs - y.atMs) })
@@ -1617,7 +1623,7 @@ function AutomationEditor({ a, startMs, playheadMs, range, onChange }: { a: Audi
       {inRange && <button type="button" className="ghost small" onClick={() => onChange({ envelope: setLevelBetween(a, range!.startMs - startMs, range!.endMs - startMs, 0.3).envelope })}>Bajar al 30 % en el fragmento</button>}
       {pts.length > 0 && <button type="button" className="ghost small" onClick={() => onChange({ envelope: [] })}>Quitar puntos</button>}
     </div>
-    <p className="muted">Los puntos multiplican el volumen del clip y se unen en línea recta; también se aplican sobre la bajada automática bajo la voz.</p>
+    <p className="muted">{video ? 'Los puntos multiplican el volumen propio del vídeo y se unen en línea recta; se combinan con las entradas y salidas graduales. El visor y el MP4 usan la misma regla.' : 'Los puntos multiplican el volumen del clip y se unen en línea recta; también se aplican sobre la bajada automática bajo la voz.'}</p>
   </div>
 }
 

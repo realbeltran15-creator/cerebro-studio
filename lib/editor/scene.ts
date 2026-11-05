@@ -194,13 +194,10 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
   return ops
 }
 
-/** Gain 0–1 of a video clip's own sound from its fade-in/out (linear), `local` ms from the clip start. No fades = 1. */
-export function clipSoundFade(clip: Pick<Clip, 'durationMs' | 'audioFadeInMs' | 'audioFadeOutMs'>, local: number): number {
-  const fi = clip.audioFadeInMs ?? 0, fo = clip.audioFadeOutMs ?? 0
-  let g = 1
-  if (fi > 0) g *= clamp01(local / fi)
-  if (fo > 0) g *= clamp01((clip.durationMs - local) / fo)
-  return g
+/** Gain of a video clip's own sound at `local` ms from its start: its volume points (linear) × fade in × fade out — the same rule as an audio clip. No automation = 1. */
+export function clipSoundFade(clip: Pick<Clip, 'durationMs' | 'audioFadeInMs' | 'audioFadeOutMs' | 'volumeEnvelope'>, local: number): number {
+  if (!clip.audioFadeInMs && !clip.audioFadeOutMs && !clip.volumeEnvelope?.length) return 1
+  return envelopeAt({ durationMs: clip.durationMs, fadeInMs: clip.audioFadeInMs, fadeOutMs: clip.audioFadeOutMs, envelope: clip.volumeEnvelope }, local)
 }
 
 function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, muted: boolean): VisualOp | null {
@@ -327,7 +324,7 @@ export function videoVoices(c: Composition, kindOf: KindOf): Array<Voice & { rat
     const fadeOut = Math.max(wOut.ms > 0 ? wOut.pre + postLive : 0, (k.audioFadeOutMs ?? 0) > 0 ? (k.audioFadeOutMs ?? 0) + postLive : 0)
     const startMs = starts[i] - preLive, endMs = starts[i] + k.durationMs + postLive
     out.push({ key: `vc:${k.id}`, assetId: k.visualAssetId, bus: 'video', trackId: 'main', startMs, endMs, sourceStartMs: trim - preLive * rate, loop: false, volume: k.volume ?? 1, pan: 0,
-      envelope: fadeIn || fadeOut ? { durationMs: endMs - startMs, ...(fadeIn ? { fadeInMs: fadeIn } : {}), ...(fadeOut ? { fadeOutMs: fadeOut } : {}) } : null, duck: null, rate, trimSec: trim / 1000 })
+      envelope: fadeIn || fadeOut || k.volumeEnvelope?.length ? { durationMs: endMs - startMs, ...(fadeIn ? { fadeInMs: fadeIn } : {}), ...(fadeOut ? { fadeOutMs: fadeOut } : {}), ...(k.volumeEnvelope?.length ? { envelope: k.volumeEnvelope.map(q => ({ atMs: q.atMs + preLive, gain: q.gain })) } : {}) } : null, duck: null, rate, trimSec: trim / 1000 })
   })
   for (const o of c.overlays ?? []) {
     if (kindOf(o.assetId) !== 'video' || o.muted || o.reverse || (o.volume ?? 1) <= 0 || tracks.find(t => t.id === o.trackId)?.muted || tracks.find(t => t.id === o.trackId)?.hidden) continue

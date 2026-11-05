@@ -167,6 +167,8 @@ export type Clip = {
   /** Video only: the clip's own sound rises over `audioFadeInMs` from its start and falls over `audioFadeOutMs` up to its end (linear). */
   audioFadeInMs?: number
   audioFadeOutMs?: number
+  /** Video only: volume automation of the clip's own sound — points (time from the clip start, gain multiplier 0–2) joined linearly; same model as an audio clip's envelope. */
+  volumeEnvelope?: EnvelopePoint[]
   /** How this clip ends into the next one. Default fade (uses composition.fadeMs). */
   transition?: Transition
   text?: TextOverlay | null
@@ -231,6 +233,12 @@ export type AudioClip = {
   groupId?: string
 }
 export type EnvelopePoint = { atMs: number; gain: number }
+
+/** Envelope points from untrusted data: finite numbers only, time ≥ 0, gain 0–2, sorted by time, at most 64. */
+export function parseEnvelopePoints(raw: unknown): EnvelopePoint[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((p: { atMs?: unknown; gain?: unknown } | null) => { const at = Number(p?.atMs), g = Number(p?.gain); return Number.isFinite(at) && Number.isFinite(g) && at >= 0 ? [{ atMs: Math.round(at), gain: Math.min(2, Math.max(0, g)) }] : [] }).sort((x, y) => x.atMs - y.atMs).slice(0, 64)
+}
 
 /** Independent level of each kind of sound in the final mix. Solo on any track silences the tracks without solo. */
 export type TrackKind = 'video' | 'voice' | 'music' | 'sfx'
@@ -418,7 +426,7 @@ function parseAudioClip(a: unknown): AudioClip | null {
     ...(Number(v.pan) ? { pan: clamp(v.pan, -1, 1, 0) } : {}),
     ...(typeof v.trackId === 'string' && v.trackId ? { trackId: v.trackId.slice(0, 60) } : {}),
     ...(typeof v.groupId === 'string' && v.groupId ? { groupId: v.groupId.slice(0, 60) } : {}),
-    ...(Array.isArray(v.envelope) && v.envelope.length ? { envelope: v.envelope.flatMap(p => { const at = Number(p?.atMs), g = Number(p?.gain); return Number.isFinite(at) && Number.isFinite(g) && at >= 0 ? [{ atMs: Math.round(at), gain: Math.min(2, Math.max(0, g)) }] : [] }).sort((x, y) => x.atMs - y.atMs).slice(0, 64) } : {}),
+      ...(Array.isArray(v.envelope) && v.envelope.length ? { envelope: parseEnvelopePoints(v.envelope) } : {}),
   }
 }
 
@@ -451,6 +459,7 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       muted: c.muted === true,
       ...(Number(c.audioFadeInMs) > 0 ? { audioFadeInMs: clamp(c.audioFadeInMs, 0, 60_000, 0) } : {}),
       ...(Number(c.audioFadeOutMs) > 0 ? { audioFadeOutMs: clamp(c.audioFadeOutMs, 0, 60_000, 0) } : {}),
+      ...(Array.isArray(c.volumeEnvelope) && parseEnvelopePoints(c.volumeEnvelope).length ? { volumeEnvelope: parseEnvelopePoints(c.volumeEnvelope) } : {}),
       transition: typeof c.transition === 'string' && c.transition in TRANSITIONS ? c.transition : 'fade',
       text: parseText(c.text),
       speed: clamp(c.speed, 0.25, 4, 1),
