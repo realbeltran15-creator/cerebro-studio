@@ -50,3 +50,6 @@ No recomendadas por coste de migración: Appwrite, PocketBase, Neon+Auth propio 
 
 ## Actualización P5.6
 Los 8 módulos «solo carga» (Plantillas, Editar con mi estilo, Montaje automático, Repurpose, Workflows, Calendario, Costes, Campañas) quedan **operativos** en local con datos sintéticos. Detalle en `docs/informe-p5-6-funcionalidad.md`.
+
+## Actualización P5.7
+Miniaturas pasa a **parcial operativo** (texto exacto sobre imagen propia, local y gratis). Plantillas añade defensa de compatibilidad. Ver `docs/informe-p5-7-desbloqueo-gratuito.md`.

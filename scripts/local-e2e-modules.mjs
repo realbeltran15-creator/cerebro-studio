@@ -385,4 +385,21 @@ await step('M23 Campañas: persistencia tras recargar, duplicar, eliminar y sin 
   const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
   return true
 })
+await step('M24 Miniaturas: texto sobre una imagen propia, 100 % local y gratis', async () => {
+  await page.goto(base + '/thumbnails'); await settle(page); await page.waitForTimeout(1000)
+  await page.locator('#thumb-project').selectOption({ label: PROJ }); await page.waitForTimeout(2000)
+  const body = await page.locator('main').innerText()
+  if (!body.includes('Imagen tuya')) throw new Error('la imagen propia no aparece como base')
+  const before = sq(`select count(*) from assets where asset_type='thumbnail'`)
+  await page.getByRole('button', { name: 'Añadir texto encima' }).first().click()
+  await page.locator('input[id^="ct-"]').first().fill('MI TEXTO')
+  await page.getByRole('button', { name: 'Crear copia con texto' }).click(); await page.waitForTimeout(4000)
+  const after = sq(`select count(*) from assets where asset_type='thumbnail'`)
+  console.log('   miniaturas antes/después:', before, after)
+  if (Number(after) !== Number(before) + 1) throw new Error('no se creó la miniatura compuesta')
+  await page.reload(); await settle(page); await page.locator('#thumb-project').selectOption({ label: PROJ }); await page.waitForTimeout(2000)
+  if (!(await page.locator('main').innerText()).includes('MI TEXTO')) throw new Error('no persiste tras recargar')
+  const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
+  return true
+})
 await finish()

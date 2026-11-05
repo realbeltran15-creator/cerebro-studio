@@ -15,7 +15,7 @@ import { composeThumbnail, DEFAULT_TEXT_STYLE, saveComposedThumbnail, type TextP
 type ModelLite = { id: string; modality: string; label: string; tier: CostTier; quality: number; ready: boolean; creditsExhausted?: boolean; capabilities: string[]; price: string }
 const AUTO = 'auto'
 
-type Thumb = { id: string; created_at: string; provenance: Record<string, unknown> | null; url?: string }
+type Thumb = { id: string; created_at: string; provenance: Record<string, unknown> | null; url?: string; asset_type?: string }
 
 const styles = [['documentary', 'Documental'], ['cinematic', 'Cinematográfico'], ['illustration', 'Ilustración'], ['minimal', 'Minimalista']] as const
 
@@ -51,8 +51,8 @@ export default function ThumbnailsPage() {
   }, [supabase])
 
   const load = useCallback(async (pid: string) => {
-    const { data, error: e } = await supabase.from('assets').select('id,created_at,provenance')
-      .eq('project_id', pid).eq('asset_type', 'thumbnail').order('created_at', { ascending: false }).limit(24)
+    const { data, error: e } = await supabase.from('assets').select('id,created_at,provenance,asset_type')
+      .eq('project_id', pid).in('asset_type', ['thumbnail', 'image']).not('storage_path', 'is', null).order('created_at', { ascending: false }).limit(24)
     if (e) { setError(e.message); return }
     const rows = (data ?? []) as Thumb[]
     setThumbs(rows)
@@ -213,7 +213,7 @@ export default function ThumbnailsPage() {
           {t.url ? <img src={t.url} alt={`Miniatura: ${String(t.provenance?.concept ?? '')}`} style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 8 }} /> : <p className="muted small">Cargando vista previa…</p>}
           <p className="small" style={{ marginTop: 8 }}>{String(t.provenance?.concept ?? '').slice(0, 140)}</p>
           <p className="muted small">{t.provenance?.overlayText ? `Texto: «${String(t.provenance.overlayText)}» · ` : ''}{new Date(t.created_at).toLocaleString()}</p>
-          {selected ? <span className="pill ok">Seleccionada</span> : <button type="button" className="ghost" onClick={() => void select(t.id)}>Seleccionar</button>}
+          {t.asset_type === 'image' ? <span className="pill">Imagen tuya (base gratis)</span> : selected ? <span className="pill ok">Seleccionada</span> : <button type="button" className="ghost" onClick={() => void select(t.id)}>Seleccionar</button>}
           {composing === t.id ? <div className="small" style={{ marginTop: 8 }}>
             <label htmlFor={`ct-${t.id}`}>Texto encima (exacto, gratis)<input id={`ct-${t.id}`} value={composeText} maxLength={40} onChange={e => setComposeText(e.target.value)} placeholder="2–4 palabras" /></label>
             <label htmlFor={`ca-${t.id}`}>Formato<select id={`ca-${t.id}`} value={composeAspect} onChange={e => setComposeAspect(e.target.value as ThumbAspect)}><option value="16:9">16:9 (YouTube)</option><option value="9:16">9:16 (Shorts/Reels)</option><option value="1:1">1:1 (cuadrado)</option></select></label>

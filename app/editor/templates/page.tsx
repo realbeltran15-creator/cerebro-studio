@@ -48,7 +48,9 @@ export default function MontageTemplatesPage() {
   useEffect(() => { setAssign({}); setCreated(null); setConfirmDelete(false); setTitle(t?.name ?? '') }, [t])
 
   const durationOf = (id: string) => { const p = assets.find(a => a.id === id)?.provenance ?? {}; return typeof p.durationMs === 'number' ? p.durationMs : typeof p.durationSeconds === 'number' ? p.durationSeconds * 1000 : null }
-  const preview = t ? fillTemplate(t, assign, { title, durationOf }) : null
+  const safeAssign: Record<string, string | undefined> = {}
+  if (t) for (const sl of t.slots) { const id = assign[sl.key]; const a = id ? assets.find(x => x.id === id) : undefined; if (a && ACCEPTS[sl.kind].includes(a.asset_type)) safeAssign[sl.key] = a.id }
+  const preview = t ? fillTemplate(t, safeAssign, { title, durationOf }) : null
 
   async function create() {
     if (!t || !preview) return
