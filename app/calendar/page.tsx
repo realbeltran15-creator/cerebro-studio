@@ -41,6 +41,7 @@ export default function CalendarPage() {
   useEffect(() => { void load() }, [load])
 
   const { byDay, undated } = useMemo(() => groupByDay(jobs), [jobs])
+  const planned = useMemo(() => jobs.filter(j => canPlan(j) && j.scheduled_for), [jobs])
   const grid = useMemo(() => monthGrid(cursor.y, cursor.m), [cursor])
   const today = dayKey(new Date())
   const projectName = (id: string) => projects.find(p => p.id === id)?.name ?? 'Proyecto'
@@ -118,6 +119,18 @@ export default function CalendarPage() {
       })}</div>)}
     </div>
     <p className="muted small">Leyenda: <span className="calItem kind-published">publicado</span> <span className="calItem kind-scheduled">programado en YouTube (lo publica YouTube)</span> <span className="calItem kind-planned">fecha prevista (recordatorio)</span></p>
+
+    {planned.length > 0 && <>
+      <h3 className="sectionTitle">Con fecha prevista ({planned.length})</h3>
+      <div className="list">{planned.map(j => <div key={`${j.id}-${j.scheduled_for}`} className="listItem" style={{ flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 220 }}><b>{platformNames[j.platform as Platform] ?? j.platform}</b> · {titleOf(j)} <span className="pill">{statusLabels[j.status] ?? j.status}</span><span className="muted small" style={{ display: 'block' }}>{projectName(j.project_id)}</span></div>
+        <div className="pageActions">
+          <label className="small">Fecha prevista <input type="date" aria-label={`Cambiar la fecha prevista de ${titleOf(j)}`} defaultValue={dayKey(new Date(j.scheduled_for as string))} onChange={e => void plan(j, e.target.value)} /></label>
+          <button type="button" className="ghost small" onClick={() => void plan(j, '')}>Quitar fecha</button>
+          <Link className="buttonLink ghost small" href={editHref(j)}>Abrir</Link>
+        </div>
+      </div>)}</div>
+    </>}
 
     <h3 className="sectionTitle">Sin fecha ({undated.length})</h3>
     {undated.length === 0 ? <p className="emptyState">Todas las publicaciones tienen fecha.</p> : <div className="list">{undated.map(j => <div key={j.id} className="listItem" style={{ flexWrap: 'wrap' }}>

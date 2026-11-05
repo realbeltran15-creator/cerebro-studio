@@ -269,4 +269,65 @@ await step('M15 aislamiento: otro usuario no ve borradores, materiales ni transc
   console.log('   ve render_jobs:', jobs.data?.length, '· assets:', assets.data?.length, '· update afectó:', upd.data?.length, '· delete afectó:', del.data?.length, '· estado intacto:', still)
   return jobs.data?.length === 0 && assets.data?.length === 0 && !upd.data?.length && !del.data?.length && still === 'draft'
 })
+
+
+const ext = []; page.on('request', r => { try { const u = new URL(r.url()); if (!/^(127\.0\.0\.1|localhost)$/.test(u.hostname) && u.protocol.startsWith('http')) ext.push(u.hostname) } catch {} })
+const extNow = () => [...new Set(ext)].filter(h => !/fonts\.(googleapis|gstatic)\.com$/.test(h))
+await step('M16 Workflows: estado calculado, «Dar visto bueno» persiste y los filtros cuentan bien', async () => {
+  await page.goto(base + '/workflows'); await settle(page); await page.waitForTimeout(1000)
+  const t0 = await page.locator('main').innerText(); const done0 = Number((t0.match(/(\d) de 8 pasos hechos/) || [])[1])
+  await page.getByRole('button', { name: 'Ver detalle' }).click().catch(() => {}); await page.waitForTimeout(400)
+  await page.getByRole('button', { name: 'Dar visto bueno' }).first().click(); await page.waitForTimeout(1500)
+  const t1 = await page.locator('main').innerText(); console.log('   antes:', done0, 'pasos · materiales:', (t0.match(/Materiales\n· ([^\n]+)/) || [])[1], '→', (t1.match(/Materiales\n· ([^\n]+)/) || [])[1], '· botones:', (await page.locator('main button').allInnerTexts()).filter(Boolean).join(' | '))
+  await page.reload(); await settle(page); await page.waitForTimeout(1000)
+  await page.getByRole('button', { name: 'Ver detalle' }).click().catch(() => {}); await page.waitForTimeout(400)
+  const t2 = await page.locator('main').innerText(); const done2 = Number((t2.match(/(\d) de 8 pasos hechos/) || [])[1])
+  console.log('   tras recargar:', done2, 'pasos · materiales:', (t2.match(/Materiales\n· ([^\n]+)/) || [])[1], '· montaje:', (t2.match(/Montaje\n· ([^\n]+)/) || [])[1], '·', t2.match(/Requieren atención \(\d+\)/)?.[0])
+  return done2 > done0 && /Materiales\n· Hecho/.test(t2)
+})
+await step('M17 Workflows: un render fallido aparece con su error y enlace para reintentar', async () => {
+  const own = sq(`select owner_id from render_jobs limit 1`); const pid = sq(`insert into projects(owner_id, name) values ('${own}','Proyecto con render fallido') returning id`).split('\n')[0]
+  sq(`insert into render_jobs(owner_id, project_id, output_format, status, error) values ('${own}','${pid}','16:9','failed','Error sintético de prueba: códec no soportado')`)
+  await page.reload(); await settle(page); await page.waitForTimeout(1000)
+  for (const b of await page.getByRole('button', { name: 'Ver detalle' }).all()) await b.click().catch(() => {}); await page.waitForTimeout(500)
+  const t = await page.locator('main').innerText(); const links = await page.locator('main a').evaluateAll(a => a.map(x => x.innerText.trim() + '→' + x.getAttribute('href')))
+  console.log('   enlaces:', links.join(' | ')); console.log('   texto de error:', /códec no soportado/.test(t), (t.match(/El último render falló[^\n]*/) || ['-'])[0], '· atención:', t.match(/Requieren atención \(\d+\)/)?.[0])
+  return /códec no soportado/.test(t) && links.some(l => /^Reintentar render→\/editor\?project=/.test(l))
+})
+await step('M18 Workflows/Calendario/Costes/Campañas no contactan con hosts externos', async () => { console.log('   hosts externos vistos hasta ahora:', extNow().join(',') || '(ninguno)'); return extNow().length === 0 })
+
+await step('M19 Calendario: crear borradores en 2 plataformas (nada se publica), fecha prevista visible, duplicado avisa', async () => {
+  await page.goto(base + '/calendar'); await settle(page); await page.waitForTimeout(1200)
+  await page.locator('main form select').first().selectOption({ label: PROJ }); await page.waitForTimeout(500)
+  const vsel = page.locator('main form select').nth(1); const vopts = await vsel.locator('option').allInnerTexts(); console.log('   vídeos:', vopts.join(' | '))
+  await vsel.selectOption({ index: 1 })
+  const d = new Date(); d.setDate(d.getDate() + 3); const key = d.toISOString().slice(0, 10)
+  await page.locator('main form input[type=date]').fill(key); await page.locator('main form input:not([type=date]):not([type=checkbox])').fill('Título de prueba E2E'); await page.locator('main form textarea').fill('Descripción de prueba')
+  await page.getByRole('checkbox', { name: 'YouTube' }).check(); await page.getByRole('checkbox', { name: 'Instagram' }).check()
+  const btn = page.getByRole('button', { name: /^Crear \d borradores?/ }); console.log('   botón:', await btn.innerText())
+  await btn.click(); await page.waitForTimeout(1800)
+  const rows = sq(`select platform||':'||status||':'||coalesce(scheduled_for::date::text,'-') from publication_jobs order by platform`).split('\n'); console.log('   filas:', rows.join(' '))
+  const msg = (await page.locator('main').innerText()).match(/\d borradores creados[^\n]+/)?.[0]; console.log('   aviso:', msg)
+  const notPub = !sq(`select count(*) from publication_jobs where status not in ('draft','awaiting_approval')`).replace('0', '') // ninguna publicada
+  await page.reload(); await settle(page); await page.waitForTimeout(1000)
+  const body = await page.locator('main').innerText()
+  const inGrid = new RegExp('Título de prueba E2E|YouTube|Instagram').test(body)
+  // duplicado: mismo vídeo + misma plataforma
+  await page.locator('main form select').first().selectOption({ label: PROJ }); await page.waitForTimeout(400); await page.locator('main form select').nth(1).selectOption({ index: 1 }); await page.getByRole('checkbox', { name: 'YouTube' }).check(); await page.waitForTimeout(400)
+  const dupWarn = /duplic|ya (hay|existe|tienes)/i.test(await page.locator('main').innerText())
+  console.log('   aviso de duplicado:', dupWarn, '· visible en calendario:', inGrid)
+  return rows.length === 2 && rows.every(r => /:draft:/.test(r)) && rows.every(r => r.endsWith(key)) && notPub && dupWarn
+})
+await step('M20 Calendario: cambiar y quitar la fecha prevista de un borrador persiste (recordatorio, no publica)', async () => {
+  await page.goto(base + '/calendar'); await settle(page); await page.waitForTimeout(1000)
+  const d = new Date(); d.setDate(d.getDate() + 6); const key = d.toISOString().slice(0, 10)
+  const input = page.getByLabel(/Cambiar la fecha prevista de Título de prueba E2E/).first(); await input.fill(key); await page.waitForTimeout(1200)
+  const moved = sq(`select count(*) from publication_jobs where scheduled_for::date='${key}'`)
+  await page.reload(); await settle(page); await page.waitForTimeout(800)
+  await page.getByRole('button', { name: 'Quitar fecha' }).first().click(); await page.waitForTimeout(1200)
+  const left = sq(`select count(*) from publication_jobs where scheduled_for is not null`)
+  const st = sq(`select string_agg(distinct status, ',') from publication_jobs`)
+  const t = await page.locator('main').innerText(); console.log('   movidos:', moved, '· con fecha tras quitar 1:', left, '· estados:', st, '· sin fecha ahora:', t.match(/Sin fecha \(\d+\)/)?.[0])
+  return Number(moved) >= 1 && Number(left) === 1 && st === 'draft' && /Sin fecha \(1\)/.test(t)
+})
 await finish()
