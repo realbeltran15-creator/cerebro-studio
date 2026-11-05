@@ -59,3 +59,6 @@ Miniaturas verificada (formatos, resolución, persistencia, imagen propia). Pexe
 
 ## Actualización P5.9
 Biblioteca incorpora el buscador de bancos gratuitos (Pexels/Pixabay/Freesound) con importación idempotente, licencia y autor; protegido con contador local y caché; apagado sin clave. Ver `docs/informe-p5-9-banco-materiales.md`.
+
+## Actualización P5.10
+Flujo completo verificado (material importado → plantilla → editor + música → MP4 con audio → reentrada), aislamiento entre dos usuarios en importación/lectura/modificación/borrado, y defecto de concurrencia en importaciones corregido. Ver `docs/informe-p5-10-flujo-completo.md`.

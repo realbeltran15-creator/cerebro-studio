@@ -450,4 +450,124 @@ await step('M25 Banco de materiales: buscar (datos de prueba), importar a la Bib
   if (!info.includes('image/png')) throw new Error('no se recupera el PNG importado: ' + info.join(','))
   return true
 })
+
+// ---------- P5.10: flujo completo, aislamiento entre dos usuarios, idempotencia y concurrencia ----------
+const FLOW = {}
+await step('M26 flujo completo: material importado → plantilla → editor + música → MP4 → cerrar sesión y volver', async () => {
+  // 1) montaje base (el de «con mi estilo», 3 clips) → guardarlo como plantilla
+  const baseJob = sq(`select id from render_jobs where status='draft' order by created_at asc limit 1`)
+  await page.goto(`${base}/editor/manual?job=${baseJob}`); await settle(page); await page.waitForTimeout(2000)
+  await page.getByText('IA', { exact: true }).first().click(); await page.waitForTimeout(500)
+  await page.getByLabel('Nombre de la plantilla').fill('Plantilla P510'); await page.getByRole('button', { name: 'Guardar como plantilla' }).click(); await page.waitForTimeout(1200)
+  if (!/Plantilla «Plantilla P510» guardada/.test(await page.locator('main').innerText())) throw new Error('no se guardó la plantilla')
+  // 2) material sintético importado desde la Biblioteca (ya importado en M25: prueba-1); asignarlo a los 3 huecos visuales
+  const imp = sq(`select provenance->>'title' from assets where source_provider='pexels' order by created_at asc limit 1`); console.log('   material:', imp)
+  await page.goto(base + '/editor/templates'); await settle(page); await page.waitForTimeout(1000)
+  await page.getByRole('button', { name: /Plantilla P510/ }).click(); await page.waitForTimeout(600)
+  await page.getByLabel('Proyecto', { exact: true }).selectOption({ label: PROJ }); await page.waitForTimeout(1500)
+  await page.getByLabel('Título del montaje').fill('Montaje con material importado')
+  for (const n of [1, 2, 3]) { const sel = page.getByLabel(`Archivo para Visual ${n}`); const opts = await sel.locator('option').allInnerTexts(); const o = opts.find(t => t.includes('PRUEBA')); if (!o) throw new Error('el material importado no se ofrece en el hueco ' + n + ': ' + opts.join('|')); await sel.selectOption({ label: o }) }
+  await page.getByRole('button', { name: 'Crear montaje con esta plantilla' }).click(); await settle(page); await page.waitForTimeout(1500)
+  // 3) transición Plantillas → Editor
+  await page.getByRole('link', { name: /Abrir en el editor manual/ }).click(); await page.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(page); await page.waitForTimeout(2500)
+  FLOW.job = new URL(page.url()).searchParams.get('job'); console.log('   editor:', page.url())
+  // 4) música local compatible
+  if (!existsSync(path.join(MEDIA, 'tono.wav'))) execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=523:d=40', path.join(MEDIA, 'tono.wav')])
+  console.log('   botones editor:', (await page.locator('button, summary').allInnerTexts()).map(x => x.trim()).filter(Boolean).slice(0, 70).join(' | '))
+  await page.getByRole('button', { name: /Música y sonidos/ }).first().click().catch(() => {}); await page.waitForTimeout(500)
+  if (!(await page.locator('#ic-files').count())) await page.locator('summary', { hasText: 'Importar o añadir' }).click({ timeout: 5000 }); await page.waitForTimeout(300)
+  await page.locator('#ic-files').setInputFiles(path.join(MEDIA, 'tono.wav')); await page.waitForTimeout(6000)
+  const musSel = page.locator('select').filter({ has: page.locator('option', { hasText: 'Sin música' }) }).first()
+  const mopts = await musSel.locator('option').allInnerTexts(); const mo = mopts.find(t => /tono/i.test(t)); if (!mo) throw new Error('la música no se ofrece: ' + mopts.join('|'))
+  await musSel.selectOption({ label: mo }); await page.waitForTimeout(500)
+  await page.getByRole('button', { name: 'Guardar ahora' }).click(); await page.waitForTimeout(2500)
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${FLOW.job}'`)); console.log('   clips:', comp.clips.length, 'música:', Boolean(comp.musicAssetId))
+  if (comp.clips.length !== 3 || !comp.musicAssetId) throw new Error('el montaje guardado no tiene 3 clips y música')
+  // 5) exportar MP4
+  await page.getByRole('button', { name: /^Exportar/ }).first().click(); await page.locator('#ed-export').waitFor({ state: 'visible' })
+  const pick = async (l, v) => page.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+  await page.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
+  const t0 = Date.now(); let st = ''
+  while (Date.now() - t0 < 270000) { st = sq(`select status from render_jobs where id='${FLOW.job}' or (status<>'draft' and composition->>'title'='Montaje con material importado') order by created_at desc limit 1`); if (st === 'completed' || st === 'failed') break; await page.waitForTimeout(2000) }
+  console.log('   estado:', st, `en ${Math.round((Date.now() - t0) / 1000)} s`); if (st !== 'completed') throw new Error('el render no terminó: ' + sq(`select coalesce(error,'-') from render_jobs where status<>'draft' order by created_at desc limit 1`))
+  FLOW.out = sq(`select a.id||'|'||a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Montaje con material importado' order by r.created_at desc limit 1`)
+  const [outId, outPath] = FLOW.out.split('|'); FLOW.outId = outId
+  const f = download(outPath.split('/').pop()); if (!f) throw new Error('no se pudo descargar el MP4')
+  const j = probe(f), v = j.streams.find(x => x.codec_type === 'video'), a = j.streams.find(x => x.codec_type === 'audio'); const dur = Number(j.format.duration)
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  const vol = spawnSync('ffmpeg', ['-i', f, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' }).stderr
+  const px = execFileSync('ffmpeg', ['-v', 'error', '-ss', '2', '-i', f, '-frames:v', '1', '-vf', 'scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { encoding: 'buffer' })
+  const mean = Number((/mean_volume: (-?[\d.]+) dB/.exec(vol) || [])[1]); console.log('   ffprobe:', JSON.stringify({ dur, v: v && [v.codec_name, v.width, v.height], a: a && a.codec_name, meanDb: mean, rgb: [...px] }))
+  if (!v || !a || Math.abs(dur - 27) > 1.5 || !(mean > -50)) throw new Error('MP4 incorrecto')
+  if (!(px[0] > 150 && px[1] < 110 && px[2] < 110)) throw new Error('el fotograma no es el material importado (rojo): ' + [...px])
+  return true
+})
+await step('M27 cerrar sesión y volver a entrar: proyecto, material y resultado siguen accesibles', async () => {
+  await ctx.close()
+  const c2 = await mkCtx(); const p2 = c2.page; await login(p2, EMAIL, PW)
+  await p2.goto(base + '/library'); await settle(p2); await p2.waitForTimeout(1500)
+  const lib = await p2.locator('main').innerText()
+  const sign = await p2.evaluate(async id => { const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' }); const j = await r.json().catch(() => ({})); if (!j.url) return r.status; const m = await fetch(j.url); return `${m.status} ${m.headers.get('content-type')} ${(await m.blob()).size}` }, FLOW.outId)
+  console.log('   resultado por URL firmada:', sign, '· en Biblioteca:', /Montaje con material importado/.test(lib))
+  await p2.goto(base + '/projects'); await settle(p2)
+  FLOW.page = p2; FLOW.ctx = c2
+  return String(sign).startsWith('200 video/mp4') && /Montaje con material importado/.test(lib) && (await p2.locator('main').innerText()).includes(PROJ)
+})
+
+const OTHER = 'otro-e2e@example.test'
+await step('M28 seguridad con dos usuarios: B no puede importar en, leer, modificar ni borrar lo de A (UI/API y cliente real)', async () => {
+  const projA = sq(`select id from projects where name='${PROJ}' limit 1`), ownerA = sq(`select owner_id from projects where id='${projA}'`)
+  const impA = sq(`select id from assets where source_provider='pexels' order by created_at asc limit 1`), pathA = sq(`select storage_path from assets where id='${impA}'`)
+  const assetsA = () => sq(`select count(*) from assets where project_id='${projA}'`)
+  const titleA = sq(`select coalesce(provenance->>'title','') from assets where id='${impA}'`)
+  const cb = await mkCtx(); const pb = cb.page; await login(pb, OTHER, PW)
+  const b = createClient(`http://127.0.0.1:${GW}`, anon, { auth: { persistSession: false } }); const { data: sess } = await b.auth.signInWithPassword({ email: OTHER, password: PW })
+  const bId = sess.user.id; const { data: myProj, error: pe } = await b.from('projects').insert({ owner_id: bId, name: 'Proyecto de B' }).select('id').single(); if (pe) throw new Error('B no pudo crear proyecto: ' + pe.message)
+  const before = assetsA(); const leaks = []
+  const api = (m, u, body) => pb.evaluate(async ([m, u, body]) => { const r = await fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const t = await r.text(); return { status: r.status, body: t.slice(0, 400) } }, [m, u, body])
+  const res = {}
+  res.import = await api('POST', '/api/stock/import', { source: 'pexels', kind: 'image', id: 'prueba-2', projectId: projA })
+  res.signedImp = await api('GET', `/api/assets/${impA}/signed-url`)
+  res.signedOut = await api('GET', `/api/assets/${FLOW.outId}/signed-url`)
+  res.reuseId = await api('POST', '/api/stock/import', { source: 'pexels', kind: 'image', id: impA, projectId: myProj.id })
+  console.log('   respuestas de B:', JSON.stringify({ imp: res.import.status, sImp: res.signedImp.status, sOut: res.signedOut.status, reuse: res.reuseId.status }))
+  for (const [k, r] of Object.entries(res)) { if (![401, 403, 404, 400, 502].includes(r.status)) throw new Error(`${k} devolvió ${r.status}`); if (/"url"\s*:\s*"http/.test(r.body)) throw new Error(`${k} filtró una URL`); for (const secret of [projA, ownerA, PROJ, 'editor-e2e', pathA]) if (r.body.includes(secret)) leaks.push(`${k}:${secret}`) }
+  if (leaks.length) throw new Error('las respuestas de error filtran datos de A: ' + leaks.join(','))
+  if (assetsA() !== before) throw new Error('B creó activos en el proyecto de A')
+  // cliente real de Supabase con la sesión de B
+  const sel = await b.from('assets').select('id').eq('project_id', projA); if ((sel.data ?? []).length) throw new Error('B lee activos de A')
+  const upd = await b.from('assets').update({ provenance: { title: 'HACKEADO' } }).eq('id', impA).select('id'); if ((upd.data ?? []).length) throw new Error('B modificó un activo de A')
+  const del = await b.from('assets').delete().eq('id', impA).select('id'); if ((del.data ?? []).length) throw new Error('B borró un activo de A')
+  const dl = await b.storage.from('generated-assets').download(pathA); if (!dl.error) throw new Error('B descargó un archivo de A')
+  const su = await b.storage.from('generated-assets').createSignedUrl(pathA, 60); if (su.data?.signedUrl) throw new Error('B obtuvo una URL firmada de A')
+  const rm = await b.storage.from('generated-assets').remove([pathA]); const still = sq(`select count(*) from storage.objects where name='${pathA}'`); if (still !== '1') throw new Error('B borró el archivo de A')
+  const after = sq(`select coalesce(provenance->>'title','') from assets where id='${impA}'`); if (after !== titleA) throw new Error('el activo de A cambió')
+  // A conserva sus permisos legítimos
+  const pa = FLOW.page
+  const mine = await pa.evaluate(async ([id, projId]) => { const s = await fetch(`/api/assets/${id}/signed-url`); const i = await fetch('/api/stock/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'pexels', kind: 'image', id: 'prueba-3', projectId: projId }) }); return [s.status, i.status] }, [impA, projA])
+  console.log('   A (firma, importación propia):', mine.join(','))
+  await cb.ctx.close()
+  return mine[0] === 200 && (mine[1] === 201 || mine[1] === 200)
+})
+await step('M29 idempotencia y concurrencia: 6 importaciones simultáneas no duplican ni dejan archivos huérfanos', async () => {
+  const projA = sq(`select id from projects where name='${PROJ}' limit 1`)
+  const pa = FLOW.page
+  const orphans = () => Number(sq(`select count(*) from storage.objects o where o.bucket_id='generated-assets' and o.name like '%/import-pexels-%' and not exists (select 1 from assets a where a.storage_path=o.name)`))
+  const n0 = Number(sq(`select count(*) from assets where project_id='${projA}' and provenance->>'externalId'='pexels:prueba-2'`)), o0 = orphans()
+  const rs = await pa.evaluate(async projId => Promise.all(Array.from({ length: 6 }, () => fetch('/api/stock/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'pexels', kind: 'image', id: 'prueba-2', projectId: projId }) }).then(async r => [r.status, (await r.json().catch(() => ({}))).error ?? '']))), projA)
+  console.log('   respuestas:', rs.map(r => r[0]).join(','), rs.filter(r => r[1]).map(r => r[1]).slice(0, 2).join(' / '))
+  await new Promise(r => setTimeout(r, 1500))
+  const n1 = Number(sq(`select count(*) from assets where project_id='${projA}' and provenance->>'externalId'='pexels:prueba-2'`)), o1 = orphans()
+  console.log('   activos prueba-2:', n0, '→', n1, '· huérfanos:', o0, '→', o1)
+  // otro proyecto del mismo usuario: debe crear su propio activo, sin cruzar proyectos
+  const { data: p2 } = await seed.auth.signInWithPassword({ email: EMAIL, password: PW })
+  const { data: np } = await seed.from('projects').insert({ owner_id: p2.user.id, name: 'Proyecto P510 segundo' }).select('id').single()
+  const other = await pa.evaluate(async projId => (await fetch('/api/stock/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'pexels', kind: 'image', id: 'prueba-2', projectId: projId }) })).status, np.id)
+  const inOther = sq(`select count(*) from assets where project_id='${np.id}' and provenance->>'externalId'='pexels:prueba-2'`), cross = sq(`select count(*) from assets a where provenance->>'externalId'='pexels:prueba-2' and storage_path not like '%/'||project_id||'/%'`)
+  console.log('   otro proyecto:', other, 'activos', inOther, '· rutas cruzadas:', cross)
+  const codes = rs.map(r => r[0]); const created = codes.filter(c => c === 201).length
+  if (codes.some(c => c !== 200 && c !== 201) || created !== 1) throw new Error('las importaciones simultáneas no son idempotentes: ' + codes.join(','))
+  return n1 === 1 && o1 === o0 && inOther === '1' && cross === '0'
+})
 await finish()

@@ -35,7 +35,17 @@ export async function persistImportedAsset(input: {
   const bytes=Buffer.from(await r.arrayBuffer());const mime=r.headers.get('content-type')?.split(';')[0]||input.mimeType
   const max=input.kind==='image'?25*1024*1024:input.kind==='video'?150*1024*1024:50*1024*1024;if(!bytes.length||bytes.byteLength>max)throw new Error('El archivo es demasiado grande para importarlo.')
   const verdict=verifyGeneratedBytes(input.kind,bytes);if(!verdict.ok)throw new Error(verdict.reason)
-  const storagePath=await putObject(supabase,user.id,`${user.id}/${input.projectId}/import-${input.source}-${input.externalId.replace(/[^A-Za-z0-9-]/g,'')}.${extFor(mime)}`,bytes,mime)
+  let storagePath:string
+  try{storagePath=await putObject(supabase,user.id,`${user.id}/${input.projectId}/import-${input.source}-${input.externalId.replace(/[^A-Za-z0-9-]/g,'')}.${extFor(mime)}`,bytes,mime)}
+  catch(e){
+    // Concurrent import of the same item: another request is storing the same file. Wait for ITS record and return it as a duplicate instead of failing.
+    if(/already exists|duplicate/i.test(e instanceof Error?e.message:''))for(let i=0;i<20;i++){
+      await new Promise(r=>setTimeout(r,250))
+      const{data:won}=await supabase.from('assets').select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').eq('owner_id',user.id).eq('project_id',input.projectId).eq('provenance->>externalId',external).maybeSingle()
+      if(won)return{asset:won,duplicate:true}
+    }
+    throw e
+  }
   const{data,error}=await supabase.from('assets').insert({owner_id:user.id,project_id:input.projectId,asset_type:input.kind,storage_path:storagePath,source_provider:input.source,source_url:input.sourceUrl,license_status:input.licenseStatus,provenance:{...input.provenance,externalId:external,mimeType:mime,importedAt:new Date().toISOString(),bytes:bytes.byteLength,cost:{amount:0,currency:'USD',reported:true},costTier:'free'}}).select('id,owner_id,project_id,asset_type,storage_path,source_provider,source_url,license_status,provenance,created_at').single()
   if(error){await removeObject(supabase,user.id,storagePath).catch(()=>undefined);throw new Error(`No se pudo registrar el archivo: ${error.message}`)}
   return{asset:data,duplicate:false}
