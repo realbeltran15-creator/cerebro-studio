@@ -1434,6 +1434,10 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         <label>Volumen del vídeo ({Math.round((clip.volume ?? 1) * 100)}%)<input type="range" min={0} max={2} step={0.05} value={clip.volume ?? 1} onChange={e => onChange({ volume: Number(e.target.value) })} /></label>
         <label className="pill" style={{ alignSelf: 'end' }}><input type="checkbox" checked={clip.muted === true} onChange={e => onChange({ muted: e.target.checked })} /> Silenciar</label>
       </div>}
+      {isVideo && <div className="field-row" data-tool="sound-fade">
+        <label>Entrada gradual del sonido (s)<input type="number" min={0} max={secs(clip.durationMs)} step={0.1} value={secs(clip.audioFadeInMs ?? 0)} onChange={e => onChange({ audioFadeInMs: Math.max(0, Math.min(clip.durationMs, Math.round(Number(e.target.value) * 1000) || 0)) || undefined })} /></label>
+        <label>Salida gradual del sonido (s)<input type="number" min={0} max={secs(clip.durationMs)} step={0.1} value={secs(clip.audioFadeOutMs ?? 0)} onChange={e => onChange({ audioFadeOutMs: Math.max(0, Math.min(clip.durationMs, Math.round(Number(e.target.value) * 1000) || 0)) || undefined })} /></label>
+      </div>}
       <div className="field-row" style={{ alignItems: 'end' }}>
         <label>Dividir en (s desde el inicio del clip)<input type="number" min={1} step={0.1} value={splitAt} onChange={e => setSplitAt(e.target.value)} placeholder={`1 – ${secs(clip.durationMs - MIN_CLIP_MS)}`} /></label>
         <button type="button" className="ghost" disabled={!canSplit} onClick={() => onSplit(splitMs)}>Dividir</button>

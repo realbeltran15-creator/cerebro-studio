@@ -8,7 +8,7 @@ import type { Composition } from '@/lib/editor/composition'
 export function compositionFingerprint(c: Composition): string {
   const clips = [...c.clips].sort((a, b) => a.position - b.position).map(k => ({
     v: k.visualAssetId, a: k.voiceAssetId, d: k.durationMs, m: k.motion, t: k.trimInMs ?? 0, s: k.speed ?? 1,
-    r: k.reverse === true, mu: k.muted === true, vol: k.volume ?? 1, tr: k.transition ?? null, n: k.narration ?? null,
+    r: k.reverse === true, mu: k.muted === true, vol: k.volume ?? 1, afi: k.audioFadeInMs ?? 0, afo: k.audioFadeOutMs ?? 0, tr: k.transition ?? null, n: k.narration ?? null,
   }))
   return sha256(stableStringify({
     f: c.format, size: c.customSize ?? null, clips, music: c.musicAssetId, mv: c.musicVolume, duck: c.duckMusic,

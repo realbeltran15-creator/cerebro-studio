@@ -164,6 +164,9 @@ export type Clip = {
   /** Video only: volume of the clip's own audio (0-2) and mute. */
   volume?: number
   muted?: boolean
+  /** Video only: the clip's own sound rises over `audioFadeInMs` from its start and falls over `audioFadeOutMs` up to its end (linear). */
+  audioFadeInMs?: number
+  audioFadeOutMs?: number
   /** How this clip ends into the next one. Default fade (uses composition.fadeMs). */
   transition?: Transition
   text?: TextOverlay | null
@@ -446,6 +449,8 @@ export function parseComposition(value: unknown, depth = 0): Composition | null 
       trimInMs: clamp(c.trimInMs, 0, MAX_TIMELINE_MS, 0),
       volume: clamp(c.volume, 0, 2, 1),
       muted: c.muted === true,
+      ...(Number(c.audioFadeInMs) > 0 ? { audioFadeInMs: clamp(c.audioFadeInMs, 0, 60_000, 0) } : {}),
+      ...(Number(c.audioFadeOutMs) > 0 ? { audioFadeOutMs: clamp(c.audioFadeOutMs, 0, 60_000, 0) } : {}),
       transition: typeof c.transition === 'string' && c.transition in TRANSITIONS ? c.transition : 'fade',
       text: parseText(c.text),
       speed: clamp(c.speed, 0.25, 4, 1),

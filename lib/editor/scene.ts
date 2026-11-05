@@ -4,7 +4,7 @@
  */
 import {
   activeTextClips, audioStartMs, audioTrackId, clipCaptions, clipStarts, envelopeAt, projectDurationMs, textTrackId, totalDurationMs, tracksOf, trackGains,
-  captionWordsFor, effectiveGrade, type AudioClip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type LayerFx, type TextOverlay, type TrackKind,
+  captionWordsFor, effectiveGrade, type AudioClip, type Clip, type CaptionPosition, type CaptionStyle, type Composition, type Crop, type Filters, type LayerFx, type TextOverlay, type TrackKind,
 } from './composition'
 import { BLENDS, cameraAt, easeBy, effectiveCamera, textFrameFor, transformAt, transitionFrame, type TextFrame } from './motion'
 import { DUCK_RATIO } from './audio-plan'
@@ -194,6 +194,15 @@ export function frameAt(c: Composition, t: number, kindOf: KindOf, starts = clip
   return ops
 }
 
+/** Gain 0–1 of a video clip's own sound from its fade-in/out (linear), `local` ms from the clip start. No fades = 1. */
+export function clipSoundFade(clip: Pick<Clip, 'durationMs' | 'audioFadeInMs' | 'audioFadeOutMs'>, local: number): number {
+  const fi = clip.audioFadeInMs ?? 0, fo = clip.audioFadeOutMs ?? 0
+  let g = 1
+  if (fi > 0) g *= clamp01(local / fi)
+  if (fo > 0) g *= clamp01((clip.durationMs - local) / fo)
+  return g
+}
+
 function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, muted: boolean): VisualOp | null {
   const clip = c.clips[i]
   if (!clip?.visualAssetId) return null
@@ -205,7 +214,7 @@ function mainVisual(c: Composition, i: number, local: number, kindOf: KindOf, mu
   return {
     ...baseVisual(), type: 'visual', slot: clip.id, assetId: clip.visualAssetId, media, fit: 'cover', trackId: 'main',
     sourceMs: sourceAt(clip, local), ...(readsFrames(clip) ? { reverse: true } : {}), ...(clip.ramp !== undefined && !clip.reverse && !clip.freeze ? { forward: true } : {}), rate: clip.speed ?? 1, live: true,
-    volume: muted || clip.muted ? 0 : clip.volume ?? 1,
+    volume: muted || clip.muted ? 0 : (clip.volume ?? 1) * clipSoundFade(clip, local),
     zoom: f.zoom * cam.zoom, focusX: cam.focusX ?? f.focusX, focusY: cam.focusY ?? f.focusY,
     rotation: f.rotation, alpha: f.opacity, crop: clip.crop ?? null, filters: clip.filters ?? null, ...(clip.fx ? { fx: clip.fx } : {}), ...(effectiveGrade(clip.grade) ? { grade: effectiveGrade(clip.grade) } : {}),
   }
@@ -313,8 +322,9 @@ export function videoVoices(c: Composition, kindOf: KindOf): Array<Voice & { rat
     // Out of the clip: it keeps sounding past its end when its file has material there.
     const haveAfter = k.sourceDurationMs ? Math.max(0, k.sourceDurationMs - (trim + k.durationMs * rate)) / rate : 0
     const postLive = Math.min(wOut.post, haveAfter)
-    const fadeIn = wIn.ms > 0 ? preLive + wIn.post : 0
-    const fadeOut = wOut.ms > 0 ? wOut.pre + postLive : 0
+    // The clip's own fades count from its real start/end (not from the pre/post-roll of a transition); the longer of the two wins.
+    const fadeIn = Math.max(wIn.ms > 0 ? preLive + wIn.post : 0, (k.audioFadeInMs ?? 0) > 0 ? (k.audioFadeInMs ?? 0) + preLive : 0)
+    const fadeOut = Math.max(wOut.ms > 0 ? wOut.pre + postLive : 0, (k.audioFadeOutMs ?? 0) > 0 ? (k.audioFadeOutMs ?? 0) + postLive : 0)
     const startMs = starts[i] - preLive, endMs = starts[i] + k.durationMs + postLive
     out.push({ key: `vc:${k.id}`, assetId: k.visualAssetId, bus: 'video', trackId: 'main', startMs, endMs, sourceStartMs: trim - preLive * rate, loop: false, volume: k.volume ?? 1, pan: 0,
       envelope: fadeIn || fadeOut ? { durationMs: endMs - startMs, ...(fadeIn ? { fadeInMs: fadeIn } : {}), ...(fadeOut ? { fadeOutMs: fadeOut } : {}) } : null, duck: null, rate, trimSec: trim / 1000 })

@@ -911,4 +911,41 @@ await step('M38 conexiones sociales: botón Conectar de Instagram siempre visibl
   const ext = extNow(); if (ext.length) throw new Error('llamadas externas: ' + ext.join(','))
   return note && ytState !== 'estado no reconocido'
 })
+await step('M39 P5.19: fundido de entrada y salida del sonido propio de un clip de vídeo (UI → viewer → MP4 medido)', async () => {
+  const P = FLOW.page
+  await P.goto(base + '/editor/manual'); await settle(P); await P.waitForTimeout(1200)
+  await P.locator('#mp-project').selectOption({ label: PROJ }); await P.locator('#mp-title').fill('Fundido sonido P519'); await P.locator('#mp-format').selectOption('16:9')
+  await P.getByRole('button', { name: 'Crear montaje vacío' }).click(); await P.waitForURL(/\/editor\/manual\?job=/, { timeout: 20000 }); await settle(P); await P.waitForTimeout(2500)
+  const job = new URL(P.url()).searchParams.get('job')
+  await P.getByText('Materiales', { exact: true }).first().click(); await P.waitForTimeout(400)
+  await P.locator('summary', { hasText: 'Importar o añadir' }).first().click(); await P.waitForTimeout(300)
+  const sel = P.locator('label', { hasText: 'Clip de imagen o vídeo' }).locator('select'); const opts = await sel.locator('option').allInnerTexts()
+  const o = opts.find(x => x.startsWith('[video]') && /Clip sint/.test(x)); if (!o) throw new Error('sin clip de vídeo')
+  await sel.selectOption({ label: o }); await P.getByRole('button', { name: /^Añadir clip/ }).click(); await P.waitForTimeout(1500)
+  await P.locator('[title*="Clip sintético"]').first().click(); await P.waitForTimeout(500)
+  await P.getByLabel('Entrada gradual del sonido (s)').fill('1.5'); await P.getByLabel('Salida gradual del sonido (s)').fill('1.5'); await P.waitForTimeout(500)
+  await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
+  const comp = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`)); const k = comp.clips[0]
+  console.log('   guardado:', JSON.stringify({ dur: k.durationMs, fi: k.audioFadeInMs, fo: k.audioFadeOutMs }))
+  if (k.audioFadeInMs !== 1500 || k.audioFadeOutMs !== 1500) throw new Error('los fundidos no se guardaron')
+  await P.reload(); await settle(P); await P.waitForTimeout(2500)
+  await P.locator('[title*="Clip sintético"]').first().click(); await P.waitForTimeout(500)
+  const back = [await P.getByLabel('Entrada gradual del sonido (s)').inputValue(), await P.getByLabel('Salida gradual del sonido (s)').inputValue()]
+  console.log('   tras recargar:', back.join(' / ')); if (back[0] !== '1.5' || back[1] !== '1.5') throw new Error('no persisten tras recargar')
+  await P.getByRole('button', { name: /^Exportar/ }).first().click(); await P.locator('#ed-export').waitFor({ state: 'visible' })
+  const pick = async (l, v) => P.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+  await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+  const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), failed0 = sq(`select count(*) from render_jobs where status='failed'`)
+  await P.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
+  const tr = Date.now(); let n = renders0
+  while (Date.now() - tr < 270000) { n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > renders0 || sq(`select count(*) from render_jobs where status='failed'`) !== failed0) break; await P.waitForTimeout(2000) }
+  if (n <= renders0) throw new Error('el render no terminó: ' + sq(`select coalesce(error,'-') from render_jobs where status='failed' order by created_at desc limit 1`))
+  const rel = sq(`select a.storage_path from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='Fundido sonido P519' order by r.created_at desc limit 1`)
+  const f = download(rel.split('/').pop()); const j = probe(f), dur = Number(j.format.duration)
+  execFileSync('ffmpeg', ['-v', 'error', '-i', f, '-f', 'null', '-'])
+  const rms = (ss, t) => { const e = spawnSync('ffmpeg', ['-v', 'info', '-ss', String(ss), '-t', String(t), '-i', f, '-af', 'astats=metadata=0', '-f', 'null', '-'], { encoding: 'utf8' }).stderr; const m = [...e.matchAll(/RMS level dB: (-?[\d.]+|-inf)/g)].map(x => x[1]); const v = m[m.length - 1]; return v === '-inf' ? -120 : Number(v) }
+  const a0 = rms(0, 0.25), mid = rms(Math.max(1.8, dur / 2 - 0.3), 0.6), a1 = rms(Math.max(0, dur - 0.3), 0.25)
+  console.log('   MP4:', dur.toFixed(2), 's · nivel RMS inicio / centro / final (dB):', a0, mid, a1)
+  return a0 < mid - 12 && a1 < mid - 12 && mid > -45
+})
 await finish()
