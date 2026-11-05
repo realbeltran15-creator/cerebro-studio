@@ -68,3 +68,6 @@ Flujo completo verificado (material importado → plantilla → editor + música
 - API/RLS: barrido de 64 rutas + A/B en las 4 rutas abiertas (M33); política de propiedad de proyecto propuesta y probada.
 - Subtítulos sin IA: transcripción pegada (tiempos estimados y rotulados), SRT importar/exportar, edición, grabado en MP4 (M34).
 - Detalle: `docs/informe-p5-11-video-seguridad-subtitulos.md`.
+
+## P5.12 — Transcripción local
+- `scripts/transcribe-local.mjs` (ffmpeg + whisper.cpp → `.auto.srt`), desactivado sin motor/modelo; rótulo «automáticos» en el panel. Calidad real sin medir (modelos no descargables en el entorno). Ver `docs/informe-p5-12-transcripcion-local.md`.

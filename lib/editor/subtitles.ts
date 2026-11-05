@@ -148,3 +148,8 @@ export function estimateCuesFromText(input: string, totalMs: number, maxWords = 
   })
   return { format: 'srt', cues, warnings }
 }
+
+/** Files written by scripts/transcribe-local.mjs end in this suffix so the editor can tell machine output from hand-made subtitles. */
+export const AUTO_SUBTITLE_SUFFIX = '.auto.srt'
+export const AUTO_SUBTITLE_NOTICE = 'Subtítulos GENERADOS AUTOMÁTICAMENTE en tu equipo (sin enviar el audio a ningún servicio). Pueden tener errores: revísalos y corrígelos antes de exportar.'
+export const isAutoSubtitleFile = (name: string) => name.toLowerCase().endsWith(AUTO_SUBTITLE_SUFFIX)

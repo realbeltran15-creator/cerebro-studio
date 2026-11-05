@@ -735,6 +735,14 @@ await step('M34 subtítulos: pegar transcripción sin tiempos (estimada), editar
   await panel2.getByRole('button', { name: 'Colocar en el montaje' }).click(); await P.waitForTimeout(800)
   const s2 = await panel2.getByLabel('Inicio del subtítulo 1').inputValue(), x2 = await panel2.getByLabel('Texto del subtítulo 2').inputValue()
   console.log('   SRT importado → inicio 1:', s2, '· texto 2:', x2, '· todos:', JSON.stringify(await panel2.locator('textarea,input[aria-label^="Texto del subt"]').evaluateAll(a=>a.map(x=>x.value)))); if (Number(s2) !== 1 || !/Primer subtítulo real/.test(x2)) throw new Error('el SRT importado no conserva sus tiempos')
+  // 4b) un .auto.srt (salida del motor local) se rotula como automático; uno manual no
+  const auto = path.join(MEDIA, 'charla.auto.srt'); writeFileSync(auto, '1\n00:00:00,000 --> 00:00:01,000\nHola\n')
+  await panel2.locator('input[type=file]').setInputFiles(auto); await P.waitForTimeout(500)
+  if (!/GENERADOS AUTOMÁTICAMENTE/.test(await panel2.innerText())) throw new Error('el .auto.srt no se rotula como automático')
+  await panel2.getByRole('button', { name: 'Descartar' }).click()
+  await panel2.locator('input[type=file]').setInputFiles(mine); await P.waitForTimeout(400)
+  if (/GENERADOS AUTOMÁTICAMENTE/.test(await panel2.innerText())) throw new Error('un SRT manual se rotuló como automático')
+  await panel2.getByRole('button', { name: 'Descartar' }).click()
   await P.getByRole('button', { name: 'Guardar ahora' }).click(); await P.waitForTimeout(2500)
   // 5) grabado en el MP4 (subtítulos activados) frente al MP4 anterior sin ellos
   await P.getByRole('button', { name: /^Exportar/ }).first().click(); await P.locator('#ed-export').waitFor({ state: 'visible' })

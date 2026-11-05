@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { clipStarts, totalDurationMs, type Composition } from '@/lib/editor/composition'
-import { applyCuesToComposition, captionList, deleteCue, editCue, estimateCuesFromText, exportSubtitles, parseSubtitles, type ParsedSubtitles } from '@/lib/editor/subtitles'
+import { applyCuesToComposition, captionList, deleteCue, editCue, estimateCuesFromText, exportSubtitles, isAutoSubtitleFile, AUTO_SUBTITLE_NOTICE, parseSubtitles, type ParsedSubtitles } from '@/lib/editor/subtitles'
 import { downloadText } from '@/lib/library'
 
 const MAX_FILE = 2 * 1024 * 1024
@@ -57,6 +57,7 @@ export function EditorSubtitlesPanel({ comp, apply, onNotice }: { comp: Composit
     {error && <p className="error" role="alert">{error}</p>}
     {parsed && <div className="panel" style={{ background: 'transparent' }}>
       <p className="small"><b>{parsed.name}</b>: {parsed.cues.length} subtítulos ({parsed.format.toUpperCase()}), de {sec(parsed.cues[0].startMs)} s a {sec(parsed.cues[parsed.cues.length - 1].endMs)} s. El montaje dura {sec(clipStarts(comp).at(-1)! + (comp.clips.at(-1)?.durationMs ?? 0))} s.</p>
+      {isAutoSubtitleFile(parsed.name) && <p className="small" role="note"><b>Automáticos.</b> {AUTO_SUBTITLE_NOTICE}</p>}
       {parsed.warnings.length > 0 && <ul className="small muted" style={{ margin: '4px 0 6px 18px' }}>{parsed.warnings.map(w => <li key={w}>{w}</li>)}</ul>}
       <div className="field-row" style={{ alignItems: 'end' }}>
         <label>Desplazar (s) <input type="number" step={0.1} value={shift} onChange={e => setShift(Number(e.target.value) || 0)} aria-label="Desplazamiento en segundos" /></label>
