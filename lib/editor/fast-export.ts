@@ -10,6 +10,7 @@
  * - Not used (the real-time exporter takes over) when the browser lacks WebCodecs H.264, when a file cannot be decoded here, or when a
  *   video with sound plays at another speed (the real-time path keeps its pitch; this one could not).
  */
+import { RgbaCanvasSink } from './rgba-canvas-sink'
 import { refreshingSourceOptions, type RefreshStats } from './refreshing-source'
 import { clipStarts, exportPlan, projectDurationMs, type Composition } from './composition'
 import { drawOps, type DrawSource } from './draw'
@@ -130,6 +131,11 @@ export async function fastExport(opts: {
     })())
     return opened.get(assetId)!
   }
+  // RGBA copy path (little native memory, see rgba-canvas-sink.ts) unless the track is rotated or WebCodecs lacks copyTo, then CanvasSink.
+  const makeSink = (track: NonNullable<Awaited<ReturnType<typeof open>>['video']>, pool: number) =>
+    track.rotation === 0 && typeof VideoFrame !== 'undefined' && typeof VideoFrame.prototype.copyTo === 'function'
+      ? new RgbaCanvasSink(new mb.VideoSampleSink(track) as unknown as ConstructorParameters<typeof RgbaCanvasSink>[0], pool)
+      : new mb.CanvasSink(track, pool > 0 ? { poolSize: pool } : undefined)
   const images = new Map<string, Promise<ImageBitmap>>()
   const image = (assetId: string) => {
     if (!images.has(assetId)) images.set(assetId, (async () => createImageBitmap(await (await fetch(await opts.resolveUrl(assetId))).blob()))())
@@ -145,7 +151,7 @@ export async function fastExport(opts: {
     if (!o.video) throw new FastExportUnsupported(`Un vídeo del montaje no tiene imagen legible.${urlStats.lastError ? ` (${urlStats.lastError})` : ''}`)
     // Ring of reused canvases: the reader only ever holds `cur`, `nxt` and the one being decoded, so 4 is safe; without a pool every frame
     // allocates a fresh canvas backing store whose native memory is only released when the GC runs (measured ≈600 MB extra in an 11 s export).
-    const sink = new mb.CanvasSink(o.video, { poolSize: 4 })
+    const sink = makeSink(o.video, 4)
     const it = sink.canvases(Math.max(0, ts - 0.25)) as AsyncGenerator<Frame, void, unknown>
     const first = await it.next(), second = first.done ? first : await it.next()
     const r: Reader = { assetId, it, cur: first.done ? null : first.value, nxt: second.done ? null : second.value, ended: !!second.done, last: ts, usedAt: 0 }
@@ -164,7 +170,7 @@ export async function fastExport(opts: {
       const stats = await o.video.computePacketStats(120).catch(() => null)
       const fpsSrc = stats && Number.isFinite(stats.averagePacketRate) && stats.averagePacketRate > 1 ? stats.averagePacketRate : 30
       const w = o.video.displayWidth || plan.width, h = o.video.displayHeight || plan.height
-      x = { assetId: op.assetId, usedAt: frameNo, r: new ReverseFrameReader(new mb.CanvasSink(o.video) as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fpsSrc, framesForBudget(w, h, 160 * 1048576), false, op.forward === true), forward: op.forward === true }
+      x = { assetId: op.assetId, usedAt: frameNo, r: new ReverseFrameReader(makeSink(o.video, 0) as unknown as ConstructorParameters<typeof ReverseFrameReader>[0], fpsSrc, framesForBudget(w, h, 160 * 1048576), false, op.forward === true), forward: op.forward === true }
       rreaders.set(op.slot, x)
     }
     x.usedAt = frameNo

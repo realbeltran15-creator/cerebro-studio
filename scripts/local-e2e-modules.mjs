@@ -1094,8 +1094,9 @@ await step('M41 P5.21: memoria de la exportación por tipo de proceso (3 repetic
         await PX.goto(base + `/editor/manual?job=${job}`); await settle(PX); await PX.waitForTimeout(2500); mine = new Set(pidsNow().filter(x => !before.has(x))); const idle = snap()
         await PX.getByRole('button', { name: /^Exportar/ }).first().click(); await PX.locator('#ed-export').waitFor({ state: 'visible' })
         await PX.locator('#ed-export').getByLabel('Resolución', { exact: true }).first().selectOption('480'); await PX.locator('#ed-export').getByLabel('Destino', { exact: true }).first().selectOption('library')
-        const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), T = Date.now(); await PX.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click(); let pk = idle
-        while (Date.now() - T < 120000) { mine = new Set(pidsNow().filter(x => !before.has(x))); const sn = snap(); if (sn.renderer > pk.renderer) pk = sn; if (Number(sq(`select count(*) from render_jobs where status='completed'`)) > renders0) break; await PX.waitForTimeout(120) }
+        const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), T = Date.now(); await PX.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click(); let pk = idle; const series = []
+        while (Date.now() - T < 120000) { mine = new Set(pidsNow().filter(x => !before.has(x))); const sn = snap(); series.push(Math.round((Date.now() - T) / 100) / 10 + 's:' + sn.renderer); if (sn.renderer > pk.renderer) pk = sn; if (Number(sq(`select count(*) from render_jobs where status='completed'`)) > renders0) break; await PX.waitForTimeout(120) }
+        if (name.startsWith('completo')) console.log('   SERIE renderizador (s:MB): ' + series.join(' '))
         table.push({ variante: name, tiempo_s: +((Date.now() - T) / 1000).toFixed(1), renderizador_inactivo: idle.renderer, renderizador_pico: pk.renderer, aumento_MB: pk.renderer - idle.renderer, total_pico: pk.total })
         await bx.close(); await new Promise(res => setTimeout(res, 1000))
       }
