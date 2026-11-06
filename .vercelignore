@@ -1,0 +1,25 @@
+# Paquete de despliegue de la beta: solo lo que necesita la compilación. Nunca secretos, copias de bases de datos ni material de pruebas.
+.env
+.env.*
+!.env.example
+.git
+.github
+.vercel
+.next
+node_modules
+tsconfig.tsbuildinfo
+docs
+scripts
+supabase
+tests
+tools
+windows
+vitest.config.mts
+*.log
+*.sql
+*.dump
+*.sqlite*
+*.pem
+*.key
+.research
+research-output
