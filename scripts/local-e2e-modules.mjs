@@ -1030,4 +1030,80 @@ await step('M40 P5.20: plantilla vertical 9:16 (guardar → rellenar con otros a
   console.log('   RENDIMIENTO: render', renderS.toFixed(1), 's · navegador NUEVO con una sola página (Chromium sin GPU): pico de memoria de todos sus procesos', peak, 'MB · al terminar', idleMb, 'MB · pico del heap JS de la página', Math.round(heap), 'MB · paso completo', ((Date.now() - T0) / 1000).toFixed(0), 's. Nota: ssim solo informativo (la imagen tiene movimiento de cámara y recorte)')
   return Boolean(v && a && v.width < v.height) && dist(exp1, got1) < 60 && dist(exp2, got2) < 60 && (dist(exp1, oldV) > 80 || dist(got1, oldV) > 80) && dist(got2, oldI) > 80 && Math.abs(dur - expectMs / 1000) < 0.6 && Math.abs(nb - expFrames) <= 2 && Math.abs(vd - ad) < 0.3 && startDiff < 0.1 && frz <= 1 && (comp.audioClips ?? []).length + (comp.musicAssetId ? 1 : 0) === (orig.audioClips ?? []).length + (orig.musicAssetId ? 1 : 0) && comp.subtitles === true && comp.clips.some(c => (c.cues ?? []).length > 0)
 })
+await step('M41 P5.21: memoria de la exportación por tipo de proceso (3 repeticiones, navegador nuevo cada vez), pico, tras exportar y tras descargar la página', async () => {
+  const title = 'Vertical desde plantilla P520', job = sq(`select id from render_jobs where composition->>'title'='${title}' and status='draft' order by created_at desc limit 1`) || sq(`select id from render_jobs where composition->>'title'='${title}' order by created_at desc limit 1`)
+  if (!job) throw new Error('falta el montaje de M40')
+  // PSS (memoria proporcional) = lo que realmente ocupa cada proceso; la suma de RSS cuenta varias veces las bibliotecas compartidas del navegador.
+  const snap = () => { const out = { browser: 0, renderer: 0, gpu: 0, utility: 0, other: 0, total: 0, rssTotal: 0, n: 0 }; for (const l of execFileSync('ps', ['-eo', 'pid,args'], { encoding: 'utf8', maxBuffer: 1 << 24 }).split('\n')) { const m = /^\s*(\d+)\s+(.*)$/.exec(l); if (!m || !/chrome/.test(m[2]) || /ps -eo/.test(m[2]) || !mine.has(m[1])) continue; let pss = 0, rss = 0; try { const sm = readFileSync(`/proc/${m[1]}/smaps_rollup`, 'utf8'); pss = Number(/Pss:\s+(\d+)/.exec(sm)[1]) / 1024; rss = Number(/Rss:\s+(\d+)/.exec(sm)[1]) / 1024 } catch { continue } const t = /--type=([\w-]+)/.exec(m[2]); const k = !t ? 'browser' : t[1] === 'renderer' ? 'renderer' : t[1] === 'gpu-process' ? 'gpu' : t[1] === 'utility' ? 'utility' : 'other'; out[k] += pss; out.total += pss; out.rssTotal += rss; out.n++ } for (const k of Object.keys(out)) out[k] = Math.round(out[k]); return out }
+  const pidsNow = () => execFileSync('bash', ['-c', "ps -eo pid,args | awk '/chrome/ && !/awk/ {print $1}'"], { encoding: 'utf8' }).split('\n').filter(Boolean)
+  let mine = new Set(); const runs = []
+  for (let r = 1; r <= 3; r++) {
+    const before = new Set(pidsNow()); const bx = await chromium.launch({ executablePath: CHROMIUM_PATH }); const cx = await bx.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true }); const PX = await cx.newPage(); await login(PX, EMAIL, PW)
+    const cdp = await cx.newCDPSession(PX); await cdp.send('Performance.enable')
+    mine = new Set(pidsNow().filter(x => !before.has(x)))
+    await PX.goto(base + `/editor/manual?job=${job}`); await settle(PX); await PX.waitForTimeout(2500); mine = new Set(pidsNow().filter(x => !before.has(x)))
+    const idle = snap()
+    await PX.getByRole('button', { name: /^Exportar/ }).first().click(); await PX.locator('#ed-export').waitFor({ state: 'visible' })
+    const pick = async (l, v) => PX.locator('#ed-export').getByLabel(l, { exact: true }).first().selectOption(v)
+    await pick('Resolución', '480'); await pick('Destino', 'library'); await pick('Imágenes por segundo', '24')
+    const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), failed0 = sq(`select count(*) from render_jobs where status='failed'`)
+    const T = Date.now(); await PX.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click()
+    let peak = { total: 0 }, peakJs = 0, n = renders0, workers = 0
+    while (Date.now() - T < 270000) {
+      mine = new Set(pidsNow().filter(x => !before.has(x))); const sn = snap(); if (sn.total > peak.total) peak = sn
+      const m = await cdp.send('Performance.getMetrics').catch(() => null); const js = m ? (m.metrics.find(x => x.name === 'JSHeapUsedSize')?.value ?? 0) / 1048576 : 0; peakJs = Math.max(peakJs, js)
+      n = Number(sq(`select count(*) from render_jobs where status='completed'`)); if (n > renders0 || sq(`select count(*) from render_jobs where status='failed'`) !== failed0) break; await PX.waitForTimeout(150)
+    }
+    const secs = (Date.now() - T) / 1000; if (n <= renders0) throw new Error('el render no terminó')
+    await PX.waitForTimeout(3000); mine = new Set(pidsNow().filter(x => !before.has(x))); const after = snap()
+    await PX.goto('about:blank'); await PX.waitForTimeout(3000); mine = new Set(pidsNow().filter(x => !before.has(x))); const blank = snap()
+    const size = Number(sq(`select coalesce((a.provenance->>'size_bytes')::bigint, 0) from render_jobs r join assets a on a.id=r.output_asset_id where r.status='completed' and r.composition->>'title'='${title}' order by r.created_at desc limit 1`) || 0)
+    runs.push({ r, secs: +secs.toFixed(1), idle, peak, after, blank, peakJsMb: Math.round(peakJs), size })
+    console.log('   RUN', r, JSON.stringify(runs[runs.length - 1])); await bx.close(); await new Promise(res => setTimeout(res, 1500))
+  }
+  // ¿fuga o meseta? tres exportaciones SEGUIDAS en la misma página, sin recargar: memoria (PSS) tras cada una
+  {
+    const before = new Set(pidsNow()); const bx = await chromium.launch({ executablePath: CHROMIUM_PATH }); const cx = await bx.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true }); const PX = await cx.newPage(); await login(PX, EMAIL, PW)
+    await PX.goto(base + `/editor/manual?job=${job}`); await settle(PX); await PX.waitForTimeout(2500); mine = new Set(pidsNow().filter(x => !before.has(x))); const seq = [{ paso: 'inicio', ...snap() }]
+    for (let k = 1; k <= 3; k++) {
+      if (!(await PX.locator('#ed-export').isVisible().catch(() => false))) { await PX.getByRole('button', { name: /^Exportar/ }).first().click(); await PX.locator('#ed-export').waitFor({ state: 'visible' }) }
+      const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)); await PX.locator('#ed-export').getByLabel('Resolución', { exact: true }).first().selectOption('480').catch(() => {}); await PX.locator('#ed-export').getByLabel('Destino', { exact: true }).first().selectOption('library').catch(() => {})
+      await PX.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click(); const T = Date.now(); let pk = 0
+      while (Date.now() - T < 120000) { mine = new Set(pidsNow().filter(x => !before.has(x))); pk = Math.max(pk, snap().renderer); if (Number(sq(`select count(*) from render_jobs where status='completed'`)) > renders0) break; await PX.waitForTimeout(200) }
+      await PX.waitForTimeout(2500); mine = new Set(pidsNow().filter(x => !before.has(x))); const a = snap(); seq.push({ paso: 'tras exportación ' + k, picoRenderizador: Math.round(pk), renderizador: a.renderer, total: a.total, tiempo: +((Date.now() - T) / 1000).toFixed(1) })
+      await PX.waitForTimeout(500)
+    }
+    console.log('   SECUENCIA (misma página):', JSON.stringify(seq)); await bx.close()
+  }
+  // ¿QUÉ COMPONENTE CONSUME? el mismo montaje con una parte quitada cada vez (misma resolución, navegador nuevo, una sola página)
+  {
+    const base0 = JSON.parse(sq(`select composition::text from render_jobs where id='${job}'`)); const setComp = c => sq(`update render_jobs set composition = $j$${JSON.stringify(c)}$j$::jsonb where id='${job}'`)
+    const clone = () => structuredClone(base0)
+    const variants = [
+      ['completo (vídeo + imagen + música + subtítulos)', c => c],
+      ['sin audio (sin música y vídeo silenciado)', c => { c.audioClips = []; c.musicAssetId = null; c.clips[0].muted = true; return c }],
+      ['sin vídeo (las dos escenas son la imagen)', c => { c.clips[0].visualAssetId = c.clips[1].visualAssetId; return c }],
+      ['sin subtítulos', c => { c.subtitles = false; c.clips.forEach(k => { delete k.cues }); return c }],
+      ['solo imágenes y sin audio (codificación de vídeo + lienzo)', c => { c.clips[0].visualAssetId = c.clips[1].visualAssetId; c.audioClips = []; c.musicAssetId = null; c.subtitles = false; return c }],
+    ]
+    const table = []
+    try {
+      for (const [name, mut] of variants) {
+        setComp(mut(clone()))
+        const before = new Set(pidsNow()); const bx = await chromium.launch({ executablePath: CHROMIUM_PATH }); const cx = await bx.newContext({ viewport: { width: 1500, height: 1000 }, acceptDownloads: true }); const PX = await cx.newPage(); await login(PX, EMAIL, PW)
+        await PX.goto(base + `/editor/manual?job=${job}`); await settle(PX); await PX.waitForTimeout(2500); mine = new Set(pidsNow().filter(x => !before.has(x))); const idle = snap()
+        await PX.getByRole('button', { name: /^Exportar/ }).first().click(); await PX.locator('#ed-export').waitFor({ state: 'visible' })
+        await PX.locator('#ed-export').getByLabel('Resolución', { exact: true }).first().selectOption('480'); await PX.locator('#ed-export').getByLabel('Destino', { exact: true }).first().selectOption('library')
+        const renders0 = Number(sq(`select count(*) from render_jobs where status='completed'`)), T = Date.now(); await PX.locator('#ed-export').getByRole('button', { name: 'Renderizar y guardar', exact: true }).click(); let pk = idle
+        while (Date.now() - T < 120000) { mine = new Set(pidsNow().filter(x => !before.has(x))); const sn = snap(); if (sn.renderer > pk.renderer) pk = sn; if (Number(sq(`select count(*) from render_jobs where status='completed'`)) > renders0) break; await PX.waitForTimeout(120) }
+        table.push({ variante: name, tiempo_s: +((Date.now() - T) / 1000).toFixed(1), renderizador_inactivo: idle.renderer, renderizador_pico: pk.renderer, aumento_MB: pk.renderer - idle.renderer, total_pico: pk.total })
+        await bx.close(); await new Promise(res => setTimeout(res, 1000))
+      }
+    } finally { setComp(base0) }
+    console.log('   ATRIBUCIÓN (PSS en MB):'); for (const t of table) console.log('     ', JSON.stringify(t))
+  }
+  const med = k => [...runs.map(x => x.peak[k])].sort((a, b) => a - b)[1]
+  console.log('   MEDIANA pico PSS (MB): total', med('total'), '· (suma de RSS, sobreestima:', med('rssTotal'), ')', '· navegador', med('browser'), '· renderizadores', med('renderer'), '· GPU', med('gpu'), '· utilidades', med('utility'), '· otros', med('other'))
+  return true
+})
 await finish()

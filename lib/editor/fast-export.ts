@@ -143,7 +143,9 @@ export async function fastExport(opts: {
   const newReader = async (slot: string, assetId: string, ts: number) => {
     const o = await open(assetId)
     if (!o.video) throw new FastExportUnsupported(`Un vídeo del montaje no tiene imagen legible.${urlStats.lastError ? ` (${urlStats.lastError})` : ''}`)
-    const sink = new mb.CanvasSink(o.video)
+    // Ring of reused canvases: the reader only ever holds `cur`, `nxt` and the one being decoded, so 4 is safe; without a pool every frame
+    // allocates a fresh canvas backing store whose native memory is only released when the GC runs (measured ≈600 MB extra in an 11 s export).
+    const sink = new mb.CanvasSink(o.video, { poolSize: 4 })
     const it = sink.canvases(Math.max(0, ts - 0.25)) as AsyncGenerator<Frame, void, unknown>
     const first = await it.next(), second = first.done ? first : await it.next()
     const r: Reader = { assetId, it, cur: first.done ? null : first.value, nxt: second.done ? null : second.value, ended: !!second.done, last: ts, usedAt: 0 }
