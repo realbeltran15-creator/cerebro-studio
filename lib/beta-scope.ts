@@ -16,7 +16,9 @@ export const betaScopeOn = (env?: Env): boolean => (env ? env.NEXT_PUBLIC_CEREBR
 
 /** Page paths that stay open (exact match, or the path followed by "/…" for the prefixes). */
 export const BETA_PAGE_EXACT = ['/', '/login', '/editor'] as const
-export const BETA_PAGE_PREFIXES = ['/projects', '/scripts', '/create', '/library', '/audio', '/storage', '/editor/manual', '/legal'] as const
+export const BETA_PAGE_PREFIXES = ['/projects', '/scripts', '/create', '/library', '/audio', '/storage', '/editor/manual', '/legal',
+  // V1 (P5.24): módulos que funcionan en el navegador y con datos propios, sin proveedor de pago ni publicación (sus llamadas a /api/* siguen cerradas).
+  '/editor/templates', '/editor/auto', '/editor/style', '/editor/styles', '/repurpose', '/thumbnails', '/workflows', '/calendar', '/usage'] as const
 
 /** API routes that stay open. Everything else under /api answers 404 {blocked:'beta'} before reaching its handler. */
 export const BETA_API_ALLOWED: RegExp[] = [

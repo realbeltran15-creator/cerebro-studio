@@ -21,7 +21,7 @@ const OFFICIAL = process.env.OFFICIAL === '1', GW = Number(process.env.GATEWAY_P
 const jwtFor = role => { const h = b64({ alg: 'HS256', typ: 'JWT' }), p = b64({ role, iss: 'local', exp: 4102444800 }); return `${h}.${p}.${createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url')}` }
 const storageDir = mkdtempSync(path.join(os.tmpdir(), 'lite-e2e-'))
 const lite = OFFICIAL ? { close() {} } : await startLite({ port: LITE, pgrst: PGRST_URL, secret: JWT_SECRET, storageDir, onUserCreated: u => sq(`insert into auth.users (id, email, raw_user_meta_data) values ('${u.id}', '${u.email}', '{}')`) })
-const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', CEREBRO_STOCK_FIXTURE: '1', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${OFFICIAL ? GW : LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
+const env = { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: '1', ...(process.env.E2E_BETA ? { NEXT_PUBLIC_CEREBRO_BETA: 'private' } : {}), CEREBRO_STOCK_FIXTURE: '1', NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${OFFICIAL ? GW : LITE}`, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: anon }
 let pass = 0, fail = 0
 const t = async (name, fn) => { const T0 = Date.now(); try { const r = await fn(); console.log('   ⏱ ' + name.split(' ')[0] + ': ' + ((Date.now() - T0) / 1000).toFixed(1) + ' s medidos'); if (r === true) { pass++; console.log('PASS ', name) } else { fail++; console.log('FAIL ', name, '->', JSON.stringify(r)) } } catch (e) { fail++; console.log('FAIL ', name, '-> excepción', e.message.split('\n').slice(0, 3).join(' | ')) } }
 if (!process.env.SKIP_BUILD) { console.log('next build…'); const b = spawn('npx', ['next', 'build'], { cwd: root, env, stdio: 'ignore' }); const code = await new Promise(r => b.on('exit', r)); if (code) { console.log('FAIL build', code); process.exit(1) } }
@@ -1107,4 +1107,103 @@ await step('M41 P5.21: memoria de la exportación por tipo de proceso (3 repetic
   console.log('   MEDIANA pico PSS (MB): total', med('total'), '· (suma de RSS, sobreestima:', med('rssTotal'), ')', '· navegador', med('browser'), '· renderizadores', med('renderer'), '· GPU', med('gpu'), '· utilidades', med('utility'), '· otros', med('other'))
   return true
 })
+// A1 (P5.24): AUDITORÍA FUNCIONAL de todas las páginas con sesión real y datos reales (proyecto + vídeos + imagen). No afirma nada: registra evidencia.
+await step('A1 auditoría: recorrer todas las páginas en escritorio y móvil (errores, avisos de simulación, desbordes, controles sin nombre)', async () => {
+  const { mkdirSync } = await import('node:fs'); mkdirSync('/tmp/audit', { recursive: true })
+  const proj = sq(`select id from projects order by created_at desc limit 1`), job = sq(`select id from render_jobs order by updated_at desc limit 1`)
+  const paths = ['/', '/projects', `/projects/${proj}`, '/library', '/scripts', '/create', '/editor', '/editor/manual', `/editor/manual?job=${job}`, '/editor/auto', '/editor/style', '/editor/styles', '/editor/templates', '/repurpose', '/shorts', '/thumbnails', '/images', '/audio', '/voices', '/videos', '/studio', '/studio/recreate', '/influencer', '/youtube', '/social', '/connectors', '/calendar', '/campaigns', '/workflows', '/automations', '/queue', '/usage', '/analytics', '/storage', '/add', '/radar', '/opportunities', '/market-intelligence', '/legal/privacidad', '/legal/terminos', '/legal/eliminar-datos']
+  const FLAG = /simulaci|próximamente|proximamente|no disponible|datos de prueba|ficticio|mock|not implemented|no está implementad|todavía no|aún no|sin conexi|no configurad|configura (la|el|tu)|requiere (una )?(clave|api|credencial|conexi)|desactivad/i
+  const out = []
+  for (const vp of [{ n: 'desk', w: 1500, h: 1000 }, { n: 'mov', w: 390, h: 844 }]) {
+    await page.setViewportSize({ width: vp.w, height: vp.h })
+    for (const pth of paths) {
+      page.errors.length = 0; page.bad.length = 0
+      let status = 0; try { const r = await page.goto(base + pth, { waitUntil: 'domcontentloaded', timeout: 20000 }); status = r?.status() ?? 0 } catch (e) { status = -1 }
+      await settle(page)
+      const info = await page.evaluate(() => {
+        const vis = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' }
+        const btns = [...document.querySelectorAll('button,[role=button],a[href],input,select,textarea')].filter(vis)
+        const name = e => (e.getAttribute('aria-label') || e.innerText || e.value || e.getAttribute('title') || e.getAttribute('placeholder') || (e.id && document.querySelector(`label[for="${e.id}"]`)?.innerText) || e.closest('label')?.innerText || '').trim()
+        const unnamed = btns.filter(e => !name(e)).length
+        const disabled = [...document.querySelectorAll('button:disabled')].filter(vis).map(e => (e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 40))
+        const main = (document.querySelector('main') || document.body).innerText
+        return { url: location.pathname + location.search, h1: (document.querySelector('h1')?.innerText || '').slice(0, 80), controls: btns.length, unnamed, disabled: disabled.slice(0, 8), disabledN: disabled.length, overflowX: document.documentElement.scrollWidth - innerWidth, textLen: main.length, text: main.slice(0, 3000) }
+      })
+      const flags = [...new Set([...info.text.matchAll(new RegExp(FLAG.source, 'gi'))].map(m => m[0].toLowerCase()))].slice(0, 6)
+      const rec = { vp: vp.n, path: pth, status, final: info.url, h1: info.h1, controls: info.controls, unnamed: info.unnamed, disabledN: info.disabledN, disabled: info.disabled, overflowX: info.overflowX, textLen: info.textLen, flags, errors: page.errors.slice(0, 3), bad: [...new Set(page.bad)].slice(0, 4), dialogs: page.dialogs.length }
+      out.push(rec); console.log('   AUDIT ' + JSON.stringify(rec))
+      if (vp.n === 'desk' || info.overflowX > 4) await page.screenshot({ path: `/tmp/audit/${vp.n}-${pth.replace(/[^a-z0-9]+/gi, '_')}.png`, fullPage: false }).catch(() => {})
+    }
+  }
+  writeFileSync('/tmp/audit/audit.json', JSON.stringify(out, null, 1)); return true
+})
+
+// A2 (P5.24): DETECTOR DE CONTROLES MUERTOS. Pulsa cada botón habilitado del contenido de cada página (datos sintéticos, red a terceros bloqueada)
+// y registra los que no producen ningún efecto (sin cambio en pantalla, sin petición, sin navegación) o provocan errores. Es evidencia, no un veredicto.
+await step('A2 auditoría: pulsar cada botón de cada página y registrar los que no hacen nada o fallan', async () => {
+  const { mkdirSync } = await import('node:fs'); mkdirSync('/tmp/audit', { recursive: true })
+  const proj = sq(`select id from projects order by created_at desc limit 1`), job = sq(`select id from render_jobs order by updated_at desc limit 1`)
+  const paths = (process.env.A2_PATHS ? process.env.A2_PATHS.split(',') : ['/projects', `/projects/${proj}`, '/library', '/scripts', '/create', '/editor', `/editor/manual?job=${job}`, '/editor/auto', '/editor/style', '/editor/styles', '/editor/templates', '/repurpose', '/shorts', '/thumbnails', '/audio', '/studio', '/studio/recreate', '/influencer', '/youtube', '/social', '/connectors', '/calendar', '/campaigns', '/workflows', '/automations', '/usage', '/analytics', '/storage', '/add', '/radar', '/opportunities', '/market-intelligence'])
+  const SKIP = /eliminar|borrar|cerrar sesi|salir|cancelar suscri|desconectar|revocar|vaciar|descargar|publicar|subir a youtube|conectar/i
+  await page.setViewportSize({ width: 1500, height: 1000 })
+  let reqN = 0; page.on('request', () => { reqN++ })
+  const res = []
+  for (const pth of paths) {
+    await page.goto(base + pth, { waitUntil: 'domcontentloaded' }).catch(() => {}); await settle(page)
+    const labels = await page.evaluate(() => { const m = document.querySelector('main') || document.body; const vis = e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
+      return [...m.querySelectorAll('button:not(:disabled):not([aria-disabled=true])')].filter(vis).map((e, i) => ({ i, t: (e.innerText || e.getAttribute('aria-label') || e.title || '').trim().replace(/\s+/g, ' ').slice(0, 60) })) })
+    const todo = labels.filter(l => !SKIP.test(l.t)).slice(0, 45)
+    for (const l of todo) {
+      await page.goto(base + pth, { waitUntil: 'domcontentloaded' }).catch(() => {}); await settle(page)
+      const btn = page.locator('main button:not(:disabled):not([aria-disabled=true])').nth(l.i)
+      if (!(await btn.count()) || !(await btn.isVisible().catch(() => false))) continue
+      const snap = async () => page.evaluate(() => (document.querySelector('main') || document.body).innerHTML.length + '|' + (document.querySelector('main') || document.body).innerText.length + '|' + location.href + '|' + document.querySelectorAll('[role=dialog],dialog,[aria-modal=true]').length + '|' + document.querySelectorAll('input:checked').length)
+      const b4 = await snap(), r0 = reqN, e0 = page.errors.length, d0 = page.dialogs.length; page.bad.length = 0
+      await btn.click({ timeout: 3000 }).catch(() => {}); await page.waitForTimeout(700)
+      const af = await snap(); const changed = af !== b4 || reqN > r0 || page.dialogs.length > d0
+      const fails = page.bad.filter(x => /^(5\d\d|4(?!03)\d\d) /.test(x) || /pageerror/.test(x)).slice(0, 2)
+      if (!changed || page.errors.length > e0 || fails.length) res.push({ path: pth.replace(proj, ':id').replace(job, ':job'), button: l.t, sinEfecto: !changed, errores: page.errors.slice(e0, e0 + 2), peticiones: fails })
+    }
+    console.log('   A2 ' + pth.replace(proj, ':id').replace(job, ':job') + ': ' + todo.length + ' botones probados, ' + res.filter(r => r.path === pth.replace(proj, ':id').replace(job, ':job')).length + ' con hallazgo')
+  }
+  writeFileSync('/tmp/audit/dead-controls.json', JSON.stringify(res, null, 1)); for (const r of res) console.log('   A2HALLAZGO ' + JSON.stringify(r)); return true
+})
+
+// A3 (P5.24): ¿qué ve el usuario al pulsar los botones sospechosos? Imprime las líneas de texto NUEVAS tras el clic (y alertas).
+await step('A3 auditoría: feedback visible de botones sospechosos', async () => {
+  const job = sq(`select id from render_jobs order by updated_at desc limit 1`)
+  const cases = [['/projects', 'Crear proyecto'], ['/create', 'Crear storyboard'], ['/editor', 'Renderizar y guardar'], ['/editor', 'Subtítulos .srt'], [`/editor/manual?job=${job}`, 'T+ Texto'], [`/editor/manual?job=${job}`, 'Pegar'], ['/audio', 'Generar con IA'], ['/audio', 'Música'], ['/repurpose', 'Transcribir'], ['/radar', 'Ver tendencias'], ['/market-intelligence', 'Descubrir oportunidades'], ['/shorts', 'Generar Short de prueba (gratis)']]
+  await page.setViewportSize({ width: 1500, height: 1000 })
+  for (const [pth, label] of cases) {
+    await page.goto(base + pth, { waitUntil: 'domcontentloaded' }); await settle(page)
+    const txt = async () => (await page.locator('body').innerText().catch(() => '')).split('\n').map(x => x.trim()).filter(Boolean)
+    const before = new Set(await txt()); const btn = page.getByRole('button', { name: label, exact: false }).first()
+    if (!(await btn.count())) { console.log(`   A3 ${pth} «${label}»: BOTÓN NO ENCONTRADO`); continue }
+    const dis = await btn.isDisabled().catch(() => false)
+    await btn.click({ timeout: 3000 }).catch(() => {}); await page.waitForTimeout(1500)
+    const nuevo = (await txt()).filter(x => !before.has(x)).slice(0, 6)
+    const alerts = await page.locator('[role=alert],[role=status]').allInnerTexts().catch(() => [])
+    console.log(`   A3 ${pth.slice(0, 22)} «${label}» disabled=${dis} → nuevo: ${JSON.stringify(nuevo)} · alertas: ${JSON.stringify(alerts.filter(Boolean).slice(0, 3))} · diálogos: ${JSON.stringify(page.dialogs.slice(-2))}`)
+    await page.screenshot({ path: `/tmp/audit/a3-${(pth + label).replace(/[^a-z0-9]+/gi, '_').slice(0, 60)}.png` }).catch(() => {})
+  }
+  return true
+})
+
+// A4 (P5.24, solo con E2E_BETA=1): los módulos abiertos en la V1, ¿degradan con claridad cuando su API está cerrada?
+await step('A4 auditoría beta: módulos abiertos y botones cuya API está cerrada', async () => {
+  await page.setViewportSize({ width: 1500, height: 1000 })
+  const cases = [['/repurpose', 'Transcribir'], ['/editor/auto', 'Transcribir'], ['/thumbnails', 'Generar'], ['/usage', ''], ['/calendar', ''], ['/workflows', ''], ['/editor/templates', ''], ['/editor/style', ''], ['/editor/styles', '']]
+  for (const [pth, label] of cases) {
+    page.errors.length = 0; page.bad.length = 0
+    const r = await page.goto(base + pth, { waitUntil: 'domcontentloaded' }); await settle(page)
+    const here = new URL(page.url()).pathname
+    const txt = async () => (await page.locator('main').innerText().catch(() => '')).split('\n').map(x => x.trim()).filter(Boolean)
+    const before = new Set(await txt()); let after = []
+    if (label) { const b = page.getByRole('button', { name: label }).first(); if (await b.count()) { await b.click({ timeout: 3000 }).catch(() => {}); await page.waitForTimeout(1500); after = (await txt()).filter(x => !before.has(x)).slice(0, 4) } else after = ['(botón no encontrado)'] }
+    console.log(`   A4 ${pth} → ${here} ${r?.status()} · errores: ${JSON.stringify(page.errors.slice(0, 2))} · fallos red: ${JSON.stringify([...new Set(page.bad)].filter(x => !/fonts\.g|ERR_ABORTED|channel_connections/.test(x)).slice(0, 3))} · tras pulsar «${label}»: ${JSON.stringify(after)}`)
+    await page.screenshot({ path: `/tmp/audit/beta-${pth.replace(/[^a-z0-9]+/gi, '_')}.png` }).catch(() => {})
+  }
+  return true
+})
+
 await finish()

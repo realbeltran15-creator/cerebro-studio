@@ -73,7 +73,10 @@ export default function RepurposePage() {
     setSelected(pick)
     void (async () => {
       // Prefill the hook with the script's hook when the storyboard came from a script.
-      const { data } = await supabase.from('storyboards').select('script_id').eq('id', source.composition.storyboardId).maybeSingle()
+      // Montajes hechos desde cero llevan un id «manual-…» que no es un storyboard: no se consulta (la API respondería 400 por uuid inválido).
+      const sbId = source.composition.storyboardId
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sbId)) { setHook(''); return }
+      const { data } = await supabase.from('storyboards').select('script_id').eq('id', sbId).maybeSingle()
       const scriptId = (data as { script_id: string | null } | null)?.script_id
       if (!scriptId) { setHook(''); return }
       const { data: script } = await supabase.from('scripts').select('hook').eq('id', scriptId).maybeSingle()

@@ -16,12 +16,13 @@ describe('beta scope: what stays open', () => {
     expect(betaVerdict('/youtube', {})).toBe('open'); expect(betaVerdict('/api/providers/render', {})).toBe('open')
   })
   it('keeps the audiovisual journey open', () => {
-    for (const p of ['/', '/login', '/projects', '/projects/abc', '/scripts', '/create', '/library', '/audio', '/editor', '/editor/manual', '/storage', '/legal/privacy'])
+    for (const p of ['/', '/login', '/projects', '/projects/abc', '/scripts', '/create', '/library', '/audio', '/editor', '/editor/manual', '/storage', '/legal/privacy',
+      '/editor/templates', '/editor/auto', '/editor/style', '/editor/styles', '/repurpose', '/thumbnails', '/workflows', '/calendar', '/usage'])
       expect(betaVerdict(p, ON), p).toBe('open')
   })
   it('closes everything that spends, publishes, automates or connects accounts', () => {
-    for (const p of ['/studio', '/images', '/videos', '/voices', '/thumbnails', '/youtube', '/social', '/campaigns', '/calendar', '/automations', '/connectors', '/influencer',
-      '/shorts', '/repurpose', '/workflows', '/add', '/market-intelligence', '/radar', '/opportunities', '/analytics', '/usage', '/queue', '/editor/auto', '/editor/style', '/editor/templates'])
+    for (const p of ['/studio', '/images', '/videos', '/voices', '/youtube', '/social', '/campaigns', '/automations', '/connectors', '/influencer',
+      '/shorts', '/add', '/market-intelligence', '/radar', '/opportunities', '/analytics', '/queue'])
       expect(betaVerdict(p, ON), p).toBe('redirect-home')
   })
   it('does not let a look-alike prefix through', () => {
