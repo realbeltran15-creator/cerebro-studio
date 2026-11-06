@@ -1364,3 +1364,20 @@ begin
       r.table_name || '_project_must_be_own', r.table_name);
   end loop;
 end $$;
+
+-- ===== Beta privada: registro CERRADO por lista de correos (P5.22) =====
+-- Sin correo en la lista no se puede crear ni cambiar a esa dirección ninguna cuenta (email, magic link u OAuth). Falla cerrado:
+-- con la lista vacía nadie puede registrarse. Segunda capa recomendada: desactivar «Allow new users to sign up» en Auth del proyecto.
+create table if not exists public.beta_allowed_emails (email text primary key check (email = lower(email) and position('@' in email) > 1));
+alter table public.beta_allowed_emails enable row level security;
+revoke all on public.beta_allowed_emails from public, anon, authenticated;
+create or replace function public.beta_signup_guard() returns trigger language plpgsql security definer set search_path to '' as $$
+begin
+  if new.email is null or not exists (select 1 from public.beta_allowed_emails a where a.email = lower(new.email)) then
+    raise exception 'Registro cerrado: este correo no esta en la lista de la beta privada' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+revoke all on function public.beta_signup_guard() from public, anon, authenticated;
+drop trigger if exists a_beta_signup_guard on auth.users;
+create trigger a_beta_signup_guard before insert or update of email on auth.users for each row execute function public.beta_signup_guard();
