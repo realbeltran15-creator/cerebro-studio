@@ -165,7 +165,7 @@ export default function ThumbnailsPage() {
   return <StudioShell title="Miniaturas" eyebrow="PRODUCCIÓN" actions={projectId ? <Link className="buttonLink ghost" href={`/projects/${projectId}`}>Volver al proyecto</Link> : null}>
     {error && <p className="error" role="alert">{error}</p>}
     {notice && <p className="notice" role="status">{notice}</p>}
-    {models && readyModels.length === 0 && <p className="warnBox">No hay ningún proveedor de imágenes configurado. Revisa <Link className="open" href="/connectors">Conectores</Link>: Cloudflare Workers AI es gratuito.</p>}
+    {models && readyModels.length === 0 && <p className="warnBox">No hay ningún proveedor de imágenes activado en este servidor. Puedes seguir usando una imagen propia de la Biblioteca y poner el texto encima, sin coste.</p>}
 
     <section className="panel" style={{ marginBottom: 18 }}>
       <form onSubmit={generate} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

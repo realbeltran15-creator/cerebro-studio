@@ -41,7 +41,7 @@ const jobPath = () => sq(`select id from render_jobs where status='draft' order 
 const ONLY = process.env.E2E_ONLY ? process.env.E2E_ONLY.split(',') : null // p. ej. E2E_ONLY=1,2,3,4,5,M25,M30,M36,M39: ejecuta solo esos pasos (iteración rápida)
 const step = async (name, fn) => { if (S.bail) return; if (ONLY && !ONLY.includes(name.split(' ')[0])) { console.log('SKIP ', name.slice(0, 60)); return }; await t(name, async () => { try { const r = await fn(); if (r !== true) S.bail = true; return r } catch (e) { S.bail = true; throw e } }) }
 const finish = async () => { await browser.close(); web.kill(); lite.close(); console.log(`\nRESUMEN E2E MÓDULOS: ${pass} correctas, ${fail} fallidas`); process.exit(fail ? 1 : 0) }
-const { ctx, page } = await mkCtx()
+let { ctx, page } = await mkCtx()
 // Alta de la cuenta usando el cliente real (el alta por UI se ejerce aparte); el resto es 100 % interfaz.
 const seed = createClient(`http://127.0.0.1:${OFFICIAL ? GW : LITE}`, anon, { auth: { persistSession: false } })
 await seed.auth.signUp({ email: EMAIL, password: PW })
@@ -1109,6 +1109,7 @@ await step('M41 P5.21: memoria de la exportación por tipo de proceso (3 repetic
 })
 // A1 (P5.24): AUDITORÍA FUNCIONAL de todas las páginas con sesión real y datos reales (proyecto + vídeos + imagen). No afirma nada: registra evidencia.
 await step('A1 auditoría: recorrer todas las páginas en escritorio y móvil (errores, avisos de simulación, desbordes, controles sin nombre)', async () => {
+  if (page.isClosed()) { ({ ctx, page } = await mkCtx()); await login(page, EMAIL, PW) } // un paso anterior pudo cerrar la sesión compartida
   const { mkdirSync } = await import('node:fs'); mkdirSync('/tmp/audit', { recursive: true })
   const proj = sq(`select id from projects order by created_at desc limit 1`), job = sq(`select id from render_jobs order by updated_at desc limit 1`)
   const paths = ['/', '/projects', `/projects/${proj}`, '/library', '/scripts', '/create', '/editor', '/editor/manual', `/editor/manual?job=${job}`, '/editor/auto', '/editor/style', '/editor/styles', '/editor/templates', '/repurpose', '/shorts', '/thumbnails', '/images', '/audio', '/voices', '/videos', '/studio', '/studio/recreate', '/influencer', '/youtube', '/social', '/connectors', '/calendar', '/campaigns', '/workflows', '/automations', '/queue', '/usage', '/analytics', '/storage', '/add', '/radar', '/opportunities', '/market-intelligence', '/legal/privacidad', '/legal/terminos', '/legal/eliminar-datos']
@@ -1123,19 +1124,26 @@ await step('A1 auditoría: recorrer todas las páginas en escritorio y móvil (e
       const info = await page.evaluate(() => {
         const vis = e => { const r = e.getBoundingClientRect(); const st = getComputedStyle(e); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' }
         const btns = [...document.querySelectorAll('button,[role=button],a[href],input,select,textarea')].filter(vis)
-        const name = e => (e.getAttribute('aria-label') || e.innerText || e.value || e.getAttribute('title') || e.getAttribute('placeholder') || (e.id && document.querySelector(`label[for="${e.id}"]`)?.innerText) || e.closest('label')?.innerText || '').trim()
-        const unnamed = btns.filter(e => !name(e)).length
+        const name = e => (e.getAttribute('aria-label') || e.innerText || e.textContent || e.value || e.getAttribute('title') || e.getAttribute('placeholder') || (e.id && document.querySelector(`label[for="${e.id}"]`)?.innerText) || e.closest('label')?.innerText || '').trim()
+        const unnamedEls = btns.filter(e => !name(e))
+        const unnamed = unnamedEls.length
+        const unnamedHtml = unnamedEls.slice(0, 30).map(e => e.outerHTML.replace(/\s+/g, ' ').slice(0, 220))
         const disabled = [...document.querySelectorAll('button:disabled')].filter(vis).map(e => (e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 40))
         const main = (document.querySelector('main') || document.body).innerText
-        return { url: location.pathname + location.search, h1: (document.querySelector('h1')?.innerText || '').slice(0, 80), controls: btns.length, unnamed, disabled: disabled.slice(0, 8), disabledN: disabled.length, overflowX: document.documentElement.scrollWidth - innerWidth, textLen: main.length, text: main.slice(0, 3000) }
+        return { unnamedHtml, url: location.pathname + location.search, h1: (document.querySelector('h1')?.innerText || '').slice(0, 80), controls: btns.length, unnamed, disabled: disabled.slice(0, 8), disabledN: disabled.length, overflowX: document.documentElement.scrollWidth - innerWidth, textLen: main.length, text: main.slice(0, 3000) }
       })
       const flags = [...new Set([...info.text.matchAll(new RegExp(FLAG.source, 'gi'))].map(m => m[0].toLowerCase()))].slice(0, 6)
-      const rec = { vp: vp.n, path: pth, status, final: info.url, h1: info.h1, controls: info.controls, unnamed: info.unnamed, disabledN: info.disabledN, disabled: info.disabled, overflowX: info.overflowX, textLen: info.textLen, flags, errors: page.errors.slice(0, 3), bad: [...new Set(page.bad)].slice(0, 4), dialogs: page.dialogs.length }
+      const rec = { vp: vp.n, path: pth, status, final: info.url, h1: info.h1, controls: info.controls, unnamed: info.unnamed, unnamedHtml: info.unnamedHtml, disabledN: info.disabledN, disabled: info.disabled, overflowX: info.overflowX, textLen: info.textLen, flags, errors: page.errors.slice(0, 3), bad: [...new Set(page.bad)].slice(0, 4), dialogs: page.dialogs.length }
       out.push(rec); console.log('   AUDIT ' + JSON.stringify(rec))
       if (vp.n === 'desk' || info.overflowX > 4) await page.screenshot({ path: `/tmp/audit/${vp.n}-${pth.replace(/[^a-z0-9]+/gi, '_')}.png`, fullPage: false }).catch(() => {})
     }
   }
-  writeFileSync('/tmp/audit/audit.json', JSON.stringify(out, null, 1)); return true
+  writeFileSync('/tmp/audit/audit.json', JSON.stringify(out, null, 1))
+  // Regresión P5.24: en las páginas abiertas en la beta V1 no puede haber controles sin nombre accesible ni respuestas 5xx.
+  const OPEN = /^\/(projects|scripts|create|library|audio|storage|editor|repurpose|thumbnails|workflows|calendar|usage|legal)/
+  const malos = out.filter(r => OPEN.test(r.path) && (r.unnamed > 0 || r.status >= 500)).map(r => `${r.vp} ${r.path} sin nombre=${r.unnamed} estado=${r.status} ${(r.unnamedHtml || []).slice(0, 3).join(' | ')}`)
+  if (malos.length) throw new Error('A1 controles sin nombre o 5xx en páginas de la beta: ' + malos.join(' ;; '))
+  return true
 })
 
 // A2 (P5.24): DETECTOR DE CONTROLES MUERTOS. Pulsa cada botón habilitado del contenido de cada página (datos sintéticos, red a terceros bloqueada)

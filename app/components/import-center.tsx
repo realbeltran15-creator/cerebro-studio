@@ -138,7 +138,7 @@ export function ImportCenter({ supabase, projectId, section, audioKind, maxBytes
     <b>Importar materiales</b>
     <div className="pageActions">
       <label className="buttonLink ghost small" htmlFor="ic-files" style={{ cursor: 'pointer' }}>Desde mi dispositivo
-        <input id="ic-files" type="file" multiple accept={accept} style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }} onChange={e => { const f = Array.from(e.target.files ?? []); e.target.value = ''; addDevice(f) }} />
+        <input id="ic-files" aria-label="Elegir archivos de este dispositivo" type="file" multiple accept={accept} style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }} onChange={e => { const f = Array.from(e.target.files ?? []); e.target.value = ''; addDevice(f) }} />
       </label>
       <button type="button" className="ghost small" disabled={!driveConfig} onClick={() => void addDrive()} aria-describedby="ic-drive-note">Desde Google Drive</button>
     </div>

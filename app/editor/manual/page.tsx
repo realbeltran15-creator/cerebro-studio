@@ -1097,7 +1097,7 @@ export default function ManualEditorPage() {
             {busy === 'import' && <span className="muted small" role="status">Importando…</span>}
             <label className="pill small"><input type="checkbox" checked={showExported} onChange={e => setShowExported(e.target.checked)} /> Incluir mis vídeos exportados</label>
             <label>Clip de imagen o vídeo
-              <select value={addAsset} onChange={e => setAddAsset(e.target.value)}><option value="">— Elegir de la Biblioteca</option>
+              <select aria-label="Clip de imagen o vídeo de la Biblioteca" value={addAsset} onChange={e => setAddAsset(e.target.value)}><option value="">— Elegir de la Biblioteca</option>
                 {visuals.some(a => a.asset_type === 'video' && !isExportedVideo(a)) && <optgroup label="Vídeos importados">{visuals.filter(a => a.asset_type === 'video' && !isExportedVideo(a)).map(a => <option key={a.id} value={a.id}>[video] {assetLabel(a)}</option>)}</optgroup>}
                 {visuals.some(a => a.asset_type !== 'video') && <optgroup label="Imágenes">{visuals.filter(a => a.asset_type !== 'video').map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</optgroup>}
                 {visuals.some(isExportedVideo) && <optgroup label="Vídeos exportados (reutilizar)">{visuals.filter(isExportedVideo).map(a => <option key={a.id} value={a.id}>[video exportado] {assetLabel(a)}</option>)}</optgroup>}
@@ -1114,7 +1114,7 @@ export default function ManualEditorPage() {
             </fieldset>}
             <button type="button" className="ghost" disabled={!addAsset || Boolean(rangeCheck && !rangeCheck.ok)} onClick={() => void (async () => { const at = selClip ? comp.clips.findIndex(c => c.id === selClip.id) + 1 : comp.clips.length; const id = addAsset; const inMs = rangeIn, outMs = rangeOut, custom = rangeCustom && rangeCheck?.ok; setAddAsset(''); if (typeOf(id) === 'video') { if (custom) apply(c => addVideoRange(c, id, inMs, outMs, at)); else { const ms = await audioDurationMs(id).catch(() => 5000) || 5000; apply(c => addVideo(c, id, ms, at)) } } else apply(c => addClip(c, id, 5000, at)) })()}>Añadir clip {selClip ? 'tras el seleccionado' : 'al final'}</button>
             <label>Audio
-              <select value={addAudio} onChange={e => setAddAudio(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{audios.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
+              <select aria-label="Audio de la Biblioteca" value={addAudio} onChange={e => setAddAudio(e.target.value)}><option value="">— Elegir de la Biblioteca</option>{audios.map(a => <option key={a.id} value={a.id}>[{a.asset_type}] {assetLabel(a)}</option>)}</select>
             </label>
             <label>Pista<select value={addAudioKind} onChange={e => setAddAudioKind(e.target.value as AudioClip['kind'])}><option value="voice">Voz / voice-over</option><option value="music">Música</option><option value="sfx">Efecto</option></select></label>
             <button type="button" className="ghost" disabled={!addAudio || busy === 'audio'} onClick={() => void (async () => {

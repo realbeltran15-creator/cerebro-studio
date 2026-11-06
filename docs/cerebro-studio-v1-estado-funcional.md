@@ -51,7 +51,7 @@ Abiertos (registro):
 
 | # | Defecto | Prioridad | Prueba de aceptación |
 |---|---|---|---|
-| D1 | ~22 controles sin nombre accesible en `/editor/manual?job=…`, 6 en `/videos`, 2 en `/images` y `/studio`, 4 en `/market-intelligence` (el rastreo cuenta controles sin texto, aria-label, título ni etiqueta) | P2 (accesibilidad) | El rastreo A1 devuelve 0 en `unnamed` |
+| D1 (cerrado en las páginas de la beta) | Controles sin nombre: selectores y subida del editor corregidos; en `/videos`, `/images`, `/studio`, `/market-intelligence` (cerradas en la beta) quedan enlaces/iconos de módulos P2 | P2 | A1 con aserción en páginas de la beta |
 | D2 | Mensajes de error que citan variables de entorno (`GROQ_API_KEY`, `YOUTUBE_API_KEY`) | P2 | Texto reescrito sin nombres técnicos |
 | D3 | Miniaturas sugiere «Revisa Conectores», cerrado en la beta | P2 | El texto no remite a páginas cerradas |
 | D4 | Dos entradas «Shorts» (`/shorts` Fábrica de curiosidades, `/repurpose`) confunden | P2 | Nombres distintos o una sola entrada |
@@ -60,11 +60,37 @@ Abiertos (registro):
 
 Clics sin efecto detectados por A2: en su mayoría falsos positivos (botones que actúan sobre el lienzo o requieren selección previa); el único con error real es «Transcribir» (502 sin proveedor), ya desactivado en la beta con mensaje claro.
 
-## 5. Pruebas realizadas
+## 5. Pruebas realizadas (sobre el código final, tras recompilar)
 
-E2E de módulos con Supabase oficial local: 46/46 antes de P5.24 (M1–M41). En P5.24: rastreo A1 (41 páginas × 2 tamaños: ninguna 5xx, ningún desborde horizontal en móvil), A2 (controles sin efecto), A3 (mensajes tras clic), A4 en modo beta (6/6). Unitarias del alcance beta 15/15. Propuestas SQL 18/18 y lista cerrada de correos 8/8 (commits anteriores). **Pendiente de repetir tras estos cambios:** tsc, ESLint, Vitest completo, E2E completo con recompilación y suite Chromium.
+| Prueba | Resultado |
+|---|---|
+| TypeScript | 0 errores |
+| ESLint | 0 errores (avisos previos) |
+| Vitest | 1678 correctas / 22 omitidas |
+| E2E de módulos, stack Supabase oficial local (M1–M41 + A1–A4 con aserciones) | 50/50 |
+| A1: 41 páginas × escritorio/móvil; aserción nueva: 0 controles sin nombre y 0 respuestas 5xx en las páginas de la beta | correcta |
+| A4: modo beta (build con `NEXT_PUBLIC_CEREBRO_BETA=private`), módulos nuevos abiertos, API cerradas | correcta |
+| Alcance beta (`tests/beta-scope.test.ts`) | 15/15 |
+| Propuestas de seguridad SQL / lista cerrada de correos (GoTrue y PostgREST reales) | 18/18 / 8/8 |
+| Aislamiento entre dos usuarios y barrido de 64 rutas API sin sesión (M15, M28, M33) | correctas |
+| Suite Chromium completa | «All browser checks passed» |
 
-Límites de las mediciones: Chromium sin GPU ni AAC nativo; no medido en el PC de Jesús (3,6 GB de RAM).
+Límites: Chromium sin GPU ni AAC nativo; no medido en el PC de Jesús (3,6 GB de RAM). Nada de lo anterior sustituye la prueba manual de Jesús.
+
+## 5b. Estado anterior → actual (P5.24)
+
+| Módulo | Anterior | Actual | Prueba de aceptación | Resultado |
+|---|---|---|---|---|
+| Editor manual (selectores y subida) | 22 controles marcados sin nombre | Selectores y subida con nombre accesible; el resto eran botones con texto dentro de menús plegados (falso positivo del rastreo, ahora contado con `textContent`) | A1 con aserción | OK |
+| Miniaturas | Remitía a «Conectores» (cerrado en la beta) | Texto sin enlace: sigue pudiendo usar imagen propia, gratis | A4 | OK |
+| Repurpose | 400 al abrir montaje manual | Guardia UUID | E2E M12–M14 | OK |
+| Shorts duplicado | Dos entradas | `/shorts` (Fábrica de curiosidades) queda cerrado en la beta; solo `/repurpose` visible | beta-scope | OK |
+| Mensajes con variables de entorno | Visibles | Solo en «Detalles técnicos» plegados, o en páginas cerradas en la beta | Revisión | OK |
+| Alcance beta | 8 páginas | +9 locales y gratuitas | beta-scope 15/15 | OK |
+
+## 5c. Veredicto de la candidata V1: **LISTA PARA PROBAR en local; acceso de Jesús BLOQUEADO**
+
+Los P0 y los P1 locales tienen recorrido completo verificado con datos de prueba y MP4 medido. No se declara COMPLETA ninguna función que dependa de un proveedor externo (transcripción, generación con IA, publicación). Defectos pendientes: D5/D6 informativos; todo lo demás cerrado.
 
 ## 6. Guion de prueba V1 (cuando haya acceso)
 
