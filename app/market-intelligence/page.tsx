@@ -7,6 +7,7 @@ import { YouTubeResearch } from './youtube-research'
 import { ChannelResearch } from './channel-analysis'
 import { ResearchProvider, ResetNoticesOnTab, useResearch } from './research-context'
 import { FilterPanel } from './filter-panel'
+import { AutoNichePanel } from './auto-niche'
 import { KeywordsTab, NichesTab } from './tabs-analysis'
 import { DiscoverTab, InternationalTab, MonetizationTab } from './tabs-trends'
 import { SavedTab, type Opportunity } from './tab-saved'
@@ -43,7 +44,8 @@ export default function MarketIntelligencePage() {
   return <StudioShell title="Investigación" eyebrow="INTELIGENCIA DE MERCADO" actions={<Link className="buttonLink ghost" href="/youtube">Explorar YouTube</Link>}>
     <p className="connectionStatus">{message}</p>
     {authenticated === false ? <Link className="buttonLink" href="/login">Iniciar sesión</Link> : authenticated === true ? <ResearchProvider>
-      <p className="muted small" style={{ margin: '0 0 4px' }}>Qué quieres investigar</p>
+      <AutoNichePanel />
+      <p className="muted small" style={{ margin: '0 0 4px' }}>Búsqueda manual (avanzado): qué quieres investigar</p>
       <div className="researchTabs" role="tablist" aria-label="Secciones de Investigación">
         {TABS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}
       </div>
