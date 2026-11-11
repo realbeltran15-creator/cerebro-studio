@@ -1,7 +1,7 @@
 /**
  * Canvas drawing of a frame description (scene.ts). Shared by the preview player and the exporter, so both draw the same pixels.
  */
-import { TEXT_FONTS, type CaptionPosition, type CaptionStyle, type TextOverlay } from './composition'
+import { TEXT_FONTS, type CaptionPosition, type CaptionStyle, type MaskShape, type TextOverlay } from './composition'
 import type { TextFrame } from './motion'
 import type { Op, VisualOp } from './scene'
 
@@ -85,14 +85,46 @@ export function applyChroma(ctx: CanvasRenderingContext2D | OffscreenCanvasRende
 }
 
 /** Clips the following drawing to a shape inside the rectangle (x, y, w, h); `invert` keeps what is OUTSIDE the shape. */
-export function maskPath(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, m: { shape: 'ellipse' | 'rounded' | 'rect'; inset: number; invert?: boolean }, x: number, y: number, w: number, h: number) {
-  const ix = w * m.inset, iy = h * m.inset, rx = x + ix, ry = y + iy, rw = w - 2 * ix, rh = h - 2 * iy
+export function maskPath(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, m: MaskShape, x: number, y: number, w: number, h: number) {
+  traceMask(ctx, m, x, y, w, h)
+  ctx.clip(m.invert ? 'evenodd' : 'nonzero')
+}
+
+/** Traza (sin recortar) la forma de la máscara dentro del rectángulo (x, y, w, h); con `invert` añade un marco grande alrededor (relleno evenodd). */
+function traceMask(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, m: MaskShape, x: number, y: number, w: number, h: number, bleed = 0) {
   ctx.beginPath()
   if (m.invert) ctx.rect(x - w, y - h, w * 3, h * 3)
+  if (m.shape === 'polygon') {
+    // Corners placed on the layer's edge are pushed out by `bleed`, so a soft edge never fades the picture along the frame border.
+    const ex = (v: number) => (v <= 0.001 ? -bleed : v >= 0.999 ? bleed : 0)
+    const pts = (m.points ?? []).map(([px, py]) => [x + px * w + ex(px), y + py * h + ex(py)] as const)
+    pts.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)))
+    ctx.closePath()
+    return
+  }
+  const ix = w * m.inset, iy = h * m.inset, rx = x + ix, ry = y + iy, rw = w - 2 * ix, rh = h - 2 * iy
   if (m.shape === 'ellipse') ctx.ellipse(rx + rw / 2, ry + rh / 2, rw / 2, rh / 2, 0, 0, Math.PI * 2)
   else if (m.shape === 'rounded') { const r = Math.min(rw, rh) * 0.18; ctx.moveTo(rx + r, ry); ctx.arcTo(rx + rw, ry, rx + rw, ry + rh, r); ctx.arcTo(rx + rw, ry + rh, rx, ry + rh, r); ctx.arcTo(rx, ry + rh, rx, ry, r); ctx.arcTo(rx, ry, rx + rw, ry, r); ctx.closePath() }
   else ctx.rect(rx, ry, rw, rh)
-  ctx.clip(m.invert ? 'evenodd' : 'nonzero')
+}
+
+/** Whether a mask needs a soft edge (and therefore its own layer, where the edge is blurred into the picture's transparency). */
+const softMask = (m: MaskShape | undefined) => !!m && (m.feather ?? 0) > 0
+
+/**
+ * Borde suave: sobre la capa privada (que solo tiene esta imagen) deja visible lo que cae dentro de la forma, con el borde difuminado.
+ * Sin filtros de canvas (Safari, el render de Node) el borde queda nítido, igual que una máscara normal.
+ */
+function featherMask(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, m: MaskShape, x: number, y: number, w: number, h: number) {
+  ctx.save()
+  ctx.globalCompositeOperation = 'destination-in'
+  ctx.globalAlpha = 1
+  const px = Math.round((m.feather ?? 0) * Math.min(w, h) * 10) / 10
+  ctx.filter = px > 0 ? `blur(${px}px)` : 'none'
+  ctx.fillStyle = '#000'
+  traceMask(ctx, m, x, y, w, h, px * 3)
+  ctx.fill(m.invert ? 'evenodd' : 'nonzero')
+  ctx.restore()
 }
 
 /** One picture layer: crop, fit (cover or a box), rotation, opacity, filters, blend mode, mask, chroma key and the transition transforms. */
@@ -110,14 +142,15 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
   if (op.scale !== 1) { ctx.translate(w / 2, h / 2); ctx.scale(op.scale, op.scale); ctx.translate(-w / 2, -h / 2) }
   if (op.backdrop) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h) }
   if (!s || !s.width || !s.height) { ctx.restore(); return }
-  // Chroma key needs the pixels: the picture goes to a private layer, the key colour is made transparent there, and the layer is drawn here.
-  const layer = op.fx?.chroma ? layerFor(w, h) : null
+  // Chroma key needs the pixels and a soft mask edge needs the picture alone: the picture goes to a private layer, the key colour is made
+  // transparent / the soft edge is cut there, and the layer is drawn here.
+  const layer = op.fx?.chroma || softMask(op.fx?.mask) ? layerFor(w, h) : null
   if (layer) {
     layer.ctx.save()
     layer.ctx.clearRect(0, 0, w, h)
-    drawPicture(layer.ctx as CanvasRenderingContext2D, op, w, h, s)
+    drawPicture(layer.ctx as CanvasRenderingContext2D, op, w, h, s, true)
     layer.ctx.restore()
-    applyChroma(layer.ctx, op.fx!.chroma!, w, h)
+    if (op.fx?.chroma) applyChroma(layer.ctx, op.fx.chroma, w, h)
     ctx.filter = 'none'
     ctx.drawImage(layer.canvas as CanvasImageSource, 0, 0, w, h)
   } else drawPicture(ctx, op, w, h, s)
@@ -125,7 +158,10 @@ export function drawVisual(ctx: CanvasRenderingContext2D, op: VisualOp, w: numbe
 }
 
 /** The picture itself (crop, fit, rotation, filters, mask) on a context already positioned for the layer. */
-function drawPicture(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: number, s: DrawSource) {
+function drawPicture(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: number, s: DrawSource, isolated = false) {
+  // A soft edge is cut after drawing (only possible on the private layer); otherwise the mask is a hard clip before drawing.
+  const mask = op.fx?.mask
+  const soft = isolated && softMask(mask)
   const filter = filterString(op, h)
   if (filter !== 'none' && 'filter' in ctx) ctx.filter = filter
   const c = op.crop
@@ -135,15 +171,16 @@ function drawPicture(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: 
     if (op.rotation) { ctx.translate(w / 2, h / 2); ctx.rotate(op.rotation * Math.PI / 180); ctx.translate(-w / 2, -h / 2) }
     const scale = Math.max(w / sw, h / sh) * op.zoom
     const dw = sw * scale, dh = sh * scale
-    if (op.fx?.mask) maskPath(ctx, op.fx.mask, 0, 0, w, h)
+    if (mask && !soft) maskPath(ctx, mask, 0, 0, w, h)
     // focusX/focusY pick which part of a larger (or zoomed) source stays in frame (0 = left/top edge, 1 = right/bottom).
     ctx.drawImage(s.src, sx, sy, sw, sh, (w - dw) * op.focusX, (h - dh) * op.focusY, dw, dh)
     if (op.grade?.warmth) drawWarmth(ctx, op.grade.warmth, Math.max(0, (w - dw) * op.focusX), Math.max(0, (h - dh) * op.focusY), Math.min(w, dw), Math.min(h, dh))
+    if (mask && soft) featherMask(ctx, mask, 0, 0, w, h)
   } else if (op.box) {
     const bw = Math.max(1, op.box.scale * w), bh = bw * sh / sw
     ctx.translate(op.box.x * w, op.box.y * h)
     if (op.box.rotation) ctx.rotate(op.box.rotation * Math.PI / 180)
-    if (op.fx?.mask) maskPath(ctx, op.fx.mask, -bw / 2, -bh / 2, bw, bh)
+    if (mask && !soft) maskPath(ctx, mask, -bw / 2, -bh / 2, bw, bh)
     if (op.zoom !== 1) {
       // Ken Burns inside the box: the box stays put and the picture moves inside it.
       ctx.beginPath(); ctx.rect(-bw / 2, -bh / 2, bw, bh); ctx.clip()
@@ -151,6 +188,7 @@ function drawPicture(ctx: CanvasRenderingContext2D, op: VisualOp, w: number, h: 
       ctx.drawImage(s.src, sx, sy, sw, sh, -bw / 2 + (bw - zw) * op.focusX, -bh / 2 + (bh - zh) * op.focusY, zw, zh)
     } else ctx.drawImage(s.src, sx, sy, sw, sh, -bw / 2, -bh / 2, bw, bh)
     if (op.grade?.warmth) drawWarmth(ctx, op.grade.warmth, -bw / 2, -bh / 2, bw, bh)
+    if (mask && soft) featherMask(ctx, mask, -bw / 2, -bh / 2, bw, bh)
   }
 }
 

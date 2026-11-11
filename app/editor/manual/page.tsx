@@ -33,6 +33,7 @@ import { effectiveCamera } from '@/lib/editor/motion'
 import { ManualPicker } from '../../components/manual-picker'
 import { EditorPlayerView } from '../../components/editor-player'
 import { ViewerHandles } from '../../components/viewer-handles'
+import { MaskDrawer } from '../../components/mask-drawer'
 import { MatchPanel, withoutGrades } from '../../components/match-panel'
 import { makeRoomForTransition } from '@/lib/editor/transition-room'
 import { RepeatDialog, BatchTransitionsDialog } from '../../components/editor-batch'
@@ -45,7 +46,7 @@ import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, 
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
 import { extractProfile } from '@/lib/editor/profile'
-import { addMarker, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
+import { addMarker, addMaskedCopy, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { friendlyDbMessage } from '@/lib/script-integrity'
@@ -60,6 +61,8 @@ const secs = (ms: number) => Math.round(ms / 100) / 10
 export default function ManualEditorPage() {
   const supabase = getSupabaseBrowserClient()
   const [job, setJob] = useState<Job | null>(null)
+  // «Dibujar máscara»: the layer whose free mask is being drawn on the viewer (replaces the viewer handles while open).
+  const [maskDraw, setMaskDraw] = useState<ItemRef | null>(null)
   const [history, setHistory] = useState<History | null>(null)
   const [assets, setAssets] = useState<EditorAsset[]>([])
   // Several items can be selected (Mayús/Ctrl + clic); the last one is the one the inspector shows.
@@ -770,6 +773,23 @@ export default function ManualEditorPage() {
   const width = Math.max(total / 1000 * pxPerSec, 600)
   const starts = clipStarts(comp)
   const selOverlay = selection?.kind === 'overlay' ? (comp.overlays ?? []).find(o => o.id === selection.id) ?? null : null
+  const maskTarget = maskDraw ? (maskDraw.kind === 'overlay' ? (comp.overlays ?? []).find(o => o.id === maskDraw.id) : maskDraw.kind === 'clip' ? comp.clips.find(k => k.id === maskDraw.id) : null) ?? null : null
+  const finishMask = (points: Array<[number, number]> | null) => {
+    const ref = maskDraw
+    setMaskDraw(null)
+    if (!ref || !points || !maskTarget) return
+    const fx = { ...(maskTarget.fx ?? {}), mask: { ...(maskTarget.fx?.mask ?? {}), shape: 'polygon' as const, inset: 0, points, feather: maskTarget.fx?.mask?.feather ?? 0.03 } }
+    apply(c => ref.kind === 'overlay' ? updateOverlay(c, ref.id, { fx }) : updateClip(c, ref.id, { fx }))
+    setNotice(`Máscara guardada (${points.length} puntos). Ctrl+Z la deshace.`)
+  }
+  const maskZoneOf = (clipId: string) => {
+    const r = addMaskedCopy(comp, clipId)
+    if (!r) { setNotice('Este clip no tiene imagen o vídeo.'); return }
+    apply(() => r.composition)
+    setSelection({ kind: 'overlay', id: r.id })
+    setMaskDraw({ kind: 'overlay', id: r.id })
+    setNotice('Copia del clip creada encima, invertida y limitada a una zona. Dibuja en el visor la zona que quieres cambiar y pulsa «Terminar». Ctrl+Z lo deshace.')
+  }
   const materials = matTab === 'visual' ? visuals : audios
   const nextBeatRel = selClip ? (() => { const st = starts[comp.clips.findIndex(k => k.id === selClip.id)]; const b = beats.beatsMs.find(t => t - st >= MIN_CLIP_MS && st + selClip.durationMs - t >= MIN_CLIP_MS); return b === undefined ? null : b - st })() : null
 
@@ -1153,7 +1173,9 @@ export default function ManualEditorPage() {
       {ws.layout.left && <Splitter label="Ancho del panel de herramientas" orientation="vertical" value={ws.layout.leftW} min={200} max={640} onChange={v => ws.set({ leftW: v })} />}
       <div className="editorViewer edViewer">
         <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
-          overlay={<ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
+          overlay={maskDraw && maskTarget
+            ? <MaskDrawer key={`${maskDraw.kind}:${maskDraw.id}`} comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} target={maskDraw} initial={maskTarget.fx?.mask?.shape === 'polygon' ? maskTarget.fx.mask.points ?? null : null} onDone={finishMask} />
+            : <ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
         <Splitter label="Alto del visor" orientation="horizontal" value={ws.layout.viewerAuto && autoViewerH ? autoViewerH : ws.layout.viewerH} min={180} max={1400} onChange={v => ws.set({ viewerH: v, viewerAuto: false })}
           onReset={() => ws.set({ viewerAuto: true })} title="Arrastra para cambiar el alto del visor; doble clic para que se ajuste solo a la pantalla" />
       </div>
@@ -1186,6 +1208,7 @@ export default function ManualEditorPage() {
               onDeletePreset={id => void storePresets({ ...presets, animations: presets.animations.filter(a => a.id !== id) })} />
           })()} o={selOverlay} visuals={visuals} isVideo={typeOf(selOverlay.assetId) === 'video'} playheadMs={playheadMs}
           onChange={p => apply(c => updateOverlay(c, selOverlay.id, p))} apply={apply}
+          onDrawMask={() => { if (playheadMs < selOverlay.startMs || playheadMs >= selOverlay.startMs + selOverlay.durationMs) setPlayheadMs(selOverlay.startMs); setMaskDraw({ kind: 'overlay', id: selOverlay.id }) }}
           onDelete={() => { apply(c => deleteItems(c, [{ kind: 'overlay', id: selOverlay.id }])); setSel([]) }}
           onDuplicate={() => { const r = duplicateItems(comp, [{ kind: 'overlay', id: selOverlay.id }]); apply(() => r.composition); setSel(r.refs) }} />}
         {selClip && <ClipInspector animation={(() => {
@@ -1213,6 +1236,7 @@ export default function ManualEditorPage() {
           onTrim={d => apply(c => trimStart(c, selClip.id, d))}
           onSplit={ms => { apply(c => splitClip(c, selClip.id, ms)); setSplitAt('') }}
           onDuplicate={() => apply(c => duplicateClip(c, selClip.id))} onRepeat={() => setBatchDlg('repeat')}
+          onDrawMask={() => setMaskDraw({ kind: 'clip', id: selClip.id })} onMaskZone={() => maskZoneOf(selClip.id)}
           onDelete={() => { apply(c => deleteClip(c, selClip.id)); setSelection(null) }}
           onMove={dir => apply(c => moveClip(c, selClip.id, c.clips.findIndex(k => k.id === selClip.id) + dir))} />}
         {selText && <TextInspector t={selText} onChange={p => apply(c => updateTextClip(c, selText.id, p))} onDuplicate={() => apply(c => duplicateTextClip(c, selText.id))} onDelete={() => { apply(c => deleteTextClip(c, selText.id)); setSelection(null) }} />}
@@ -1359,7 +1383,9 @@ function PrecisionRow({ onPrecision, onFreeze, isVideo }: { onFreeze: () => void
   )
 }
 
-function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onPrecision, onFreeze, onRamp, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation }: {
+function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs, onChange, onSpeed, onReverse, onPrecision, onFreeze, onRamp, onBounce, onTrim, onSplit, onDuplicate, onRepeat, onDelete, onMove, transitionTools, transitionDuration, animation, onDrawMask, onMaskZone }: {
+  /** Free-shape mask of this clip drawn on the viewer; «cambiar una zona» = masked copy above it. */
+  onDrawMask?: () => void; onMaskZone?: () => void
   transitionTools?: React.ReactNode
   transitionDuration?: React.ReactNode
   animation?: React.ReactNode
@@ -1379,7 +1405,11 @@ function ClipInspector({ clip, isVideo, visuals, splitAt, setSplitAt, nextBeatMs
         {isVideo && <label>Inicio en el vídeo (s)<input type="number" min={0} step={0.1} value={secs(clip.trimInMs ?? 0)} onChange={e => onTrim(Number(e.target.value) * 1000 - (clip.trimInMs ?? 0))} /></label>}
         {isVideo && <label>Velocidad<select value={String(clip.speed ?? 1)} onChange={e => onSpeed(Number(e.target.value))}>{[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map(v => <option key={v} value={String(v)}>{v}×</option>)}</select></label>}
       </div>
-      <details data-tool="fx"><summary>Fusión, máscara y clave de color</summary><FxEditor fx={clip.fx} onChange={fx => onChange({ fx })} /></details>
+      {onMaskZone && clip.visualAssetId && <div className="field-row" data-tool="mask-zone" style={{ alignItems: 'end' }}>
+        <button type="button" className="ghost" onClick={onMaskZone}
+          title="Pone encima una copia de este clip (el mismo vídeo, invertido) que solo se ve en la zona que dibujes. Sirve para cambiar una parte del plano, por ejemplo que el agua vaya en otra dirección, sin tocar el resto. Luego puedes cambiar la copia por otra imagen o vídeo.">◩ Cambiar una zona (máscara)</button>
+      </div>}
+      <details data-tool="fx" open={clip.fx?.mask ? true : undefined}><summary>Fusión, máscara y clave de color</summary><FxEditor fx={clip.fx} onChange={fx => onChange({ fx })} onDrawMask={onDrawMask} /></details>
       {isVideo && !clip.reverse && !clip.freeze && <div className="field-row" data-tool="ramp" style={{ alignItems: 'end' }}>
         <label>Rampa de velocidad: termina a
           <select value={clip.ramp === undefined ? '' : String(clip.ramp)} onChange={e => onRamp(e.target.value === '' ? null : Number(e.target.value))} title="La velocidad cambia suavemente desde la velocidad del clip hasta este valor al final del clip. El clip rampa no emite su sonido.">

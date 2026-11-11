@@ -44,3 +44,24 @@ describe('layer effects', () => {
     expect(parseFx({ chroma: { color: '#00FF00', tolerance: 5, softness: -1 } })!.chroma).toEqual({ color: '#00ff00', tolerance: 1, softness: 0 })
   })
 })
+
+describe('free mask (polygon) and soft edge', () => {
+  const tri: Array<[number, number]> = [[0, 0], [1, 0], [0, 1]]   // upper-left half of the layer
+  it('polygon: the copy shows only inside the drawn zone; invert shows it outside', () => {
+    const a = fresh('#ffffff'); drawVisual(a, { ...base, fx: { mask: { shape: 'polygon', inset: 0, points: tri } } }, W, H, src('#000000'))
+    expect(px(a, 5, 5).slice(0, 3)).toEqual([0, 0, 0]); expect(px(a, 35, 35).slice(0, 3)).toEqual([255, 255, 255])
+    const b = fresh('#ffffff'); drawVisual(b, { ...base, fx: { mask: { shape: 'polygon', inset: 0, points: tri, invert: true } } }, W, H, src('#000000'))
+    expect(px(b, 5, 5).slice(0, 3)).toEqual([255, 255, 255]); expect(px(b, 35, 35).slice(0, 3)).toEqual([0, 0, 0])
+  })
+  it('soft edge: centre of the zone fully the copy, far outside untouched, background never painted over by the layer box', () => {
+    const lower: Array<[number, number]> = [[0, 0.5], [1, 0.5], [1, 1], [0, 1]]
+    const g = fresh('#ffffff'); drawVisual(g, { ...base, fx: { mask: { shape: 'polygon', inset: 0, points: lower, feather: 0.05 } } }, W, H, src('#000000'))
+    expect(px(g, 20, 36).slice(0, 3)).toEqual([0, 0, 0])
+    expect(px(g, 20, 3).slice(0, 3)).toEqual([255, 255, 255])
+  })
+  it('parseFx: keeps a valid polygon, clamps points and feather, drops shapes with fewer than 3 points', () => {
+    expect(parseFx({ mask: { shape: 'polygon', points: [[-1, 0.5], [2, 0.5], [0.5, 1]], feather: 9, inset: 0.3 } })).toEqual({ mask: { shape: 'polygon', inset: 0, points: [[0, 0.5], [1, 0.5], [0.5, 1]], feather: 0.15 } })
+    expect(parseFx({ mask: { shape: 'polygon', points: [[0, 0], [1, 1]] } })).toBeNull()
+    expect(parseFx({ mask: { shape: 'rect', inset: 0.1, feather: 0.02 } })).toEqual({ mask: { shape: 'rect', inset: 0.1, feather: 0.02 } })
+  })
+})

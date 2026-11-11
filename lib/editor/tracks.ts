@@ -102,8 +102,34 @@ export function addOverlay(c: Composition, o: Partial<OverlayClip> & Pick<Overla
     transform: { ...DEFAULT_TRANSFORM, ...(o.transform ?? {}) },
     ...(o.speed ? { speed: o.speed } : {}), ...(o.volume !== undefined ? { volume: o.volume } : {}), ...(o.muted ? { muted: true } : {}),
     ...(o.keyframes ? { keyframes: o.keyframes } : {}), ...(o.camera ? { camera: o.camera } : {}), ...(o.fadeInMs ? { fadeInMs: o.fadeInMs } : {}), ...(o.fadeOutMs ? { fadeOutMs: o.fadeOutMs } : {}),
+    ...(o.reverse ? { reverse: true } : {}), ...(o.fx ? { fx: o.fx } : {}), ...(o.crop ? { crop: o.crop } : {}), ...(o.filters ? { filters: o.filters } : {}),
   }
   return { composition: { ...comp, overlays: [...(comp.overlays ?? []), clip] }, id }
+}
+
+/** Default free mask of a masked copy: the lower 40 % of the frame (where water, floors or skies usually sit), with a soft edge. */
+export const DEFAULT_MASK_POINTS: Array<[number, number]> = [[0, 0.6], [1, 0.6], [1, 1], [0, 1]]
+
+/**
+ * «Cambiar una zona con máscara»: puts a copy of a main clip on a new overlay track, exactly over it (same file, same stretch, full frame,
+ * muted) and limited to a free mask. Only the masked zone shows the copy; the rest of the frame stays the original. With `reverse` the copy
+ * reads its stretch backwards (e.g. water whose waves go the other way). The copy can then use another picture or video from the inspector.
+ * Returns the new layer's id, or null when the clip has no picture.
+ */
+export function addMaskedCopy(c: Composition, clipId: string, opts: { reverse?: boolean; points?: Array<[number, number]>; feather?: number } = {}): { composition: Composition; id: string } | null {
+  const i = c.clips.findIndex(k => k.id === clipId)
+  const clip = c.clips[i]
+  if (!clip?.visualAssetId) return null
+  const start = clipStarts(c)[i]
+  const { composition: withTrack, trackId } = addTrack(c, 'overlay', 'Máscara')
+  const reverse = opts.reverse ?? !clip.reverse
+  return addOverlay(withTrack, {
+    assetId: clip.visualAssetId, trackId, startMs: start, durationMs: clip.durationMs, trimInMs: clip.trimInMs ?? 0,
+    ...(clip.speed && clip.speed !== 1 ? { speed: clip.speed } : {}), muted: true, ...(reverse ? { reverse: true } : {}),
+    transform: { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1 },
+    ...(clip.crop ? { crop: clip.crop } : {}), ...(clip.filters ? { filters: clip.filters } : {}),
+    fx: { mask: { shape: 'polygon', inset: 0, points: opts.points ?? DEFAULT_MASK_POINTS, feather: opts.feather ?? 0.03 } },
+  })
 }
 export function updateOverlay(c: Composition, id: string, patch: Partial<Omit<OverlayClip, 'id'>>): Composition {
   return {

@@ -92,7 +92,14 @@ export type Grade = { brightness: number; contrast: number; saturation: number; 
 export const BLEND_MODES = ['multiply', 'screen', 'overlay', 'darken', 'lighten', 'soft-light', 'hard-light', 'difference'] as const
 export type BlendMode = (typeof BLEND_MODES)[number]
 export type ChromaKey = { color: string; tolerance: number; softness: number }
-export type MaskShape = { shape: 'ellipse' | 'rounded' | 'rect'; /** Fraction of each side left out (0–0.45). */ inset: number; invert?: boolean }
+export type MaskShapeKind = 'ellipse' | 'rounded' | 'rect' | 'polygon'
+/**
+ * Máscara de una capa. ellipse/rounded/rect = forma centrada con un margen; polygon = forma libre dibujada sobre el visor
+ * (puntos en fracciones de la caja de la capa, 0..1). feather = borde suave, fracción del lado menor de la capa (0–0.15).
+ */
+export type MaskShape = { shape: MaskShapeKind; /** Fraction of each side left out (0–0.45). */ inset: number; invert?: boolean; points?: Array<[number, number]>; feather?: number }
+export const MAX_MASK_POINTS = 64
+export const MAX_MASK_FEATHER = 0.15
 export type LayerFx = { blend?: BlendMode; chroma?: ChromaKey; mask?: MaskShape }
 export function parseFx(v: unknown): LayerFx | null {
   if (!v || typeof v !== 'object') return null
@@ -101,8 +108,27 @@ export function parseFx(v: unknown): LayerFx | null {
   const ch = o.chroma as Record<string, unknown> | undefined
   if (ch && typeof ch.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(ch.color)) out.chroma = { color: ch.color.toLowerCase(), tolerance: Math.min(Math.max(Number(ch.tolerance) || 0.3, 0.02), 1), softness: Math.min(Math.max(Number(ch.softness) || 0.1, 0), 1) }
   const mk = o.mask as Record<string, unknown> | undefined
-  if (mk && (mk.shape === 'ellipse' || mk.shape === 'rounded' || mk.shape === 'rect')) out.mask = { shape: mk.shape, inset: Math.min(Math.max(Number(mk.inset) || 0, 0), 0.45), ...(mk.invert === true ? { invert: true } : {}) }
+  if (mk && (mk.shape === 'ellipse' || mk.shape === 'rounded' || mk.shape === 'rect' || mk.shape === 'polygon')) {
+    const feather = Math.min(Math.max(Number(mk.feather) || 0, 0), MAX_MASK_FEATHER)
+    const points = mk.shape === 'polygon' ? parseMaskPoints(mk.points) : null
+    if (mk.shape !== 'polygon' || points) out.mask = {
+      shape: mk.shape, inset: mk.shape === 'polygon' ? 0 : Math.min(Math.max(Number(mk.inset) || 0, 0), 0.45),
+      ...(points ? { points } : {}), ...(feather > 0 ? { feather: Math.round(feather * 1000) / 1000 } : {}), ...(mk.invert === true ? { invert: true } : {}),
+    }
+  }
   return out.blend || out.chroma || out.mask ? out : null
+}
+/** Puntos de una máscara libre: entre 3 y MAX_MASK_POINTS, cada uno dentro de 0..1. Null si no hay forma válida. */
+export function parseMaskPoints(v: unknown): Array<[number, number]> | null {
+  if (!Array.isArray(v)) return null
+  const pts: Array<[number, number]> = []
+  for (const p of v.slice(0, MAX_MASK_POINTS)) {
+    if (!Array.isArray(p) || p.length < 2) continue
+    const x = Number(p[0]), y = Number(p[1])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    pts.push([Math.round(Math.min(Math.max(x, 0), 1) * 1e4) / 1e4, Math.round(Math.min(Math.max(y, 0), 1) * 1e4) / 1e4])
+  }
+  return pts.length >= 3 ? pts : null
 }
 export type Crop = { left: number; top: number; right: number; bottom: number }
 /** Position of an overlay: centre (fractions of the frame), width as a fraction of the frame width, rotation in degrees, opacity 0..1. */
