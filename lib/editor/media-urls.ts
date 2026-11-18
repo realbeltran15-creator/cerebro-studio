@@ -1,6 +1,7 @@
 'use client'
 import { visualTypes, type EditorAsset } from './client'
 import type { KindOf, MediaKind } from './scene'
+import { isLocalId, resolveLocal } from './local-media'
 
 /**
  * Playable URLs for the editor's player and exporter: short-lived signed URLs of the owner's private files, asked once per asset and
@@ -9,6 +10,8 @@ import type { KindOf, MediaKind } from './scene'
 export function assetUrlResolver(ttlSeconds = 3 * 3600) {
   const cache = new Map<string, { url: string; until: number } | Promise<string>>()
   return async function resolve(assetId: string, refresh = false): Promise<string> {
+    // Files on the owner's own disk (chosen with «Usar una carpeta de mi disco»): read locally, never uploaded.
+    if (isLocalId(assetId)) return resolveLocal(assetId)
     const hit = cache.get(assetId)
     if (!refresh && hit) {
       if (hit instanceof Promise) return hit

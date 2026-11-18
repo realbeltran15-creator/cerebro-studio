@@ -48,6 +48,8 @@ import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
 import { extractProfile } from '@/lib/editor/profile'
 import { addMarker, addMaskedCopy, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
+import { asEditorAssets, localFiles, type LocalFile } from '@/lib/editor/local-media'
+import { LocalLofiPanel } from '@/app/components/local-lofi-panel'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { friendlyDbMessage } from '@/lib/script-integrity'
 import { internalNavTarget, unsavedAtRisk } from '@/lib/editor/nav-guard'
@@ -64,7 +66,11 @@ export default function ManualEditorPage() {
   // «Dibujar máscara»: the layer whose free mask is being drawn on the viewer (replaces the viewer handles while open).
   const [maskDraw, setMaskDraw] = useState<ItemRef | null>(null)
   const [history, setHistory] = useState<History | null>(null)
-  const [assets, setAssets] = useState<EditorAsset[]>([])
+  const [remoteAssets, setAssets] = useState<EditorAsset[]>([])
+  // Files from the owner's own disk (external drive), used without uploading them: shown as ordinary materials.
+  const [localList, setLocalList] = useState<LocalFile[]>([])
+  useEffect(() => { void localFiles().then(setLocalList) }, [])
+  const assets = useMemo(() => { const loc = asEditorAssets(localList); return [...remoteAssets, ...loc.filter(l => !remoteAssets.some(r => r.id === l.id))] }, [remoteAssets, localList])
   // Several items can be selected (Mayús/Ctrl + clic); the last one is the one the inspector shows.
   const [sel, setSelState] = useState<ItemRef[]>([])
   // Selecting items clears the selected transition (the selection setter is declared once here, the transition one just below).
@@ -1087,6 +1093,7 @@ export default function ManualEditorPage() {
         </ul>
         <label className="pill small"><input type="checkbox" checked={allProjects} onChange={e => setAllProjects(e.target.checked)} /> Ver también otros proyectos</label>
         <p className="muted small">Arrastra un material a cualquier pista; se coloca donde lo sueltas. Los materiales de la Biblioteca general y de otros proyectos se usan sin copiar el archivo.</p>
+        {comp && <LocalLofiPanel comp={comp} files={localList} onFiles={setLocalList} apply={apply} onError={setError} onNotice={setNotice} />}
         <details open={assets.length === 0}><summary className="small"><b>Importar o añadir</b></summary>
           <section style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             {job && <ImportCenter supabase={supabase} projectId={job.project_id} section={matTab} audioKind={importAudioKind} maxBytes={importMax} onImported={items => void centerImported(items)} onError={setError} />}

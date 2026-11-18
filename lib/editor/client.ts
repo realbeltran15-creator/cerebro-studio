@@ -3,6 +3,7 @@ import { incompleteRenderNotice, type Composition } from './composition'
 import type { MediaSource } from './renderer'
 import { containerOf } from './container'
 import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
+import { isLocalId, resolveLocal } from './local-media'
 
 export type EditorAsset = {
   id: string
@@ -33,6 +34,7 @@ export function sceneFirst<T extends EditorAsset>(list: T[], sceneId: string): A
 }
 
 export async function signedUrl(assetId: string) {
+  if (isLocalId(assetId)) return resolveLocal(assetId)
   const r = await fetch(`/api/assets/${assetId}/signed-url`, { cache: 'no-store' })
   const json = await r.json().catch(() => ({})) as { url?: string; error?: string }
   if (!r.ok || !json.url) throw new Error(json.error ?? 'No se pudo acceder a un recurso.')
