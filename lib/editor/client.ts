@@ -3,7 +3,7 @@ import { incompleteRenderNotice, type Composition } from './composition'
 import type { MediaSource } from './renderer'
 import { containerOf } from './container'
 import { removeFromCloud, uploadToCloud } from '@/lib/storage/client'
-import { isLocalId, resolveLocal } from './local-media'
+import { isLocalId, localDurationMs, resolveLocal } from './local-media'
 
 export type EditorAsset = {
   id: string
@@ -140,6 +140,8 @@ export async function saveRender(supabase: SupabaseClient, input: {
 
 /** Measures an audio asset's real duration by decoding it. */
 export async function audioDurationMs(assetId: string) {
+  // Files on the owner's disk: their length was measured when the folder was chosen (works for videos without sound too).
+  if (isLocalId(assetId)) { const ms = await localDurationMs(assetId); if (ms) return ms }
   const response = await fetch(await signedUrl(assetId))
   const ctx = new AudioContext()
   try {

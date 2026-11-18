@@ -159,6 +159,15 @@ export async function localAccessNeeded(): Promise<boolean> {
   return false
 }
 
+/** Length (ms) measured when the folder was chosen, or null. */
+export async function localDurationMs(id: string): Promise<number | null> {
+  try {
+    const d = await db()
+    const rec = await new Promise<LocalFile | undefined>((ok, bad) => { const q = d.transaction('files').objectStore('files').get(id); q.onsuccess = () => ok(q.result as LocalFile | undefined); q.onerror = () => bad(q.error) })
+    return rec?.durationMs ?? null
+  } catch { return null }
+}
+
 const urls = new Map<string, string>()
 /** A playable blob: URL for a local file (kept for the page's life; the file is read from disk, not copied). */
 export async function resolveLocal(id: string): Promise<string> {

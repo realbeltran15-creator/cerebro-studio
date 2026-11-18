@@ -64,7 +64,9 @@ export function LocalLofiPanel({ comp, files, onFiles, apply, onError, onNotice 
   function build() {
     onError('')
     try {
-      const r = buildLofiMontage(comp, { songs: songs.map(f => ({ assetId: f.id, durationMs: f.durationMs ?? 0 })), crossfadeMs: xfSec * 1000, transitionMs: trSec * 1000, wholeClips })
+      // Clips from the disk: their real length is known from the folder (the editor may not know it).
+      const known = { ...comp, clips: comp.clips.map(k => { const f = files.find(x => x.id === k.visualAssetId); return f?.durationMs && !k.sourceDurationMs ? { ...k, sourceDurationMs: f.durationMs } : k }) }
+      const r = buildLofiMontage(known, { songs: songs.map(f => ({ assetId: f.id, durationMs: f.durationMs ?? 0 })), crossfadeMs: xfSec * 1000, transitionMs: trSec * 1000, wholeClips })
       apply(() => r.composition)
       onNotice(`Listo: ${songs.length} canciones en fila con fundidos de ${xfSec} s y el vídeo repetido en ${r.clips} clips con transición de ${trSec} s. Duración total ${fmt(r.totalMs)}.${r.warnings.length ? ' ' + r.warnings.join(' ') : ''}`)
     } catch (e) { onError(e instanceof Error ? e.message : 'No se pudo preparar el montaje.') }
