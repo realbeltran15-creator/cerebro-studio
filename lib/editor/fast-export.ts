@@ -173,7 +173,22 @@ export async function fastExport(opts: {
   }
   const closeReader = (slot: string) => { const r = readers.get(slot); if (r) { void r.it.return(undefined); readers.delete(slot) } }
   const trimOf = (op: VisualOp) => (op.slot.startsWith('ov:') ? (c.overlays ?? []).find(o => `ov:${o.id}` === op.slot)?.trimInMs ?? 0 : c.clips.find(k => k.id === op.slot)?.trimInMs ?? 0) / 1000
+  // The browser's video decoder fails now and then on a perfectly good file («Decoding error», seen with WebCodecs at the very first
+  // frame and mid-way). One bad moment must not throw away an hour of render: the reader (and, the second time, the opened file) is
+  // started again from the same instant, a few times, before giving up.
   async function videoFrame(op: VisualOp, frameNo: number): Promise<DrawSource | null> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await videoFrameOnce(op, frameNo) } catch (e) {
+        const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e)
+        if (attempt >= 4 || e instanceof FastExportUnsupported || !/decod|EncodingError|OperationError|closed codec/i.test(msg)) throw e
+        console.warn(`[export] fallo del decodificador de vídeo (intento ${attempt + 1}), se reintenta`, e)
+        closeReader(op.slot); closeRev(op.slot)
+        if (attempt >= 1) opened.delete(op.assetId)
+        await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
+      }
+    }
+  }
+  async function videoFrameOnce(op: VisualOp, frameNo: number): Promise<DrawSource | null> {
     if (op.reverse) return reverseFrame(op, frameNo)
     const o = await open(op.assetId)
     let ts = op.sourceMs / 1000
