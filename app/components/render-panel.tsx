@@ -89,6 +89,9 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
   const [driveFile, setDriveFile] = useState<{ name: string; link: string; sizeMb: number } | null>(null)
   const [measured, setMeasured] = useState<string>('')
   const [selfTest, setSelfTest] = useState<{ busy: boolean; text: string }>({ busy: false, text: '' })
+  // The 20 s test, kept in memory to watch it here (never saved anywhere).
+  const [testVideo, setTestVideo] = useState<string | null>(null)
+  useEffect(() => () => { if (testVideo) URL.revokeObjectURL(testVideo) }, [testVideo])
   const [pendingDrive, setPendingDrive] = useState<{ temp: string; name: string; mime: string; folderId: string; folderName: string } | null>(null)
   const [driveBusy, setDriveBusy] = useState(false)
   // Container the file will have, known BEFORE the render so the «save as» dialog can propose the right extension (it needs a click, so it cannot wait).
@@ -186,12 +189,15 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
     let stageNow: ExportStage = 'preparar'
     try {
       const head = headOfComposition(composition, 20_000)
-      const sinkProbe = checkingSink()
+      const sinkProbe = checkingSink(true)
+      setTestVideo(null)
       const fragmented = (where === 'drive' && driveMode === 'direct' && ext === 'mp4') || (where === 'dropbox' && ext === 'mp4')
       const r = await fastExport({ composition: head, canvas: canvasRef.current!, resolveUrl: assetUrlResolver(), kindOf: kindFromAssets(assets), sink: sinkProbe.stream as never, fragmented, fps: plan.fps, onStage: st => { stageNow = st } })
       const st = sinkProbe.stats()
       const secs = Math.round((performance.now() - t0) / 100) / 10
       const ok = st.bytes > 0 && (!fragmented || st.sequential)
+      const watch = ok ? sinkProbe.file(r.encoded.container === 'mp4' ? 'video/mp4' : 'video/webm') : null
+      if (watch) setTestVideo(URL.createObjectURL(watch))
       console.info(`[export ${id}] prueba de 20 s`, { ok, ...r.encoded, bytes: st.bytes, writes: st.writes, sequential: st.sequential, secs })
       setSelfTest({ busy: false, text: ok
         ? `Prueba superada en ${secs} s: ${r.encoded.width}×${r.encoded.height} · ${r.encoded.fps} fps · ${r.encoded.videoCodec === 'avc' ? 'H.264' : r.encoded.videoCodec.toUpperCase()} + ${r.encoded.audioCodec.toUpperCase()} · ${r.encoded.container.toUpperCase()}${r.encoded.fragmented ? ' fragmentado' : ''} · ${Math.round(st.bytes / 1048576 * 10) / 10} MB escritos en ${st.writes} bloque(s)${fragmented ? ', todos en orden (se puede enviar a Drive mientras se renderiza)' : ''}. (id ${id})`
@@ -544,6 +550,7 @@ export function RenderPanel({ projectId, composition: given, assets, beforeRende
         {!previewOnly && <button type="button" disabled={blocking || composition.clips.length === 0 || !recordingSupported() || advice.level === 'block' || (plan.destination === 'library' && !plan.fitsLibrary) || ((where === 'folder' || where === 'drive') && !dest)} title={(where === 'folder' || where === 'drive') && !dest ? 'Elige primero el destino' : undefined} onClick={() => void run(true)}><Icon name="video" size={16} />{where === 'download' ? 'Renderizar y descargar' : where === 'folder' ? 'Renderizar y guardar en el destino' : where === 'drive' ? (directDrive ? 'Renderizar y enviar a Drive' : 'Renderizar y subir a Drive') : 'Renderizar y guardar'}</button>}
       </> : <button type="button" className="ghost" onClick={() => { if (mode !== 'render' || window.confirm('¿Cancelar el render? No se guardará el vídeo.')) abortRef.current?.abort() }} disabled={mode === 'saving'}>{mode === 'render' ? 'Cancelar render' : 'Detener vista previa'}</button>}
       {selfTest.text && <p className={`small ${/falló|no es válido/.test(selfTest.text) ? 'warnBox' : 'notice'}`} role="status" aria-label="Resultado de la prueba de 20 segundos">{selfTest.text}</p>}
+          {testVideo && !selfTest.busy && <video src={testVideo} controls playsInline aria-label="Vídeo de la prueba de 20 segundos" style={{ width: '100%', borderRadius: 8, background: '#000' }} />}
       {pendingDrive && mode === 'idle' && <><button type="button" onClick={() => void retryDrive()} disabled={driveBusy}>Reintentar subida a Drive</button><button type="button" className="ghost" onClick={() => void (async () => { await removeExportTemp(pendingDrive.temp); setPendingDrive(null); setStatus('Temporal borrado. El vídeo no se subió.') })()}>Descartar el temporal</button></>}
       {phoneFile && mode === 'idle' && <button type="button" className="primary" onClick={() => void shareToPhone()}>Guardar en el iPhone</button>}
       {download && <a className="buttonLink ghost" href={download.url} download={download.name}>Descargar {/\.mp4$/i.test(download.name) ? 'MP4' : 'WebM'}</a>}

@@ -22,14 +22,23 @@ export function headOfComposition(c: Composition, ms: number): Composition {
 export type SelfTestStats = { bytes: number; writes: number; sequential: boolean; firstBadAt: number | null }
 
 /** A destination that stores nothing and checks the order of what is written (append-only: each chunk starts where the last ended). */
-export function checkingSink(): { stream: WritableStream<{ type: 'write'; data: Uint8Array; position: number }>; stats: () => SelfTestStats } {
+export function checkingSink(keep = false): { stream: WritableStream<{ type: 'write'; data: Uint8Array; position: number }>; stats: () => SelfTestStats; file: (type: string) => Blob | null } {
   const st: SelfTestStats = { bytes: 0, writes: 0, sequential: true, firstBadAt: null }
+  // Only for the 20 s test (a few MB, in memory, never saved): the chunks with their positions, to watch the result.
+  const parts: Array<{ data: Uint8Array; position: number }> = []
+  const file = (type: string) => {
+    if (!keep || !parts.length) return null
+    const out = new Uint8Array(st.bytes)
+    for (const p of parts) out.set(p.data, p.position)
+    return new Blob([out], { type })
+  }
   const stream = new WritableStream<{ type: 'write'; data: Uint8Array; position: number }>({
     write(chunk) {
+      if (keep) parts.push({ data: chunk.data.slice(), position: chunk.position })
       st.writes++
       if (chunk.position !== st.bytes && st.firstBadAt === null) { st.sequential = false; st.firstBadAt = chunk.position }
       st.bytes = Math.max(st.bytes, chunk.position + chunk.data.byteLength)
     },
   })
-  return { stream, stats: () => ({ ...st }) }
+  return { stream, stats: () => ({ ...st }), file }
 }
