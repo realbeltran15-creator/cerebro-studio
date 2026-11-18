@@ -22,8 +22,12 @@ export type LocalFile = {
   lastModified: number
   durationMs: number | null
   addedAt: string
-  handle: FileSystemFileHandle
+  /** Absent when the folder was chosen with the plain file input (browsers without folder handles): then the file is only
+   *  readable while the page stays open, and the folder has to be chosen again after a reload. */
+  handle?: FileSystemFileHandle
 }
+/** Files chosen with the plain file input, kept in memory for this page only (never copied to browser storage). */
+const memFiles = new Map<string, File>()
 type FolderRec = { name: string; handle: FileSystemDirectoryHandle; addedAt: string }
 
 const DB = 'cerebro-local-media'
@@ -99,6 +103,32 @@ export async function pickLocalFolder(onProgress?: (done: number, total: number)
   return { folder: dir.name, files }
 }
 
+/**
+ * Alternative for browsers where the folder dialog does not work (e.g. embedded browsers): the files of a folder chosen with
+ * `<input type="file" webkitdirectory>`. They are read from disk while the page is open; nothing is uploaded or copied.
+ */
+export async function registerPickedFiles(list: File[], onProgress?: (done: number, total: number) => void): Promise<{ folder: string; files: LocalFile[] }> {
+  const media = list.filter(f => kindOfName(f.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+  if (!media.length) throw new Error('En esa carpeta no hay canciones, vídeos ni imágenes.')
+  const rel = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || ''
+  const folder = rel(media[0]).split('/').slice(-2, -1)[0] || 'Carpeta'
+  const known = new Map((await all<LocalFile>('files').catch(() => [] as LocalFile[])).map(f => [f.id, f]))
+  const files: LocalFile[] = []
+  let n = 0
+  for (const f of media) {
+    const kind = kindOfName(f.name)!
+    const id = await idOf(folder, f.name, f.size)
+    const prev = known.get(id)
+    memFiles.set(id, f)
+    const durationMs = prev?.durationMs ?? await mediaDurationMs(f, kind)
+    // Keep a handle saved earlier (from the folder dialog) if there was one.
+    files.push({ id, name: f.name, folder, kind, size: f.size, lastModified: f.lastModified, durationMs, addedAt: prev?.addedAt ?? new Date().toISOString(), ...(prev?.handle ? { handle: prev.handle } : {}) })
+    onProgress?.(++n, media.length)
+  }
+  await putAll('files', files)
+  return { folder, files }
+}
+
 export async function localFiles(): Promise<LocalFile[]> {
   if (typeof indexedDB === 'undefined') return []
   try { return (await all<LocalFile>('files')).sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name, undefined, { numeric: true })) } catch { return [] }
@@ -134,9 +164,12 @@ const urls = new Map<string, string>()
 export async function resolveLocal(id: string): Promise<string> {
   const hit = urls.get(id)
   if (hit) return hit
+  const mem = memFiles.get(id)
+  if (mem) { const u = URL.createObjectURL(mem); urls.set(id, u); return u }
   const d = await db()
   const rec = await new Promise<LocalFile | undefined>((ok, bad) => { const q = d.transaction('files').objectStore('files').get(id); q.onsuccess = () => ok(q.result as LocalFile | undefined); q.onerror = () => bad(q.error) })
   if (!rec) throw new Error('Este archivo del disco no está registrado en este navegador. Vuelve a elegir su carpeta.')
+  if (!rec.handle) throw new Error(`«${rec.name}» se eligió solo para esa sesión. Vuelve a elegir su carpeta («${rec.folder}») en Materiales de mi disco.`)
   let file: File
   try { file = await rec.handle.getFile() } catch {
     throw new Error(`No hay permiso para leer «${rec.name}» del disco. Pulsa «Dar acceso a mis carpetas del disco» o comprueba que el disco está conectado.`)
