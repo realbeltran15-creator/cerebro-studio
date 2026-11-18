@@ -13,15 +13,25 @@ const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${(seq++)
  * Deterministic and free (no AI). The video's own sound is left as it was (muted or not) — the music is added on its own track.
  */
 export type LofiSong = { assetId: string; durationMs: number }
-export type LofiOptions = { songs: LofiSong[]; crossfadeMs?: number; transitionMs?: number; volume?: number; fadeEdgesMs?: number }
-export const LOFI_DEFAULTS = { crossfadeMs: 5000, transitionMs: 3000, volume: 1, fadeEdgesMs: 3000 }
+export type LofiOptions = {
+  songs: LofiSong[]; crossfadeMs?: number; transitionMs?: number; volume?: number; fadeEdgesMs?: number
+  /** «Bucle perfecto»: every clip plays its whole file, from the first frame to the last, so each cut joins the end of the file with its
+   *  start (the loop seam of a first/last-frame video). The pattern is then each different file once, in timeline order. */
+  wholeClips?: boolean
+}
+// 1.65 s: the transition the owner chose by eye for his lo-fi loops (18-11-2026).
+export const LOFI_DEFAULTS = { crossfadeMs: 5000, transitionMs: 1650, volume: 1, fadeEdgesMs: 3000 }
 
 export function buildLofiMontage(c: Composition, o: LofiOptions): { composition: Composition; totalMs: number; clips: number; warnings: string[] } {
   const warnings: string[] = []
   const songs = o.songs.filter(s => s.durationMs > 1000)
   if (!songs.length) throw new Error('No hay canciones con duración conocida.')
   if (songs.length < o.songs.length) warnings.push(`${o.songs.length - songs.length} canción(es) sin duración conocida se han saltado.`)
-  const pattern = c.clips.filter(k => k.visualAssetId)
+  const visual = c.clips.filter(k => k.visualAssetId)
+  const pattern = o.wholeClips
+    ? visual.filter((k, i) => visual.findIndex(x => x.visualAssetId === k.visualAssetId) === i)
+      .map(k => ({ ...k, trimInMs: 0, durationMs: k.sourceDurationMs && k.sourceDurationMs >= MIN_CLIP_MS ? Math.round(k.sourceDurationMs / (k.speed ?? 1)) : k.durationMs }))
+    : visual
   if (!pattern.length) throw new Error('Pon primero en la línea de tiempo el clip (o los clips) que se repetirán.')
   const xf = Math.max(0, Math.round(o.crossfadeMs ?? LOFI_DEFAULTS.crossfadeMs))
   const tMs = Math.max(0, Math.round(o.transitionMs ?? LOFI_DEFAULTS.transitionMs))

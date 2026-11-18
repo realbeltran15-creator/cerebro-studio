@@ -27,6 +27,7 @@ export function LocalLofiPanel({ comp, files, onFiles, apply, onError, onNotice 
   const [folder, setFolder] = useState('')
   const [xfSec, setXfSec] = useState(LOFI_DEFAULTS.crossfadeMs / 1000)
   const [trSec, setTrSec] = useState(LOFI_DEFAULTS.transitionMs / 1000)
+  const [wholeClips, setWholeClips] = useState(true)
   useEffect(() => { if (!folder && folders.length) setFolder(folders[folders.length - 1]) }, [folders, folder])
   useEffect(() => { void localAccessNeeded().then(setNeedAccess).catch(() => undefined) }, [files])
   const songs = files.filter(f => f.kind === 'music' && f.folder === folder)
@@ -63,7 +64,7 @@ export function LocalLofiPanel({ comp, files, onFiles, apply, onError, onNotice 
   function build() {
     onError('')
     try {
-      const r = buildLofiMontage(comp, { songs: songs.map(f => ({ assetId: f.id, durationMs: f.durationMs ?? 0 })), crossfadeMs: xfSec * 1000, transitionMs: trSec * 1000 })
+      const r = buildLofiMontage(comp, { songs: songs.map(f => ({ assetId: f.id, durationMs: f.durationMs ?? 0 })), crossfadeMs: xfSec * 1000, transitionMs: trSec * 1000, wholeClips })
       apply(() => r.composition)
       onNotice(`Listo: ${songs.length} canciones en fila con fundidos de ${xfSec} s y el vídeo repetido en ${r.clips} clips con transición de ${trSec} s. Duración total ${fmt(r.totalMs)}.${r.warnings.length ? ' ' + r.warnings.join(' ') : ''}`)
     } catch (e) { onError(e instanceof Error ? e.message : 'No se pudo preparar el montaje.') }
@@ -86,8 +87,9 @@ export function LocalLofiPanel({ comp, files, onFiles, apply, onError, onNotice 
       <span className="muted small">{songs.length} canciones · {fmt(musicMs)}</span>
       <div className="field-row">
         <label>Fundido entre canciones (s)<input type="number" min={0} max={15} step={0.5} value={xfSec} onChange={e => setXfSec(Math.max(0, Math.min(15, Number(e.target.value) || 0)))} /></label>
-        <label>Transición entre clips (s)<input type="number" min={0} max={3} step={0.5} value={trSec} onChange={e => setTrSec(Math.max(0, Math.min(3, Number(e.target.value) || 0)))} /></label>
+        <label>Transición entre clips (s)<input type="number" min={0} max={3} step={0.05} value={trSec} onChange={e => setTrSec(Math.max(0, Math.min(3, Number(e.target.value) || 0)))} /></label>
       </div>
+      <label className="pill small"><input type="checkbox" checked={wholeClips} onChange={e => setWholeClips(e.target.checked)} /> Bucle perfecto: cada clip entero, del primer al último fotograma (el corte une el final del vídeo con su inicio)</label>
       <button type="button" disabled={!songs.length || !comp.clips.length} onClick={build}>Montar vídeo completo con esta música</button>
     </>}
   </section>
