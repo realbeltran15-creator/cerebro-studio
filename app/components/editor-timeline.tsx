@@ -66,6 +66,8 @@ export type TimelineProps = {
   onDropFiles: (files: File[]) => void
   onTrackAction: (track: TrackMeta, action: 'up' | 'down' | 'duplicate' | 'delete' | 'rename', value?: string) => void
   onTrackFlag: (track: TrackMeta, flag: 'locked' | 'hidden' | 'muted' | 'solo') => void
+  /** Adds an empty track of that kind (video layer, text, voice, music or effects). */
+  onAddTrack: (type: 'overlay' | 'text' | 'voice' | 'music' | 'sfx') => void
   scrollerRef: React.RefObject<HTMLElement | null>
   playheadRef: React.RefObject<HTMLDivElement | null>
   view: { left: number; width: number }
@@ -79,6 +81,8 @@ export type TimelineProps = {
  * and are trimmed from either edge. Main-track clips are sequential: drag to reorder, drag the right edge to change their length.
  */
 export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps) {
+  // Menú de clic derecho sobre el nombre de una pista.
+  const [trackMenu, setTrackMenu] = useState<{ x: number; y: number; t: TrackMeta } | null>(null)
   const { comp, pxPerSec, trackScale } = p
   const drag = useRef<Drag | null>(null)
   const rangeDrag = useRef<{ startMs: number; left: number } | null>(null)
@@ -386,7 +390,8 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   return <div className="tlGrid" style={{ display: 'grid', gridTemplateColumns: 'var(--tl-head, 190px) minmax(0, 1fr)', gap: 6, alignItems: 'start' }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
     <div className="tlHeads" aria-label="Pistas">
       <div style={{ height: 20 }} />
-      {tracks.map(t => <div key={t.id} className={`tlHead type-${t.type}`} style={{ height: rowH(t), marginTop: 6, overflow: 'hidden', boxSizing: 'border-box' }} role="group" aria-label={`Controles de ${t.name}`}>
+      {tracks.map(t => <div key={t.id} className={`tlHead type-${t.type}`} style={{ height: rowH(t), marginTop: 6, overflow: 'hidden', boxSizing: 'border-box' }} role="group" aria-label={`Controles de ${t.name}`}
+        onContextMenu={e => { e.preventDefault(); setTrackMenu({ x: e.clientX, y: e.clientY, t }) }} title="Clic derecho: añadir, duplicar, mover o eliminar pista">
         <input className="tlName" defaultValue={t.name} key={t.name} aria-label={`Nombre de la pista ${t.name}`} onBlur={e => { if (e.target.value.trim() && e.target.value !== t.name) p.onTrackAction(t, 'rename', e.target.value) }} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
         <div className="tlFlags">
           {flagBtn(t, 'locked', 'Bloquear', '🔒')}
@@ -403,6 +408,27 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           </details>}
         </div>
       </div>)}
+      <div className="tlAddTracks" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+        <button type="button" className="ghost small" onClick={() => p.onAddTrack('overlay')} title="Una pista de vídeo e imágenes nueva, encima de la principal">+ Pista de vídeo</button>
+        <button type="button" className="ghost small" onClick={() => p.onAddTrack('music')} title="Una pista de música nueva">+ Pista de audio</button>
+      </div>
+      {trackMenu && <>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setTrackMenu(null)} onContextMenu={e => { e.preventDefault(); setTrackMenu(null) }} />
+        <div role="menu" aria-label={`Opciones de la pista ${trackMenu.t.name}`} className="tlCtxMenu"
+          style={{ position: 'fixed', left: Math.min(trackMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 230), top: Math.min(trackMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 800) - 330), zIndex: 1000, minWidth: 210, display: 'flex', flexDirection: 'column', gap: 2, padding: 6, background: 'var(--panel, #1b1b2b)', border: '1px solid var(--line-2, #444)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
+          <b className="small" style={{ padding: '2px 6px' }}>Añadir pista</b>
+          {([['overlay', 'Vídeo / imágenes'], ['music', 'Música'], ['voice', 'Voz'], ['sfx', 'Efectos y ambiente'], ['text', 'Texto']] as const).map(([type, label]) =>
+            <button key={type} type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onAddTrack(type); setTrackMenu(null) }}>+ {label}</button>)}
+          {trackMenu.t.type !== 'main' && <>
+            <hr style={{ width: '100%', border: 0, borderTop: '1px solid var(--line, #333)', margin: '4px 0' }} />
+            <b className="small" style={{ padding: '2px 6px' }}>Esta pista: {trackMenu.t.name}</b>
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onTrackAction(trackMenu.t, 'duplicate'); setTrackMenu(null) }}>Duplicar pista</button>
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onTrackAction(trackMenu.t, 'up'); setTrackMenu(null) }}>Subir</button>
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onTrackAction(trackMenu.t, 'down'); setTrackMenu(null) }}>Bajar</button>
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left', color: '#ff8a80' }} onClick={() => { p.onTrackAction(trackMenu.t, 'delete'); setTrackMenu(null) }}>Eliminar pista</button>
+          </>}
+        </div>
+      </>}
       {p.selection.length > 1 && <div className="muted small" role="status" aria-label="Elementos seleccionados" style={{ marginTop: 6 }}>{p.selection.length} elementos seleccionados</div>}
       {cues.length > 0 && <div className="tlHead type-text" style={{ height: 24, marginTop: 6, overflow: 'hidden', boxSizing: 'border-box', fontSize: 12, justifyContent: 'center' }} role="group" aria-label="Controles de Subtítulos"><b>Subtítulos</b> <span className="muted">(se editan abajo)</span></div>}
     </div>

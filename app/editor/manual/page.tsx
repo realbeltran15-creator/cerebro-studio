@@ -46,14 +46,17 @@ import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, 
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
 import { extractProfile } from '@/lib/editor/profile'
-import { addMarker, addMaskedCopy, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
+import { addMarker, addMaskedCopy, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, snapBlock, snapPoints, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { asEditorAssets, localFiles, type LocalFile } from '@/lib/editor/local-media'
 import { LocalLofiPanel } from '@/app/components/local-lofi-panel'
 import type { EditorPlayer } from '@/lib/editor/player'
 import { friendlyDbMessage } from '@/lib/script-integrity'
 import { internalNavTarget, unsavedAtRisk } from '@/lib/editor/nav-guard'
-import { mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
+import { fetchAllPages } from '@/lib/fetch-all'
+import { deletionCheck } from '@/lib/library'
+import { compositionAssetIds } from '@/lib/editor/client'
+import { deleteAsset, mediaDuration, uploadProjectMedia, validateUpload, type LicenseStatus, type UploadKind } from '@/lib/media-upload'
 
 type Job = { id: string; project_id: string; status: string; updated_at: string; composition: unknown }
 
@@ -749,13 +752,23 @@ export default function ManualEditorPage() {
       const starts = clipStarts(c)
       const index = c.clips.findIndex((k, i) => starts[i] + k.durationMs / 2 > atMs)
       const ms = a.asset_type === 'video' ? await audioDurationMs(id).catch(() => 5000) || 5000 : 5000
-      apply(x => (a.asset_type === 'video' ? addVideo(x, id, ms, index < 0 ? x.clips.length : index) : addClip(x, id, ms, index < 0 ? x.clips.length : index)))
+      // Soltado lejos del final: se deja un hueco (clip vacío negro). Cerca del final se pega solo (imán de 1,5 s).
+      const total = c.clips.reduce((s, k) => s + k.durationMs, 0)
+      const gap = index < 0 && atMs - total > 1500 ? Math.round(atMs - total) : 0
+      apply(x => {
+        const at = index < 0 ? x.clips.length : index
+        const base = gap ? addClip(x, null, gap, x.clips.length) : x
+        const to = gap ? base.clips.length : at
+        return a.asset_type === 'video' ? addVideo(base, id, ms, to) : addClip(base, id, ms, to)
+      })
+      if (gap) setNotice(`Dejé un hueco de ${(gap / 1000).toFixed(1)} s antes del clip. Si lo quieres pegado, suéltalo más cerca del final.`)
       return
     }
     if (track.type === 'overlay') {
       if (!isVisual) { setError('A una pista de superposición van vídeos e imágenes.'); return }
       const ms = a.asset_type === 'video' ? await audioDurationMs(id).catch(() => 5000) || 5000 : 5000
-      const r = addOverlay(history.present, { assetId: id, startMs: atMs, durationMs: ms, trackId: track.id })
+      const startAt = Math.max(0, Math.round(snapBlock(atMs, ms, snapPoints(history.present), 400)))
+      const r = addOverlay(history.present, { assetId: id, startMs: startAt, durationMs: ms, trackId: track.id })
       apply(() => r.composition); setSel([{ kind: 'overlay', id: r.id }])
       return
     }
@@ -764,6 +777,41 @@ export default function ManualEditorPage() {
     const ms = await audioDurationMs(id).catch(() => 5000) || 5000
     const kind = track.type as AudioClip['kind']
     apply(x => addAudioClip(x, { assetId: id, kind, linkedClipId: null, offsetMs: 0, startMs: atMs, trimInMs: 0, durationMs: ms, volume: kind === 'music' ? 0.3 : 1, muted: false, ...(track.id !== kind ? { trackId: track.id } : {}) }))
+  }
+  // Clic derecho sobre un material: borrado seguro que libera espacio en la nube.
+  const [matMenu, setMatMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  // Material arrastrado al visor: se ve ahí sin añadirlo a la línea de tiempo.
+  const [viewerPreview, setViewerPreview] = useState<{ id: string; url: string; video: boolean } | null>(null)
+  async function previewInViewer(id: string) {
+    const a = assets.find(x => x.id === id)
+    if (!a || !visualTypes.includes(a.asset_type)) { setError('Solo se pueden previsualizar vídeos e imágenes en el visor.'); return }
+    try {
+      const url = await resolveUrl(id)
+      if (!url) throw new Error('sin enlace')
+      setViewerPreview({ id, url, video: a.asset_type === 'video' })
+    } catch { setError('No se pudo cargar la vista previa de ese material.') }
+  }
+  async function deleteMaterial(id: string) {
+    const a = assets.find(x => x.id === id)
+    if (!a) return
+    setError(''); setNotice('')
+    if (!a.storage_path) { setError('Ese material es local del ordenador, no ocupa espacio en la nube.'); return }
+    try {
+      if (history && compositionAssetIds(history.present).includes(id)) { setError(`«${assetLabel(a)}» está en la línea de tiempo. Quítalo de ahí primero.`); return }
+      const [pubs, jobs] = await Promise.all([
+        fetchAllPages<{ id: string; platform: string; status: string; payload: Record<string, unknown> | null }>((f, t) => supabase.from('publication_jobs').select('id,platform,status,payload').order('id').range(f, t)),
+        fetchAllPages<{ id: string; project_id: string; composition: unknown }>((f, t) => supabase.from('render_jobs').select('id,project_id,composition').not('composition', 'is', null).order('id').range(f, t)),
+      ])
+      const montages = jobs.flatMap(j => { const c = parseComposition(j.composition); return j.id !== job?.id && c && compositionAssetIds(c).includes(id) ? [{ id: j.id, title: c.title || 'Montaje', project: 'otro montaje' }] : [] })
+      const publications = pubs.filter(j => j.payload?.videoAssetId === id || j.payload?.thumbnailAssetId === id).map(({ id: pid, platform, status }) => ({ id: pid, platform, status }))
+      const check = deletionCheck({ publications, montages, renders: [], derived: [] })
+      if (!check.allowed) { setError(`No se borró «${assetLabel(a)}». ${check.reasons.join(' ')}`); return }
+      if (!window.confirm(`¿Borrar «${assetLabel(a)}» para siempre? Se elimina de la nube y libera espacio. No se puede deshacer.`)) return
+      await deleteAsset(supabase, a)
+      setAssets(list => list.filter(x => x.id !== id))
+      setSelectedAsset(x => (x === id ? null : x))
+      setNotice(`«${assetLabel(a)}» borrado. El espacio de la nube queda libre.`)
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo borrar el material.') }
   }
   function trackAction(t: TrackMeta, action: 'up' | 'down' | 'duplicate' | 'delete' | 'rename', value?: string) {
     if (action === 'rename') { apply(c => updateTrack(c, t.id, { name: value ?? t.name })); return }
@@ -1111,12 +1159,19 @@ export default function ManualEditorPage() {
               <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Música y sonidos</button>
             </div>
         <ul className="materialList" role="listbox" aria-label="Materiales del proyecto">
-          {materials.map(a => <li key={a.id} data-aid={a.id} ref={observeMat} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
+          {materials.map(a => <li key={a.id} data-aid={a.id} ref={observeMat} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onContextMenu={e => { e.preventDefault(); setMatMenu({ x: e.clientX, y: e.clientY, id: a.id }) }} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista o al visor. Clic derecho: borrar" aria-label={`Material ${assetLabel(a)}`}>
             <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{a.asset_type === 'video' && videoUrls[a.id] ? <video src={`${videoUrls[a.id]}#t=0.1`} muted playsInline preload="metadata" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 5, pointerEvents: 'none' }} /> : thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
             <span className="matName">{assetLabel(a)}<small className="muted">{a.asset_type}{a.project_id === null ? ' · Biblioteca general' : ''}</small></span>
           </li>)}
           {!materials.length && <li role="option" aria-selected={false} aria-disabled="true" className="muted small">Nada todavía. Importa archivos abajo.</li>}
         </ul>
+        {matMenu && <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setMatMenu(null)} onContextMenu={e => { e.preventDefault(); setMatMenu(null) }} />
+          <div role="menu" aria-label="Opciones del material" style={{ position: 'fixed', left: Math.min(matMenu.x, window.innerWidth - 220), top: Math.min(matMenu.y, window.innerHeight - 140), zIndex: 1000, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 2, padding: 6, background: 'var(--panel, #1b1b2b)', border: '1px solid var(--line-2, #444)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
+            {visualTypes.includes(assets.find(x => x.id === matMenu.id)?.asset_type ?? '') && <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { const id = matMenu.id; setMatMenu(null); void previewInViewer(id) }}>Ver en el visor</button>}
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left', color: '#ff8a80' }} onClick={() => { const id = matMenu.id; setMatMenu(null); void deleteMaterial(id) }}>Borrar material (libera espacio)</button>
+          </div>
+        </>}
         <label className="pill small"><input type="checkbox" checked={allProjects} onChange={e => setAllProjects(e.target.checked)} /> Ver también otros proyectos</label>
         <p className="muted small">Arrastra un material a cualquier pista; se coloca donde lo sueltas. Los materiales de la Biblioteca general y de otros proyectos se usan sin copiar el archivo.</p>
         {comp && <LocalLofiPanel comp={comp} files={localList} onFiles={setLocalList} apply={apply} onError={setError} onNotice={setNotice} />}
@@ -1204,7 +1259,17 @@ export default function ManualEditorPage() {
         }} />
       </aside>
       {ws.layout.left && <Splitter label="Ancho del panel de herramientas" orientation="vertical" value={ws.layout.leftW} min={200} max={640} onChange={v => ws.set({ leftW: v })} />}
-      <div className="editorViewer edViewer">
+      <div className="editorViewer edViewer" style={{ position: 'relative' }}
+        onDragOver={e => { if (e.dataTransfer.types.includes(ASSET_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+        onDrop={e => { const id = e.dataTransfer.getData(ASSET_MIME); if (id) { e.preventDefault(); void previewInViewer(id) } }}>
+        {viewerPreview && <div role="region" aria-label="Vista previa del material" style={{ position: 'absolute', inset: 0, zIndex: 5, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {viewerPreview.video
+            // eslint-disable-next-line jsx-a11y/media-has-caption
+            ? <video src={viewerPreview.url} controls autoPlay style={{ maxWidth: '100%', maxHeight: '100%' }} />
+            // eslint-disable-next-line @next/next/no-img-element
+            : <img src={viewerPreview.url} alt="Vista previa" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}
+          <button type="button" className="small" style={{ position: 'absolute', top: 8, right: 8 }} onClick={() => setViewerPreview(null)}>Cerrar vista previa</button>
+        </div>}
         <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
           overlay={maskDraw && maskTarget
             ? <MaskDrawer key={`${maskDraw.kind}:${maskDraw.id}`} comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} target={maskDraw} initial={maskTarget.fx?.mask?.shape === 'polygon' ? maskTarget.fx.mask.points ?? null : null} onDone={finishMask} />
@@ -1359,6 +1424,7 @@ export default function ManualEditorPage() {
         begin={beginDrag} live={liveDrag} end={endDrag} apply={apply} onReorderMain={(id, to) => apply(c => moveClip(c, id, to))}
         onDropTransition={(clipId, t) => { { const k = comp.clips.find(x => x.id === clipId); const next = updateClip(comp, clipId, k ? transitionPatch(k, t) : { transition: t }); apply(() => roomFor(clipId, next)) }; setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}
+        onAddTrack={type => apply(c => addTrack(c, type).composition)}
         onTrackAction={trackAction} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
         scrollerRef={scroller} playheadRef={playheadEl} view={view} onScroll={measureView}>
         {selAudio && <AutomationLane key={selAudio.id} a={selAudio} startMs={audioStartMs(comp, selAudio)} pxPerSec={pxPerSec} label={label(selAudio.assetId)}
