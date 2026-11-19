@@ -190,6 +190,20 @@ export default function ManualEditorPage() {
   const [recovery, setRecovery] = useState<LocalDraft | null>(null)
   const [autoSave, setAutoSave] = useState(true)
   const [matTab, setMatTab] = useState<'visual' | 'audio'>('visual')
+  // Materiales que ya se han visto en la lista (se les carga la miniatura al hacer scroll, sin tope de cantidad).
+  const [visibleIds, setVisibleIds] = useState<string[]>([])
+  const [videoUrls, setVideoUrls] = useState<Record<string, string>>({})
+  const matObserver = useRef<IntersectionObserver | null>(null)
+  const observeMat = useCallback((el: HTMLLIElement | null) => {
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    if (!matObserver.current) {
+      matObserver.current = new IntersectionObserver(entries => {
+        const add = entries.filter(e => e.isIntersecting).map(e => (e.target as HTMLElement).dataset.aid).filter((x): x is string => Boolean(x))
+        if (add.length) setVisibleIds(v => { const s = new Set(v); add.forEach(id => s.add(id)); return s.size === v.length ? v : [...s] })
+      }, { rootMargin: '300px' })
+    }
+    matObserver.current.observe(el)
+  }, [])
   // Audio analysis (real waveforms and beats), measured in a background worker and kept per asset.
   const [analyses, setAnalyses] = useState<Record<string, AssetAnalysis | 'loading' | 'error'>>({})
   const requested = useRef(new Set<string>())
@@ -636,21 +650,33 @@ export default function ManualEditorPage() {
   }, [dirty])
 
   // Thumbnails of the images used on the timeline (signed URLs, fetched once per asset).
-  const imageIds = useMemo(() => [...new Set([...(history?.present.clips ?? []).map(c => c.visualAssetId), ...assets.filter(a => a.asset_type !== 'video' && visualTypes.includes(a.asset_type)).slice(0, 60).map(a => a.id)].filter((id): id is string => Boolean(id) && assets.find(a => a.id === id)?.asset_type !== 'video'))].sort().join(','), [history, assets])
+  const imageIds = useMemo(() => [...new Set([...(history?.present.clips ?? []).map(c => c.visualAssetId), ...visibleIds].filter((id): id is string => Boolean(id) && assets.find(a => a.id === id)?.asset_type !== 'video'))].sort().join(','), [history, assets, visibleIds])
   const thumbsTried = useRef<Set<string>>(new Set())
   useEffect(() => {
     // Cada id se pide UNA vez: si el archivo ya no existe (404) no se reintenta en bucle con cada respuesta.
     const missing = imageIds ? imageIds.split(',').filter(id => !thumbs[id] && !thumbsTried.current.has(id)) : []
     if (!missing.length) return
     missing.forEach(id => thumbsTried.current.add(id))
-    let alive = true
+    // Sin guarda "alive": al hacer scroll cambian los ids y la respuesta de una petición ya enviada no debe perderse.
     void Promise.all(missing.map(async id => {
       const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' })
       const j = await r.json().catch(() => ({})) as { url?: string }
       return [id, j.url ?? ''] as const
-    })).then(pairs => { const found = pairs.filter(([, u]) => u); if (alive && found.length) setThumbs(t => ({ ...t, ...Object.fromEntries(found) })) })
-    return () => { alive = false }
+    })).then(pairs => { const found = pairs.filter(([, u]) => u); if (found.length) setThumbs(t => ({ ...t, ...Object.fromEntries(found) })) })
   }, [imageIds, thumbs])
+
+  // Primer fotograma de los vídeos de la lista de Materiales (solo los que se han visto).
+  const videosTried = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const missing = visibleIds.filter(id => assets.find(a => a.id === id)?.asset_type === 'video' && !videosTried.current.has(id))
+    if (!missing.length) return
+    missing.forEach(id => videosTried.current.add(id))
+    void Promise.all(missing.map(async id => {
+      const r = await fetch(`/api/assets/${id}/signed-url`, { cache: 'no-store' })
+      const j = await r.json().catch(() => ({})) as { url?: string }
+      return [id, j.url ?? ''] as const
+    })).then(pairs => { const found = pairs.filter(([, u]) => u); if (found.length) setVideoUrls(t => ({ ...t, ...Object.fromEntries(found) })) })
+  }, [visibleIds, assets])
 
   /** Uploads files from the computer to the project's Library and puts them on the timeline (videos and images at the end, audio on its own track). */
   async function importFiles(files: File[]) {
@@ -1085,8 +1111,8 @@ export default function ManualEditorPage() {
               <button type="button" role="tab" aria-selected={matTab === 'audio'} className={matTab === 'audio' ? 'small' : 'ghost small'} onClick={() => setMatTab('audio')}>Música y sonidos</button>
             </div>
         <ul className="materialList" role="listbox" aria-label="Materiales del proyecto">
-          {materials.map(a => <li key={a.id} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
-            <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
+          {materials.map(a => <li key={a.id} data-aid={a.id} ref={observeMat} role="option" draggable aria-selected={selectedAsset === a.id} className={selectedAsset === a.id ? 'selected' : undefined} onClick={() => setSelectedAsset(x => (x === a.id ? null : a.id))} onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, a.id); e.dataTransfer.effectAllowed = 'copy' }} title="Arrástralo a una pista" aria-label={`Material ${assetLabel(a)}`}>
+            <span className="matThumb" style={{ background: thumbs[a.id] ? `url(${thumbs[a.id]}) center / cover` : kindColor[a.asset_type] ?? '#555' }} aria-hidden="true">{a.asset_type === 'video' && videoUrls[a.id] ? <video src={`${videoUrls[a.id]}#t=0.1`} muted playsInline preload="metadata" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 5, pointerEvents: 'none' }} /> : thumbs[a.id] ? '' : a.asset_type === 'video' ? '▶' : a.asset_type === 'image' ? '' : '♪'}</span>
             <span className="matName">{assetLabel(a)}<small className="muted">{a.asset_type}{a.project_id === null ? ' · Biblioteca general' : ''}</small></span>
           </li>)}
           {!materials.length && <li role="option" aria-selected={false} aria-disabled="true" className="muted small">Nada todavía. Importa archivos abajo.</li>}
