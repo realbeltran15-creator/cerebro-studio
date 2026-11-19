@@ -767,7 +767,11 @@ export default function ManualEditorPage() {
     if (track.type === 'overlay') {
       if (!isVisual) { setError('A una pista de superposición van vídeos e imágenes.'); return }
       const ms = a.asset_type === 'video' ? await audioDurationMs(id).catch(() => 5000) || 5000 : 5000
-      const startAt = Math.max(0, Math.round(snapBlock(atMs, ms, snapPoints(history.present), 400)))
+      // Como en la pista principal: se pega al borde de los clips de esa misma pista (imán de 1,5 s); si no, a cualquier borde cercano (0,4 s).
+      const mine = (history.present.overlays ?? []).filter(o => o.trackId === track.id)
+      const own = mine.flatMap(o => [o.startMs, o.startMs + o.durationMs])
+      const nearOwn = snapBlock(atMs, ms, own, 1500)
+      const startAt = Math.max(0, Math.round(own.length && nearOwn !== atMs ? nearOwn : snapBlock(atMs, ms, snapPoints(history.present), 400)))
       const r = addOverlay(history.present, { assetId: id, startMs: startAt, durationMs: ms, trackId: track.id })
       apply(() => r.composition); setSel([{ kind: 'overlay', id: r.id }])
       return
