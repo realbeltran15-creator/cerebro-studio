@@ -33,13 +33,15 @@ const isTyping = (el: EventTarget | null) => {
  * The editor's viewer: a real player over the same timeline that is being edited. Play, pause, stop, jump anywhere,
  * frame by frame, loop a fragment, speed, volume, full screen and keyboard shortcuts. Changes to the montage show at once.
  */
-export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime, onPlayer, overlay, children }: {
+export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime, onPlay, onPlayer, overlay, children }: {
   composition: Composition
   kindOf: KindOf
   resolveUrl: (assetId: string, refresh?: boolean) => Promise<string>
   /** Fragment marked on the timeline (for «repetir fragmento»). */
   loop: LoopRange | null
   onTime?: (ms: number, playing: boolean) => void
+  /** Called when playback starts (the viewer uses it to drop a material preview). */
+  onPlay?: () => void
   onPlayer?: (p: EditorPlayer | null) => void
   /** Drawn over the picture (handles to move and resize layers). */
   overlay?: ReactNode
@@ -57,6 +59,9 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
   const scrubbing = useRef(false)
   const onTimeRef = useRef(onTime)
   useEffect(() => { onTimeRef.current = onTime }, [onTime])
+  const onPlayRef = useRef(onPlay)
+  useEffect(() => { onPlayRef.current = onPlay }, [onPlay])
+  const wasPlaying = useRef(false)
   const kindRef = useRef(kindOf)
   const urlRef = useRef(resolveUrl)
   useEffect(() => { kindRef.current = kindOf; urlRef.current = resolveUrl }, [kindOf, resolveUrl])
@@ -73,7 +78,7 @@ export function EditorPlayerView({ composition, kindOf, resolveUrl, loop, onTime
       canvas: canvas.current,
       resolveUrl: (id, refresh) => urlRef.current(id, refresh),
       kindOf: id => kindRef.current(id),
-      onState: s => setSt(s),
+      onState: s => { setSt(s); if (s.playing && !wasPlaying.current) onPlayRef.current?.(); wasPlaying.current = s.playing },
       onError: m => setError(m),
       onTime: ms => {
         const now = performance.now()

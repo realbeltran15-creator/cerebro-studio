@@ -1286,7 +1286,7 @@ export default function ManualEditorPage() {
           </div>
           <button type="button" className="small" style={{ position: 'absolute', top: 8, right: 8 }} onClick={() => setViewerPreview(null)}>Cerrar vista previa</button>
         </div>}
-        <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
+        <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlay={() => clearPreviewRef.current()} onPlayer={p => { playerRef.current = p }}
           overlay={maskDraw && maskTarget
             ? <MaskDrawer key={`${maskDraw.kind}:${maskDraw.id}`} comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} target={maskDraw} initial={maskTarget.fx?.mask?.shape === 'polygon' ? maskTarget.fx.mask.points ?? null : null} onDone={finishMask} />
             : <ViewerHandles comp={comp} player={playerRef.current} kindOf={kindOfAsset} playheadMs={playheadMs} selection={selection} onSelect={r => setSelection(r)} begin={beginDrag} live={liveDrag} end={endDrag} />} />
