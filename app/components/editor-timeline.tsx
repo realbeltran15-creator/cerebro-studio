@@ -14,6 +14,7 @@ import { WaveformSvg } from './waveform-view'
 
 export const ASSET_MIME = 'application/x-cerebro-asset'
 export const TRANSITION_MIME = 'application/x-cerebro-transition'
+export const TRACK_MIME = 'application/x-cerebro-track'
 /** Set (with the source clip id) when an existing transition is dragged to another cut: it moves instead of being copied. */
 export const MOVE_TRANSITION_MIME = 'application/x-cerebro-transition-move'
 export const TRANSITION_ICONS: Record<Transition, string> = { fade_white: '○', zoom_out: '⊖', flash: '✦', fade: '◐', dissolve: '◑', slide: '⇢', slide_up: '⇡', wipe: '▶', wipe_down: '▼', zoom: '⊕', blur: '≋', cut: '|' }
@@ -69,6 +70,8 @@ export type TimelineProps = {
   onTrackFlag: (track: TrackMeta, flag: 'locked' | 'hidden' | 'muted' | 'solo') => void
   /** Adds an empty track of that kind (video layer, text, voice, music or effects). */
   onAddTrack: (type: 'overlay' | 'text' | 'voice' | 'music' | 'sfx') => void
+  /** Drag a track onto another: they take each other's place. */
+  onTrackSwap: (fromId: string, toId: string) => void
   scrollerRef: React.RefObject<HTMLElement | null>
   playheadRef: React.RefObject<HTMLDivElement | null>
   view: { left: number; width: number }
@@ -84,6 +87,7 @@ export type TimelineProps = {
 export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps) {
   // Menú de clic derecho sobre el nombre de una pista.
   const [trackMenu, setTrackMenu] = useState<{ x: number; y: number; t: TrackMeta } | null>(null)
+  const [trackOver, setTrackOver] = useState<string | null>(null)
   const { comp, pxPerSec, trackScale } = p
   const drag = useRef<Drag | null>(null)
   const rangeDrag = useRef<{ startMs: number; left: number } | null>(null)
@@ -295,6 +299,8 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
       onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes(ASSET_MIME) || e.dataTransfer.types.includes(TRANSITION_MIME)) e.preventDefault() },
       onDrop: (e: React.DragEvent) => { const id = e.dataTransfer.getData(ASSET_MIME); if (!id) return; e.preventDefault(); e.stopPropagation(); p.onDropAsset(id, t, Math.max(0, toMs(e.clientX - e.currentTarget.getBoundingClientRect().left))) },
       onPointerDown: (e: React.PointerEvent) => { if (e.target === e.currentTarget) startMarquee(e) },
+      // Right click on the empty part of a track opens the same menu as on its header (add, duplicate, move, delete).
+      onContextMenu: (e: React.MouseEvent) => { if (e.target === e.currentTarget) { e.preventDefault(); setTrackMenu({ x: e.clientX, y: e.clientY, t }) } },
     }
     if (t.type === 'main') {
       return <div key={t.id} {...common} aria-label="Pista de vídeo" style={{ display: 'flex', height: h, marginTop: 6, position: 'relative' }}>
@@ -398,8 +404,14 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
   return <div className="tlGrid" style={{ display: 'grid', gridTemplateColumns: 'var(--tl-head, 190px) minmax(0, 1fr)', gap: 6, alignItems: 'start' }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
     <div className="tlHeads" aria-label="Pistas">
       <div style={{ height: 20 }} />
-      {tracks.map(t => <div key={t.id} className={`tlHead type-${t.type}`} style={{ height: rowH(t), marginTop: 6, overflow: 'hidden', boxSizing: 'border-box' }} role="group" aria-label={`Controles de ${t.name}`}
-        onContextMenu={e => { e.preventDefault(); setTrackMenu({ x: e.clientX, y: e.clientY, t }) }} title="Clic derecho: añadir, duplicar, mover o eliminar pista">
+      {tracks.map(t => <div key={t.id} className={`tlHead type-${t.type}`} style={{ height: rowH(t), marginTop: 6, overflow: 'hidden', boxSizing: 'border-box', outline: trackOver === t.id ? '2px dashed #b49cff' : undefined }} role="group" aria-label={`Controles de ${t.name}`}
+        onDragOver={e => { if (e.dataTransfer.types.includes(TRACK_MIME)) { e.preventDefault(); if (trackOver !== t.id) setTrackOver(t.id) } }}
+        onDragLeave={() => setTrackOver(o => (o === t.id ? null : o))}
+        onDrop={e => { const from = e.dataTransfer.getData(TRACK_MIME); setTrackOver(null); if (!from) return; e.preventDefault(); e.stopPropagation(); if (from !== t.id) p.onTrackSwap(from, t.id) }}
+        onContextMenu={e => { e.preventDefault(); setTrackMenu({ x: e.clientX, y: e.clientY, t }) }} title="Clic derecho: añadir, duplicar, mover o eliminar pista. Arrastra el asa ⠿ sobre otra pista para intercambiarlas.">
+        <span draggable aria-label={`Arrastrar la pista ${t.name} para cambiarla de sitio`} title="Arrastra sobre otra pista para intercambiarlas"
+          onDragStart={e => { e.dataTransfer.setData(TRACK_MIME, t.id); e.dataTransfer.effectAllowed = 'move'; const head = e.currentTarget.closest('.tlHead'); if (head) e.dataTransfer.setDragImage(head, 10, 10) }}
+          onDragEnd={() => setTrackOver(null)} style={{ cursor: 'grab', userSelect: 'none', padding: '0 4px', opacity: 0.7 }}>⠿</span>
         <input className="tlName" defaultValue={t.name} key={t.name} aria-label={`Nombre de la pista ${t.name}`} onBlur={e => { if (e.target.value.trim() && e.target.value !== t.name) p.onTrackAction(t, 'rename', e.target.value) }} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
         <div className="tlFlags">
           {flagBtn(t, 'locked', 'Bloquear', '🔒')}
@@ -427,6 +439,12 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
           <b className="small" style={{ padding: '2px 6px' }}>Añadir pista</b>
           {([['overlay', 'Vídeo / imágenes'], ['music', 'Música'], ['voice', 'Voz'], ['sfx', 'Efectos y ambiente'], ['text', 'Texto']] as const).map(([type, label]) =>
             <button key={type} type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onAddTrack(type); setTrackMenu(null) }}>+ {label}</button>)}
+          {trackMenu.t.type === 'main' && <>
+            <hr style={{ width: '100%', border: 0, borderTop: '1px solid var(--line, #333)', margin: '4px 0' }} />
+            <b className="small" style={{ padding: '2px 6px' }}>Esta pista: {trackMenu.t.name}</b>
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onTrackAction(trackMenu.t, 'up'); setTrackMenu(null) }}>Subir</button>
+            <button type="button" role="menuitem" className="ghost small" style={{ textAlign: 'left' }} onClick={() => { p.onTrackAction(trackMenu.t, 'down'); setTrackMenu(null) }}>Bajar</button>
+          </>}
           {trackMenu.t.type !== 'main' && <>
             <hr style={{ width: '100%', border: 0, borderTop: '1px solid var(--line, #333)', margin: '4px 0' }} />
             <b className="small" style={{ padding: '2px 6px' }}>Esta pista: {trackMenu.t.name}</b>

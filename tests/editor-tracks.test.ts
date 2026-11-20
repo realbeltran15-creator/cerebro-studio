@@ -34,8 +34,8 @@ describe('tracks', () => {
     const ids = tracksOf(c).map(t => t.id)
     c = moveTrack(c, ids[0], 1)
     expect(tracksOf(c).map(t => t.id).slice(0, 2)).toEqual([ids[1], ids[0]])
-    // Overlays never go below the main track.
-    expect(moveTrack(c, ids[0], 1)).toBe(c)
+    // The main track can trade places too (on screen it is one more row; only the overlays' order among themselves sets their layering).
+    expect(tracksOf(moveTrack(c, ids[0], 1)).map(t => t.id).slice(0, 3)).toEqual([ids[1], 'main', ids[0]])
     // Hidden overlay tracks are not drawn.
     const hid = updateTrack(c, ids[0], { hidden: true })
     expect(frameAt(hid, 1500, kind).filter(o => o.type === 'visual' && (o as VisualOp).slot.startsWith('ov:'))).toHaveLength(1)

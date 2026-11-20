@@ -46,7 +46,7 @@ import { BUILTIN_ANIMATIONS, EMPTY_PRESETS, type AnimationPreset, keysToPreset, 
 import { transformAt as frameValuesAt } from '@/lib/editor/motion'
 import { loadProfiles, saveProfiles } from '@/lib/editor/profiles-store'
 import { extractProfile } from '@/lib/editor/profile'
-import { addMarker, addMaskedCopy, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, snapBlock, snapPoints, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
+import { addMarker, addMaskedCopy, addOverlay, addTrack, copyItems, deleteItems, deleteMarker, deleteTrack, duplicateItems, duplicateTrack, expandGroups, groupItems, itemsInRange, moveTrack, swapTracks, pasteItems, isLocked, setClipKeyframes, splitAt as splitAllAt, ungroupItems, missingAssets, replaceAsset, updateMarker, updateOverlay, updateTrack, snapBlock, snapPoints, type Clipboard, type ItemRef } from '@/lib/editor/tracks'
 import { assetUrlResolver, kindFromAssets } from '@/lib/editor/media-urls'
 import { asEditorAssets, localFiles, type LocalFile } from '@/lib/editor/local-media'
 import { LocalLofiPanel } from '@/app/components/local-lofi-panel'
@@ -1429,7 +1429,7 @@ export default function ManualEditorPage() {
         onDropTransition={(clipId, t) => { { const k = comp.clips.find(x => x.id === clipId); const next = updateClip(comp, clipId, k ? transitionPatch(k, t) : { transition: t }); apply(() => roomFor(clipId, next)) }; setSelection({ kind: 'clip', id: clipId }); ws.reveal({ section: 'clip-transition' }); setNotice(`Transición «${TRANSITIONS[t]}» entre el clip ${comp.clips.findIndex(k => k.id === clipId) + 1} y el siguiente.`) }}
         onDropAsset={(id, t, at) => void dropAsset(id, t, at)} onDropFiles={files => void importFiles(files)}
         onAddTrack={type => apply(c => addTrack(c, type).composition)}
-        onTrackAction={trackAction} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
+        onTrackAction={trackAction} onTrackSwap={(a, b) => apply(c => swapTracks(c, a, b))} onTrackFlag={(t, f) => apply(c => updateTrack(c, t.id, { [f]: !t[f] }))}
         scrollerRef={scroller} playheadRef={playheadEl} view={view} onScroll={measureView}>
         {selAudio && <AutomationLane key={selAudio.id} a={selAudio} startMs={audioStartMs(comp, selAudio)} pxPerSec={pxPerSec} label={label(selAudio.assetId)}
           waveform={(() => { const an = analyses[selAudio.assetId]; return typeof an === 'object' && an.waveform ? an.waveform : null })()}

@@ -69,12 +69,21 @@ export function duplicateTrack(c: Composition, id: string): Composition {
   return { ...out, audioClips: [...(c.audioClips ?? []), ...(c.audioClips ?? []).filter(a => audioTrackId(a) === id).map(a => ({ ...a, id: newId(a.kind), trackId: copyId, linkedClipId: null, startMs: audioStartMs(c, a), groupId: undefined }))] }
 }
 
-/** Moves a track one place up or down. Overlays stay above the main track and every other track stays below it. */
+/** Moves a track one place up or down (the main track too: on screen it is just another row; only the overlays' order sets their layering). */
 export function moveTrack(c: Composition, id: string, dir: -1 | 1): Composition {
   const list = [...tracksOf(c)]
   const i = list.findIndex(x => x.id === id)
   const j = i + dir
-  if (i < 0 || j < 0 || j >= list.length || list[i].type === 'main' || list[j].type === 'main') return c
+  if (i < 0 || j < 0 || j >= list.length) return c
+  ;[list[i], list[j]] = [list[j], list[i]]
+  return { ...c, tracks: list }
+}
+
+/** Two tracks take each other's place (drag one track onto another). */
+export function swapTracks(c: Composition, a: string, b: string): Composition {
+  const list = [...tracksOf(c)]
+  const i = list.findIndex(x => x.id === a), j = list.findIndex(x => x.id === b)
+  if (i < 0 || j < 0 || i === j) return c
   ;[list[i], list[j]] = [list[j], list[i]]
   return { ...c, tracks: list }
 }
