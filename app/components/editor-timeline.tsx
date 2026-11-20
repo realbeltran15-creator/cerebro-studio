@@ -29,6 +29,7 @@ type Drag =
   | { mode: 'move'; refs: ItemRef[]; primary: ItemRef; startX: number; base: Composition; span: { startMs: number; durationMs: number }; trackId: string | null }
   | { mode: 'trimStart' | 'end'; ref: ItemRef; startX: number; base: Composition; span: { startMs: number; durationMs: number } }
   | { mode: 'resizeMain'; id: string; startX: number; base: Composition; clipStart: number; dur: number }
+  | { mode: 'trimMain'; id: string; startX: number; base: Composition; dur: number; trimIn: number; speed: number; reverse: boolean; video: boolean }
 
 export type TimelineProps = {
   comp: Composition
@@ -226,7 +227,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
     // redrawn and lost the capture…). End it here; moving on from its old snapshot would undo everything done since it started.
     if (e.buttons === 0) { onUp(); return }
     const delta = toMs(e.clientX - d.startX)
-    const exclude = d.mode === 'move' ? d.refs : d.mode === 'resizeMain' ? [{ kind: 'clip' as const, id: d.id }] : [d.ref]
+    const exclude = d.mode === 'move' ? d.refs : d.mode === 'resizeMain' || d.mode === 'trimMain' ? [{ kind: 'clip' as const, id: d.id }] : [d.ref]
     const pts = p.magnet ? snapPoints(d.base, exclude, [p.playheadMs, ...(p.showBeats ? p.beatsMs : [])]) : []
     if (d.mode === 'move') {
       const want = d.span.startMs + delta
@@ -250,6 +251,12 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
       const want = d.clipStart + d.dur + delta
       const end = p.magnet ? snap(want, pts, tolMs) : want
       p.live(updateClip(d.base, d.id, { durationMs: end - d.clipStart }))
+    } else if (d.mode === 'trimMain') {
+      // Left edge of a main-track clip: the clip keeps its place and the later ones follow (sequential track). A video moves its in-point
+      // by the amount cut (a reversed one reads backwards, so its in-point stays); a photo has no source window, so only its length changes.
+      const moveIn = d.video && !d.reverse
+      const cut = Math.round(Math.min(Math.max(delta, moveIn ? -d.trimIn / d.speed : -Infinity), d.dur - 100))
+      p.live(updateClip(d.base, d.id, { durationMs: d.dur - cut, ...(moveIn ? { trimInMs: Math.max(0, Math.round(d.trimIn + cut * d.speed)) } : {}) }))
     }
   }
   function onUp() { if (drag.current) { drag.current = null; p.end() } }
@@ -321,6 +328,7 @@ export function EditorTimeline({ scrollerRef, playheadRef, ...p }: TimelineProps
             title={`${p.labelOf(clip.visualAssetId)} · ${secs(clip.durationMs)} s`}>
             {clip.visualAssetId && p.typeOf(clip.visualAssetId) === 'video' && p.resolveUrl && <Filmstrip reverse={clip.reverse === true} assetId={clip.visualAssetId} trimInMs={clip.trimInMs ?? 0} durationMs={clip.durationMs} speed={clip.speed ?? 1} width={clip.durationMs / 1000 * pxPerSec} height={h} resolveUrl={p.resolveUrl} />}
             <span style={{ position: 'relative', textShadow: '0 1px 2px #000' }}><b>{i + 1}</b> {p.labelOf(clip.visualAssetId)}{groupMark(clip.groupId)}<br />{secs(clip.durationMs)} s{clip.speed && clip.speed !== 1 ? ` · ${clip.speed}×` : ''}{clip.reverse ? ' · ↺ invertido' : ''}{clip.transition && clip.transition !== 'fade' ? ` · ${TRANSITIONS[clip.transition].toLowerCase()}` : ''}{clip.text ? ' · T' : ''}{clip.muted ? ' · 🔇' : ''}{clip.filters ? ' · fx' : ''}</span>
+            {!t.locked && <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); p.begin(); drag.current = { mode: 'trimMain', id: clip.id, startX: e.clientX, base: comp, dur: clip.durationMs, trimIn: clip.trimInMs ?? 0, speed: clip.speed || 1, reverse: clip.reverse === true, video: p.typeOf(clip.visualAssetId) === 'video' } }} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)', zIndex: 2 }} role="separator" aria-orientation="vertical" aria-label="Recortar inicio" />}
             {!t.locked && <span onMouseDown={e => { e.preventDefault(); e.stopPropagation() }} onPointerDown={e => { e.stopPropagation(); (e.target as HTMLElement).setPointerCapture(e.pointerId); p.begin(); drag.current = { mode: 'resizeMain', id: clip.id, startX: e.clientX, base: comp, clipStart: starts[i], dur: clip.durationMs } }} style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 8, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' }} role="separator" aria-orientation="vertical" aria-label="Cambiar duración" />}
           </div>
           {i < comp.clips.length - 1 && (clip.transition ?? 'fade') !== 'cut' && <TransitionChip comp={comp} clip={clip} index={i} pxPerSec={pxPerSec} locked={!!t.locked} kindOf={id => p.typeOf(id) as 'video' | 'image' | 'audio' | null}
