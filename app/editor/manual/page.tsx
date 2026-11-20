@@ -173,7 +173,11 @@ export default function ManualEditorPage() {
   const playerRef = useRef<EditorPlayer | null>(null)
   const playheadEl = useRef<HTMLDivElement | null>(null)
   const resolveUrl = useMemo(() => assetUrlResolver(), [])
-  const setPlayheadMs = useCallback((ms: number) => { setPlayheadMsState(ms); const p = playerRef.current; if (p && Math.abs(p.state.timeMs - ms) > 1) p.seek(ms) }, [])
+  // Vista previa de un material en el visor: se quita sola al dar play o mover el cursor de la línea de tiempo.
+  const previewOpenRef = useRef(false)
+  const previewAtMsRef = useRef(0)
+  const clearPreviewRef = useRef<() => void>(() => {})
+  const setPlayheadMs = useCallback((ms: number) => { clearPreviewRef.current(); setPlayheadMsState(ms); const p = playerRef.current; if (p && Math.abs(p.state.timeMs - ms) > 1) p.seek(ms) }, [])
   const lastPlayheadState = useRef(0)
   // Marked fragment («entrada»/«salida»): instructions and fragment actions apply only to it.
   const [range, setRange] = useState<Range | null>(null)
@@ -265,6 +269,7 @@ export default function ManualEditorPage() {
     el.scrollLeft = scrollForAnchor(a.t, pxPerSec, a.x)
   }, [pxPerSec])
   const onPlayerTime = useCallback((ms: number, playing: boolean) => {
+    if (previewOpenRef.current && (playing || Math.abs(ms - previewAtMsRef.current) > 1)) clearPreviewRef.current()
     const el = playheadEl.current
     if (el) el.style.left = `${ms / 1000 * pxRef.current}px`
     const now = performance.now()
@@ -786,12 +791,15 @@ export default function ManualEditorPage() {
   const [matMenu, setMatMenu] = useState<{ x: number; y: number; id: string } | null>(null)
   // Material arrastrado al visor: se ve ahí sin añadirlo a la línea de tiempo.
   const [viewerPreview, setViewerPreview] = useState<{ id: string; url: string; video: boolean } | null>(null)
+  previewOpenRef.current = viewerPreview !== null
+  clearPreviewRef.current = () => { if (previewOpenRef.current) { previewOpenRef.current = false; setViewerPreview(null) } }
   async function previewInViewer(id: string) {
     const a = assets.find(x => x.id === id)
     if (!a || !visualTypes.includes(a.asset_type)) { setError('Solo se pueden previsualizar vídeos e imágenes en el visor.'); return }
     try {
       const url = await resolveUrl(id)
       if (!url) throw new Error('sin enlace')
+      previewAtMsRef.current = playerRef.current?.state.timeMs ?? playheadMs
       setViewerPreview({ id, url, video: a.asset_type === 'video' })
     } catch { setError('No se pudo cargar la vista previa de ese material.') }
   }
@@ -1267,11 +1275,15 @@ export default function ManualEditorPage() {
         onDragOver={e => { if (e.dataTransfer.types.includes(ASSET_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
         onDrop={e => { const id = e.dataTransfer.getData(ASSET_MIME); if (id) { e.preventDefault(); void previewInViewer(id) } }}>
         {viewerPreview && <div role="region" aria-label="Vista previa del material" style={{ position: 'absolute', inset: 0, zIndex: 5, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {viewerPreview.video
-            // eslint-disable-next-line jsx-a11y/media-has-caption
-            ? <video src={viewerPreview.url} controls autoPlay style={{ maxWidth: '100%', maxHeight: '100%' }} />
-            // eslint-disable-next-line @next/next/no-img-element
-            : <img src={viewerPreview.url} alt="Vista previa" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}
+          <div draggable title="Arrástralo a la línea de tiempo para añadirlo" aria-label="Material en vista previa, arrástralo a la línea de tiempo"
+            onDragStart={e => { e.dataTransfer.setData(ASSET_MIME, viewerPreview.id); e.dataTransfer.effectAllowed = 'copy' }}
+            style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab' }}>
+            {viewerPreview.video
+              // eslint-disable-next-line jsx-a11y/media-has-caption
+              ? <video src={viewerPreview.url} controls autoPlay draggable={false} style={{ maxWidth: '100%', maxHeight: '100%' }} />
+              // eslint-disable-next-line @next/next/no-img-element
+              : <img src={viewerPreview.url} alt="Vista previa" draggable={false} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}
+          </div>
           <button type="button" className="small" style={{ position: 'absolute', top: 8, right: 8 }} onClick={() => setViewerPreview(null)}>Cerrar vista previa</button>
         </div>}
         <EditorPlayerView composition={compareBefore ? withoutGrades(comp) : comp} kindOf={kindOfAsset} resolveUrl={resolveUrl} loop={range} onTime={onPlayerTime} onPlayer={p => { playerRef.current = p }}
